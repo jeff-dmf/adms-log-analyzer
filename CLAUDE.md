@@ -4,7 +4,7 @@ Analisador de logs dos adapters (online interfaces) do ADMS. Python (`src/dmslog
 
 ## Referências
 - Documentação dos adapters: projeto `~/Projects/adms-v3.9` (vault Obsidian em `adms-knowledge-base/Concluído/12 Interfaces online/`). Resumo e mapa em `docs/ADAPTERS.md`.
-- Logs de exemplo: `local-samples/<SIGLA>/<LogLevel>[-Msg<MessageLogLevel>]/` (convenção em `local-samples/README.md`). Não commitar credenciais nem dados de clientes.
+- Logs de exemplo: ERS zipados em `local-samples/` (convenção em `local-samples/README.md`; o que é o ERS em `docs/ERS.md`). Não commitar credenciais nem dados de clientes.
 - Não alterar o adms-v3.9 a partir daqui (só leitura).
 
 <!-- ai-memory:start -->

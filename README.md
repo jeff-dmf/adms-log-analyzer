@@ -10,8 +10,9 @@ Estrutura inicial. O formato das linhas e das mensagens será definido a partir 
 
 - `src/dmslog/`: pacote Python (CLI `dmslog`).
 - `tests/`: testes (pytest).
-- `local-samples/`: logs reais por adapter e nível de log (ver `local-samples/README.md`).
+- `local-samples/`: ERS zipados com logs reais por adapter e nível de log (ver `local-samples/README.md`).
 - `docs/ADAPTERS.md`: o que a documentação diz sobre log dos adapters e onde achar cada coisa no vault.
+- `docs/ERS.md`: o que é o ERS (Error Reporting System) e como os logs vêm dentro dele.
 
 ## Desenvolvimento
 
