@@ -1,0 +1,260 @@
+"""Local HTTP server: loopback only, token-to-cookie sessions, Host/Origin checks."""
+
+from __future__ import annotations
+
+import hmac
+import json
+import os
+import secrets
+import threading
+import webbrowser
+from http import HTTPStatus
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib import resources
+from importlib.resources.abc import Traversable
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit
+
+from .. import __version__, messages
+from ..buildinfo import get_commit
+from ..paths import check_sqlite_fts5
+
+LOOPBACK_HOST = "127.0.0.1"
+COOKIE_NAME = "dmslog_session"
+TOKEN_PARAM = "token"
+
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+)
+
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".woff2": "font/woff2",
+}
+
+UNSAFE_METHODS = ("POST", "DELETE")
+
+
+class DmslogServer(ThreadingHTTPServer):
+    """Loopback-only ThreadingHTTPServer; a start token is exchanged for a session cookie.
+
+    The start token stays valid while the process runs (each use issues a new cookie).
+    """
+
+    daemon_threads = True
+    # On Windows SO_REUSEADDR allows another process to bind the same port.
+    allow_reuse_address = os.name != "nt"
+
+    def __init__(self, port: int = 0) -> None:
+        super().__init__((LOOPBACK_HOST, port), RequestHandler)
+        self.port: int = self.server_address[1]
+        self.token = secrets.token_urlsafe(32)
+        self._sessions: set[str] = set()
+        self._lock = threading.Lock()
+        self.allowed_hosts = frozenset({f"127.0.0.1:{self.port}", f"localhost:{self.port}"})
+        self.allowed_origins = frozenset(f"http://{host}" for host in self.allowed_hosts)
+
+    @property
+    def start_url(self) -> str:
+        return f"http://{LOOPBACK_HOST}:{self.port}/?{TOKEN_PARAM}={self.token}"
+
+    def token_is_valid(self, candidate: str) -> bool:
+        return hmac.compare_digest(candidate.encode("utf-8"), self.token.encode("utf-8"))
+
+    def new_session(self) -> str:
+        session_id = secrets.token_urlsafe(32)
+        with self._lock:
+            self._sessions.add(session_id)
+        return session_id
+
+    def session_is_valid(self, candidate: str) -> bool:
+        with self._lock:
+            known = list(self._sessions)
+        encoded = candidate.encode("utf-8")
+        return any(hmac.compare_digest(encoded, s.encode("utf-8")) for s in known)
+
+
+class RequestHandler(BaseHTTPRequestHandler):
+    server: DmslogServer
+    server_version = "dmslog"
+    sys_version = ""
+    protocol_version = "HTTP/1.1"
+
+    # -- plumbing ---------------------------------------------------------
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """Silence per-request logging (the console shows only the start URL)."""
+
+    def _send(
+        self,
+        status: HTTPStatus,
+        body: bytes,
+        content_type: str,
+        extra_headers: list[tuple[str, str]] | None = None,
+    ) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store")
+        for name, value in extra_headers or []:
+            self.send_header(name, value)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _send_text(self, status: HTTPStatus, text: str) -> None:
+        self._send(status, text.encode("utf-8"), "text/plain; charset=utf-8")
+
+    def _send_json(self, status: HTTPStatus, payload: Any) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self._send(status, body, "application/json; charset=utf-8")
+
+    def _forbid(self) -> None:
+        self._send_text(HTTPStatus.FORBIDDEN, messages.HTTP_FORBIDDEN)
+
+    # -- checks -----------------------------------------------------------
+
+    def _host_ok(self) -> bool:
+        host = (self.headers.get("Host") or "").strip().lower()
+        return host in self.server.allowed_hosts
+
+    def _origin_ok(self) -> bool:
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        return origin in self.server.allowed_origins
+
+    def _cookie_session_ok(self) -> bool:
+        raw = self.headers.get("Cookie")
+        if not raw:
+            return False
+        jar: SimpleCookie = SimpleCookie()
+        try:
+            jar.load(raw)
+        except Exception:  # malformed cookie header
+            return False
+        morsel = jar.get(COOKIE_NAME)
+        return morsel is not None and self.server.session_is_valid(morsel.value)
+
+    # -- dispatch ---------------------------------------------------------
+
+    def _handle(self) -> None:
+        if self.command != "GET":
+            # Request bodies are never read, so the connection cannot be reused.
+            self.close_connection = True
+        if not self._host_ok():
+            self._forbid()
+            return
+        split = urlsplit(self.path)
+        query = parse_qsl(split.query, keep_blank_values=True)
+        token = next((value for key, value in query if key == TOKEN_PARAM), None)
+
+        if self.command == "GET" and token is not None:
+            if not self.server.token_is_valid(token):
+                self._forbid()
+                return
+            self._exchange_token(split.path, [(k, v) for k, v in query if k != TOKEN_PARAM])
+            return
+
+        if not self._cookie_session_ok():
+            self._forbid()
+            return
+        if self.command in UNSAFE_METHODS and not self._origin_ok():
+            self._forbid()
+            return
+
+        if self.command == "GET":
+            self._route_get(split.path)
+        else:
+            self._send_text(HTTPStatus.METHOD_NOT_ALLOWED, messages.HTTP_METHOD_NOT_ALLOWED)
+
+    def _exchange_token(self, path: str, remaining_query: list[tuple[str, str]]) -> None:
+        session_id = self.server.new_session()
+        location = "/" + path.lstrip("/")  # collapse "//host" so it stays a same-origin path
+        if remaining_query:
+            location += "?" + urlencode(remaining_query)
+        cookie = f"{COOKIE_NAME}={session_id}; HttpOnly; SameSite=Strict; Path=/"
+        self._send(
+            HTTPStatus.FOUND,
+            b"",
+            "text/plain; charset=utf-8",
+            [("Location", location), ("Set-Cookie", cookie)],
+        )
+
+    def _route_get(self, path: str) -> None:
+        if path == "/api/health":
+            self._send_json(HTTPStatus.OK, health_payload())
+        elif path.startswith("/api/"):
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": messages.HTTP_NOT_FOUND})
+        else:
+            self._serve_static(path)
+
+    def _serve_static(self, path: str) -> None:
+        resource = find_web_resource(path)
+        if resource is None:
+            self._send_text(HTTPStatus.NOT_FOUND, messages.HTTP_NOT_FOUND)
+            return
+        suffix = "." + resource.name.rsplit(".", 1)[-1].lower() if "." in resource.name else ""
+        content_type = CONTENT_TYPES.get(suffix)
+        if content_type is None:
+            self._send_text(HTTPStatus.NOT_FOUND, messages.HTTP_NOT_FOUND)
+            return
+        self._send(HTTPStatus.OK, resource.read_bytes(), content_type)
+
+    do_GET = do_POST = do_DELETE = do_PUT = do_PATCH = do_HEAD = _handle  # noqa: N815
+
+
+def health_payload() -> dict[str, Any]:
+    """Return the body of GET /api/health."""
+    check = check_sqlite_fts5()
+    return {
+        "version": __version__,
+        "pack_version": None,
+        "sqlite": check["sqlite"],
+        "fts5": check["fts5"],
+        "commit": get_commit(),
+    }
+
+
+def find_web_resource(url_path: str) -> Traversable | None:
+    """Map a URL path to a file under the web/ package, or None when not servable."""
+    relative = "index.html" if url_path in ("", "/") else url_path.lstrip("/")
+    parts = relative.split("/")
+    for part in parts:
+        if part in ("", ".", "..") or "\\" in part or ":" in part or "\x00" in part:
+            return None
+    node: Traversable = resources.files("dmslog.web")
+    for part in parts:
+        node = node.joinpath(part)
+    if not node.is_file() or node.name.startswith(("_", ".")):
+        return None
+    return node
+
+
+def serve(port: int = 0, open_browser: bool = True) -> int:
+    """Run the server until Ctrl+C. Returns the process exit code."""
+    try:
+        server = DmslogServer(port)
+    except OSError as exc:
+        print(messages.BIND_FAILED.format(port=port, error=exc), flush=True)
+        return 1
+    with server:
+        url = server.start_url
+        print(messages.SERVING.format(url=url), flush=True)
+        print(messages.SERVING_HINT, flush=True)
+        if open_browser:
+            webbrowser.open(url)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+    print(messages.STOPPED, flush=True)
+    return 0

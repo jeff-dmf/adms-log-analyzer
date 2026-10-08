@@ -6,7 +6,10 @@ on:
   pull_request:
 
 jobs:
+  # Job names are required checks in docs/REVISAO-CRUZADA.md: keep
+  # "test (ubuntu-latest)", "test (windows-latest)" and "portable-windows" unchanged.
   test:
+    name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -18,7 +21,54 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install -e ".[dev]"
+      - run: ruff check
       - run: python -m pytest -q
+
+  test-py311:
+    name: test-py311 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check
+      - run: python -m pytest -q
+
+  pyz-linux:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build dmslog.pyz and the Linux tarball
+        run: python packaging/build_linux.py
+      - name: Smoke test the zipapp
+        shell: bash
+        run: |
+          python3 -I dist/dmslog.pyz --version
+          python3 -I dist/dmslog.pyz info | tee info.txt
+          grep -q "^fts5: yes" info.txt
+          python packaging/smoke_health.py python3 -I dist/dmslog.pyz
+      - name: Smoke test the tarball launcher
+        run: |
+          mkdir -p "$RUNNER_TEMP/linux-unpacked"
+          tar -xzf dist/dmslog-linux.tar.gz -C "$RUNNER_TEMP/linux-unpacked"
+          "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog" --version
+          python packaging/smoke_health.py "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmslog-linux
+          path: |
+            dist/dmslog.pyz
+            dist/dmslog-linux.tar.gz
 
   portable-windows:
     runs-on: windows-latest
@@ -29,11 +79,23 @@ jobs:
         with:
           python-version: "3.13"
       - run: python packaging/build_portable.py
-      - name: Smoke test da pasta portátil (sem o Python do runner no PATH do app)
-        shell: cmd
+      - name: Smoke test the portable folder (embeddable Python, not the runner Python)
+        shell: pwsh
         run: |
-          dist\dmslog-portable-win64\dmslog.bat --version
-          dist\dmslog-portable-win64\python\python.exe -I -c "import sqlite3, zipfile, http.server, dmslog; print(sqlite3.sqlite_version)"
+          $dir = Join-Path $PWD "dist\dmslog-portable-win64"
+          & "$dir\dmslog.bat" --version
+          if ($LASTEXITCODE -ne 0) { throw "dmslog.bat --version failed" }
+          & "$dir\python\python.exe" -I -c "import sqlite3, zipfile, http.server; print(sqlite3.sqlite_version)"
+          if ($LASTEXITCODE -ne 0) { throw "embeddable Python stdlib check failed" }
+          $info = & "$dir\dmslog.bat" info
+          if ($LASTEXITCODE -ne 0) { throw "dmslog.bat info failed" }
+          $info
+          if (-not ($info -match "^fts5: yes")) { throw "FTS5 missing in the embeddable Python" }
+      - name: Smoke test dmslog.bat serve (health, token, cookie, FTS5)
+        shell: pwsh
+        run: |
+          python packaging/smoke_health.py (Join-Path $PWD "dist\dmslog-portable-win64\dmslog.bat")
+          if ($LASTEXITCODE -ne 0) { throw "serve smoke test failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: dmslog-portable-win64

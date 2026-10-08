@@ -10,3 +10,6 @@ __pycache__/
 # Logs extraídos localmente dos ERS
 local-samples/_extracted/
 dist/
+
+# Generated inside the zipapp only
+src/dmslog/_build_info.py
