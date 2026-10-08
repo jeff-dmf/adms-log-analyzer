@@ -83,7 +83,7 @@ Todos com janela de 272k tokens. `ultra` = raciocínio máximo com delegação a
 | Papel (CLAUDE.md) | Codex | Effort | Por quê |
 |---|---|---|---|
 | **Opus**: arquitetura, modelo de dados/eventos, parser/templates, descoberta de formato, algoritmos difíceis | `gpt-6-astra` | `high` | Única opção "fronteira"; julgamento é o que importa aqui |
-| **Opus**: revisão final de código antes do merge, algoritmo realmente difícil | `gpt-6-astra` | `xhigh` | Mais profundidade onde o erro custa caro; `max` só se `xhigh` falhar |
+| **Opus**: revisão final T2 (segurança, parser/algoritmo, esquema/arquitetura) e algoritmo realmente difícil | `gpt-6-astra` | `high`; `xhigh` só com suspeita concreta ou a pedido | Mais profundidade onde o erro custa caro; `max` só se `xhigh` falhar |
 | **Sonnet**: implementação, testes, empacotamento/CI, docs, git, coordenação | `gpt-6.1-sol` | `medium` | Custo menor com qualidade próxima do Astra; `high` para módulo com várias decisões locais |
 | **Haiku**: contagens, inventário, grep em lote, anonimização, links, tabelas | `gpt-6-luna` | `low` | Mais barato e rápido; `medium` se a varredura exigir interpretar resultado |
 
@@ -98,7 +98,7 @@ Como invocar:
 codex -m gpt-6-astra -c model_reasoning_effort=high          # sessão interativa "Opus"
 codex -p arquiteto                                            # o mesmo, via perfil
 codex exec -m gpt-6-luna -c model_reasoning_effort=low -s read-only "conte ..."
-codex review --base main -c model=gpt-6-astra -c model_reasoning_effort=xhigh   # equivalente ao /code-review
+codex review --base main -c model=gpt-6.1-sol -c model_reasoning_effort=high   # revisão T1; T2 usa gpt-6-astra high (níveis em REVISAO-CRUZADA.md)
 ```
 Dentro da sessão interativa, `/model` troca modelo e effort sem sair.
 
@@ -117,7 +117,7 @@ O Codex tem subagentes nativos (feature `multi_agent`, estável e ligada). Difer
   codex exec -p rotina -s workspace-write -o /tmp/impl.md "Altere apenas src/dmslog/x.py ... Não faça commit."
   ```
   Para trabalho paralelo que mexe em arquivos, use `--worktree` (cada sessão em uma worktree gerenciada) e integre na sessão principal.
-- **Paralelização (regra do projeto)**: tudo que não é do papel Opus/Astra roda em paralelo quando possível. No Codex: peça o lote na mesma mensagem, citando subagente e arquivos de cada um (ex.: "em paralelo: `implementador` altera só `src/dmslog/store/db.py` e `tests/unit/test_db.py`; `implementador` altera só `src/dmslog/ingest/discover.py` e seus testes; `varredura` conta os logs de `local-samples/_extracted/`"). Condições: dependências do `docs/ROADMAP.md` concluídas, arquivos disjuntos, sem estado compartilhado; com risco de sobreposição use `codex exec --worktree`. Padrão de até 4 simultâneos. Tarefas do `arquiteto` (`gpt-6-astra`) rodam uma por vez. A sessão principal integra o lote e roda lint e testes antes de commitar.
+- **Paralelização (regra do projeto)**: tudo que não é do papel Opus/Astra roda em paralelo quando possível. No Codex: peça o lote na mesma mensagem, citando subagente e arquivos de cada um (ex.: "em paralelo: `implementador` altera só `src/dmslog/store/db.py` e `tests/unit/test_db.py`; `implementador` altera só `src/dmslog/ingest/discover.py` e seus testes; `varredura` conta os logs de `local-samples/_extracted/`"). Condições: dependências do `docs/ROADMAP.md` concluídas, escritas disjuntas, nenhuma mutação concorrente de recurso compartilhado (cada tarefa com seu `-o`; worktrees não isolam caminhos externos compartilhados; índice e branch do git ficam com a sessão principal); com risco de sobreposição use `codex exec --worktree`. Neste projeto o Codex só delega quando o pedido pede subagentes ou trabalho paralelo explicitamente. Padrão de até 4 simultâneos. Tarefas do `arquiteto` (`gpt-6-astra`) rodam uma por vez. A sessão principal integra o lote e roda lint e testes antes de commitar.
 - **Regra de commit e merge**: subagentes de implementação/revisão não fazem commit. A sessão principal está autorizada a criar branch, commitar, publicar PR e fazer merge sem aprovação manual do Jefferson, dentro do escopo solicitado. A revisão final é cruzada: Claude revisa Codex e Codex revisa Claude, com aprovação do SHA final e CI obrigatório verde em Linux e Windows. Revisão local pelo mesmo harness é complementar. Protocolo: `REVISAO-CRUZADA.md`; repita "não faça commit" no prompt de delegação.
 
 ## 4. Handoff Claude → Codex

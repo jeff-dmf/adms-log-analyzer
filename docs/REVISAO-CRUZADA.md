@@ -9,7 +9,7 @@ Decisão do Jefferson em 2026-10-08. A regra canônica está em `../CLAUDE.md`; 
 | Codex | Claude Code, papel Opus/arquiteto |
 | Claude Code | Codex, papel `arquiteto` |
 
-O revisor trabalha em uma sessão independente e recebe o escopo, a base, o SHA final, o diff completo e os resultados das verificações. Ele lê as instruções canônicas e avalia o conteúdo sem editar arquivos nem fazer commit, push ou merge. Revisões auxiliares pelo mesmo harness não substituem a revisão cruzada. Se o PR tiver contribuição dos dois harnesses, cada um revisa as alterações do outro no mesmo SHA final.
+O revisor trabalha em uma sessão independente e recebe o escopo, a base, o SHA final, o diff completo e os resultados das verificações. Ele não relê o cânone inteiro: usa o `AGENTS.md` (carregado automaticamente) e só os arquivos e trechos indicados no pacote do autor (ver "Custo e níveis de revisão"). Avalia o conteúdo sem editar arquivos nem fazer commit, push ou merge. Revisões auxiliares pelo mesmo harness não substituem a revisão cruzada. Se o PR tiver contribuição dos dois harnesses, cada um revisa as alterações do outro no mesmo SHA final.
 
 Quando houver ferramentas de leitura disponíveis, o revisor obtém o diff diretamente do repositório para o SHA informado. Se receber apenas um pacote de contexto sem ferramentas, declara essa limitação no parecer; a sessão principal confere que o pacote contém o diff completo do SHA e preserva a evidência.
 
@@ -25,6 +25,46 @@ Quando houver ferramentas de leitura disponíveis, o revisor obtém o diff diret
 No CI atual (`../.github/workflows/ci.yml`), os três jobs exigidos são `test (ubuntu-latest)`, `test (windows-latest)` e `portable-windows`. Todos devem concluir com sucesso; pendente, ausente, falho ou cancelado não atende ao requisito. A exigência vale também sem proteção de branch configurada no GitHub.
 
 O parecer aprovado deve permitir identificar o SHA, o autor das alterações, o revisor, o escopo revisado e as verificações. Não afirmar que um teste foi executado pelo revisor quando ele apenas conferiu um resultado de CI.
+
+## Custo e níveis de revisão
+
+Medido em 2026-10-08: quatro revisões do Codex custaram de 66 mil a 130 mil tokens cada (cerca de 437 mil no total), principalmente porque o prompt mandava ler quase todo o cânone (`cat` de três documentos de formato inteiros, `ARQUITETURA.md` em grandes faixas, `ROADMAP.md`, `CLAUDE.md`) e porque rodava em `xhigh`. O efeito dos hooks do ai-memory nas sessões de revisão não foi medido.
+
+**Nível pelo risco do PR** (o autor classifica e informa no prompt; na dúvida, o nível acima):
+
+| Nível | Quando | Revisor no Codex | Revisor no Claude |
+|---|---|---|---|
+| T0 | Documentação de processo, redação, links, regras sem efeito em código ou esquema | `gpt-6.1-sol`, `medium` | Sonnet |
+| T1 | Código rotineiro, testes, CI, empacotamento (use `codex review --base main` quando o PR é só código) | `gpt-6.1-sol`, `high` | Sonnet com `/code-review` |
+| T2 | Segurança, concorrência, parser e algoritmos, esquema e arquitetura, documentos que fixam decisões | `gpt-6-astra`, `high` | Opus |
+
+`xhigh` / revisão Opus extensa só em T2 e só quando uma primeira passada em `high` deixar suspeita concreta, ou quando o Jefferson pedir.
+
+**Orçamento de contexto** (vale para qualquer revisor):
+1. O autor monta o pacote: `git diff --stat`, base e SHA, nível, até 5 afirmações que sustentam o desenho, cada uma com o comando ou script do autor e o resultado já medido, e a lista de arquivos e intervalos de linhas que o revisor deve abrir além do diff.
+2. Proibido `cat` de documento com mais de 200 linhas: usar `rg -n` e `sed -n 'a,bp'`. Não reler `CLAUDE.md` (o `AGENTS.md` é o resumo) nem este protocolo (o prompt traz o checklist). Limite de referência: cerca de 60 KB lidos além do diff e no máximo 10 comandos.
+3. Conferências independentes: no máximo 3, só das afirmações que decidem o desenho, por amostragem; o revisor não reconstrói a análise do autor. CI já cobre lint e testes: não reexecutar.
+4. Re-revisão olha só o diff incremental (`SHA_ANTERIOR..SHA_NOVO`) mais a lista de achados anteriores; não reabre o resto.
+5. Saída curta: primeira linha `APPROVED` ou `CHANGES_REQUESTED`; até 8 achados com arquivo:linha e correção; "Verificado:" em uma linha por item, separando leu, executou e confiou no autor. Sem tabelas longas.
+6. Agrupar: ajustes de redação e correções pequenas entram no próximo PR relacionado, em vez de abrir PR (e revisão) só para eles. Um marco, um PR por vez para revisão.
+
+Prompt-modelo para o Codex (preencher os campos):
+
+```text
+Revisor cruzado (papel arquiteto), PR #<n>, nível <T0|T1|T2>. Autor: Claude Code.
+Base <sha> / SHA final <sha>. Diff: git diff <base> <sha>. (Re-revisão: só <sha_ant>..<sha>; achados anteriores: <lista>.)
+Abra além do diff só: <arquivo:linhas>, ... Não dê cat em documentos; use rg -n e sed -n.
+Afirmações a conferir por amostragem (máx. 3 conferências suas): 1) ... [comando do autor] -> [resultado do autor]
+CI deste SHA: <resultado>. Somente leitura; sem editar, commitar ou publicar.
+Resposta: 1ª linha APPROVED ou CHANGES_REQUESTED; até 8 achados (arquivo:linha, correção); "Verificado:" 1 linha por item (leu/executou/confiou).
+```
+
+## Aprovação manual e exceções
+
+Se o outro harness estiver indisponível (por exemplo, limite de uso), o PR fica aberto, como em "Bloqueios". O Jefferson pode aprovar manualmente; nesse caso a sessão registra a aprovação em comentário no PR (SHA, quem aprovou, por quê, evidência disponível). A revisão cruzada daquele PR fica **dispensada** e não é retomada depois, salvo pedido do Jefferson.
+
+Exceções registradas:
+- **PR #10** (M6.1, descoberta de formato dos payloads), SHA `78479ff`, mergeado em 2026-10-08 como `94f3c5b`: aprovado manualmente pelo Jefferson porque o limite de uso do Codex acabou durante a revisão. O Codex **não** deve retomar essa revisão quando houver créditos.
 
 ## Bloqueios
 
