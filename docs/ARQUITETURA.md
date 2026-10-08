@@ -47,7 +47,7 @@ Respostas do Jefferson às perguntas em aberto da versão inicial. Valem como re
 | U4 | A ferramenta deve analisar **todos** os logs do ERS; a meta da 1.0 é cobrir os adapters | Na 1.0, qualquer log de texto do ERS abre, indexa, busca e entra na timeline (envelope + `_common`); templates, eventos e painéis específicos só para os adapters. Esquema e descoberta sem nada específico de adapter, para os demais logs entrarem depois só com dados (TOML) e derivadores novos | 9.1a |
 | U5 | **Um ERS por caso**, de um servidor | Caso = uma coleta (par Enterprise/Sensitive ou uma pasta de instalação). Múltiplos ERS, correlação entre máquinas e ajuste de relógio saem da 1.0; `collection.clock_offset_ms` e `collection_group` ficam no esquema (porta aberta), sem UI | 5, 8, 10 |
 | U6 | Timestamps em **horário local**, sem conversão de fuso | `ts` guarda o horário do log como está; UI e exportação mostram sem conversão; salto de horário de verão é detectado e sinalizado, não corrigido | 5 (Tempo) |
-| U7 | Suporte a **payload** (request/response) é obrigatório na 1.0 | Hoje não há amostra (`MessageLogLevel=Info` em todos os adapters do ERS de exemplo). O Jefferson está coletando ERS com nível Verbose para `local-samples/`. Esquema `payload`, visualização XML/JSON formatada, ligação ao evento, cuidado com dados sensíveis; a descoberta de formato fica bloqueada até as amostras chegarem | 5, 6.6, 10, 12 |
+| U7 | Suporte a **payload** (request/response) é obrigatório na 1.0 | Amostra Verbose recebida (ERS de 2026-10-08 14:53, Wfm/Ont/Smn elevados ~2 h) e formato descoberto em `docs/formato/payloads.md` (tarefa 6.1). Esquema `payload` definitivo, visualização XML formatada, ligação ao evento por chave ou por tempo, cuidado com dados sensíveis | 5, 6.6, 10, 12 |
 | U8 | Adapters sem amostra não existem no ambiente produtivo: **fora do escopo** | Escopo de adapters: Wfm, Ont, AVL, Osr, Smn, SiteSwitch, Crm, Ami, Smr, WDI, ClaimCheck, FileUpload, FileMonitor + BLTHost, com inclusão de `CustomAdapterChangeIncidentDevice` confirmada em U11. O antigo M7 ("adapters sem amostra") foi removido do roadmap | 6.3, ROADMAP |
 | U9 | Precedência do Registry: **sufixo maior vence** onde há sobreposição; `AdapterX_1_<Projeto>` configura o **mesmo processo**, no escopo do projeto, com base em `AdapterX` | Camadas resolvidas por chave. Os arquivos de projeto são distribuídos nos pacotes de atualização MSI/MSU específicos daquele projeto ADMS; não representam instâncias independentes | 7.2 |
 | U10 | Exportação para chamado (ServiceNow): **`.txt`** colável, anonimização configurável | `report/export.py` gera só texto simples; perfis de anonimização por categoria + termos do usuário | 10, 12 |
@@ -95,7 +95,18 @@ Máquina de dev: Linux, 20 núcleos, SSD, Python 3.14.7, SQLite 3.53.4. Scripts 
 | Leitura em streaming de membro do zip | Osr 49 MB: 0,14 s (340 MB/s); BLTHost 167 MB: 0,69 s (240 MB/s); RSS ≈ 50 MB |
 | `seek` em membro do zip | ir ao fim 47–97 ms; voltar ao meio 23–49 ms (rebobina e descomprime). Conclusão: zip só em leitura sequencial; acesso aleatório vem do SQLite |
 
-Projeção: um ERS típico, no escopo padrão (seção 9.1), tem 400–600 MB de logs relevantes. Indexação inicial: 20–35 s com templates, banco de 0,7–1 GB. O grid fica utilizável por arquivo já nos primeiros segundos. Um ERS coletado com `LogLevel=Verbose` (payloads, U7) deve ser bem maior; os números serão medidos de novo quando as amostras chegarem (tarefa de desempenho do M8).
+Projeção: um ERS típico, no escopo padrão (seção 9.1), tem 400–600 MB de logs relevantes. Indexação inicial: 20–35 s com templates, banco de 0,7–1 GB. O grid fica utilizável por arquivo já nos primeiros segundos.
+
+ERS com nível elevado (medido em 2026-10-08, `docs/formato/payloads.md`, seção 8; contagem de bytes por script, sem indexar):
+
+| Medida | Resultado |
+|---|---|
+| Escrita do log normal, fora × dentro da janela Info/Verbose | Wfm 1,2 → 32 MB/h; Ont 0,4 → 30 MB/h; Smn 0,3 → 37 MB/h. Só Info (Smn): 5 MB/h |
+| Composição da janela elevada | 92% no log normal; rastreio `Communication2` = 46–62% das linhas Info/Verbose; payload ≈ 8% dos bytes (3–4 MB/h por adapter, no sensitive) |
+| Escopo padrão, mesmo servidor (adapters normal + sensitive + BLTHost, com rotacionados) | ERS 12:40: 793 MiB; ERS 14:53 (Wfm/Ont/Smn elevados ~2 h): 1.041 MiB (+31%) |
+| Banco estimado (× 1,59) | 1,26 GB e 1,65 GB; pior caso projetado (14 adapters em Verbose até o limite da rotação): logs ≈ 2,6 GB, banco ≈ 4,1 GB |
+
+A meta de indexação do M6 parte desses números (ROADMAP, M6); o pior caso fica para o M8.
 
 ## 4. Layout do repositório
 
@@ -241,7 +252,8 @@ CREATE TABLE entry_body(entry_id INTEGER PRIMARY KEY, cont TEXT NOT NULL);  -- c
 
 CREATE VIEW entry_text AS
   SELECT e.id AS rowid, e.msg AS msg, substr(b.cont, 1, 65536) AS cont   -- limite do FTS por registro (seção 6.6)
-  FROM entry e LEFT JOIN entry_body b ON b.entry_id = e.id;
+  FROM entry e LEFT JOIN entry_body b ON b.entry_id = e.id
+  WHERE e.tpl_id NOT IN (SELECT id FROM template WHERE fts = 0);         -- rastreio Verbose fora do FTS (seção 6.6)
 CREATE VIRTUAL TABLE entry_fts USING fts5(msg, cont, content='entry_text', content_rowid='rowid',
   tokenize="unicode61 remove_diacritics 2");
 
@@ -259,6 +271,7 @@ CREATE TABLE template(
   code TEXT NOT NULL UNIQUE,                                   -- WFM-010, GEN-STA-02, ...
   family TEXT NOT NULL, class TEXT NOT NULL,                   -- start|end|req_resp|validation|error|statistics|startup|lifecycle|other
   sev INTEGER, title TEXT, pattern TEXT NOT NULL,
+  fts INTEGER NOT NULL DEFAULT 1,                              -- 0 = registros deste template não entram no FTS
   def_version TEXT NOT NULL);                                  -- hash do TOML que o definiu
 CREATE TABLE unknown_sig(                                      -- registros sem template, agrupados por assinatura
   family TEXT NOT NULL, signature TEXT NOT NULL,
@@ -292,22 +305,28 @@ CREATE TABLE link(
   PRIMARY KEY(a_entry_id, b_entry_id, kind)) WITHOUT ROWID;
 CREATE INDEX ix_link_b ON link(b_entry_id);
 
--- Payloads (request/response) — PROVISÓRIO até a descoberta de formato com amostras Verbose (seção 6.6) --
+-- Payloads (formato descoberto em docs/formato/payloads.md; seção 6.6) ---------------------------
 CREATE TABLE payload(          -- o texto NÃO é duplicado: offsets dentro de msg + '\n' + cont do registro
   id INTEGER PRIMARY KEY,
-  entry_id INTEGER NOT NULL,   -- registro que contém o payload (esperado no stream sensitive)
+  entry_id INTEGER NOT NULL,   -- registro que contém o payload (sensitive, ou normal: Wfm Content being sent to CRS/WMS)
   event_id INTEGER,            -- operação a que pertence (preenchido por derive/payloads.py)
-  ref_entry_id INTEGER,        -- registro normal que anuncia o payload (via link normal_sensitive), se houver
-  direction TEXT NOT NULL,     -- request|response|callback|unknown
-  operation TEXT,              -- nome da operação (do template ou do elemento raiz)
-  fmt TEXT NOT NULL,           -- xml|soap|json|text
-  root TEXT,                   -- elemento raiz / propriedade de topo (ex.: CreatedCrewAssignments)
-  char_off INTEGER NOT NULL, char_len INTEGER NOT NULL,
+  event_conf INTEGER,          -- confiança da ligação ao evento: 3 chave, 2 TID dentro da operação, 1 tempo
+  ref_entry_id INTEGER,        -- registro normal que anuncia o payload (GEN-MSG-01, WFM-112, ...), se houver
+  pair_id INTEGER,             -- payload par (request <-> response/fault), se houver
+  role TEXT NOT NULL,          -- request|response|fault|delta|content|publication|other
+  direction TEXT NOT NULL,     -- in (recebido pelo adapter) | out (enviado pelo adapter)
+  peer TEXT,                   -- outro lado, do TOML: WFM, SAP_PI, CRS, IMS, WMS, DMS_PUBSUB
+  operation TEXT,              -- nome da operação (do evento, do template ou do elemento raiz)
+  msg_id TEXT, corr_id TEXT,   -- Header/MessageID e Header/CorrelationID, quando existem
+  fmt TEXT NOT NULL,           -- xml|xml_seq (vários elementos irmãos, sem raiz)|html|json|text
+  root TEXT,                   -- 1º elemento, com prefixo (ex.: ns0:SwitchingStepsResponseMessage, s:Fault)
+  char_off INTEGER NOT NULL, char_len INTEGER NOT NULL,   -- sem o '.' final que o adapter acrescenta
   well_formed INTEGER,         -- 1 ok, 0 malformado, NULL não verificado
   truncated INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX ix_payload_entry ON payload(entry_id);
 CREATE INDEX ix_payload_event ON payload(event_id) WHERE event_id IS NOT NULL;
-CREATE INDEX ix_payload_op ON payload(operation, direction);
+CREATE INDEX ix_payload_op ON payload(operation, role);
+CREATE INDEX ix_payload_msg ON payload(msg_id) WHERE msg_id IS NOT NULL;
 
 -- Estatística periódica e agregados ------------------------------------------------
 CREATE TABLE stat_sample(
@@ -362,11 +381,11 @@ Como cada requisito fica representado:
 - **Eventos derivados**: `event`, com `entry.event_id` apontando a operação dona do registro (registros sem chave na mesma TID entre início e fim, como `Detected errors:`).
 - **Correlação entre fontes**: `entry_key` (mesmo GUID/GID/INC em qualquer fonte do caso) + `link`. Entre máquinas fica para depois da 1.0 (U5); o esquema já comporta (`collection_group`, `clock_offset_ms`).
 - **Mudança de nível de log**: `event(kind='level_window')` a partir de `Debug level changed from X (n) to Y (m).` e `flags & 16` nos registros dentro da janela.
-- **Payload**: `payload` aponta trechos do texto do registro (sem duplicar), com direção, operação, formato e ligação ao evento; registros com payload têm `flags & 64`. Esquema provisório até a descoberta de formato (seção 6.6).
+- **Payload**: `payload` aponta trechos do texto do registro (sem duplicar), com papel, direção, outro lado, IDs do header, par request↔response, formato e ligação ao evento (com confiança); registros com payload têm `flags & 64`. Formato descoberto nas amostras Verbose (seção 6.6).
 - **Configuração em camadas**: `config_param` guarda todas as camadas e marca a efetiva; `config_observed` guarda o que o processo registrou no startup, para conferência (seção 7.2).
 - **Demais logs do ERS**: nada no esquema é específico de adapter; família, kinds de evento e chaves são texto aberto, e os campos específicos ficam em `fields` (JSON) (seção 9.1a).
 
-Ordem global (merge): `ORDER BY ts, id`. Dentro de uma fonte o `id` respeita a ordem do arquivo; timestamps que voltam no tempo (3 ms no Wfm) recebem `flags & 32` e continuam na posição do arquivo dentro da fonte.
+Ordem global (merge): `ORDER BY ts, id`. Dentro de uma fonte o `id` respeita a ordem do arquivo; timestamps que voltam no tempo (até 16 ms nos logs normais e até 2,1 s no sensitive em nível elevado, `docs/formato/payloads.md`) recebem `flags & 32` e continuam na posição do arquivo dentro da fonte.
 
 ## 6. Parsing
 
@@ -387,7 +406,7 @@ ENVELOPES: dict[str, Envelope]           # adms, oaserr, plain
 def detect_envelope(head: bytes) -> Envelope   # testa as primeiras ~50 linhas; maioria vence; senão 'plain'
 ```
 
-- `adms`: `^(?:\ufeff)?(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}) \[PID=(\d+)\](?:\[TID=0x([0-9a-fA-F]+)\])? (FATAL|EXIT|ERROR|ALWAYS|DEBUGLOG|WARNING|INFO|VERBOSE) - `. Aplicada em **bytes** (o decode só acontece no registro final). TID opcional (há uma linha sem TID no Ont).
+- `adms`: `^(?:\ufeff)?(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}) \[PID=(\d+)\](?:\[TID=0x([0-9a-fA-F]+)\])? (FATAL|EXIT|ERROR|ALWAYS|DEBUGLOG|WARNING|INFO|VERBOSE) - `. Aplicada em **bytes** (o decode só acontece no registro final). TID opcional: as linhas do logger nativo (`PSAttach::…`, `arb_pubSubLookup: …`) saem sem TID em nível Info (271 no ERS Verbose; 1 no ERS em DebugLog).
 - `oaserr`: `^(?:\ufeff)?(ts) (?P<proc>\S+)_(?P<pid>\d+) \[PID=(\d+)\]\[TID=0x(hex)\] - \((LEVEL)\) `.
 - `plain`: cada linha é um registro sem `ts` (arquivos desconhecidos continuam navegáveis).
 - O sufixo de fonte do BLTHost/serviço (` {E:\...\Main.cs:373}`) vira campo `src` e é removido do `msg` exibido apenas na coluna "mensagem" (o texto original continua no registro).
@@ -435,6 +454,31 @@ sev = 2
 regex = '''^ERROR - Processing "(?P<event_type>\w+)" message failed\. ExceptionType: "(?P<exc_type>[^"]+)" Reason: (?P<reason>.*)$'''
 keys = ["exc_type"]
 
+[[template]]                                     # anúncio no normal (comum; aqui só para ilustrar)
+code = "GEN-MSG-01"
+class = "req_resp"
+regex = '''^Message with MessageID: '(?P<msgid>[^']*)' will be logged in sensitive log\.$'''
+keys = ["msgid"]
+refs_sensitive = true
+
+[[template]]                                     # payload no sensitive (seção 6.6)
+code = "GEN-PLD-01"
+class = "req_resp"
+regex = '''^Message(?: content)?: (?=<)'''
+payload = { fmt = "xml", start = "match_end", strip_suffix = ".", role = "by_root" }
+
+[[template]]                                     # rastreio Verbose: ruído, fora do FTS
+code = "GEN-C2T-02"
+class = "other"
+sev = 5
+fts = false
+regex = '''^\[Communication2\] - TCP client connection id = (?P<conn_id>\d+) (?P<dir>sending|receiving) message msgId = (?P<c2_msgid>\d+), msgType = (?P<msg_type>\w+), msgSize = (?P<size>\d+)\.$'''
+
+[payload_defaults]                               # por família: papel → direção e outro lado
+request = { direction = "in", peer = "WFM" }     # Ont/Smn: request = out, peer = "SAP_PI"
+response = { direction = "out", peer = "WFM" }
+fault = { direction = "out", peer = "WFM" }
+
 [[operation]]                                    # ciclo de vida (seção 6.5)
 name_field = "op"
 start = ["WFM-010", "WFM-011"]
@@ -457,6 +501,16 @@ max_dt_ms = 1000
 class TemplateDef:
     code: str; family: str; cls: str; sev: int | None; regex: re.Pattern[str]
     keys: tuple[str, ...]; refs_sensitive: bool; literal_prefix: str | None
+    fts: bool = True                                  # False: registro fora do FTS (rastreio Verbose)
+    payload: PayloadSpec | None = None                # seção 6.6
+
+@dataclass(frozen=True, slots=True)
+class PayloadSpec:
+    fmt: str                                          # xml | xml_seq | html | json | text
+    start: str                                        # match_end | msg | first_cont_lt (1ª continuação que começa com '<')
+    strip_suffix: str | None                          # "." nos request/response
+    role: str                                         # request|response|fault|delta|content|publication|by_root
+    direction: str | None = None; peer: str | None = None   # senão vem de [payload_defaults] da família
 
 @dataclass(slots=True)
 class TplMatch:
@@ -518,24 +572,30 @@ def derive_stream(db: Store, stream_id: int, rules: TemplateSet, kb: Knowledge) 
 | `maps` | `"X" map closed` → `New "X" map content:` (+ itens) → `map is now open`. | `map_reload` |
 | `exceptions` | agrupa exceções pela 1ª linha (tipo + mensagem normalizada), não pelos frames; versão do build sai do caminho `F:\PD\<build>\`. | `exception` (um por ocorrência; agrupamento na consulta) |
 | `service` | `ProcessMonitor` (processo morto/reiniciado), `dnaService` (start/stop do serviço), `arb*` (transições HOT/STANDBY). | `restart`, `service_state` |
-| `payloads` | liga cada `payload` à operação (mesma TID/chave, ou via `link normal_sensitive` ao registro normal que o anunciou), define a direção pela regra do template e extrai chaves do payload para `entry_key`. Regras definitivas só após a descoberta (seção 6.6). | — (preenche `payload.event_id`) |
+| `payloads` | liga cada `payload` ao anúncio, ao par e à operação pelas regras da seção 6.6 (chave do header, TID dentro da operação aberta, ou fim da operação ±16 ms) e extrai chaves do payload para `entry_key`. Roda depois de `operations` nos dois streams (normal e sensitive) da mesma coleta. | — (preenche `payload.event_id`, `event_conf`, `ref_entry_id`, `pair_id`) |
 
 ### 6.6 Payloads (request/response)
 
-Requisito da 1.0 (U7). Situação hoje: **não há nenhuma amostra de payload**; no ERS de exemplo todos os WebServiceConfiguration têm `MessageLogLevel=Info` e os adapters rodam com `LogLevel=DebugLog`, então o conteúdo das mensagens não vai para o log (ver `docs/ADAPTERS.md`). O Jefferson está coletando ERS com nível Verbose (máximo) para `local-samples/`. Até lá, o que está abaixo é desenho provisório; a **tarefa de descoberta de formato (Opus) fica bloqueada até as amostras chegarem** e pode mudar o esquema `payload` (o índice é cache: mudança de esquema antes da 1.0 = reindexar, sem migração de dados).
-
-Premissas a confirmar na descoberta:
-- O payload aparece no log **sensitive**, como continuação de um registro anunciado no normal (`Message content wr(i)tten in sensitive log`), ou no próprio registro com o nível Verbose.
-- Formatos: SOAP/XML (adapters SOAP) e JSON (adapters REST), possivelmente em uma linha só ou indentado em várias linhas; pode haver truncamento pelo adapter.
-- Nível Verbose também traz **mensagens novas fora do payload**: a descoberta inclui minerar templates Verbose para as famílias do escopo.
+Requisito da 1.0 (U7). Formato descoberto nas amostras Verbose de 2026-10-08 (tarefa 6.1): fatos, contagens e catálogo em `docs/formato/payloads.md`. Resumo do que vale para o desenho:
+- **Quando**: o payload é gravado se o nível **corrente** ≥ `MessageLogLevel` da operação (Info no ERS). O nível corrente vem das janelas `level_window` (linhas `Debug level changed`), não só do `LogLevel` configurado. Verbose não acrescenta payload, só rastreio.
+- **Onde**: um payload = um registro inteiro, nunca truncado pelo adapter, nunca intercalado. Request, response e fault de Wfm/Ont/Smn, delta ao CRS, conteúdo ao IMS e publicações do Smn ficam no **sensitive**, em INFO; o conteúdo do Wfm ao CRS/WMS fica no **log normal**. Cada payload do sensitive tem um registro de anúncio no normal (GEN-MSG-01, WFM-112, WFM-121, SMN-110) na mesma TID e no mesmo ms.
+- **Formato**: só XML do corpo da mensagem (sem envelope SOAP; `s:Fault` solto), indentado com 2 espaços, UTF-8, CRLF; texto de elemento pode ter quebras de linha (continuação sem `<`); request/response terminam com `.` colado ao fechamento da raiz; publicações do Smn são uma sequência de `ResourceDescription` sem raiz (`xml_seq`); um corpo HTML de erro HTTP aparece dentro de mensagem de falha (`html`). Nenhum JSON na amostra; `json` fica no esquema para adapters REST futuros.
 
 Desenho:
-- `parse/payload.py` localiza o payload no texto do registro (`msg + '\n' + cont`) por marcadores declarados no template (`payload = {direction = "request", fmt = "xml"}` no TOML) e, sem marcador, por heurística barata (primeiro `<?xml`, `<soap:Envelope`, `<s:Envelope` ou `{`/`[` balanceado). Grava offsets, formato, raiz, `well_formed` e `truncated`; não copia o texto.
-- `payload/pretty.py` formata sob demanda (na API, nunca na ingestão): XML por tokenizador tolerante próprio (sem DTD, sem resolver entidades, aceita payload truncado, preserva texto literal); JSON por `json.loads` com limite de tamanho e `json.dumps(indent=2, ensure_ascii=False)`. Se não formatar, devolve o texto cru com o motivo.
-- `derive/payloads.py` liga request e response da mesma operação (por chave quando existir; senão por TID e ordem dentro do evento), e ao evento `operation`.
-- Busca: o payload já está no `cont` e entra no FTS. Para limitar o tamanho do índice, a view `entry_text` indexa só os primeiros 65.536 caracteres de `cont` por registro; acima disso a busca de substring dentro do payload usa `LIKE` restrito ao registro/fonte.
-- Configuração: o painel "Effective configuration" mostra, por operação, se o payload **deveria** aparecer: `LogLevel` do adapter igual ou mais detalhado que o `MessageLogLevel` da operação, na ordem Fatal < Exit < Error < Always < DebugLog < Warning < Info < Verbose (`docs/ADAPTERS.md`; `None` = nunca). Com `LogLevel=Verbose`, o padrão `MessageLogLevel=Info` já registra o payload. Operação sem payload quando ele era esperado vira aviso; quando não era esperado, a UI explica o motivo ("MessageLogLevel=Info, LogLevel=DebugLog").
-- Dados sensíveis: payload é tratado sempre como sensível (dados de cliente: nome, telefone, endereço, e-mail, documentos). Ver seção 12: sem payload na exportação por padrão, anonimização ciente de XML/JSON quando incluído, fixtures de payload só sintéticas.
+- `parse/payload.py`, na ingestão, só para registros cujo template declara `payload` (sem heurística em registros sem template): o início vem de `start` (`match_end` = logo após o match da regex no `msg`; `msg` = o `msg` inteiro; `first_cont_lt` = 1ª continuação que começa com `<`); o fim é o fim do registro, menos `strip_suffix`. Grava offsets, `fmt`, `root`, `msg_id`/`corr_id` (primeiros `Header/MessageID` e `Header/CorrelationID`, por regex barata, sem parser), `role` (`by_root`: raiz terminada em `ResponseMessage` → response, `Fault` → fault, senão request) e `direction`/`peer` de `[payload_defaults]` da família. `well_formed` é verificado sob demanda, não na ingestão (custo); `truncated` = registro `partial`. Não copia o texto.
+- `derive/payloads.py` (depois de `operations`, por coleta), em ordem de confiança:
+  1. anúncio: registro normal do template anunciante, mesmo PID e TID, Δt mínimo ≤ 1 s, conferido pelo MessageID quando não vazio → `ref_entry_id` + `link(normal_sensitive)`;
+  2. request → operação: `msg_id` = chave da operação (`request_id` do Wfm, MessageId de ONT-011/SMN-007) → `event_conf=3`;
+  3. response → par: `corr_id` = `msg_id` de um request (Wfm) → `pair_id`, evento do request, `event_conf=3`;
+  4. response sem IDs (Ont/Smn): operação do mesmo tipo (`<Noun>EventMessageType` ↔ `<Noun>ResponseMessage`) cujo fim está a ≤ 16 ms; candidato único → `event_conf=1`; mais de um → órfão com motivo `ambiguous`;
+  5. fault sem IDs (Wfm): falha WFM-081 no mesmo ms → `event_conf=1`;
+  6. payload em registro do normal ou anunciado por WFM-112/121 dentro de operação aberta na mesma TID → `event_conf=2`;
+  7. resto (publicações do Smn, janelas antigas do sensitive fora do normal): sem evento, motivo registrado.
+  Nunca parear request/response por TID ou ordem: a thread de logging difere da thread da operação.
+- `payload/pretty.py` formata sob demanda (na API, nunca na ingestão): XML por tokenizador tolerante próprio (sem DTD, sem resolver entidades, aceita truncado e `xml_seq`, preserva texto literal); HTML exibido cru; JSON por `json.loads` com limite de tamanho. Se não formatar, devolve o texto cru com o motivo.
+- Busca: o payload já está no `cont` e entra no FTS; a view `entry_text` indexa até 65.536 caracteres de `cont` por registro (2 registros acima disso na amostra). Templates com `fts = false` (rastreio `Communication2`, ModeTracker, PSAttach, proxies, filtros: sev 5) ficam fora do FTS; continuam no grid e na busca por `LIKE`/regex com filtro de fonte ou tempo.
+- Configuração: o painel "Effective configuration" mostra, por operação, se o payload **deveria** aparecer pela configuração (`LogLevel` × `MessageLogLevel`, ordem DebugLog < Warning < Info < Verbose; `None` = nunca) e, no tempo, em quais janelas `level_window` ele é esperado. Operação dentro de janela ≥ `MessageLogLevel` sem payload ligado vira aviso; fora dela, a UI explica o motivo.
+- Dados sensíveis: payload é tratado sempre como sensível (nomes, endereços, textos livres, placas, INC/PROB, GIDs). O conteúdo ao CRS/WMS do Wfm está no log **normal**, e o nível Info também expõe no normal chaves de mapa (`entry added to the map`) e URLs/hosts; a anonimização da exportação (seção 12) vale para esses templates também.
 
 ### 6.7 Mineração auxiliar de templates
 
@@ -619,7 +679,8 @@ Precedência: configuração do ERS > pack do vault. Divergências (código no l
 | retry e resposta | mesmo `msgId` (Smn/Ont `Sending ... message: <guid>` → `finished` → `Request message with MessageId ... sent`). | 3 |
 | mesma chave | qualquer valor de `entry_key` repetido em fontes diferentes do caso (INC, GID, mRID, GUID): consulta sob demanda, não materializada. | — |
 | entre máquinas | **fora da 1.0** (U5: um ERS por caso). Pós-1.0: por chave e por tempo com `clock_offset_ms` da coleta. | — |
-| payload ↔ operação | request/response ligados ao evento `operation` e ao registro normal que os anunciou (seção 6.6). | 3 por chave; 2 TID + ordem |
+| payload ↔ anúncio, par e operação | anúncio no normal por PID + TID + Δt ≤ 1 s (+ MessageID); request ↔ operação por MessageID; response ↔ request por CorrelationID (Wfm) ou pelo fim da operação ±16 ms (Ont/Smn, sem ID); conteúdo do Wfm pela TID da operação aberta (seção 6.6). | 3 por chave; 2 TID dentro da operação; 1 tempo |
+| callback CRS/IMS (Wfm, só com nível ≥ Info) | GID do pedido (WFM-123/124) = GID do callback (WFM-126, WFM-030). | 3 |
 
 `correlate.py` roda por stream após `derive` e também refaz só a cauda (mesmo checkpoint).
 
@@ -646,7 +707,7 @@ Regras para que os demais logs entrem depois **sem retrabalho**:
 - Envelope novo = uma classe a mais em `parse/envelope.py` registrada em `ENVELOPES`; a detecção por maioria já escolhe entre os registrados.
 - Esquema sem colunas de adapter: família, `event.kind`, `entry_key.key_type`, `template.class` são texto aberto; campos específicos ficam em `entry.fields` (JSON); `config_param.product` aceita qualquer produto do Registry.
 - Derivadores são habilitados por regra no TOML da família (`[[operation]]`, `gap_heartbeat`, ...); família sem regras simplesmente não gera eventos.
-- Arquivos que não são texto de log (XML de configuração, binários) ficam fora; o Registry/WebServiceConfiguration já é lido pela camada de conhecimento.
+- Arquivos que não são texto de log (XML de configuração, binários) ficam fora; o Registry/WebServiceConfiguration já é lido pela camada de conhecimento. Os bancos `LocalPersistenceStore/*.db3` (fila/cache de mensagens dos adapters, com conteúdo sensível) aparecem na lista de fontes como "não indexado"; uso como fonte opcional é proposta pós-1.0 (seção 15, P3 no ROADMAP).
 
 ### 9.2 Leitura
 
@@ -667,6 +728,14 @@ Estado por `source`: `size`, `mtime`, `zip_crc`, `head_hash` (4 KiB iniciais), `
 | Arquivo novo (novo PID após restart) | não há `source` | novo `stream`/`source` |
 
 Modo `watch`: polling a cada 2 s (configurável) com `os.stat`; novidades viram eventos SSE para a UI ("+342 registros em WfmAdapter"). Exclusões do FTS de conteúdo externo usam o comando `'delete'` com o texto antigo, lido antes de apagar.
+
+### 9.3a Volume com nível elevado (Info/Verbose)
+
+Medido no ERS de 2026-10-08 14:53 (seção 3; `docs/formato/payloads.md`, seção 8):
+- Uma janela Info/Verbose multiplica a escrita do log normal por 27–120× (≈ 30–37 MB/h por adapter em Verbose; 5 MB/h só em Info). O sensitive cresce 2–4 MB/h, quase tudo payload.
+- O rastreio `Communication2` (GEN-C2T/C2O/C2M) é 46–62% das linhas Info/Verbose e 56% dos bytes dos logs normais na amostra: vai para `entry`/`entry_body` (grid e contagens), mas fora do FTS (`template.fts = 0`), e entra no `bucket` como sev 5 (oculto por padrão).
+- A rotação limita cada processo a `.log` + `.log.0` no ERS (`.log.0` de 59–81 MB), então o pior caso é limitado pelo número de adapters em Verbose, não pelo tempo de elevação: ≈ 2,6 GB de logs no escopo padrão com os 14 adapters elevados (projeção). Lotes por bytes (9.2) já cobrem registros grandes (payload de até 164 mil caracteres).
+- Metas: M6 (ERS Verbose real, 1.041 MiB no escopo padrão) ≤ 60 s e banco ≤ 1,7 GB; M8 (pior caso projetado) no ROADMAP.
 
 ### 9.4 Consultas e UI
 
@@ -703,7 +772,7 @@ JSON sobre HTTP em `127.0.0.1`. Todas as rotas exigem o cookie de sessão (seç�
 | `GET /api/config?group=&product=` | configuração por camada (`config_param`) com efetivo, status e valor observado no log (`config_observed`); por operação, se o payload é esperado (`LogLevel` × `MessageLogLevel`) |
 | `GET /api/entries/{id}/payloads` | payloads do registro (metadados) |
 | `GET /api/payloads/{id}?pretty=1&max_bytes=` | texto do payload, formatado (XML/JSON) ou cru com o motivo; par request↔response e evento ligados |
-| `POST /api/payloads/page` `{operation, direction, fmt, filter, cursor}` | lista de payloads (para "todas as respostas de GetIncidents com erro") |
+| `POST /api/payloads/page` `{operation, role, direction, peer, fmt, filter, cursor}` | lista de payloads (para "todas as respostas de SendWorks na janela") |
 | `GET/POST/DELETE /api/bookmarks` · `GET/POST/DELETE /api/views` | bookmarks com nota; filtros salvos |
 | `GET/PUT /api/redaction` | perfil de anonimização (categorias ligadas, termos do usuário, lista de exceções); fica na pasta de dados do usuário, fora do caso |
 | `POST /api/export` `{what, filter, bookmarks, include_payloads, redact}` | relatório `.txt` (`text/plain; charset=utf-8`, download e cópia para a área de transferência); `redact` = `{profile, overrides}` ou `false` explícito |
@@ -717,7 +786,7 @@ Filtro (árvore JSON, compilada para SQL **parametrizado** em `store/filters.py`
   {"text": {"fts": "timeout"}}, {"key": {"type": "request_id", "eq": "a0b0..."}},
   {"not": {"tpl": ["GEN-STA-01", "GEN-STA-02", "GEN-STA-03"]}},
   {"or": [{"event_status": "fail"}, {"flags": "partial"}]},
-  {"payload": {"direction": "response", "operation": "GetIncidents"}}
+  {"payload": {"role": "response", "operation": "SendSwitchingSteps"}}
 ]}
 ```
 
@@ -799,6 +868,8 @@ Time shown as logged (local server time, no conversion).
 - Exportação (U10): `redact.py` substitui valores por marcadores estáveis dentro do relatório (o mesmo valor vira o mesmo marcador, ex.: `<HOST-1>`, `<GUID-3>`). **Configurável**: categorias liga/desliga (GUIDs, GIDs, INC/PROB, mRIDs, placas, hosts, IPs, usuários, URLs, caminhos, e-mails, telefones, nomes/endereços de pessoa em payload), termos do usuário (ex.: nome do cliente, siglas de subestação) e lista de exceções (ex.: nomes de operação, códigos de erro, que nunca são trocados). O perfil fica em `<dados>/redaction.toml`, fora dos casos e do repo; padrão = tudo ligado. Exportar sem anonimizar exige marcar a opção explicitamente a cada exportação.
 - **Payloads** (U7): sempre tratados como sensíveis. Ficam fora da exportação por padrão; quando incluídos, a anonimização também atua por nome de elemento/propriedade XML/JSON (lista no `redaction.toml`, ex.: `Name`, `Phone`, `Email`, `Address`, `Document`), além das regex. A UI marca payloads com selo "sensitive". XML de payload nunca passa por parser que resolva DTD/entidades (`payload/pretty.py` é tokenizador próprio).
 - Amostras Verbose em `local-samples/` seguem a convenção já usada (Git LFS, repositório privado) e só são lidas por script; fixtures de payload no `tests/` são sempre sintéticas.
+- Nível elevado também põe dado sensível no **log normal**: conteúdo XML enviado ao CRS/WMS (WFM-120), chaves de mapa (GEN-MAP-02), URLs, hosts e IPs (GEN-C2L-02, GEN-PSA-02). Esses templates entram nas categorias de anonimização da exportação como os payloads.
+- Bancos `LocalPersistenceStore/*.db3` do ERS (fila de mensagens dos adapters): sensíveis (corpo das mensagens, conta do processo). Na 1.0 não são lidos nem copiados; se um dia forem lidos (proposta P3), só com opção explícita, abertos somente leitura (`mode=ro&immutable=1`) a partir de cópia temporária na pasta do caso, apagada ao fim, e nunca indexados por padrão.
 - Repositório privado (U1): o pack do vault é documentação Schneider. Nada de índice ou export em git; `.gitignore` cobre `dist/`, `local-samples/_extracted/`, `*.sqlite`.
 
 ## 12a. Idioma do app (i18n)
@@ -848,3 +919,10 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-08 | Exportação só `.txt` (CRLF, sem BOM) com anonimização configurável (`redaction.toml`, `/api/redaction`); payload fora por padrão (10.1, 12) | Opus |
 | 2026-10-08 | Pack do vault commitado em repositório privado, com aviso em `manifest.json`; alvo do front-end = Edge/Chrome; índices em `%LOCALAPPDATA%`/XDG confirmados | Opus |
 | 2026-10-08 | Decisão U11: `CustomAdapterChangeIncidentDevice` obrigatório na 1.0 com base de conhecimento, templates e eventos específicos; genérico apenas provisório, sem bloquear M0. U9 esclarecida: `_1_<Projeto>` configura o mesmo processo e é distribuído em MSI/MSU de atualização do projeto ADMS; precedência por chave preservada | Arquiteto (Codex) |
+| 2026-10-08 | Tarefa 6.1 (formato dos payloads, `docs/formato/payloads.md`): tabela `payload` deixa de ser provisória; `direction` passa a `in`/`out` e ganha `role`, `peer`, `msg_id`, `corr_id`, `pair_id`, `event_conf`; `fmt` = `xml`/`xml_seq`/`html`/`json`/`text` (sai `soap`); `entry_id` pode ser do log normal (seções 5, 6.6) | Opus |
+| 2026-10-08 | Atributo `payload` dos TOML definitivo (`PayloadSpec`: `fmt`, `start`, `strip_suffix`, `role`, `direction`/`peer` ou `[payload_defaults]` da família); localização só por template, sem heurística; `well_formed` sob demanda (seções 6.3, 6.6) | Opus |
+| 2026-10-08 | Regras de ligação de payload: anúncio por PID+TID+Δt, operação por MessageID/CorrelationID, response Ont/Smn pelo fim da operação ±16 ms (`event_conf=1`), fault pelo WFM-081 no mesmo ms; nunca por TID/ordem; callback CRS/IMS por GID (seções 6.5, 6.6, 8) | Opus |
+| 2026-10-08 | `template.fts` + filtro na view `entry_text`: rastreio Verbose (sev 5) fora do FTS; volume Verbose medido e metas do M6 fixadas (seções 3, 5, 9.3a) | Opus |
+| 2026-10-08 | Expectativa de payload por janela `level_window` (nível corrente ≥ `MessageLogLevel`), não pelo `LogLevel` configurado; Verbose não é necessário para payload (seção 6.6) | Opus |
+| 2026-10-08 | Envelope: TID ausente é comum em Info (logger nativo); recuos de `ts` até 2,1 s no sensitive (seções 5, 6.1) | Opus |
+| 2026-10-08 | **Proposta, não decisão (aguarda o Jefferson):** bancos `LocalPersistenceStore/*.db3` (fila/cache de mensagens por adapter: estado, tipo, MessageId, instante, corpo serializado em binário) fora da 1.0, listados como "não indexado". Pós-1.0 (P3), fonte opcional por caso: leitura somente leitura de cópia temporária, tabela `queue_item(collection_group, cache, item_id, message_id, msg_type, status, ts, size)` sem o corpo; painel "fila pendente/não enviada" e ligação ao evento por `message_id` (`entry_key msgid`); corpo nunca indexado e só decodificado sob demanda se o formato for documentado. Escopo segue U4–U11; sensível por padrão (seções 9.1a, 12) | Opus |

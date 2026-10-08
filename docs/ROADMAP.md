@@ -22,12 +22,12 @@ Modelos: **haiku** = varredura mecânica barata; **sonnet** = implementação ro
 | M3 | Conhecimento: códigos de erro, configuração em camadas do Registry com conferência pelo log de startup, pack do vault | M2 |
 | M4 | Eventos derivados: operações com duração/status, startup, estatísticas, níveis, gaps, saltos de relógio; painéis | M2 (M3 para status por código) |
 | M5 | Correlação normal↔sensitive, callbacks, retries, busca por chave entre as fontes do caso | M4 |
-| M6 | **Payloads** (request/response): descoberta de formato, extração, visualização XML/JSON, ligação ao evento | M5 + **amostras Verbose** em `local-samples/` (bloqueio externo, só para 6.1–6.4) |
+| M6 | **Payloads** (request/response): descoberta de formato (6.1 concluída), templates Info/Verbose, extração, visualização XML, ligação ao evento | M5 (amostras Verbose recebidas em 2026-10-08) |
 | M7 | Incremental ao vivo (pasta de instalação), bookmarks, exportação `.txt` anonimizada para chamado | M5 (payload na exportação: M6) |
 | M8 | Endurecimento, desempenho no pior caso (inclusive ERS Verbose), release 1.0 | M6, M7 |
 | Pós-1.0 | P1: templates/eventos para os demais logs do ERS. P2: múltiplos ERS por caso, correlação entre máquinas, ajuste de relógio | M8 |
 
-M6 e M7 podem andar em paralelo: o M7 não espera as amostras Verbose.
+M6 e M7 podem andar em paralelo.
 
 A base de conhecimento de `CustomAdapterChangeIncidentDevice` ainda será criada por Jefferson no `adms-v3.9` ([issue #22](the ADMS knowledge-base repository)). Essa dependência não bloqueia M0 nem o avanço dos demais adapters. O suporte genérico é provisório: as tarefas 2.11, 3.10 e 4.8 devem estar concluídas antes da release 1.0, com base, templates e eventos específicos validados.
 
@@ -77,7 +77,7 @@ Aceite:
 
 | # | Tarefa | Modelo |
 |---|---|---|
-| 2.1 | Esquema TOML dos adapters (inclusive atributo `payload` provisório), `parse/templates.py` (validação, despacho por prefixo, `cont_parser`s) e `parse/signature.py` | opus |
+| 2.1 | Esquema TOML dos adapters (inclusive `fts` e o atributo `payload` (`PayloadSpec`, ARQUITETURA 6.3 e 6.6)), `parse/templates.py` (validação, despacho por prefixo, `cont_parser`s) e `parse/signature.py` | opus |
 | 2.2 | `_common.toml` unificando os genéricos dos três docs de formato (aliases dos IDs antigos) e tabela de aliases de nomes de `[Configuration]` (para o M3) | opus |
 | 2.3 | TOML por família a partir de `docs/formato/` (AVL, Osr, Smn, SiteSwitch, Wfm, Ont, Crm, Ami, Smr, WDI, ClaimCheck, FileUpload, FileMonitor, BLTHost, oaserr, service), com exemplos positivos/negativos por template; reaproveitar regex de `catalog.py` | sonnet (um agente por grupo de famílias) |
 | 2.4 | Conferir os TOML contra os docs: todo ID documentado existe, contagens das fixtures batem | haiku |
@@ -109,7 +109,7 @@ Aceite:
 | 3.6 | `knowledge/resolve.py` (ERS > vault, divergências "fora do vault") e uso na severidade por código | sonnet |
 | 3.7 | Mapa processo → sigla para os adapters do escopo (U8, U11) | haiku (inventário) + sonnet (curadoria) |
 | 3.8 | `hints.toml` em inglês para os templates de erro/timeout, ligando parâmetros (ex.: WFM-080 → `WaitForCRSCallback`) | sonnet |
-| 3.9 | UI: painel de conhecimento no detalhe do registro; painel "Effective configuration" por adapter com camadas (arquivo de origem, `only`/`wins`/`overridden`/`ambiguous`), valor observado no log, divergências, e por operação se o payload é esperado (`LogLevel` × `MessageLogLevel`) | sonnet |
+| 3.9 | UI: painel de conhecimento no detalhe do registro; painel "Effective configuration" por adapter com camadas (arquivo de origem, `only`/`wins`/`overridden`/`ambiguous`), valor observado no log, divergências, e por operação se o payload é esperado (`LogLevel` × `MessageLogLevel`, e no tempo pelas janelas `level_window`, ARQUITETURA 6.6) | sonnet |
 | 3.10 | Incorporar ao pack a base de `CustomAdapterChangeIncidentDevice`, após sua criação no `adms-v3.9`, e validar a ligação de operações, parâmetros e mensagens/códigos documentados à análise específica | sonnet |
 
 Aceite:
@@ -117,7 +117,7 @@ Aceite:
 - Arquivos `AdapterX_1_<Projeto>` são camadas do mesmo processo, definidas com base em `AdapterX` e distribuídas em MSI/MSU de atualização do projeto ADMS; não geram instâncias separadas.
 - Fixture de Registry: todos os casos da regra 7.2.1 (só uma camada, sobreposição -1/0/1/2, `<Key>`, empate, as duas formas de `%OASINSTALLDATADIR%`) dão o efetivo esperado.
 - No ERS de exemplo (smoke local): `AdapterAmi` `WebServiceConfiguration` efetivo = camada `_2` (`DMSCustomIntegrationPROD`), `CreatedMeterReadings_ErrorConfigurationPath` = camada `_1_Custom`, `AdapterFileUpload` `FileUploadInterval` = `00:01:00`; todos batem com `config_observed`; nenhuma divergência resolvido × observado nos 13 adapters já analisados na amostra, salvo as explicadas por alias faltante (que viram tarefa).
-- A configuração efetiva mostra `LogLevel=DebugLog` e `MessageLogLevel=Info` para os adapters e marca "payload not expected" em todas as operações (fato do ERS de exemplo).
+- A configuração efetiva mostra `LogLevel=DebugLog` e `MessageLogLevel=Info` para os adapters e marca "payload not expected" pela configuração em todas as operações (fato dos dois ERS de exemplo); no ERS de 14:53, Wfm/Ont/Smn mostram payload esperado dentro das janelas Info/Verbose.
 - Todo código de erro encontrado nas fixtures resolve para severidade; os conhecidos como ausentes do vault aparecem marcados.
 
 ## M4: eventos derivados e painéis
@@ -154,23 +154,25 @@ Aceite:
 
 ## M6: payloads
 
-Situação: **não há amostra de payload** (no ERS de exemplo, `LogLevel=DebugLog` e `MessageLogLevel=Info` em todos os adapters). O Jefferson está coletando ERS com `LogLevel=Verbose` para `local-samples/`. As tarefas 6.1–6.4 ficam **bloqueadas até as amostras chegarem**; 6.5–6.7 podem começar antes, com fixtures sintéticas no formato provisório (ARQUITETURA, seção 6.6).
+Situação: amostra Verbose recebida (ERS de 2026-10-08 14:53, Wfm/Ont/Smn elevados por ~2 h). **6.1 concluída**: formato, ligações, catálogo Info/Verbose e volume em `docs/formato/payloads.md`; esquema `payload`, atributo `payload` dos TOML e regras de ligação ajustados na ARQUITETURA (5, 6.3, 6.6, 8, 9.3a, seção 15). 6.2–6.4 desbloqueadas. Fatos que guiam o resto: payload só XML, um por registro, nunca truncado; sai com nível corrente ≥ Info; fica no sensitive (e no normal para Wfm→CRS/WMS); anúncio no normal na mesma TID; ligação à operação por MessageID/CorrelationID ou pelo fim da operação, nunca por TID.
 
-| # | Tarefa | Modelo | Bloqueio |
+| # | Tarefa | Modelo | Situação |
 |---|---|---|---|
-| 6.1 | **Descoberta de formato dos payloads** nas amostras Verbose, por script: onde aparecem (normal/sensitive, registro próprio ou continuação), marcadores de início/fim, SOAP/XML × JSON, uma linha × indentado, truncamento, ligação com o registro que anuncia e com a operação, chaves úteis (msgId, mRID, INC); também mensagens novas que só existem em Verbose. Saída: `docs/formato/payloads.md` e ajuste do esquema `payload` e do atributo `payload` dos TOML (registrar na seção 15 da arquitetura) | opus | amostras |
-| 6.2 | Templates Verbose novos nas famílias do escopo (mineração com `tools/mine_templates.py` + revisão) | opus (desenho) + sonnet (TOML) | 6.1 |
-| 6.3 | `parse/payload.py` (localização, offsets, formato, raiz, `well_formed`, `truncated`) e `derive/payloads.py` (direção, par request↔response, evento, chaves) | opus | 6.1 |
-| 6.4 | Fixtures sintéticas de payload no formato descoberto, por família com payload; smoke local nas amostras Verbose | sonnet + haiku (varredura de vazamento nas fixtures) | 6.1 |
-| 6.5 | `payload/pretty.py`: tokenizador XML tolerante (sem DTD/entidades, aceita truncado) e JSON com limite de tamanho; testes com malformados, `<!DOCTYPE>`, entidades, `<script>` | sonnet | — |
-| 6.6 | API `entries/{id}/payloads`, `payloads/{id}`, `payloads/page`; filtro `payload` na árvore | sonnet | — (dados reais após 6.3) |
-| 6.7 | UI: aba "Payload" no detalhe (formatado/cru, copiar, selo "sensitive"), par request↔response lado a lado, ir para a operação, lista de payloads por operação/direção, aviso de payload esperado e ausente | sonnet | — |
+| 6.1 | Descoberta de formato dos payloads e das mensagens Info/Verbose; ajuste do esquema e do atributo `payload` | opus | **concluída** (2026-10-08) |
+| 6.2 | Templates Info/Verbose do catálogo de `payloads.md`, seção 9 (≈ 60 entradas; regex já testadas em 100% das linhas da amostra): `GEN-*` em `_common.toml` (GEN-MSG-01 com aliases WFM-100/ONT-100; GEN-MAP-01 e GEN-SUB-01 estendidos sem trocar ID), `WFM-110..130`, `ONT-110/111`, `SMN-110..113`, sensitive `GEN-PLD-01`, `WFM-S112/S121`, `SMN-S110`, `ONT-S020`, `GEN-PRX-S01`; `fts = false` e sev 5 no rastreio; `cont_parser`s `kv_dash` (Publication info) e `kv_colon` (EventData) | opus (revisão) + sonnet (TOML) | desbloqueada |
+| 6.3 | `parse/payload.py` (`PayloadSpec`: `start`, `strip_suffix`, `fmt`, `role` por raiz, `msg_id`/`corr_id` por regex) e `derive/payloads.py` com as 7 regras de ligação da ARQUITETURA 6.6 e `event_conf`; callback CRS/IMS por GID | opus | desbloqueada |
+| 6.4 | Fixtures sintéticas por família com payload (Wfm request/response/fault/delta/CRS/WMS/IMS; Ont e Smn request/response; publicação `xml_seq` do Smn; HTML de erro), cobrindo: `>.` final, texto multilinha dentro de elemento, `&amp;` e `&#xD;&#xA;`, WMS em uma linha, registro > 65.536 caracteres, linhas sem TID do PSAttach, `ts` voltando 2 s no sensitive, response sem IDs com duas operações concorrentes; smoke local nas amostras | sonnet + haiku (varredura de vazamento nas fixtures) | desbloqueada |
+| 6.5 | `payload/pretty.py`: tokenizador XML tolerante (sem DTD/entidades, aceita truncado e `xml_seq`), HTML cru, JSON com limite; testes com malformados, `<!DOCTYPE>`, entidades, `<script>` | sonnet | pode começar |
+| 6.6 | API `entries/{id}/payloads`, `payloads/{id}`, `payloads/page` (filtros `role`, `direction`, `peer`, `operation`, `fmt`); filtro `payload` na árvore | sonnet | pode começar |
+| 6.7 | UI: aba "Payload" no detalhe (formatado/cru, copiar, selo "sensitive"), par request↔response lado a lado com a confiança da ligação, ir para a operação e para o anúncio, lista de payloads por operação/papel, aviso de payload esperado e ausente pela janela `level_window` | sonnet | pode começar |
+
+Meta de indexação (medida em 6.1, `payloads.md` seção 8): o ERS de 14:53 no escopo padrão (60 arquivos, 1.041 MiB de log, ~31% a mais que o ERS em DebugLog) indexado com templates, FTS e extração de payload em **≤ 60 s** na máquina de dev, banco **≤ 1,7 GB**, RSS < 600 MB; a extração de payload acrescenta ≤ 10% ao tempo sem ela.
 
 Aceite:
-- Fixtures: todos os payloads localizados com offsets exatos; request e response ligados à operação certa; truncado e malformado exibidos crus com motivo, sem erro.
-- Amostras Verbose locais: 100% dos payloads das operações com payload esperado são localizados e ligados a um evento (ou listados como órfãos com motivo); cobertura de template continua 100%.
+- Fixtures: todos os payloads localizados com offsets exatos (sem o `.` final); request e response ligados à operação certa com a confiança esperada; truncado, malformado e `xml_seq` exibidos sem erro (crus com motivo quando não formatam).
+- Amostras Verbose locais: payloads ligados ao anúncio e à operação nas taxas de `payloads.md` seção 5 (Wfm 4.716/4.716 anúncios, 2.359/2.359 requests por chave, 2.339/2.340 responses por CorrelationID, 17/17 faults; Ont 943/943 e Smn 1.426/1.426 requests por chave, 943/943 e 1.389/1.389 responses por tempo) ou listados como órfãos com motivo; cobertura de template continua 100% (inclusive Info/Verbose).
 - Segurança: `<!DOCTYPE>` com entidade externa ou expansão não é resolvida; `<script>` no payload aparece literal.
-- Indexação de um ERS Verbose dentro da meta registrada em 6.1 (definida após medir o tamanho real).
+- Indexação do ERS Verbose dentro da meta acima.
 
 ## M7: ao vivo, bookmarks e exportação
 
@@ -194,14 +196,14 @@ Aceite:
 
 | # | Tarefa | Modelo |
 |---|---|---|
-| 8.1 | Desempenho no pior caso: ERS com escopo completo (≈ 2 GB), ERS Verbose com payloads, BLTHost sensitive, Wfm com dumps; ajuste de lotes, despacho de templates, índices e limite do FTS | opus |
+| 8.1 | Desempenho no pior caso: ERS com escopo completo (≈ 2 GB), ERS com os 14 adapters em Verbose (projeção ≈ 2,6 GB de log, banco ≈ 4,1 GB; ARQUITETURA 9.3a), BLTHost sensitive, Wfm com dumps; ajuste de lotes, despacho de templates, índices e limite do FTS | opus |
 | 8.2 | Revisão de segurança (`/security-review`) e de privacidade (onde ficam os dados, apagar caso, payloads, mapa de anonimização) | opus |
 | 8.3 | Processo documentado para adicionar uma família nova (`families.toml` + TOML + `mine_templates`), preparando o P1 (doc de uso em inglês) | sonnet |
 | 8.4 | README e ajuda da CLI em inglês; LEIA-ME do portátil em inglês (com aviso de uso interno/privado do pack) | sonnet |
 | 8.5 | Release: artefatos do CI (`dmslog.pyz`, portátil Windows, tarball Linux) em release privada, e checklist de teste manual em um PC Windows sem admin e sem internet, no Edge e no Chrome | sonnet + teste manual do Jefferson |
 
 Aceite:
-- ERS completo de 2 GB indexado sem erro, RSS < 1 GB, UI responsiva durante a indexação; ERS Verbose dentro da meta do M6.
+- ERS completo de 2 GB indexado sem erro, RSS < 1 GB, UI responsiva durante a indexação; ERS Verbose dentro da meta do M6; pior caso Verbose sintético (≈ 2,6 GB) indexado sem erro com RSS < 1 GB.
 - Teste manual no PC Windows: copiar a pasta, executar o `.bat`, abrir um ERS local no Edge e no Chrome, nenhuma conexão de rede além de loopback.
 - Nenhum achado alto/crítico aberto na revisão de segurança.
 - `CustomAdapterChangeIncidentDevice`: base de conhecimento incorporada e análise específica com templates e eventos validada (2.11, 3.10 e 4.8); suporte apenas genérico não atende ao aceite da 1.0.
@@ -212,4 +214,5 @@ Aceite:
 |---|---|---|
 | P1 | Templates e eventos para os demais logs do ERS (NMC, PSengine, arbIP, outros processos `UNKNOWN`, ...) | Só dados (`families.toml` + TOML) e derivadores novos; esquema e descoberta já preparados (ARQUITETURA, 9.1a) |
 | P2 | Vários ERS por caso, correlação entre máquinas, ajuste de relógio (`clock_offset_ms`) | Esquema já comporta (`collection_group`, `clock_offset_ms`); falta UI, regra de 409 e correlação por tempo entre coletas |
+| P3 | **Proposta, aguarda decisão do Jefferson:** bancos `LocalPersistenceStore/*.db3` do ERS (fila/cache de mensagens dos adapters) como fonte opcional: painel de itens pendentes/não enviados e ligação ao evento do log por MessageId | Fora da 1.0. Sensível, nunca indexado por padrão, sem o corpo; desenho na ARQUITETURA, seção 15 (`payloads.md`, seção 10) |
 | — | Adapters do vault sem amostra | Fora do escopo (não existem no ambiente produtivo, U8); entram só se surgirem amostras, pelo mesmo processo do P1 |
