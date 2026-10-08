@@ -15,7 +15,7 @@ Objetivo: qualidade onde importa, sem gastar tokens à toa. Subagentes recebem o
 
 | Modelo | Fica com |
 |---|---|
-| **Opus** | Decisões de arquitetura e estrutura (`docs/ARQUITETURA.md`, `docs/ROADMAP.md`); modelo de dados e de eventos; desenho do parser e dos templates; descoberta de formato em logs novos (mineração de templates, ciclo de vida, correlação); algoritmos difíceis (indexação incremental, correlação normal↔sensitive, desempenho); revisão final de código (`/code-review`) antes do merge de cada marco |
+| **Opus** | Decisões de arquitetura e estrutura (`docs/ARQUITETURA.md`, `docs/ROADMAP.md`); modelo de dados e de eventos; desenho do parser e dos templates; descoberta de formato em logs novos (mineração de templates, ciclo de vida, correlação); algoritmos difíceis (indexação incremental, correlação normal↔sensitive, desempenho); revisão final do trabalho do Codex; `/code-review` local como revisão complementar |
 | **Sonnet** | Implementação rotineira conforme a arquitetura (módulos, API, viewer, testes); empacotamento e CI; geração do pacote de conhecimento a partir do vault; documentação; git, commits e PRs; coordenação da sessão |
 | **Haiku** | Varreduras mecânicas e baratas: contagens, inventário de arquivos, grep em lote, checagem de anonimização das fixtures, conferência de formatação e links, atualização de tabelas |
 
@@ -23,8 +23,18 @@ Regras:
 - Estrutura, interfaces e esquemas são definidos pelo Opus; ninguém muda isso sem passar por ele (registrar a mudança em `docs/ARQUITETURA.md`).
 - Em dúvida entre dois modelos, usar o mais barato que dê conta; subir para Opus se a tentativa falhar por falta de raciocínio, não por falta de contexto.
 - Agentes recebem contexto completo e escopo fechado (arquivos que podem tocar); não fazem commit, quem commita é a sessão principal.
+- A sessão principal está autorizada a criar branches, commitar, publicar PRs e fazer merge sem pedir aprovação manual ao Jefferson, dentro do escopo solicitado e seguindo o fluxo de revisão cruzada abaixo.
 - Logs de exemplo são lidos por script (templates, contagens), nunca por leitura integral.
 - O detalhe por tarefa (qual modelo em cada item) fica em `docs/ROADMAP.md`.
+
+## Revisão e integração autônomas
+
+- **Claude revisa e aprova alterações do Codex; Codex revisa e aprova alterações do Claude.** A revisão final é feita pelo outro harness no papel de arquiteto (Opus no Claude; `arquiteto` no Codex). Uma revisão pelo mesmo harness não substitui essa etapa.
+- A sessão principal conduz implementação, checks, commit em branch, PR, revisão pelo outro harness, correções e merge. Não espera uma nova confirmação do Jefferson para cada uma dessas ações.
+- A aprovação deve identificar o SHA final revisado e registrar parecer e verificações no PR. Novos commits invalidam a aprovação anterior. O merge exige aprovação cruzada sem pendências bloqueantes e CI obrigatório verde, incluindo Linux e Windows.
+- Se ambos os harnesses usam a mesma conta GitHub do autor do PR, registrar a aprovação do modelo em comentário no PR, pois o GitHub não permite uma review `APPROVE` do próprio autor. Usar review formal quando houver identidade distinta. Não simular outra identidade nem contornar proteções.
+- Sem acesso ao outro harness, com revisão reprovada ou checks falhando, não fazer merge: corrigir ou informar o bloqueio. Aprovações de sandbox e controles externos continuam valendo.
+- Protocolo e evidências: `docs/REVISAO-CRUZADA.md`. Esta autorização substitui a antiga exigência de pedido separado para commit e aprovação manual de PR; subagentes continuam sem autorização para commit, push ou merge.
 
 ## Requisitos de portabilidade (Windows e Linux)
 - Destinos finais: **Windows e Linux**, ambos de primeira classe (desenvolvimento em Linux/Omarchy; uso final também em PC Windows). Nada pode funcionar só em um dos dois.

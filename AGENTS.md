@@ -31,7 +31,8 @@ Analyzer + viewer dos logs dos adapters (online interfaces) do ADMS: o Jefferson
 Em dúvida, o mais barato que dê conta; subir de papel se falhar por falta de raciocínio, não de contexto. Detalhes e alternativas em `docs/CODEX.md`.
 
 ## Regras
-- Delegação: use os subagentes de `.codex/agents/` pelo nome (o Codex só cria subagentes quando o pedido os menciona); eles recebem contexto completo e escopo fechado (arquivos que podem tocar) e **não fazem commit**. Quem commita é a sessão principal, e só quando o Jefferson pedir.
+- Delegação: use os subagentes de `.codex/agents/` pelo nome (o Codex só cria subagentes quando o pedido os menciona); eles recebem contexto completo e escopo fechado (arquivos que podem tocar) e **não fazem commit**. A sessão principal está autorizada a criar branches, commitar, publicar PRs e fazer merge dentro do escopo solicitado, sem confirmação manual a cada etapa.
+- Revisão cruzada obrigatória: **Claude revisa e aprova Codex; Codex revisa e aprova Claude**, no papel de arquiteto. Aprovação vinculada ao SHA final, sem pendências bloqueantes, e CI obrigatório verde em Linux e Windows antes do merge. Fluxo canônico em `CLAUDE.md` e `docs/REVISAO-CRUZADA.md`; mesma conta GitHub registra aprovação do modelo em comentário, sem simular uma review formal do próprio autor.
 - Logs de exemplo são lidos por script (templates, contagens), nunca por leitura integral.
 - `~/Projects/adms-v3.9` é só leitura.
 - Não commitar credenciais nem dados de clientes.

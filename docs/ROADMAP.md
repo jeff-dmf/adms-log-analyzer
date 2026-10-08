@@ -1,13 +1,13 @@
 # Roadmap do dmslog
 
-Marcos em ordem de entrega de valor. Cada marco termina com o app utilizável e testado em Linux e Windows (CI verde nos dois), revisão `/code-review` pelo Opus e merge. Arquitetura, esquema e interfaces: `docs/ARQUITETURA.md`; decisões do usuário que fixam o escopo: seção 1a de lá (U1–U10).
+Marcos em ordem de entrega de valor. Cada marco termina com o app utilizável, CI verde em Linux e Windows e aprovação do commit final pelo harness oposto no papel de arquiteto: Claude Opus revisa o trabalho do Codex; Codex arquiteto revisa o trabalho do Claude. Após esses requisitos, o merge é autônomo, sem aprovação manual do Jefferson, conforme o protocolo de [revisão cruzada](REVISAO-CRUZADA.md). Arquitetura, esquema e interfaces: `docs/ARQUITETURA.md`; decisões do usuário que fixam o escopo: seção 1a de lá (U1–U11).
 
 Regras que valem para todas as tarefas:
 - **Todo o app em inglês** (identificadores, comentários, mensagens, UI, testes, fixtures, docs de uso); textos visíveis centralizados em `messages.py` / `strings.js`; texto dos logs exibido literalmente (ARQUITETURA, seção 12a).
 - Só stdlib em runtime; pytest/hypothesis/ruff só em dev.
 - Fixtures sintéticas e anonimizadas; nada de log real em `tests/`. Fixtures de payload são sempre sintéticas.
 - Os ERS de `local-samples/` servem para conferir formato, nunca para diagnosticar aqueles ambientes; são lidos por script (`python3 -I`), como dado não confiável.
-- Escopo da 1.0 (U4, U5, U8): **um ERS por caso**, de um servidor; adapters Wfm, Ont, AVL, Osr, Smn, SiteSwitch, Crm, Ami, Smr, WDI, ClaimCheck, FileUpload, FileMonitor + BLTHost com templates e eventos; todos os demais logs do ERS navegáveis em nível genérico (ARQUITETURA, seção 9.1a). Horário dos logs preservado, sem conversão (U6).
+- Escopo da 1.0 (U4, U5, U8, U11): **um ERS por caso**, de um servidor; adapters Wfm, Ont, AVL, Osr, Smn, SiteSwitch, Crm, Ami, Smr, WDI, ClaimCheck, FileUpload, FileMonitor, `CustomAdapterChangeIncidentDevice` + BLTHost com templates e eventos; todos os demais logs do ERS navegáveis em nível genérico (ARQUITETURA, seção 9.1a). Horário dos logs preservado, sem conversão (U6).
 - Repositório privado (U1): o pack do vault é documentação Schneider; artefatos com o pack não são publicados.
 
 Modelos: **haiku** = varredura mecânica barata; **sonnet** = implementação rotineira seguindo a arquitetura; **opus** = decisão, algoritmo difícil, desenho de regra, revisão final.
@@ -28,6 +28,8 @@ Modelos: **haiku** = varredura mecânica barata; **sonnet** = implementação ro
 | Pós-1.0 | P1: templates/eventos para os demais logs do ERS. P2: múltiplos ERS por caso, correlação entre máquinas, ajuste de relógio | M8 |
 
 M6 e M7 podem andar em paralelo: o M7 não espera as amostras Verbose.
+
+A base de conhecimento de `CustomAdapterChangeIncidentDevice` ainda será criada por Jefferson no `adms-v3.9` ([issue #22](the ADMS knowledge-base repository)). Essa dependência não bloqueia M0 nem o avanço dos demais adapters. O suporte genérico é provisório: as tarefas 2.11, 3.10 e 4.8 devem estar concluídas antes da release 1.0, com base, templates e eventos específicos validados.
 
 ## M0: esqueleto
 
@@ -85,11 +87,13 @@ Aceite:
 | 2.8 | Timeline (uPlot vendorizado com LICENSE) por `bucket`, empilhada por severidade/fonte, seleção de intervalo filtra o grid | sonnet |
 | 2.9 | Painel de templates desconhecidos (assinatura, contagem, exemplo, "copiar como esboço de TOML") | sonnet |
 | 2.10 | Smoke local: cobertura de template = 100% das linhas em todos os 30 arquivos de exemplo; invariantes de contagem dos docs de formato (ex.: CRM-001 = CRM-003 + CRM-004) | haiku |
+| 2.11 | `CustomAdapterChangeIncidentDevice`: descobrir formato por script e documentar; definir família e templates específicos com fixtures positivas/negativas, apoiados na base do `adms-v3.9`. Cobertura nova medida separadamente das contagens históricas | opus (descoberta e desenho) + sonnet (TOML e fixtures) |
 
 Aceite:
 - Fixtures: 100% dos registros com template; cada template casa com seus exemplos e com nenhum negativo.
 - Amostras locais: 100% de cobertura nos 30 arquivos; nenhuma exceção .NET com `sev` > 2.
-- Família `UNKNOWN` (ex.: `CustomAdapterChangeIncidentDevice`) indexa com `_common` e aparece no painel de desconhecidos, sem erro.
+- Família `UNKNOWN` indexa com `_common` e aparece no painel de desconhecidos, sem erro.
+- A tarefa 2.11 valida os templates específicos de `CustomAdapterChangeIncidentDevice` nas fixtures do formato descoberto, antes da 1.0.
 - Indexação com templates ≤ 1,3× o tempo do M1.
 - Histograma com 2 M registros < 50 ms.
 
@@ -103,14 +107,16 @@ Aceite:
 | 3.4 | `knowledge/installation.py`: Registry em camadas pela regra 7.2.1 (agrupamento por `Product/@Name`, camada por sufixo, precedência só em chave sobreposta, `<Key>` como lista, empate = `ambiguous`), WebServiceConfiguration e ErrorConfiguration efetivos, normalização de `%OASINSTALLDATADIR%` | opus |
 | 3.5 | `config_observed` a partir das linhas `[Configuration] ... Type: [ConfigurationRegistry]` do startup; comparação resolvido × observado por nome normalizado + aliases | sonnet |
 | 3.6 | `knowledge/resolve.py` (ERS > vault, divergências "fora do vault") e uso na severidade por código | sonnet |
-| 3.7 | Mapa processo → sigla para os adapters do escopo (U8) | haiku (inventário) + sonnet (curadoria) |
+| 3.7 | Mapa processo → sigla para os adapters do escopo (U8, U11) | haiku (inventário) + sonnet (curadoria) |
 | 3.8 | `hints.toml` em inglês para os templates de erro/timeout, ligando parâmetros (ex.: WFM-080 → `WaitForCRSCallback`) | sonnet |
 | 3.9 | UI: painel de conhecimento no detalhe do registro; painel "Effective configuration" por adapter com camadas (arquivo de origem, `only`/`wins`/`overridden`/`ambiguous`), valor observado no log, divergências, e por operação se o payload é esperado (`LogLevel` × `MessageLogLevel`) | sonnet |
+| 3.10 | Incorporar ao pack a base de `CustomAdapterChangeIncidentDevice`, após sua criação no `adms-v3.9`, e validar a ligação de operações, parâmetros e mensagens/códigos documentados à análise específica | sonnet |
 
 Aceite:
 - `kb_build` roda duas vezes e produz bytes idênticos; schema validado no CI.
+- Arquivos `AdapterX_1_<Projeto>` são camadas do mesmo processo, definidas com base em `AdapterX` e distribuídas em MSI/MSU de atualização do projeto ADMS; não geram instâncias separadas.
 - Fixture de Registry: todos os casos da regra 7.2.1 (só uma camada, sobreposição -1/0/1/2, `<Key>`, empate, as duas formas de `%OASINSTALLDATADIR%`) dão o efetivo esperado.
-- No ERS de exemplo (smoke local): `AdapterAmi` `WebServiceConfiguration` efetivo = camada `_2` (`DMSCustomIntegrationPROD`), `CreatedMeterReadings_ErrorConfigurationPath` = camada `_1_Custom`, `AdapterFileUpload` `FileUploadInterval` = `00:01:00`; todos batem com `config_observed`; nenhuma divergência resolvido × observado nos 13 adapters, salvo as explicadas por alias faltante (que viram tarefa).
+- No ERS de exemplo (smoke local): `AdapterAmi` `WebServiceConfiguration` efetivo = camada `_2` (`DMSCustomIntegrationPROD`), `CreatedMeterReadings_ErrorConfigurationPath` = camada `_1_Custom`, `AdapterFileUpload` `FileUploadInterval` = `00:01:00`; todos batem com `config_observed`; nenhuma divergência resolvido × observado nos 13 adapters já analisados na amostra, salvo as explicadas por alias faltante (que viram tarefa).
 - A configuração efetiva mostra `LogLevel=DebugLog` e `MessageLogLevel=Info` para os adapters e marca "payload not expected" em todas as operações (fato do ERS de exemplo).
 - Todo código de erro encontrado nas fixtures resolve para severidade; os conhecidos como ausentes do vault aparecem marcados.
 
@@ -125,6 +131,7 @@ Aceite:
 | 4.5 | `exceptions` (agrupamento pela 1ª linha) e `retry_seq` | sonnet |
 | 4.6 | API `events/page`, `events/{id}`, `events/stats`, `stats/series` | sonnet |
 | 4.7 | UI: lista de operações com duração/status e drill-down; painéis por adapter (throughput, erros, p50/p90/p99, estatísticas por método, gaps, startups, janelas de nível); aviso de salto de relógio na timeline | sonnet |
+| 4.8 | Definir e implementar eventos específicos de `CustomAdapterChangeIncidentDevice` a partir da descoberta 2.11 e da base 3.10; validar resultados esperados em fixtures sintéticas | opus (regras) + sonnet (implementação e fixtures) |
 
 Aceite:
 - Fixtures: durações e status esperados por operação (incluindo falha sem fim, fim `failed`, `business_error`, `truncated`, operação dividida entre `.log.0` e `.log`).
@@ -197,11 +204,12 @@ Aceite:
 - ERS completo de 2 GB indexado sem erro, RSS < 1 GB, UI responsiva durante a indexação; ERS Verbose dentro da meta do M6.
 - Teste manual no PC Windows: copiar a pasta, executar o `.bat`, abrir um ERS local no Edge e no Chrome, nenhuma conexão de rede além de loopback.
 - Nenhum achado alto/crítico aberto na revisão de segurança.
+- `CustomAdapterChangeIncidentDevice`: base de conhecimento incorporada e análise específica com templates e eventos validada (2.11, 3.10 e 4.8); suporte apenas genérico não atende ao aceite da 1.0.
 
 ## Pós-1.0
 
 | # | Entrega | Observação |
 |---|---|---|
-| P1 | Templates e eventos para os demais logs do ERS (NMC, PSengine, arbIP, processos `UNKNOWN` como `CustomAdapterChangeIncidentDevice`, ...) | Só dados (`families.toml` + TOML) e derivadores novos; esquema e descoberta já preparados (ARQUITETURA, 9.1a) |
+| P1 | Templates e eventos para os demais logs do ERS (NMC, PSengine, arbIP, outros processos `UNKNOWN`, ...) | Só dados (`families.toml` + TOML) e derivadores novos; esquema e descoberta já preparados (ARQUITETURA, 9.1a) |
 | P2 | Vários ERS por caso, correlação entre máquinas, ajuste de relógio (`clock_offset_ms`) | Esquema já comporta (`collection_group`, `clock_offset_ms`); falta UI, regra de 409 e correlação por tempo entre coletas |
 | — | Adapters do vault sem amostra | Fora do escopo (não existem no ambiente produtivo, U8); entram só se surgirem amostras, pelo mesmo processo do P1 |

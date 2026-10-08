@@ -117,7 +117,7 @@ O Codex tem subagentes nativos (feature `multi_agent`, estável e ligada). Difer
   codex exec -p rotina -s workspace-write -o /tmp/impl.md "Altere apenas src/dmslog/x.py ... Não faça commit."
   ```
   Para trabalho paralelo que mexe em arquivos, use `--worktree` (cada sessão em uma worktree gerenciada) e integre na sessão principal.
-- **Regra de commit**: nenhum agente nem `codex exec` faz commit. A sessão principal revisa o diff (`git diff`, `codex review --uncommitted`) e commita só quando o Jefferson pedir. O sandbox não impede `git commit` em `workspace-write`; a regra vem do `AGENTS.md` e das instruções dos subagentes, então repita "não faça commit" no prompt de delegação.
+- **Regra de commit e merge**: subagentes de implementação/revisão não fazem commit. A sessão principal está autorizada a criar branch, commitar, publicar PR e fazer merge sem aprovação manual do Jefferson, dentro do escopo solicitado. A revisão final é cruzada: Claude revisa Codex e Codex revisa Claude, com aprovação do SHA final e CI obrigatório verde em Linux e Windows. Revisão local pelo mesmo harness é complementar. Protocolo: `REVISAO-CRUZADA.md`; repita "não faça commit" no prompt de delegação.
 
 ## 4. Handoff Claude → Codex
 
@@ -160,7 +160,7 @@ Para voltar ao Claude: o mesmo procedimento ao contrário (`ai-memory run claude
 | Edição por `apply_patch` em vez de edição por trecho | Pedir diffs pequenos e rodar `pytest` após cada mudança |
 | Contexto: 272k e compactação automática | Delegar varreduras para não poluir a sessão principal; registrar decisões em docs antes de tarefas longas |
 | Fins de linha e Windows | `.gitattributes` já controla o repo; o `apply_patch` pode normalizar fins de linha. Conferir `git diff` em arquivos com CRLF |
-| `/code-review` do Claude | `codex review --base main` (ou `--uncommitted`) com Astra `xhigh` |
+| Revisão final antes do merge | Harness oposto no papel de arquiteto: Claude/Opus para alterações do Codex; Codex/`arquiteto` para alterações do Claude. Ver `REVISAO-CRUZADA.md` |
 | Captura do texto do assistente desligada nos dois harnesses | Handoff explícito antes da troca (seção 4) |
 
 ## 6. Limitações e perguntas em aberto
