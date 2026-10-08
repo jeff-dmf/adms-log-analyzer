@@ -6,6 +6,8 @@ import hmac
 import json
 import os
 import secrets
+import select
+import socket
 import threading
 import webbrowser
 from http import HTTPStatus
@@ -13,12 +15,15 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from importlib.resources.abc import Traversable
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from .. import __version__, messages
 from ..buildinfo import get_commit
-from ..paths import check_sqlite_fts5
+from ..paths import check_sqlite_fts5, resolve_data_dir
+from . import sse
+from .api import MAX_BODY_BYTES, Api, ApiError, Stream
 
 LOOPBACK_HOST = "127.0.0.1"
 COOKIE_NAME = "dmslog_session"
@@ -40,6 +45,7 @@ CONTENT_TYPES = {
 }
 
 UNSAFE_METHODS = ("POST", "DELETE")
+DISCARD_LIMIT = 8 * 1024 * 1024
 
 
 class DmslogServer(ThreadingHTTPServer):
@@ -52,14 +58,21 @@ class DmslogServer(ThreadingHTTPServer):
     # On Windows SO_REUSEADDR allows another process to bind the same port.
     allow_reuse_address = os.name != "nt"
 
-    def __init__(self, port: int = 0) -> None:
+    def __init__(self, port: int = 0, data_dir: str | os.PathLike[str] | None = None) -> None:
         super().__init__((LOOPBACK_HOST, port), RequestHandler)
         self.port: int = self.server_address[1]
+        self.data_dir: Path = resolve_data_dir(data_dir)
+        self.api = Api(self.data_dir)
         self.token = secrets.token_urlsafe(32)
         self._sessions: set[str] = set()
         self._lock = threading.Lock()
         self.allowed_hosts = frozenset({f"127.0.0.1:{self.port}", f"localhost:{self.port}"})
         self.allowed_origins = frozenset(f"http://{host}" for host in self.allowed_hosts)
+
+    def server_close(self) -> None:
+        """Stop background work (ingest jobs, SSE streams) before closing the socket."""
+        self.api.shutdown()
+        super().server_close()
 
     @property
     def start_url(self) -> str:
@@ -101,7 +114,8 @@ class RequestHandler(BaseHTTPRequestHandler):
     ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+        if status != HTTPStatus.NO_CONTENT:
+            self.send_header("Content-Length", str(len(body)))
         self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -161,6 +175,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             if not self.server.token_is_valid(token):
                 self._forbid()
                 return
+            if "\\" in split.path:  # browsers treat "\\" like "/": would redirect off-origin
+                self._forbid()
+                return
             self._exchange_token(split.path, [(k, v) for k, v in query if k != TOKEN_PARAM])
             return
 
@@ -171,8 +188,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._forbid()
             return
 
-        if self.command == "GET":
-            self._route_get(split.path)
+        if split.path.startswith("/api/"):
+            self._route_api(split.path, query)
+        elif self.command == "GET":
+            self._serve_static(split.path)
         else:
             self._send_text(HTTPStatus.METHOD_NOT_ALLOWED, messages.HTTP_METHOD_NOT_ALLOWED)
 
@@ -189,13 +208,85 @@ class RequestHandler(BaseHTTPRequestHandler):
             [("Location", location), ("Set-Cookie", cookie)],
         )
 
-    def _route_get(self, path: str) -> None:
+    def _route_api(self, path: str, query: list[tuple[str, str]]) -> None:
         if path == "/api/health":
-            self._send_json(HTTPStatus.OK, health_payload())
-        elif path.startswith("/api/"):
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": messages.HTTP_NOT_FOUND})
+            if self.command == "GET":
+                self._send_json(HTTPStatus.OK, health_payload())
+            else:
+                self._send_json(
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    {"error": "method_not_allowed", "message": messages.API_METHOD_NOT_ALLOWED},
+                )
+            return
+        params: dict[str, str] = {}
+        for key, value in query:
+            params.setdefault(key, value)
+        result = self.server.api.dispatch(self.command, path, params, self._read_json_body)
+        if isinstance(result, Stream):
+            self._stream_progress(result)
+        elif result.body is None:
+            self._send(HTTPStatus(result.status), b"", "application/json; charset=utf-8")
         else:
-            self._serve_static(path)
+            self._send_json(HTTPStatus(result.status), result.body)
+
+    def _read_json_body(self) -> dict[str, Any]:
+        """Read and decode the JSON object body; the size is capped before reading."""
+        if self.headers.get("Transfer-Encoding"):
+            raise ApiError(411, "length_required", messages.API_LENGTH_REQUIRED)
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            raise ApiError(411, "length_required", messages.API_LENGTH_REQUIRED)
+        try:
+            length = int(raw_length)
+        except ValueError:
+            raise ApiError(400, "bad_content_length", messages.API_BAD_LENGTH) from None
+        if length < 0:
+            raise ApiError(400, "bad_content_length", messages.API_BAD_LENGTH)
+        if length > MAX_BODY_BYTES:
+            self._discard(length)
+            raise ApiError(413, "body_too_large", messages.API_BODY_TOO_LARGE.format(limit=MAX_BODY_BYTES))
+        raw = self.rfile.read(length)
+        try:
+            data = json.loads(raw)
+        except (ValueError, RecursionError):
+            raise ApiError(400, "bad_json", messages.API_BAD_JSON) from None
+        if not isinstance(data, dict):
+            raise ApiError(400, "bad_json", messages.API_BODY_NOT_OBJECT)
+        return data
+
+    def _discard(self, length: int) -> None:
+        """Drain a moderately oversized body so the client can read the 413 instead of a reset."""
+        remaining = min(length, DISCARD_LIMIT)
+        while remaining > 0:
+            chunk = self.rfile.read(min(65536, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+
+    def _client_gone(self) -> bool:
+        """True when the peer closed the connection (a readable socket that returns no data)."""
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+            return bool(readable) and self.connection.recv(1, socket.MSG_PEEK) == b""
+        except (OSError, ValueError):
+            return True
+
+    def _stream_progress(self, result: Stream) -> None:
+        self.close_connection = True
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        def write(data: bytes) -> None:
+            self.wfile.write(data)
+            self.wfile.flush()
+
+        sse.stream(result.hub, write, self._client_gone, self.server.api.jobs.stopping)
 
     def _serve_static(self, path: str) -> None:
         resource = find_web_resource(path)
@@ -239,10 +330,10 @@ def find_web_resource(url_path: str) -> Traversable | None:
     return node
 
 
-def serve(port: int = 0, open_browser: bool = True) -> int:
+def serve(port: int = 0, open_browser: bool = True, data_dir: str | os.PathLike[str] | None = None) -> int:
     """Run the server until Ctrl+C. Returns the process exit code."""
     try:
-        server = DmslogServer(port)
+        server = DmslogServer(port, data_dir)
     except OSError as exc:
         print(messages.BIND_FAILED.format(port=port, error=exc), flush=True)
         return 1

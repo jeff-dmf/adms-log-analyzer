@@ -1,0 +1,4 @@
+2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] INFO - User text: <script>alert(1)</script> end.
+2030-01-15 10:00:00.010 [PID=1111][TID=0x1a2b] DEBUGLOG - Payload follows:
+<a href="x" onclick="alert(1)"><script>alert(1)</script></a>
+2030-01-15 10:00:00.020 [PID=1111][TID=0x1a2b] INFO - Done.

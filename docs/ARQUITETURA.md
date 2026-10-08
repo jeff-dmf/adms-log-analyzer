@@ -401,14 +401,20 @@ class Header:
 class Envelope(Protocol):
     name: str
     def match(self, line: bytes) -> Header | None: ...
+    # opcional: scan(buf, pos, endpos) -> Iterator[(offset, Header)]  (caminho rápido, finditer)
 
-ENVELOPES: dict[str, Envelope]           # adms, oaserr, plain
-def detect_envelope(head: bytes) -> Envelope   # testa as primeiras ~50 linhas; maioria vence; senão 'plain'
+ENVELOPES: dict[str, Envelope]           # adms, oaserr, plain; register_envelope() acrescenta outros
+def detect_envelope(head: bytes, *, max_lines: int = 50) -> Envelope
+    # conta cabeçalhos reconhecidos nas primeiras 50 linhas; maior contagem vence
+    # (empate: o registrado primeiro); nenhuma linha reconhecida → 'plain'
 ```
 
-- `adms`: `^(?:\ufeff)?(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}) \[PID=(\d+)\](?:\[TID=0x([0-9a-fA-F]+)\])? (FATAL|EXIT|ERROR|ALWAYS|DEBUGLOG|WARNING|INFO|VERBOSE) - `. Aplicada em **bytes** (o decode só acontece no registro final). TID opcional: as linhas do logger nativo (`PSAttach::…`, `arb_pubSubLookup: …`) saem sem TID em nível Info (271 no ERS Verbose; 1 no ERS em DebugLog).
-- `oaserr`: `^(?:\ufeff)?(ts) (?P<proc>\S+)_(?P<pid>\d+) \[PID=(\d+)\]\[TID=0x(hex)\] - \((LEVEL)\) `.
+- Contrato de todo envelope: a decisão "é cabeçalho" depende só de um **prefixo** da linha (sem olhar o fim). Acrescentar bytes a uma linha nunca muda a decisão nem os campos. É isso que torna o agrupamento (6.2) seguro para pedaços e retomada.
+- Nível numérico em `entry.level`, na ordem da alternância da regex: `FATAL`=1, `EXIT`=2, `ERROR`=3, `ALWAYS`=4, `DEBUGLOG`=5, `WARNING`=6, `INFO`=7, `VERBOSE`=8.
+- `adms`: `^(?:\ufeff)?(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.(\d{3}) \[PID=(\d{1,10})\](?:\[TID=0x([0-9a-fA-F]{1,15})\])? (FATAL|EXIT|ERROR|ALWAYS|DEBUGLOG|WARNING|INFO|VERBOSE) - `. Aplicada em **bytes** (o decode só acontece no registro final). TID opcional: as linhas do logger nativo (`PSAttach::…`, `arb_pubSubLookup: …`) saem sem TID em nível Info (271 no ERS Verbose; 1 no ERS em DebugLog). Data impossível (ex.: mês 13) não é cabeçalho.
+- `oaserr`: `^(?:\ufeff)?(ts)\.(ms) (?P<proc>\S+?) \[PID=(\d{1,10})\](?:\[TID=0x(hex)\])? - (?:\((LEVEL)\) )?`. **Nível e TID opcionais**; o token de processo é `\S+?` (não exige o sufixo `_<pid>`), e `process` = token sem o sufixo `_\d+` final, quando houver. A versão anterior (`(?P<proc>\S+)_(?P<pid>\d+) … \[TID=…\] - \((LEVEL)\) `, tudo obrigatório) deixava sem casar 25 de 63 linhas com data nos 6 `oasErrLog` das amostras.
 - `plain`: cada linha é um registro sem `ts` (arquivos desconhecidos continuam navegáveis).
+- **UTF-16 (decisão de tratamento)**: 67 dos 130 logs que a detecção classifica como `plain` nas amostras são UTF-16 com BOM (logs de instaladores); lidos como bytes, viram lixo com `\x00` a cada caractere. A leitura (tarefa 1.6) detecta o BOM UTF-16 (`FF FE`/`FE FF`) antes de `detect_envelope` e **transcodifica para UTF-8** em streaming (decodificador incremental da stdlib); o arquivo é tratado como `final` (sem retomada incremental: qualquer mudança reindexa o arquivo inteiro) e `byte_off`/`indexed_bytes` contam bytes do fluxo transcodificado. Enquanto a 1.6 não transcodifica, a fonte fica `status='skipped'` com o motivo em `error`; nunca é indexada como `plain` corrompido.
 - O sufixo de fonte do BLTHost/serviço (` {E:\...\Main.cs:373}`) vira campo `src` e é removido do `msg` exibido apenas na coluna "mensagem" (o texto original continua no registro).
 - Timestamp: cache por segundo (`AAAA-MM-DD HH:MM:SS` → ms base) e soma dos milissegundos. Evita `strptime` por linha.
 
@@ -420,16 +426,25 @@ class Record:
     byte_off: int; line_no: int; nlines: int
     ts_ms: int | None; pid: int | None; tid: int | None; level: int | None
     msg: str; cont: str | None; partial: bool
+    nbytes: int = 0                  # tamanho bruto no arquivo, fim de linha incluído
+    process: str | None = None       # do envelope (só oasErrLog)
+    orphan: bool = False             # linhas antes do primeiro cabeçalho
+
+class RecordGrouper:                 # parser "push": feed(chunk) -> list[Record]; finish(final=) -> list[Record]
+    def __init__(self, envelope, *, start_off=0, start_line=1): ...
+    pending_offset: int              # offset do que ainda não foi devolvido
 
 def iter_records(stream: BinaryIO, env: Envelope, *, start_off: int = 0, start_line: int = 1,
-                 final: bool) -> Iterator[Record]
+                 final: bool, chunk_size: int = 1 << 20) -> Iterator[Record]
+def parse_bytes(data, env, *, start_off=0, start_line=1, final=True) -> list[Record]   # testes/entradas pequenas
 ```
 
-- Leitura por linha em bytes (`for raw in stream`), CRLF/LF aceitos, BOM só no início. Decode `utf-8` com `errors='replace'`.
-- Registro = cabeçalho + linhas seguintes que não casam com o envelope. Linhas antes do primeiro cabeçalho formam um registro órfão (`ts` herdado = NULL, `sev` 5).
+- Leitura em **pedaços de 1 MiB** (`chunk_size`), em bytes; só linhas completas são examinadas até `finish`. CRLF/LF aceitos (`\r` antes do `\n` pertence ao fim de linha), BOM só no início. Decode `utf-8` com `errors='replace'`.
+- `iter_records` **não faz seek**: o stream já deve estar posicionado em `start_off` (início de registro, ou 0); `start_off`/`start_line` só servem para calcular offsets e números de linha.
+- Registro = cabeçalho + linhas seguintes que não casam com o envelope. Linhas antes do primeiro cabeçalho formam um registro órfão (`orphan=True`, campos do envelope NULL, `sev` 5).
 - **TAB no começo de `msg` não é continuação** (é cabeçalho com mensagem iniciada por TAB).
-- `final=False` (arquivo vivo): o último registro não é emitido como definitivo; o pipeline guarda seu `byte_off` para retomar. `final=True` (zip ou arquivo parado): o último registro é emitido; se o arquivo não termina em `\n`, recebe `partial=True`.
-- Propriedade garantida e testada: indexar o arquivo inteiro de uma vez produz os mesmos registros que indexá-lo em pedaços cortados em qualquer byte (seção 13).
+- Retomada: todos os registros, menos o último, são definitivos. O último sai com `partial=True` quando `final=False` (arquivo vivo) ou quando a entrada não termina em `\n`. Para retomar, o pipeline guarda `byte_off`/`line_no` desse último registro, descarta-o e volta a ler a partir desse offset. `final=True` (zip ou arquivo parado): o último registro só é `partial` se faltar o `\n` final.
+- Propriedade garantida e testada: indexar o arquivo inteiro de uma vez produz os mesmos registros que indexá-lo em pedaços cortados em qualquer byte, e a concatenação dos registros reconstrói os bytes originais (seção 13).
 
 ### 6.3 Camada 2: templates declarativos por adapter
 
@@ -926,3 +941,7 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-08 | Expectativa de payload por janela `level_window` (nível corrente ≥ `MessageLogLevel`), não pelo `LogLevel` configurado; Verbose não é necessário para payload (seção 6.6) | Opus |
 | 2026-10-08 | Envelope: TID ausente é comum em Info (logger nativo); recuos de `ts` até 2,1 s no sensitive (seções 5, 6.1) | Opus |
 | 2026-10-08 | **Proposta, não decisão (aguarda o Jefferson):** bancos `LocalPersistenceStore/*.db3` (fila/cache de mensagens por adapter: estado, tipo, MessageId, instante, corpo serializado em binário) fora da 1.0, listados como "não indexado". Pós-1.0 (P3), fonte opcional por caso: leitura somente leitura de cópia temporária, tabela `queue_item(collection_group, cache, item_id, message_id, msg_type, status, ts, size)` sem o corpo; painel "fila pendente/não enviada" e ligação ao evento por `message_id` (`entry_key msgid`); corpo nunca indexado e só decodificado sob demanda se o formato for documentado. Escopo segue U4–U11; sensível por padrão (seções 9.1a, 12) | Opus |
+| 2026-10-08 | Tarefa 1.2 conferida no código: regex do `oaserr` corrigida (nível e TID opcionais, processo `\S+?` sem exigir `_<pid>`; a anterior não casava 25 de 63 linhas com data nos 6 `oasErrLog`); nível numérico 1..8 na ordem da regex; contrato "decisão por prefixo da linha"; `detect_envelope` com empate para o primeiro registrado (seção 6.1) | Opus |
+| 2026-10-08 | `Record` ganha `nbytes`, `process` e `orphan` (com default); `RecordGrouper` (feed/finish) e `parse_bytes`; `iter_records` lê em pedaços de 1 MiB, não faz seek (stream já em `start_off`) e devolve o último registro com `partial=True` para retomada (seção 6.2) | Opus |
+| 2026-10-08 | Decisão: logs UTF-16 com BOM (67 de 130 classificados como `plain` nas amostras; instaladores) são transcodificados para UTF-8 na leitura (tarefa 1.6), tratados como `final` e sem retomada incremental; até lá, `source.status='skipped'` com motivo (seção 6.1) | Opus |
+| 2026-10-08 | `.hypothesis/` no `.gitignore` (banco de exemplos do hypothesis, só dev) | Opus |

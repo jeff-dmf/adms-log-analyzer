@@ -1,0 +1,3 @@
+2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] INFO - Multibyte: café, ção, 日本語, 😀.
+2030-01-15 10:00:00.010 [PID=1111][TID=0x1a2b] INFO - Lone CR insidethe same line, still one record.
+2030-01-15 10:00:00.020 [PID=1111][TID=0x1a2b] INFO - Done.

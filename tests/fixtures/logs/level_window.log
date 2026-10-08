@@ -1,0 +1,4 @@
+2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] ALWAYS - Debug level changed from DebugLog (3) to Info (5).
+2030-01-15 10:00:00.100 [PID=1111][TID=0x1a2b] INFO - Inside the window.
+2030-01-15 10:00:00.200 [PID=1111][TID=0x1a2b] ALWAYS - Debug level changed from Info (5) to DebugLog (3).
+2030-01-15 10:00:00.300 [PID=1111][TID=0x1a2b] DEBUGLOG - Back to the base level.

@@ -57,12 +57,14 @@ jobs:
           python3 -I dist/dmslog.pyz info | tee info.txt
           grep -q "^fts5: yes" info.txt
           python packaging/smoke_health.py python3 -I dist/dmslog.pyz
+          python packaging/smoke_ingest.py python3 -I dist/dmslog.pyz
       - name: Smoke test the tarball launcher
         run: |
           mkdir -p "$RUNNER_TEMP/linux-unpacked"
           tar -xzf dist/dmslog-linux.tar.gz -C "$RUNNER_TEMP/linux-unpacked"
           "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog" --version
           python packaging/smoke_health.py "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog"
+          python packaging/smoke_ingest.py "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog"
       - uses: actions/upload-artifact@v4
         with:
           name: dmslog-linux
@@ -96,6 +98,11 @@ jobs:
         run: |
           python packaging/smoke_health.py (Join-Path $PWD "dist\dmslog-portable-win64\dmslog.bat")
           if ($LASTEXITCODE -ne 0) { throw "serve smoke test failed" }
+      - name: Smoke test dmslog.bat ingest + serve (zip fixture, one page, one entry)
+        shell: pwsh
+        run: |
+          python packaging/smoke_ingest.py (Join-Path $PWD "dist\dmslog-portable-win64\dmslog.bat")
+          if ($LASTEXITCODE -ne 0) { throw "ingest smoke test failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: dmslog-portable-win64

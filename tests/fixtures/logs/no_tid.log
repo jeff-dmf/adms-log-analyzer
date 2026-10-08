@@ -1,0 +1,4 @@
+2030-01-15 10:00:00.000 [PID=1111] INFO - PSAttach::Connect: synthetic attach to channel one
+2030-01-15 10:00:00.005 [PID=1111] INFO - arb_pubSubLookup: synthetic lookup done
+2030-01-15 10:00:00.009 [PID=1111][TID=0x1a2b] INFO - Message with TID follows.
+2030-01-15 10:00:00.012 [PID=1111] INFO - PSAttach::Release: synthetic release

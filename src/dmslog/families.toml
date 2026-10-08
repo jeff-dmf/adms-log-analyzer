@@ -1,2 +1,290 @@
-# Placeholder: log path/name pattern -> family, expected envelope, default scope.
-# Filled in during milestone M1 (see docs/ARQUITETURA.md, section 9.1a).
+# Source classification, driven by data (docs/ARQUITETURA.md, section 9.1a).
+#
+# Each [[rule]] maps a logical member path (POSIX separators, relative to the zip,
+# folder or file that was opened) to a family. Rules are tried IN FILE ORDER and the
+# FIRST match wins, so a specific rule must appear before a generic one. A path that
+# matches nothing becomes the UNKNOWN family (see [fallback]).
+#
+# Rule fields:
+#   family    family code stored in stream.family (open text; a new family is a new rule)
+#   envelope  expected line envelope: adms | oaserr | plain (a hint; detection by majority decides)
+#   scope     default  -> in the default scope
+#             service  -> in the default scope only when its service hosts an anchor adapter
+#                         (falls back to default when the source has no anchor at all)
+#             optional -> listed, indexed only when the user selects it
+#   anchor    true on adapter rules: their service marks "the service of the adapter"
+#   indexable false for files that are not text logs (listed as "not indexed")
+#   layout    name of a [layouts] pattern; `process` is substituted into its {process} slot
+#   pattern   a full regular expression instead of layout/process
+#
+# Patterns are regular expressions, case-insensitive, searched against the logical path.
+# Recognised named groups: account, service, process, pid, sensitive, rotation.
+# Use TOML literal strings (single quotes) so backslashes need no escaping.
+
+[layouts]
+# <Process>_<pid>[.sensitive].log[.N], optionally under dnaApp_<account>/<service>/
+adapter = '(?:^|/)(?:(?P<account>dnaApp_[^/]+)/(?P<service>[^/]+)/)?(?P<process>{process})_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+# BLTHost.<service>[.sensitive].log[.N]
+blthost = '(?:^|/)(?P<process>BLTHost)\.(?P<service>[^/.]+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+# <Process>.<service>.log[.N] (service logs)
+service = '(?:^|/)(?P<process>{process})\.(?P<service>[A-Za-z0-9_]+)\.log(?:\.(?P<rotation>\d+))?$'
+# <Process>.log[.N] (single instance, no service)
+single = '(?:^|/)(?P<process>{process})\.log(?:\.(?P<rotation>\d+))?$'
+# <Process>_<pid>.log[.N] anywhere
+pidlog = '(?:^|/)(?P<process>{process})_(?P<pid>\d+)\.log(?:\.(?P<rotation>\d+))?$'
+
+# ---------------------------------------------------------------------------
+# 1. Adapters in the 1.0 scope (normal and sensitive logs of the same process)
+# ---------------------------------------------------------------------------
+
+[[rule]]
+family = "AWFM"
+layout = "adapter"
+process = "WfmAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "AONT"
+layout = "adapter"
+process = "OntAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "AAVL"
+layout = "adapter"
+process = "AVLAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "AOSR"
+layout = "adapter"
+process = "OsrAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "ASMN"
+layout = "adapter"
+process = "SmnAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "ASSS"
+layout = "adapter"
+process = "SiteSwitchAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "ACRM"
+layout = "adapter"
+process = "CrmAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "AAMI"
+layout = "adapter"
+process = "AmiAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "ASMR"
+layout = "adapter"
+process = "SmrAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "AWDI"
+layout = "adapter"
+process = "WDIAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "ACLC"
+layout = "adapter"
+process = "ClaimCheckAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "AFUP"
+layout = "adapter"
+process = "FileUploadAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+[[rule]]
+family = "AFMO"
+layout = "adapter"
+process = "FileMonitorAdapter"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+# U11: in the 1.0 scope with its own analysis; the family code is provisional until
+# the format discovery of task 2.11 settles it.
+[[rule]]
+family = "AEDP"
+layout = "adapter"
+process = "CustomAdapterChangeIncidentDevice"
+envelope = "adms"
+scope = "default"
+anchor = true
+
+# ---------------------------------------------------------------------------
+# 2. Host and system logs that are in the default scope
+# ---------------------------------------------------------------------------
+
+[[rule]]
+family = "BLTHOST"
+layout = "blthost"
+envelope = "adms"
+scope = "default"
+
+[[rule]]
+family = "OASERR"
+layout = "single"
+process = "oasErrLog"
+envelope = "oaserr"
+scope = "default"
+
+# Service logs of the service that hosts the adapters: dnaService.<svc>, ProcessMonitor.<svc>,
+# dnaHealthMonitor.<svc>, arbRx/arbTx/arbMonitor.exe.<svc>.
+[[rule]]
+family = "SERVICE"
+layout = "service"
+process = 'dnaService|ProcessMonitor|dnaHealthMonitor|arbRx|arbTx|arbMonitor\.exe'
+envelope = "adms"
+scope = "service"
+
+# Service framework logs without a service in the name: listed, optional.
+[[rule]]
+family = "SERVICE"
+layout = "single"
+process = 'dnaServiceAutoStart|dnaServiceFailover|dnaServiceStartup|arbSetState|arbState|arbinfo|ArbitrationStateMonitor'
+envelope = "adms"
+scope = "optional"
+
+# ---------------------------------------------------------------------------
+# 3. Other ERS logs: listed and indexable at the generic level, off by default
+# ---------------------------------------------------------------------------
+
+[[rule]]
+family = "NMC"
+layout = "single"
+process = "NMC"
+envelope = "adms"
+scope = "optional"
+
+[[rule]]
+family = "PSENGINE"
+layout = "single"
+process = "PSengine"
+envelope = "adms"
+scope = "optional"
+
+[[rule]]
+family = "ARBIP"
+layout = "pidlog"
+process = "arbIP"
+envelope = "adms"
+scope = "optional"
+
+[[rule]]
+family = "SHUTDOWN"
+layout = "pidlog"
+process = "ServiceShutdown"
+envelope = "plain"
+scope = "optional"
+
+[[rule]]
+family = "SHUTDOWN"
+pattern = '(?:^|/)(?P<process>[A-Za-z0-9]+_LastShutdownReason)\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "plain"
+scope = "optional"
+
+# Installer, hotfix and snapshot logs.
+[[rule]]
+family = "INSTALL"
+pattern = '(?:^|/)(?:Deployment/Logs|ADMS/scripts/InstallationLogs)/(?:[^/]+/)*[^/]+\.(?:log|txt)$'
+envelope = "plain"
+scope = "optional"
+
+# ERS tool logs.
+[[rule]]
+family = "ERS"
+pattern = '(?:^|/)(?P<process>ERS|ERSEngine)\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "optional"
+
+# Process logs under dnaApp_<account>/<service>/ that are not an adapter of the scope
+# (DMS_ReplicationService, NDSProxy, adapters outside the 1.0 scope, ...).
+[[rule]]
+family = "PROCESS"
+pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>[^/]+)/(?P<process>[A-Za-z][A-Za-z0-9_]*?)_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "optional"
+
+# Any other <Process>_<pid>.log (ConfigTool, cscscript, EventEngine, WMIPublisher, ...).
+[[rule]]
+family = "PROCESS"
+pattern = '(?:^|/)(?P<process>[A-Za-z][A-Za-z0-9_]*?)_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "optional"
+
+# Any other text log of the Servers/Log folder (AdminPager, CMXREPBulkClient, RCS.Default, ...).
+[[rule]]
+family = "SERVERLOG"
+pattern = '(?:^|/)(?P<process>[^/]+?)\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "optional"
+
+# ---------------------------------------------------------------------------
+# 4. Not text logs: configuration, scripts, binaries, event logs and databases.
+#    Listed as "not indexed" (the Registry and other XML are read by the
+#    knowledge layer, not indexed as logs).
+# ---------------------------------------------------------------------------
+
+[[rule]]
+family = "NONLOG"
+pattern = '\.(?:xml|xsd|xsl|xslt|xmlold\d*|config|sql|csc|init|html?|dll|exe|jpe?g|png|gif|ico|evtx|etl|blg|db3|db3-wal|db3-shm|dmp|dat|old|example|zip|csv)$'
+envelope = "plain"
+scope = "optional"
+indexable = false
+
+# Plain-text reports (computer_info, audit lists): readable, generic, off by default.
+[[rule]]
+family = "REPORT"
+pattern = '\.txt$'
+envelope = "plain"
+scope = "optional"
+
+# ---------------------------------------------------------------------------
+# Fallback: anything that matched no rule above.
+# ---------------------------------------------------------------------------
+
+[fallback]
+family = "UNKNOWN"
+envelope = "plain"
+scope = "optional"
+indexable = true

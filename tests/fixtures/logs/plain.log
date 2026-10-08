@@ -1,0 +1,4 @@
+Service synthetic-svc starting
+  limit cpu=80 mem=2048
+
+Process alpha.exe restarted by monitor

@@ -1,0 +1,6 @@
+orphan line one, written before any header
+	orphan line two with a tab
+
+2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] INFO - Adapter Alpha started.
+2030-01-15 10:00:00.040 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Processing request 1 for work item W-001.
+2030-01-15 10:00:00.080 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Validation passed for work item W-001.

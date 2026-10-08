@@ -13,3 +13,4 @@ dist/
 
 # Generated inside the zipapp only
 src/dmslog/_build_info.py
+.hypothesis/

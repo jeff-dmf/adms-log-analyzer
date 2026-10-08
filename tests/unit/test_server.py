@@ -76,6 +76,27 @@ def test_token_redirect_stays_on_the_same_origin(server, path):
     assert location.startswith("/") and not location.startswith("//")
 
 
+@pytest.mark.parametrize("path", ["/%5Cevil.example/x", "/%5C%5Cevil.example"])
+def test_token_exchange_rejects_backslash_paths(server, path):
+    status, headers, _ = call(server, "GET", f"{path}?token={server.token}")
+    assert status in (302, 403)
+    if status == 302:
+        assert "\\" not in headers["location"]
+
+
+def test_token_exchange_rejects_raw_backslash_path(server):
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    try:
+        conn.putrequest("GET", f"/\\evil.example/x?token={server.token}", skip_host=False)
+        conn.endheaders()
+        response = conn.getresponse()
+        response.read()
+        assert response.status == 403
+        assert response.getheader("Location") is None
+    finally:
+        conn.close()
+
+
 def test_token_is_exchanged_for_http_only_strict_cookie(server):
     status, headers, _ = call(server, "GET", f"/?token={server.token}")
     assert status == 302

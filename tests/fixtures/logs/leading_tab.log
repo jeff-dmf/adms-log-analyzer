@@ -1,0 +1,5 @@
+2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] ALWAYS - 	Managed BLT: bobjSyntheticOne.dll
+2030-01-15 10:00:00.003 [PID=1111][TID=0x1a2b] ALWAYS - 	Managed BLT: bobjSyntheticTwo.dll
+2030-01-15 10:00:00.006 [PID=1111][TID=0x1a2b] INFO - Next record is a normal one.
+2030-01-15 10:00:00.009 [PID=1111][TID=0x1a2b] INFO - Trailing space on purpose 
+2030-01-15 10:00:00.012 [PID=1111][TID=0x1a2b] INFO - 	Tab first, space last 

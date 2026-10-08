@@ -1,0 +1,13 @@
+2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] DEBUGLOG - [Communication2] - Client-side statistics:
+[TOTAL][Client] Call count: 50, Request bytes: 5000 (avg. 100.0), Response bytes: 10000 (avg. 200.0). Total operations: 50
+By call count:
+OpOne,50,5000,10000
+2030-01-15 11:00:00.000 [PID=1111][TID=0x1a2b] DEBUGLOG - [Communication2] - Client-side statistics:
+[TOTAL][Client] Call count: 120, Request bytes: 12000 (avg. 100.0), Response bytes: 24000 (avg. 200.0). Total operations: 120
+By call count:
+OpOne,120,12000,24000
+2030-01-15 11:00:00.500 [PID=1111][TID=0x1a2b] INFO - Process restarted.
+2030-01-15 12:00:00.000 [PID=1111][TID=0x1a2b] DEBUGLOG - [Communication2] - Client-side statistics:
+[TOTAL][Client] Call count: 7, Request bytes: 700 (avg. 100.0), Response bytes: 1400 (avg. 200.0). Total operations: 7
+By call count:
+OpOne,7,700,1400

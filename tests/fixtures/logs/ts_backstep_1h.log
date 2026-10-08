@@ -1,0 +1,4 @@
+2030-10-27 02:59:58.000 [PID=1111][TID=0x1a2b] INFO - Before the clock moves back.
+2030-10-27 02:59:59.900 [PID=1111][TID=0x1a2b] INFO - Still before.
+2030-10-27 02:00:00.100 [PID=1111][TID=0x1a2b] INFO - Clock moved back one hour.
+2030-10-27 02:00:01.000 [PID=1111][TID=0x1a2b] INFO - After the change.

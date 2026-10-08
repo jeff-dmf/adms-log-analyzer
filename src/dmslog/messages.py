@@ -12,7 +12,10 @@ HELP_SERVE = "Start the local web viewer."
 HELP_PORT = "TCP port on 127.0.0.1 (default: a random free port)."
 HELP_NO_BROWSER = "Do not open the default web browser."
 HELP_INFO = "Show version, environment and data directory."
-HELP_INGEST = "Index the logs of an ERS zip, folder or file (not implemented yet)."
+HELP_INGEST = "Index the logs of an ERS zip, folder or file into a case (safe to run again)."
+HELP_INGEST_PATH = "ERS zip, Log folder or log file to index."
+HELP_INGEST_CASE = "Case name (default: derived from the ERS GUID and capture time, or from the folder name)."
+HELP_INGEST_ALL = "Index every text log of the collection, not only the default scope."
 HELP_EXPORT = "Export a text report of a selection (not implemented yet)."
 HELP_TEMPLATES = "List message templates and their counts (not implemented yet)."
 HELP_KB = "Build or inspect the knowledge pack (not implemented yet)."
@@ -43,6 +46,65 @@ INFO_LINES = (
     ("data directory", "{data_dir}"),
 )
 
+INGEST_START = "Indexing {path} into case {case} ({scope} scope)..."
+INGEST_SCOPE_DEFAULT = "default"
+INGEST_SCOPE_ALL = "all logs"
+INGEST_PROGRESS = "  {member}: {percent:3d}%"
+INGEST_SOURCE_DONE = "  [{action}] {member}: {records} records, {size_mb:.1f} MB"
+INGEST_SOURCE_FAILED = "  [error] {member}: {error}"
+INGEST_SUMMARY = (
+    "Sources: {selected} selected of {listed} listed ({indexed} indexed, {unchanged} unchanged, "
+    "{skipped} not selected, {failed} failed)"
+)
+INGEST_SUMMARY_DATA = "Records: {records}  Lines: {lines}  Data: {size_mb:.1f} MB"
+INGEST_SUMMARY_TIME = "Time: {seconds:.1f} s ({rate:.1f} MB/s)"
+INGEST_CASE_DB = "Case database: {path}"
+INGEST_NOT_FOUND = "cannot ingest: {error}"
+INGEST_UNSAFE = "cannot ingest: unsafe or invalid archive: {error}"
+INGEST_CONFLICT = "cannot add this collection to case {case}: {error}"
+INGEST_INVALID_CASE = "{error}"
+
+INFO_CASES_NONE = "none"
+INFO_CASE_LINE = "{name}: {sources} sources, {entries} records ({path})"
+INFO_CASE_UNREADABLE = "{name}: unreadable ({error})"
+
 HTTP_FORBIDDEN = "Forbidden"
 HTTP_NOT_FOUND = "Not found"
 HTTP_METHOD_NOT_ALLOWED = "Method not allowed"
+
+# --- JSON API (src/dmslog/server/api.py) ------------------------------------------------------
+API_NOT_FOUND = "Unknown API route"
+API_METHOD_NOT_ALLOWED = "Method not allowed for this route"
+API_BAD_JSON = "The request body is not valid JSON"
+API_BODY_NOT_OBJECT = "The request body must be a JSON object"
+API_BODY_TOO_LARGE = "The request body is larger than {limit} bytes"
+API_LENGTH_REQUIRED = "A Content-Length header is required (chunked bodies are not supported)"
+API_BAD_LENGTH = "Invalid Content-Length header"
+API_INVALID_CASE_ID = (
+    "Invalid case id: use 1 to 80 letters, digits, '.', '_' or '-', starting with a letter or digit"
+)
+API_CASE_NOT_FOUND = "Case {case!r} does not exist"
+API_CASE_EXISTS = "Case {case!r} already exists"
+API_CASE_BUSY = "Case {case!r} has an indexing job running"
+API_CASE_DELETE_FAILED = "Case {case!r} could not be deleted: {error}"
+API_CASE_CREATE_FAILED = "Case {case!r} could not be created: {error}"
+API_MISSING_FIELD = "Missing or invalid field {field!r}"
+API_BAD_SCOPE = "scope must be 'default' or 'all'"
+API_PATH_NOT_FOUND = "Path does not exist: {path}"
+API_PATH_NOT_ABSOLUTE = "The collection path must be absolute"
+API_BAD_LIMIT = "limit must be an integer from 1 to {limit}"
+API_BAD_INT = "{field} must be a non-negative integer"
+API_BAD_ENTRY_ID = "Invalid entry id"
+API_ENTRY_NOT_FOUND = "Entry {entry_id} does not exist in case {case!r}"
+API_SUBSTR_NEEDS_SCOPE = (
+    "Substring and regex search need a source or time-range condition at the top level of the filter"
+)
+API_QUERY_TIMEOUT = "The query took too long and was cancelled"
+API_DATABASE_ERROR = "The case database could not be read"
+API_INTERNAL_ERROR = "Internal error"
+
+JOB_DONE_OK = "Indexed {records} records from {sources} sources"
+JOB_DONE_WITH_FAILURES = "Indexed {records} records; {failed} of {sources} sources failed"
+JOB_CANCELLED = "Indexing was cancelled because the server is stopping"
+JOB_FAILED = "Indexing failed: {error}"
+JOB_UNSAFE = "Unsafe or invalid archive: {error}"

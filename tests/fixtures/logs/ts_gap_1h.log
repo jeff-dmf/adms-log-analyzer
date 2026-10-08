@@ -1,0 +1,3 @@
+2030-03-10 01:59:58.000 [PID=1111][TID=0x1a2b] INFO - Before the clock jumps forward.
+2030-03-10 03:00:00.200 [PID=1111][TID=0x1a2b] INFO - Clock jumped forward one hour.
+2030-03-10 03:00:01.000 [PID=1111][TID=0x1a2b] INFO - After the jump.

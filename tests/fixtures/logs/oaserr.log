@@ -1,0 +1,4 @@
+﻿2030-01-15 10:00:00.000 AlphaAdapter_1111 [PID=1111][TID=0x1a2b] - (ERROR) Synthetic error while sending response.
+   at Acme.Widgets.Runner.Execute() in F:\build\acme\Runner.cs:line 9
+2030-01-15 10:00:00.050 BetaAdapter_2222 [PID=2222][TID=0x1a2b] - (WARNING) Synthetic warning, queue length 5.
+2030-01-15 10:00:00.090 AlphaAdapter_1111 [PID=1111][TID=0x1a2b] - (ERROR) Second synthetic error.

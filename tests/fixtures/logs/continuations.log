@@ -1,0 +1,22 @@
+﻿2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] INFO - Before the continuation blocks.
+2030-01-15 10:00:00.100 [PID=1111][TID=0x1a2b] DEBUGLOG - Non Fatal Exception System.InvalidOperationException: Synthetic failure in widget 7
+	Managed Code Stack Trace:
+   at Acme.Widgets.Runner.Execute(String name) in F:\build\acme\Runner.cs:line 42
+   at Acme.Widgets.Host.Dispatch(Request r) in F:\build\acme\Host.cs:line 118
+	Inner Exception System.TimeoutException: Synthetic timeout after 30 s
+		   at Acme.Net.Client.Send(Byte[] data) in F:\build\acme\Client.cs:line 77
+		   at Acme.Net.Client.Call(String op) in F:\build\acme\Client.cs:line 31
+2030-01-15 10:00:00.200 [PID=1111][TID=0x1a2b] DEBUGLOG - Request payload follows:
+<Envelope>
+  <Body>
+    <Item id="A-1">
+      <Name>Synthetic item</Name>
+    </Item>
+  </Body>
+</Envelope>
+2030-01-15 10:00:00.300 [PID=1111][TID=0x1a2b] DEBUGLOG - [Communication2] - Client-side statistics:
+[TOTAL][Client] Call count: 10, Request bytes: 1000 (avg. 100.0), Response bytes: 2000 (avg. 200.0). Total operations: 10
+By call count:
+OpOne,6,600,1200
+OpTwo,4,400,800
+2030-01-15 10:00:00.400 [PID=1111][TID=0x1a2b] INFO - After the continuation blocks.

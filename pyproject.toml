@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "hypothesis"]
 
 [project.scripts]
 dmslog = "dmslog.cli:main"
@@ -20,7 +20,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-dmslog = ["families.toml", "web/**/*", "adapters/*.toml", "knowledge/pack/*", "knowledge/curated/*"]
+dmslog = ["families.toml", "store/*.sql", "web/**/*", "adapters/*.toml", "knowledge/pack/*", "knowledge/curated/*"]
 
 [tool.ruff]
 line-length = 110

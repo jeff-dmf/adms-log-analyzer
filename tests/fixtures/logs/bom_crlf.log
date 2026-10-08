@@ -1,0 +1,12 @@
+﻿2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] INFO - Adapter Alpha started.
+2030-01-15 10:00:00.040 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Processing request 1 for work item W-001.
+2030-01-15 10:00:00.080 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Validation passed for work item W-001.
+2030-01-15 10:00:00.120 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Sending response 1 for work item W-001.
+2030-01-15 10:00:00.160 [PID=1111][TID=0x1a2b] WARNING - [Alpha] Retry 1 of 3 for endpoint svc-one.
+2030-01-15 10:00:00.200 [PID=1111][TID=0x1a2b] ERROR - [Alpha] Request 2 failed: synthetic error code E-100.
+2030-01-15 10:00:00.240 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Processing request 3 for work item W-003.
+2030-01-15 10:00:00.280 [PID=1111][TID=0x1a2b] INFO - [Alpha] Heartbeat ok.
+2030-01-15 10:00:00.320 [PID=1111][TID=0x1a2b] INFO - Adapter Alpha started.
+2030-01-15 10:00:00.360 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Processing request 1 for work item W-001.
+2030-01-15 10:00:00.400 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Validation passed for work item W-001.
+2030-01-15 10:00:00.440 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Sending response 1 for work item W-001.

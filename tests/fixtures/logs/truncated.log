@@ -1,0 +1,8 @@
+2030-01-15 10:00:00.000 [PID=1111][TID=0x1a2b] INFO - Adapter Alpha started.
+2030-01-15 10:00:00.040 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Processing request 1 for work item W-001.
+2030-01-15 10:00:00.080 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Validation passed for work item W-001.
+2030-01-15 10:00:00.120 [PID=1111][TID=0x1a2b] DEBUGLOG - [Alpha] Sending response 1 for work item W-001.
+2030-01-15 10:00:00.160 [PID=1111][TID=0x1a2b] WARNING - [Alpha] Retry 1 of 3 for endpoint svc-one.
+2030-01-15 10:00:00.300 [PID=1111][TID=0x1a2b] DEBUGLOG - Record cut in the middle of a continuation
+first continuation line
+second continuation li

@@ -3,15 +3,113 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'">
   <title>dmslog</title>
   <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/main.js"></script>
 </head>
 <body>
-  <main>
-    <h1 id="title"></h1>
-    <p id="version"></p>
-  </main>
-  <script src="/js/strings.js"></script>
-  <script src="/js/main.js"></script>
+  <div id="app">
+    <header id="toolbar" role="banner">
+      <span id="app-name" class="app-name" data-i18n="appName"></span>
+      <form id="search-form" role="search" class="inline-form">
+        <label for="search-input" class="visually-hidden" data-i18n="searchLabel"></label>
+        <input id="search-input" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder">
+        <button type="submit" data-i18n="searchButton"></button>
+        <button type="button" id="search-clear" data-i18n="clearButton"></button>
+      </form>
+      <form id="goto-form" class="inline-form">
+        <label for="goto-input" class="visually-hidden" data-i18n="gotoLabel"></label>
+        <input id="goto-input" type="text" autocomplete="off" data-i18n-placeholder="gotoPlaceholder">
+        <button type="submit" data-i18n="gotoButton"></button>
+      </form>
+      <div class="menu-wrap">
+        <button type="button" id="columns-button" aria-haspopup="true" aria-expanded="false" data-i18n="columnsButton"></button>
+        <div id="columns-menu" class="menu" role="group" hidden></div>
+      </div>
+      <button type="button" id="theme-button" data-i18n-title="themeToggle" data-i18n-aria-label="themeToggle"></button>
+    </header>
+
+    <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+    <main id="panels">
+      <aside id="sources-panel" class="panel" aria-labelledby="sources-title">
+        <h2 id="sources-title" data-i18n="panelSources"></h2>
+        <div class="field-row">
+          <label for="case-select" data-i18n="caseLabel"></label>
+          <select id="case-select"></select>
+        </div>
+        <form id="new-case-form" class="inline-form">
+          <label for="new-case-name" class="visually-hidden" data-i18n="newCaseLabel"></label>
+          <input id="new-case-name" type="text" autocomplete="off" data-i18n-placeholder="newCaseLabel">
+          <button type="submit" data-i18n="newCaseButton"></button>
+        </form>
+        <form id="open-form" class="stack-form">
+          <label for="path-input" class="visually-hidden" data-i18n="pathLabel"></label>
+          <input id="path-input" type="text" autocomplete="off" data-i18n-placeholder="pathPlaceholder">
+          <div class="inline-form">
+            <label for="scope-select" class="visually-hidden" data-i18n="scopeLabel"></label>
+            <select id="scope-select"></select>
+            <button type="submit" data-i18n="openButton"></button>
+          </div>
+        </form>
+        <div class="progress-box">
+          <progress id="progress-bar" hidden data-i18n-aria-label="progressLabel"></progress>
+          <div id="progress-text" class="source-meta"></div>
+        </div>
+        <ul id="source-list" class="source-list"></ul>
+      </aside>
+
+      <section id="grid-panel" class="panel" aria-labelledby="grid-title">
+        <h2 id="grid-title" class="visually-hidden" data-i18n="panelGrid"></h2>
+        <form id="filter-form" class="filter-bar">
+          <div class="field">
+            <label for="sev-select" data-i18n="filterSeverity"></label>
+            <select id="sev-select"></select>
+          </div>
+          <div class="field">
+            <label for="level-select" data-i18n="filterLevel"></label>
+            <select id="level-select"></select>
+          </div>
+          <div class="field">
+            <label for="from-input" data-i18n="filterFrom"></label>
+            <input id="from-input" type="text" autocomplete="off" data-i18n-placeholder="filterTimePlaceholder">
+          </div>
+          <div class="field">
+            <label for="to-input" data-i18n="filterTo"></label>
+            <input id="to-input" type="text" autocomplete="off" data-i18n-placeholder="filterTimePlaceholder">
+          </div>
+          <button type="submit" data-i18n="filterApply"></button>
+          <button type="button" id="filter-reset" data-i18n="filterReset"></button>
+        </form>
+        <div id="grid-header" class="grid-header" role="row"></div>
+        <div id="grid-viewport" class="grid-viewport" role="grid" tabindex="0" data-i18n-aria-label="panelGrid">
+          <div id="grid-rows" class="grid-rows"></div>
+          <div id="grid-spacer" class="grid-spacer" aria-hidden="true"></div>
+        </div>
+        <div id="grid-status" class="grid-status" role="status" aria-live="polite"></div>
+      </section>
+
+      <aside id="detail-panel" class="panel" aria-labelledby="detail-title">
+        <h2 id="detail-title" data-i18n="panelDetail"></h2>
+        <div id="detail-meta" class="detail-meta"></div>
+        <div id="detail-actions" class="inline-form" hidden>
+          <label for="context-same" class="visually-hidden" data-i18n="contextSame"></label>
+          <select id="context-same"></select>
+          <button type="button" id="context-button" data-i18n="contextButton"></button>
+          <button type="button" id="copy-button" data-i18n="copyButton"></button>
+          <span id="copy-status" class="source-meta" role="status"></span>
+        </div>
+        <pre id="detail-text" class="detail-text"></pre>
+        <div id="context-box" class="context-box" hidden>
+          <div class="context-head">
+            <h3 data-i18n="contextTitle"></h3>
+            <button type="button" id="context-close" data-i18n="contextClose"></button>
+          </div>
+          <ul id="context-list" class="context-list"></ul>
+        </div>
+      </aside>
+    </main>
+  </div>
 </body>
 </html>
