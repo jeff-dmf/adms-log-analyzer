@@ -1,6 +1,6 @@
 # adms-log-analyzer
 
-Analisador de logs dos adapters (online interfaces) do ADMS (ADMS GridOps 3.9).
+Log analyzer and viewer for ADMS adapters (online interfaces), ADMS GridOps 3.9.
 
 ## Estado
 

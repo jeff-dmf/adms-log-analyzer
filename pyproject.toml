@@ -1,7 +1,7 @@
 [project]
 name = "dmslog"
 version = "0.1.0"
-description = "Analisador de logs dos adapters (online interfaces) do ADMS"
+description = "Log analyzer and viewer for ADMS adapters (online interfaces)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
