@@ -9,3 +9,4 @@ __pycache__/
 
 # Logs extraídos localmente dos ERS
 local-samples/_extracted/
+dist/

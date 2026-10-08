@@ -5,12 +5,37 @@ Analisador de logs dos adapters (online interfaces) do ADMS. Python (`src/dmslog
 ## Objetivo
 Construir uma ferramenta (analyzer + viewer) em que o Jefferson carrega sempre os logs de um ERS (zip) e os analisa de forma focada, apoiada na base de conhecimento do adms-v3.9 (operações, parâmetros, códigos de erro, mensagens dos adapters). Os ERS em `local-samples/` são amostras para descobrir formato e mensagens; **não** analisar nem reportar problemas desses ambientes. Referência de UX: `docs/REFERENCIA-UX.md`.
 
+## Idioma do app
+- **O app inteiro é construído em inglês**: nomes de pacotes, módulos, funções, variáveis, tabelas e colunas; comentários e docstrings; mensagens de CLI, API, erro e UI; testes e fixtures; documentação do próprio app (README, `--help`). Textos dos logs dos adapters ficam literais, como estão.
+- Conversa com o Jefferson e documentos de processo em `docs/` (decisões, roadmap, notas de análise) seguem em pt-BR do Brasil.
+- Strings visíveis ao usuário ficam centralizadas (um módulo/arquivo), para permitir outro idioma no futuro sem refatorar.
+
+## Divisão de trabalho por modelo
+Objetivo: qualidade onde importa, sem gastar tokens à toa. Subagentes recebem o modelo explícito (`model`); a sessão principal coordena e integra.
+
+| Modelo | Fica com |
+|---|---|
+| **Opus** | Decisões de arquitetura e estrutura (`docs/ARQUITETURA.md`, `docs/ROADMAP.md`); modelo de dados e de eventos; desenho do parser e dos templates; descoberta de formato em logs novos (mineração de templates, ciclo de vida, correlação); algoritmos difíceis (indexação incremental, correlação normal↔sensitive, desempenho); revisão final de código (`/code-review`) antes do merge de cada marco |
+| **Sonnet** | Implementação rotineira conforme a arquitetura (módulos, API, viewer, testes); empacotamento e CI; geração do pacote de conhecimento a partir do vault; documentação; git, commits e PRs; coordenação da sessão |
+| **Haiku** | Varreduras mecânicas e baratas: contagens, inventário de arquivos, grep em lote, checagem de anonimização das fixtures, conferência de formatação e links, atualização de tabelas |
+
+Regras:
+- Estrutura, interfaces e esquemas são definidos pelo Opus; ninguém muda isso sem passar por ele (registrar a mudança em `docs/ARQUITETURA.md`).
+- Em dúvida entre dois modelos, usar o mais barato que dê conta; subir para Opus se a tentativa falhar por falta de raciocínio, não por falta de contexto.
+- Agentes recebem contexto completo e escopo fechado (arquivos que podem tocar); não fazem commit, quem commita é a sessão principal.
+- Logs de exemplo são lidos por script (templates, contagens), nunca por leitura integral.
+- O detalhe por tarefa (qual modelo em cada item) fica em `docs/ROADMAP.md`.
+
 ## Requisitos de portabilidade (Windows e Linux)
 - Destinos finais: **Windows e Linux**, ambos de primeira classe (desenvolvimento em Linux/Omarchy; uso final também em PC Windows). Nada pode funcionar só em um dos dois.
 - No Windows, os logs já estão no PC (lê direto de `C:\SchneiderElectricData\...\Log` e de ZIPs de ERS locais); nada é transferido para fora. O PC provavelmente é corporativo: sem admin, sem internet.
 - Sem dependências nativas ou instalação: stdlib sempre que possível (`sqlite3`, `zipfile`, `http.server`), no máximo wheels puros Python vendorizados. Front-end sem CDN e sem build em runtime (assets vendorizados).
 - Caminhos sempre com `pathlib`; abrir arquivos com encoding explícito (`utf-8-sig`), `newline=''`; não assumir `/`, LF nem permissões POSIX.
-- Distribuição: pasta copiável por plataforma (Windows: Python embeddable + o app; Linux: o app com `python3` do sistema ou venv) e/ou binário gerado por CI em runner de cada SO. Testes rodam em Linux e Windows via GitHub Actions.
+- Python ≥ 3.11 com `sqlite3` + FTS5 (checado na inicialização). Distribuição: um zipapp `dmslog.pyz` comum aos dois SOs; Windows = pasta portátil com Python embeddable 3.13 + `dmslog.pyz` + `.bat`; Linux = `python3 dmslog.pyz`. Sem PyInstaller/instalador. Testes rodam em Linux e Windows via GitHub Actions (detalhes em `docs/ARQUITETURA.md`, seção 14).
+- Viewer = web local (`http.server` + HTML/JS vendorizado, sem framework nem build). Conteúdo de log é dado não confiável: na UI só `textContent`, nunca `innerHTML`.
+- Logs vivos: abrir, ler e fechar a cada ciclo; nunca manter handle aberto (no Windows impede a rotação `.log` → `.log.0`).
+- Arquitetura, esquema e interfaces: `docs/ARQUITETURA.md`; marcos e modelo por tarefa: `docs/ROADMAP.md`.
+- Decisões do usuário (escopo da 1.0, um ERS por caso, payload, horário local, precedência do Registry, exportação `.txt`, repo privado): `docs/ARQUITETURA.md`, seção 1a.
 - Dados sensíveis ficam locais: servidor só em `127.0.0.1`, índice/cache em pasta do usuário, nada de telemetria.
 
 ## Referências
