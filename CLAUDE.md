@@ -2,6 +2,17 @@
 
 Analisador de logs dos adapters (online interfaces) do ADMS. Python (`src/dmslog/`), testes com pytest.
 
+## Objetivo
+Construir uma ferramenta (analyzer + viewer) em que o Jefferson carrega sempre os logs de um ERS (zip) e os analisa de forma focada, apoiada na base de conhecimento do adms-v3.9 (operações, parâmetros, códigos de erro, mensagens dos adapters). Os ERS em `local-samples/` são amostras para descobrir formato e mensagens; **não** analisar nem reportar problemas desses ambientes. Referência de UX: `docs/REFERENCIA-UX.md`.
+
+## Requisitos de portabilidade (Windows e Linux)
+- Destinos finais: **Windows e Linux**, ambos de primeira classe (desenvolvimento em Linux/Omarchy; uso final também em PC Windows). Nada pode funcionar só em um dos dois.
+- No Windows, os logs já estão no PC (lê direto de `C:\SchneiderElectricData\...\Log` e de ZIPs de ERS locais); nada é transferido para fora. O PC provavelmente é corporativo: sem admin, sem internet.
+- Sem dependências nativas ou instalação: stdlib sempre que possível (`sqlite3`, `zipfile`, `http.server`), no máximo wheels puros Python vendorizados. Front-end sem CDN e sem build em runtime (assets vendorizados).
+- Caminhos sempre com `pathlib`; abrir arquivos com encoding explícito (`utf-8-sig`), `newline=''`; não assumir `/`, LF nem permissões POSIX.
+- Distribuição: pasta copiável por plataforma (Windows: Python embeddable + o app; Linux: o app com `python3` do sistema ou venv) e/ou binário gerado por CI em runner de cada SO. Testes rodam em Linux e Windows via GitHub Actions.
+- Dados sensíveis ficam locais: servidor só em `127.0.0.1`, índice/cache em pasta do usuário, nada de telemetria.
+
 ## Referências
 - Documentação dos adapters: projeto `~/Projects/adms-v3.9` (vault Obsidian em `adms-knowledge-base/Concluído/12 Interfaces online/`). Resumo e mapa em `docs/ADAPTERS.md`.
 - Logs de exemplo: ERS zipados em `local-samples/` (convenção em `local-samples/README.md`; o que é o ERS em `docs/ERS.md`). Não commitar credenciais nem dados de clientes.
