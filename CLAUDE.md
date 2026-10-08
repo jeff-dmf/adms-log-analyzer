@@ -23,6 +23,9 @@ Regras:
 - Estrutura, interfaces e esquemas são definidos pelo Opus; ninguém muda isso sem passar por ele (registrar a mudança em `docs/ARQUITETURA.md`).
 - Em dúvida entre dois modelos, usar o mais barato que dê conta; subir para Opus se a tentativa falhar por falta de raciocínio, não por falta de contexto.
 - Agentes recebem contexto completo e escopo fechado (arquivos que podem tocar); não fazem commit, quem commita é a sessão principal.
+- **Paralelização**: tarefas que não são de Opus/Astra (Sonnet/`gpt-6.1-sol` e Haiku/`gpt-6-luna`) devem rodar **em paralelo** quando possível, em vez de em série: vários subagentes na mesma rodada. Entram no mesmo lote só tarefas com (1) dependências já concluídas segundo `docs/ROADMAP.md`, (2) conjuntos de arquivos **disjuntos**, declarados no prompt de cada uma, e (3) nenhum estado compartilhado (mesma branch com edição no mesmo arquivo, índice do git, pastas de saída). Com risco de sobreposição, isolar em worktree. Padrão: até 4 em paralelo (o Jefferson pode alterar).
+- Tarefas de Opus/Astra (arquitetura, desenho, algoritmos difíceis, revisão final) não são paralelizadas entre si; rodam uma por vez, e podem coexistir com um lote de Sonnet/Haiku apenas se este não depender delas nem tocar nos mesmos arquivos.
+- Ao fim de cada lote, a sessão principal integra, resolve conflitos e roda lint e testes no conjunto antes de commitar; subagentes continuam sem commit. No Codex, subagentes só nascem quando o pedido os cita: peça explicitamente o lote (ex.: "em paralelo, `implementador` em X e `varredura` em Y").
 - A sessão principal está autorizada a criar branches, commitar, publicar PRs e fazer merge sem pedir aprovação manual ao Jefferson, dentro do escopo solicitado e seguindo o fluxo de revisão cruzada abaixo.
 - Logs de exemplo são lidos por script (templates, contagens), nunca por leitura integral.
 - O detalhe por tarefa (qual modelo em cada item) fica em `docs/ROADMAP.md`.
