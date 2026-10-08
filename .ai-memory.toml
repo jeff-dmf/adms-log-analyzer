@@ -1,0 +1,3 @@
+# ai-memory: opt-in deste repositório (captura em modo allowlist)
+workspace = "adms-log-analyzer"
+project = "adms-log-analyzer"
