@@ -27,7 +27,7 @@ Fonte: vault Obsidian do projeto `adms-v3.9` (`adms-knowledge-base/Concluído/12
 
 `MessageLogLevel` define em que nível as mensagens trocadas (request/response) vão para o log. Ou seja, o conteúdo das mensagens só aparece se `LogLevel` for igual ou mais detalhado que o `MessageLogLevel` da operação.
 
-A semântica de cada nível está no "Logging and Tracing Administration Guide" (citado nas configurações). Ainda não está no vault: confirmar com os logs de exemplo.
+Níveis em ordem de severidade (incrementais) e arquivos de log: ver `docs/ERS.md`. O "Logging and Tracing Administration Guide" citado nas configurações não está no vault; confirmar detalhes com os logs de exemplo.
 
 ## Pendente (depende dos logs)
 

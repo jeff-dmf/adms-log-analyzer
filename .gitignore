@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 *.swp
 *~
+
+# Logs extraídos localmente dos ERS
+local-samples/_extracted/
