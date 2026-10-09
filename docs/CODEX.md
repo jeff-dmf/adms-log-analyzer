@@ -83,12 +83,12 @@ Todos com janela de 272k tokens. `ultra` = raciocínio máximo com delegação a
 | Papel (CLAUDE.md) | Codex | Effort | Por quê |
 |---|---|---|---|
 | **Opus**: arquitetura, modelo de dados/eventos, parser/templates, descoberta de formato, algoritmos difíceis | `gpt-6-astra` | `high` | Única opção "fronteira"; julgamento é o que importa aqui |
-| **Opus**: revisão final T2 (segurança, parser/algoritmo, esquema/arquitetura) e algoritmo realmente difícil | `gpt-6-astra` | `high`; `xhigh` só com suspeita concreta ou a pedido | Mais profundidade onde o erro custa caro; `max` só se `xhigh` falhar |
+| **Opus**: só caso extremamente complexo (revisão ou algoritmo) | `gpt-6-astra` | `high`; `xhigh` só a pedido | Reservado: o padrão de revisão é o Sonnet-equivalente (`gpt-6.1-sol`); critérios em `docs/REVISAO-CRUZADA.md` |
 | **Sonnet**: implementação, testes, empacotamento/CI, docs, git, coordenação | `gpt-6.1-sol` | `medium` | Custo menor com qualidade próxima do Astra; `high` para módulo com várias decisões locais |
 | **Haiku**: contagens, inventário, grep em lote, anonimização, links, tabelas | `gpt-6-luna` | `low` | Mais barato e rápido; `medium` se a varredura exigir interpretar resultado |
 
 Quando o equivalente não existir ou estiver indisponível (limite de uso, rollout):
-- Sem Astra → `gpt-6.1-sol` com `xhigh` (ou `max` para revisão).
+- Sem Astra → `gpt-6.1-sol` com `xhigh`.
 - Sem 6.1 Sol → `gpt-6-sol` `medium`.
 - Sem Luna → `gpt-6.1-sol` `low`.
 - Regra do CLAUDE.md vale igual: comece pelo mais barato que dê conta e suba se falhar por falta de raciocínio, não de contexto.
@@ -98,7 +98,7 @@ Como invocar:
 codex -m gpt-6-astra -c model_reasoning_effort=high          # sessão interativa "Opus"
 codex -p arquiteto                                            # o mesmo, via perfil
 codex exec -m gpt-6-luna -c model_reasoning_effort=low -s read-only "conte ..."
-codex review --base main -c model=gpt-6.1-sol -c model_reasoning_effort=high   # revisão T1; T2 usa gpt-6-astra high (níveis em REVISAO-CRUZADA.md)
+codex review --base main -c model=gpt-6.1-sol -c model_reasoning_effort=high   # revisão T1; T2 também usa sol (high); astra só em caso extremamente complexo (REVISAO-CRUZADA.md)
 ```
 Dentro da sessão interativa, `/model` troca modelo e effort sem sair.
 

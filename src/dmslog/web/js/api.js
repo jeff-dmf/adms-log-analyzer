@@ -74,8 +74,9 @@ export const api = {
   page: (caseId, filter, cursor, dir, limit, signal) =>
     request("POST", "/api/entries/page", { case: caseId, filter, cursor, dir, limit, columns: [] }, signal),
   count: (caseId, filter, signal) => request("POST", "/api/entries/count", { case: caseId, filter }, signal),
-  entry: (caseId, id) => request("GET", "/api/entries/" + encodeURIComponent(id) + query({ case: caseId })),
-  context: (caseId, id, same, before, after) =>
+  entry: (caseId, id, signal) =>
+    request("GET", "/api/entries/" + encodeURIComponent(id) + query({ case: caseId }), undefined, signal),
+  context: (caseId, id, same, before, after, signal) =>
     request("GET", "/api/entries/" + encodeURIComponent(id) + "/context" +
-      query({ case: caseId, same, before, after })),
+      query({ case: caseId, same, before, after }), undefined, signal),
 };

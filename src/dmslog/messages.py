@@ -84,6 +84,7 @@ API_INVALID_CASE_ID = (
     "Invalid case id: use 1 to 80 letters, digits, '.', '_' or '-', starting with a letter or digit"
 )
 API_CASE_NOT_FOUND = "Case {case!r} does not exist"
+API_CASE_AMBIGUOUS = "Case {case!r} is ambiguous: several folders differ only in letter case"
 API_CASE_EXISTS = "Case {case!r} already exists"
 API_CASE_BUSY = "Case {case!r} has an indexing job running"
 API_CASE_DELETE_FAILED = "Case {case!r} could not be deleted: {error}"

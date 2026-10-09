@@ -11,6 +11,7 @@ from urllib.parse import quote, urlsplit
 
 import pytest
 
+from dmslog.server.api import ApiError
 from dmslog.server.app import COOKIE_NAME, DmslogServer
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -381,3 +382,28 @@ def test_script_literal_comes_back_intact(client, tmp_path):
     assert headers["content-type"] == "application/json; charset=utf-8"
     assert headers["x-content-type-options"] == "nosniff"
     assert entry["text"] == ('Payload follows:\n<a href="x" onclick="alert(1)"><script>alert(1)</script></a>')
+
+
+def test_aliases_with_other_letter_case_resolve_to_the_real_folder_name(server, client):
+    assert client.post("/api/cases", {"name": "Demo"})[0] == 201
+    store = server.api.store
+    for alias in ("Demo", "demo", "DEMO", "dEmO"):
+        assert store.canonical_case_id(alias) == "Demo"
+        assert store.require(alias) == "Demo"
+    assert client.get("/api/sources?case=demo")[0] == 200
+    with pytest.raises(ApiError) as err:
+        store.canonical_case_id("missing")
+    assert err.value.status == 404
+
+
+def test_pre_existing_folders_differing_only_in_case_are_ambiguous(server, tmp_path):
+    store = server.api.store
+    for name in ("Twin", "twin"):
+        folder = store.root / name
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "case.sqlite").write_bytes(b"")
+    if len({p.name for p in store.root.iterdir()}) < 2:
+        pytest.skip("case-insensitive filesystem cannot hold both folders")
+    with pytest.raises(ApiError) as err:
+        store.canonical_case_id("TWIN")
+    assert err.value.status == 409 and err.value.code == "case_ambiguous"

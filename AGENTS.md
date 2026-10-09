@@ -24,7 +24,7 @@ Analyzer + viewer dos logs dos adapters (online interfaces) do ADMS: o Jefferson
 ## Divisão por modelo no Codex
 | Papel no CLAUDE.md | Codex | Effort | Subagente (`.codex/agents/`) |
 |---|---|---|---|
-| Opus (arquitetura, partes difíceis, revisão) | `gpt-6-astra` | `high` (`xhigh` só em revisão T2 com suspeita concreta ou a pedido; ver `docs/REVISAO-CRUZADA.md`) | `arquiteto` |
+| Opus (arquitetura, partes difíceis; revisão só se extremamente complexa) | `gpt-6-astra` | `high` (`xhigh` só a pedido) | `arquiteto` |
 | Sonnet (implementação, empacotamento, docs, git, coordenação) | `gpt-6.1-sol` | `medium` | `implementador` |
 | Haiku (varreduras mecânicas) | `gpt-6-luna` | `low` | `varredura` |
 
@@ -33,8 +33,9 @@ Em dúvida, o mais barato que dê conta; subir de papel se falhar por falta de r
 ## Regras
 - Delegação: use os subagentes de `.codex/agents/` pelo nome (o Codex só cria subagentes quando o pedido os menciona); eles recebem contexto completo e escopo fechado (arquivos que podem tocar) e **não fazem commit**. A sessão principal está autorizada a criar branches, commitar, publicar PRs e fazer merge dentro do escopo solicitado, sem confirmação manual a cada etapa.
 - Paralelização: tarefas que não são do `arquiteto` (`gpt-6-astra`), ou seja, `implementador` (`gpt-6.1-sol`) e `varredura` (`gpt-6-luna`), devem rodar em paralelo quando possível: dependências do `docs/ROADMAP.md` concluídas, escritas disjuntas declaradas em cada prompt e nenhuma mutação concorrente de recurso compartilhado (saída própria por tarefa; índice e branch do git só a sessão principal; worktree se houver risco); até 4 simultâneos por padrão. Tarefas do `arquiteto` não são paralelizadas entre si. Neste projeto, só delegue quando o pedido solicitar explicitamente subagentes ou trabalho paralelo; a sessão principal integra, roda lint e testes e commita. Regra canônica: `CLAUDE.md`.
+- **Política vigente (Jefferson, 2026-10-09):** revisão cruzada reativada e otimizada. O Claude revisa os PRs que o Codex escrever e o Codex revisa os do Claude, com o revisor padrão barato: `gpt-6.1-sol` (`medium` em T0, `high` em T1/T2). `gpt-6-astra` (`arquiteto`) só em caso extremamente complexo ou a pedido do Jefferson (definição em `docs/REVISAO-CRUZADA.md`). Merge pela sessão principal depois da aprovação sem pendências e do CI verde.
 - Revisão cruzada obrigatória: **Claude revisa e aprova Codex; Codex revisa e aprova Claude**, no papel de arquiteto. Aprovação vinculada ao SHA final, sem pendências bloqueantes, e CI obrigatório verde em Linux e Windows antes do merge. Fluxo canônico em `CLAUDE.md` e `docs/REVISAO-CRUZADA.md`; mesma conta GitHub registra aprovação do modelo em comentário, sem simular uma review formal do próprio autor.
-- Custo da revisão: classifique o PR em T0/T1/T2 e siga o orçamento de contexto e o prompt-modelo de `docs/REVISAO-CRUZADA.md` (sem `cat` de documentos grandes; `xhigh` só em T2 com suspeita concreta). Se o outro harness estiver indisponível, o Jefferson pode aprovar manualmente; essa revisão é dispensada e não é retomada. Exceção registrada: PR #10 (o Codex não deve retomá-lo).
+- Custo da revisão: classifique o PR em T0/T1/T2 e siga o orçamento de contexto e o prompt-modelo de `docs/REVISAO-CRUZADA.md` (sem `cat` de documentos grandes, saída curta, re-revisão só do diff incremental). Revisor padrão `gpt-6.1-sol`; `gpt-6-astra` só em caso extremamente complexo. Se o outro harness estiver indisponível, o Jefferson pode aprovar manualmente (registrar em comentário no PR). Exceção registrada: PR #10.
 - Logs de exemplo são lidos por script (templates, contagens), nunca por leitura integral.
 - `~/Projects/adms-v3.9` é só leitura.
 - Não commitar credenciais nem dados de clientes.

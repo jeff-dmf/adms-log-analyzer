@@ -246,3 +246,18 @@ def test_server_close_cancels_a_running_ingest_and_ends_streams(tmp_path):
     conn.close()
     assert time.monotonic() - started < 10
     assert not any(t.name == "ingest-stop" and t.is_alive() for t in threading.enumerate())
+
+
+def test_aliases_with_other_letter_case_share_the_job_lock_and_hub(session, server, tmp_path):
+    big = big_log(tmp_path)
+    session.call("POST", "/api/cases", {"name": "Demo"})
+    assert session.call("POST", "/api/cases/Demo/collections", {"path": str(big)})[0] == 202
+    for alias in ("demo", "DEMO"):
+        status, body = session.call("POST", f"/api/cases/{alias}/collections", {"path": str(big)})
+        assert status == 409 and body["error"] == "job_running"
+        assert session.call("DELETE", f"/api/cases/{alias}")[0] == 409
+    jobs = server.api.jobs
+    assert jobs.hub("demo") is jobs.hub("DEMO") is jobs.hub("Demo")
+    assert jobs.is_running("DEMO")
+    events = session.events_until_done("dEmO")
+    assert events[-1][0] == "done"

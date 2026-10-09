@@ -23,9 +23,22 @@ from typing import BinaryIO
 from .envelope import BOM, Envelope, Header
 
 DEFAULT_CHUNK = 1 << 20
+# Upper bound for the pending record plus the unterminated tail held in memory. Real records
+# (dumps of 1,600 lines, hundreds of KB) are far below it; headerless repetitive content is not.
+DEFAULT_MAX_RECORD_BYTES = 64 << 20
 _ORPHAN = Header(None, None, None, None, 0)  # field source for orphan records
 
 _ScanFn = Callable[[bytearray, int, int], Iterable[tuple[int, Header]]]
+
+
+class RecordTooLargeError(ValueError):
+    """The pending record (or the unterminated line after it) exceeded ``max_record_bytes``."""
+
+    def __init__(self, offset: int, size: int, limit: int) -> None:
+        super().__init__(f"record starting at byte {offset} exceeds {limit} bytes (at least {size} bytes)")
+        self.offset = offset  # source offset where the oversized record starts
+        self.size = size  # bytes held when the limit was detected
+        self.limit = limit
 
 
 @dataclass(slots=True)
@@ -69,8 +82,18 @@ def _strip_eol(raw: bytes | bytearray) -> bytes | bytearray:
 class RecordGrouper:
     """Push parser: :meth:`feed` byte chunks, then call :meth:`finish` once."""
 
-    def __init__(self, envelope: Envelope, *, start_off: int = 0, start_line: int = 1) -> None:
+    def __init__(
+        self,
+        envelope: Envelope,
+        *,
+        start_off: int = 0,
+        start_line: int = 1,
+        max_record_bytes: int = DEFAULT_MAX_RECORD_BYTES,
+    ) -> None:
+        if max_record_bytes < 1:
+            raise ValueError("max_record_bytes must be positive")
         self.envelope = envelope
+        self.max_record_bytes = max_record_bytes
         scan = getattr(envelope, "scan", None)
         self._scan: _ScanFn = scan if scan is not None else (lambda b, p, e: _scan_by_line(envelope, b, p, e))
         self._buf = bytearray()  # pending record (from index 0) plus the unterminated tail
@@ -96,8 +119,23 @@ class RecordGrouper:
         buf += chunk
         nl = buf.rfind(b"\n", old_len)
         if nl < 0:
+            self._check_size()
             return []
-        return self._consume(nl + 1)
+        out = self._consume(nl + 1)
+        self._check_size()
+        return out
+
+    def _check_size(self) -> None:
+        """Fail when the held data (pending record plus unterminated tail) exceeds the limit."""
+        size = len(self._buf)
+        if size > self.max_record_bytes:
+            self._fail(self._buf_off, size)
+
+    def _fail(self, offset: int, size: int) -> None:
+        self._buf = bytearray()  # release the memory; the grouper is unusable from here on
+        self._scan_pos = 0
+        self._finished = True
+        raise RecordTooLargeError(offset, size, self.max_record_bytes)
 
     def finish(self, *, final: bool) -> list[Record]:
         """End of the available input.
@@ -126,6 +164,8 @@ class RecordGrouper:
         header = self._header
         for pos, h in self._scan(buf, self._scan_pos, end):
             if pos > rec_start:
+                if pos - rec_start > self.max_record_bytes:
+                    self._fail(self._buf_off + rec_start, pos - rec_start)
                 rec = self._make(rec_start, pos, header, False, line_no)
                 line_no += rec.nlines
                 out.append(rec)

@@ -18,7 +18,7 @@ from query_helpers import build_case, open_ro, py_match  # noqa: E402
 from dmslog.store import filters as F  # noqa: E402
 from dmslog.store import query as Q  # noqa: E402
 
-SETTINGS = settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+SETTINGS = settings(max_examples=500, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 
 # Tables a compiled filter may read (plus FTS5 shadow tables).
 EXPECTED_TABLES = {

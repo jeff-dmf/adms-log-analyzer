@@ -3,7 +3,13 @@ import io
 import pytest
 
 from dmslog.parse.envelope import ADMS, BOM, OASERR, PLAIN, Header
-from dmslog.parse.records import RecordGrouper, iter_records, parse_bytes
+from dmslog.parse.records import (
+    DEFAULT_MAX_RECORD_BYTES,
+    RecordGrouper,
+    RecordTooLargeError,
+    iter_records,
+    parse_bytes,
+)
 
 
 def hdr(msg=b"m", *, sec=b"05", ms=b"000", pid=b"1111", tid=b"[TID=0x1a]", level=b"DEBUGLOG", eol=b"\r\n"):
@@ -234,3 +240,65 @@ def test_feed_after_finish_raises():
         grouper.feed(b"x")
     with pytest.raises(RuntimeError):
         grouper.finish(final=True)
+
+
+# --------------------------------------------------------------------------- record size limit
+
+
+def test_default_limit_is_64_mib_and_a_large_normal_dump_is_unaffected():
+    assert DEFAULT_MAX_RECORD_BYTES == 64 << 20
+    data = hdr(b"dump") + b"".join(b"line %d %s\r\n" % (i, b"x" * 200) for i in range(1600)) + hdr(b"next")
+    big, nxt = parse_bytes(data, ADMS)
+    assert big.nlines == 1601 and nxt.msg == "next"
+
+
+def test_single_huge_line_without_header_raises_typed_error_and_stops_growing():
+    g = RecordGrouper(ADMS, start_off=1000, max_record_bytes=1000)
+    with pytest.raises(RecordTooLargeError) as info:
+        for _ in range(100):
+            g.feed(b"a" * 400)  # never a newline
+    exc = info.value
+    assert isinstance(exc, ValueError)
+    assert (exc.offset, exc.limit) == (1000, 1000)
+    assert 1000 < exc.size <= 1400  # detected on the first feed past the limit
+    assert len(g._buf) == 0
+
+
+def test_many_continuation_lines_exceed_the_limit():
+    g = RecordGrouper(ADMS, max_record_bytes=2000)
+    head = hdr(b"a")
+    assert g.feed(head) == []
+    with pytest.raises(RecordTooLargeError) as info:
+        for _ in range(1000):
+            g.feed(b"continuation line\r\n")
+    assert info.value.offset == 0 and info.value.size > 2000
+    assert len(g._buf) == 0
+
+
+def test_buffer_never_exceeds_limit_plus_one_chunk():
+    limit, chunk = 5000, b"y" * 700 + b"\n"
+    g = RecordGrouper(ADMS, max_record_bytes=limit)
+    g.feed(hdr(b"a"))
+    peak = 0
+    with pytest.raises(RecordTooLargeError):
+        for _ in range(100):
+            g.feed(chunk)
+            peak = max(peak, len(g._buf))
+    assert peak <= limit
+
+
+def test_oversized_record_closed_in_the_same_chunk_still_fails_and_reports_its_offset():
+    data = hdr(b"ok") + hdr(b"big") + b"z" * 500 + b"\n" + hdr(b"after")
+    off = len(hdr(b"ok"))
+    g = RecordGrouper(ADMS, max_record_bytes=400)
+    with pytest.raises(RecordTooLargeError) as info:
+        g.feed(data)
+    assert info.value.offset == off
+
+
+def test_record_exactly_at_the_limit_is_accepted():
+    body = hdr(b"a") + b"c" * 20 + b"\n"
+    n = len(body)
+    g = RecordGrouper(ADMS, max_record_bytes=n)
+    out = g.feed(body + hdr(b"b"))
+    assert [r.nbytes for r in out] == [n]

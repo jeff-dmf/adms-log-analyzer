@@ -1,13 +1,15 @@
 # Revisão cruzada e merge autônomo
 
+> **Reativado e otimizado (decisão do Jefferson em 2026-10-09):** um agente revisa o PR do outro, em vez de o Jefferson aprovar manualmente, com o revisor padrão barato (`gpt-6.1-sol` no Codex; Sonnet no Claude). Opus e `gpt-6-astra` só em caso extremamente complexo (seção "Caso extremamente complexo"). Isto substitui a suspensão de 2026-10-08.
+
 Decisão do Jefferson em 2026-10-08. A regra canônica está em `../CLAUDE.md`; este documento descreve sua execução. A sessão principal pode criar branches, commitar, publicar PRs e fazer merge dentro do escopo solicitado, sem pedir aprovação manual do Jefferson em cada etapa.
 
 ## Quem revisa
 
 | Autor das alterações | Revisor final |
 |---|---|
-| Codex | Claude Code, papel Opus/arquiteto |
-| Claude Code | Codex, papel `arquiteto` |
+| Codex | Claude Code, revisor padrão Sonnet |
+| Claude Code | Codex, revisor padrão `gpt-6.1-sol` |
 
 O revisor trabalha em uma sessão independente e recebe o escopo, a base, o SHA final, o diff completo e os resultados das verificações. Ele não relê o cânone inteiro: usa o `AGENTS.md` (carregado automaticamente) e só os arquivos e trechos indicados no pacote do autor (ver "Custo e níveis de revisão"). Avalia o conteúdo sem editar arquivos nem fazer commit, push ou merge. Revisões auxiliares pelo mesmo harness não substituem a revisão cruzada. Se o PR tiver contribuição dos dois harnesses, cada um revisa as alterações do outro no mesmo SHA final.
 
@@ -35,10 +37,15 @@ Medido em 2026-10-08: quatro revisões do Codex custaram de 66 mil a 130 mil tok
 | Nível | Quando | Revisor no Codex | Revisor no Claude |
 |---|---|---|---|
 | T0 | Documentação de processo, redação, links, regras sem efeito em código ou esquema | `gpt-6.1-sol`, `medium` | Sonnet |
-| T1 | Código rotineiro, testes, CI, empacotamento (use `codex review --base main` quando o PR é só código) | `gpt-6.1-sol`, `high` | Sonnet com `/code-review` |
-| T2 | Segurança, concorrência, parser e algoritmos, esquema e arquitetura, documentos que fixam decisões | `gpt-6-astra`, `high` | Opus |
+| T1 | Código rotineiro, testes, CI, empacotamento (use `codex review --base main` quando o PR é só código) | `gpt-6.1-sol`, `high` | Sonnet |
+| T2 | Segurança, concorrência, parser e algoritmos, esquema e arquitetura, documentos que fixam decisões | `gpt-6.1-sol`, `high` | Sonnet (esforço alto) |
 
-`xhigh` / revisão Opus extensa só em T2 e só quando uma primeira passada em `high` deixar suspeita concreta, ou quando o Jefferson pedir.
+**Opus e `gpt-6-astra` só em caso extremamente complexo**, que é um destes (o autor justifica no PR):
+1. dúvida de segurança que o revisor padrão não consegue descartar nem reproduzir, e que o autor também não consegue refutar com teste;
+2. correção de algoritmo concorrente ou incremental que os testes não cobrem, em que o revisor padrão pediu uma segunda opinião;
+3. dois ciclos seguidos de `CHANGES_REQUESTED` com discordância técnica entre autor e revisor padrão;
+4. pedido explícito do Jefferson.
+Mesmo nesses casos: uma única passada em `high` (`xhigh` só a pedido), com o pacote enxuto e restrita à dúvida concreta, não ao PR inteiro.
 
 **Orçamento de contexto** (vale para qualquer revisor):
 1. O autor monta o pacote: `git diff --stat`, base e SHA, nível, até 5 afirmações que sustentam o desenho, cada uma com o comando ou script do autor e o resultado já medido, e a lista de arquivos e intervalos de linhas que o revisor deve abrir além do diff.

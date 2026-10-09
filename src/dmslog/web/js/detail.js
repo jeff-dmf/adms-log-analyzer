@@ -1,5 +1,6 @@
 // Detail panel: full multi-line text of the selected entry (text nodes only) plus a context list.
 import { api } from "./api.js";
+import { RequestGuard, canLoadContext } from "./detail-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format } from "./strings.js";
 import { formatTs } from "./time.js";
@@ -11,8 +12,10 @@ export class Detail {
     this.getSourceName = getSourceName;
     this.onError = onError;
     this.entry = null;
+    this.entryCase = null;
     this.terms = [];
-    this.token = 0;
+    this.entryGuard = new RequestGuard();
+    this.contextGuard = new RequestGuard();
     refs.contextButton.addEventListener("click", () => this.loadContext());
     refs.contextClose.addEventListener("click", () => this.closeContext());
     refs.copyButton.addEventListener("click", () => this.copyText());
@@ -27,7 +30,10 @@ export class Detail {
   }
 
   clear() {
+    this.entryGuard.invalidate();
+    this.contextGuard.invalidate();
     this.entry = null;
+    this.entryCase = null;
     this.refs.meta.textContent = "";
     this.refs.text.textContent = S.detailEmpty;
     this.refs.actions.hidden = true;
@@ -39,18 +45,20 @@ export class Detail {
     if (caseId === null) {
       return;
     }
-    const token = (this.token += 1);
+    this.contextGuard.invalidate();
+    const ticket = this.entryGuard.begin(caseId, id);
     try {
-      const entry = await api.entry(caseId, id);
-      if (token === this.token) {
+      const entry = await api.entry(caseId, id, ticket.signal);
+      if (this.entryGuard.isCurrent(ticket, this.getCase(), id) && entry && String(entry.id) === String(id)) {
         this.entry = entry;
+        this.entryCase = ticket.caseId;
         if (!keepContext) {
           this.closeContext();
         }
         this.renderEntry(entry);
       }
     } catch (err) {
-      if (token === this.token) {
+      if (this.entryGuard.isCurrent(ticket, this.getCase(), id) && !(err && err.name === "AbortError")) {
         this.onError(err);
       }
     }
@@ -82,15 +90,22 @@ export class Detail {
 
   async loadContext() {
     const caseId = this.getCase();
-    if (!this.entry || caseId === null) {
+    if (!canLoadContext(this.entry, this.entryCase, caseId)) {
       return;
     }
+    const entryId = this.entry.id;
     const same = this.refs.contextSame.value;
+    const ticket = this.contextGuard.begin(caseId, entryId);
     try {
-      const data = await api.context(caseId, this.entry.id, same, 50, 50);
-      this.renderContext(data.rows);
+      const data = await api.context(caseId, entryId, same, 50, 50, ticket.signal);
+      if (this.contextGuard.isCurrent(ticket, this.getCase(), this.entry ? this.entry.id : null)) {
+        this.renderContext(data.rows);
+      }
     } catch (err) {
-      this.onError(err);
+      if (this.contextGuard.isCurrent(ticket, this.getCase(), this.entry ? this.entry.id : null) &&
+          !(err && err.name === "AbortError")) {
+        this.onError(err);
+      }
     }
   }
 
@@ -130,6 +145,7 @@ export class Detail {
   }
 
   closeContext() {
+    this.contextGuard.invalidate(); // a pending context answer must not reopen the panel
     this.refs.contextBox.hidden = true;
     this.refs.contextList.textContent = "";
   }

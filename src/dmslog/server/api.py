@@ -118,13 +118,23 @@ class CaseStore:
     def db_path(self, case_id: str) -> Path:
         return self.case_dir(case_id) / pipeline.CASE_DB_FILENAME
 
-    def require(self, case_id: Any) -> str:
-        """Validate the id and make sure the case exists (and is a real folder, not a link)."""
-        cid = self.validate_id(case_id)
-        folder = self.root / cid
-        if folder.is_symlink() or not self.db_path(cid).is_file():
+    def canonical_case_id(self, raw: Any) -> str:
+        """Resolve a received id to the real folder name (case-insensitive match).
+
+        Every job, SSE hub, delete and database access keys on this value, so ``Demo`` and
+        ``demo`` can never be treated as two cases on case-insensitive filesystems.
+        """
+        cid = self.validate_id(raw)
+        matches = [name for name in self.ids() if name.casefold() == cid.casefold()]
+        if not matches:
             raise ApiError(404, "case_not_found", messages.API_CASE_NOT_FOUND.format(case=cid))
-        return cid
+        if len(matches) > 1:
+            raise ApiError(409, "case_ambiguous", messages.API_CASE_AMBIGUOUS.format(case=cid))
+        return matches[0]
+
+    def require(self, case_id: Any) -> str:
+        """Validate the id and make sure the case exists; returns the canonical id."""
+        return self.canonical_case_id(case_id)
 
     @contextmanager
     def reader(self, case_id: str) -> Iterator[sqlite3.Connection]:
@@ -224,15 +234,21 @@ class IngestJobs:
         self.stopping = threading.Event()
 
     def hub(self, case_id: str) -> ProgressHub:
+        case_id = self._store.canonical_case_id(case_id)
         with self._lock:
             return self._hubs.setdefault(case_id, ProgressHub())
 
     def is_running(self, case_id: str) -> bool:
+        try:
+            case_id = self._store.canonical_case_id(case_id)
+        except ApiError:
+            return False
         with self._lock:
             hub = self._hubs.get(case_id)
         return hub is not None and hub.running
 
     def start(self, case_id: str, path: Path, scope: str) -> str:
+        case_id = self._store.canonical_case_id(case_id)
         hub = self.hub(case_id)
         job_id = uuid.uuid4().hex[:12]
         if self.stopping.is_set() or not hub.try_begin(job_id):

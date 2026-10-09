@@ -9,7 +9,7 @@ from hypothesis import HealthCheck, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
 from dmslog.parse.envelope import ADMS, BOM, LEVELS, OASERR, PLAIN  # noqa: E402
-from dmslog.parse.records import Record, RecordGrouper, parse_bytes  # noqa: E402
+from dmslog.parse.records import Record, RecordGrouper, RecordTooLargeError, parse_bytes  # noqa: E402
 
 MAIN = settings(
     max_examples=500,
@@ -258,3 +258,27 @@ def test_generated_continuations_never_match(text, end):
 @given(adms_header, st.binary(max_size=20))
 def test_header_decision_depends_only_on_prefix(text, suffix):
     assert ADMS.match(text + suffix) == ADMS.match(text)
+
+
+@MAIN
+@given(st.data(), log_bytes(), st.sampled_from(ENVS), st.booleans())
+def test_record_limit_is_independent_of_chunking(data, raw, env, final):
+    points = data.draw(cuts(raw))
+    whole = parse_bytes(raw, env, final=final)
+    largest = max((r.nbytes for r in whole), default=0)
+    longest_line = max((len(line) for line in raw.split(b"\n")), default=0) + 1
+
+    def run(limit):
+        grouper = RecordGrouper(env, max_record_bytes=limit)
+        out, prev = [], 0
+        for point in [*points, len(raw)]:
+            out += grouper.feed(raw[prev:point])
+            prev = point
+        return out + grouper.finish(final=final)
+
+    # Room for the record plus an unterminated line: nothing changes.
+    assert run(max(largest + longest_line, 1)) == whole
+    # A limit below the largest record always fails, whatever the chunking.
+    if largest > 1:
+        with pytest.raises(RecordTooLargeError):
+            run(largest - 1)

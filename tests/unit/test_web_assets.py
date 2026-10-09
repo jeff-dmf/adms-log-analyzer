@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "src" / "dmslog" / "web"
 JS_DIR = WEB / "js"
 EXPECTED_MODULES = {
-    "api.js", "detail.js", "filters.js", "grid.js", "grid-model.js", "main.js", "search.js",
-    "sources.js", "strings.js", "theme.js", "time.js",
+    "api.js", "detail-model.js", "detail.js", "filters.js", "grid.js", "grid-model.js", "main.js",
+    "search.js", "sources.js", "strings.js", "theme.js", "time.js",
 }
 
 FORBIDDEN_JS = [

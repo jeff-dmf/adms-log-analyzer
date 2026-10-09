@@ -44,7 +44,7 @@ from dmslog.ingest.fingerprint import (
 )
 from dmslog.ingest.reader import ReadLimitError, ReadLimits, SourceReader, relax_ratio_violations
 from dmslog.parse.envelope import detect_envelope, get_envelope
-from dmslog.parse.records import RecordGrouper
+from dmslog.parse.records import DEFAULT_MAX_RECORD_BYTES, RecordGrouper, RecordTooLargeError
 from dmslog.store.writer import MAX_BATCH_RECORDS, BatchStats, CollectionRow, IndexWriter, SourceRow
 
 CASE_DB_FILENAME = "case.sqlite"
@@ -58,6 +58,7 @@ SCOPE_ALL = "all"
 # Reasons stored in source.error for sources that are listed but not indexed.
 SKIP_OUT_OF_SCOPE = "out_of_scope"
 SKIP_NOT_INDEXABLE = "not_indexable"
+FAIL_RECORD_TOO_LARGE = "record_too_large"
 
 _ERROR_MARKERS = re.compile(
     r"Non Fatal Exception|Exception:|failed|unsuccessfully|\[ERROR\]|ERROR -|Errors occurred"
@@ -92,6 +93,7 @@ class IngestOptions:
     batch_bytes: int = DEFAULT_BATCH_BYTES
     chunk_size: int = 1 << 20
     limits: ReadLimits = field(default_factory=ReadLimits)
+    max_record_bytes: int = DEFAULT_MAX_RECORD_BYTES
 
 
 @dataclass(frozen=True)
@@ -401,6 +403,11 @@ class _Run:
             self.w.rollback()
             self._fail(row, info, exc)
             return
+        except RecordTooLargeError as exc:
+            # Batches committed before the oversized record stay (complete records only).
+            self.w.rollback()
+            self._fail(row, info, exc, reason=FAIL_RECORD_TOO_LARGE)
+            return
         except BaseException:
             self.w.rollback()
             raise
@@ -416,11 +423,12 @@ class _Run:
         self.sources_done += 1
         self.emit("source_done", fed, info.size, records)
 
-    def _fail(self, row: SourceRow, info: SourceInfo, exc: Exception) -> None:
-        self.w.update_source(row.id, status="error", error=f"{type(exc).__name__}: {exc}"[:500])
+    def _fail(self, row: SourceRow, info: SourceInfo, exc: Exception, reason: str | None = None) -> None:
+        text = f"{reason}: {exc}" if reason else f"{type(exc).__name__}: {exc}"
+        self.w.update_source(row.id, status="error", error=text[:500])
         self.w.commit()
         self.result.sources_failed += 1
-        self.result.details.append(SourceResult(info.member, "error", error=str(exc)))
+        self.result.details.append(SourceResult(info.member, "error", error=text))
         self._finish_source(info, 0)
 
     @staticmethod
@@ -475,7 +483,12 @@ class _Run:
 
         read_from = start_off - min(start_off, HASH_SPAN)  # bytes before the cut only feed the tail hash
         skip = start_off - read_from
-        grouper = RecordGrouper(envelope, start_off=start_off, start_line=start_line) if envelope else None
+        max_rec = self.opt.max_record_bytes
+        grouper = (
+            RecordGrouper(envelope, start_off=start_off, start_line=start_line, max_record_bytes=max_rec)
+            if envelope
+            else None
+        )
         fed = start_off  # position in the stream of the bytes fed so far
         batch_start = fed
         pending: list[bytes] = []
@@ -513,7 +526,7 @@ class _Run:
                         continue
                     chunk = b"".join(pending)
                     pending.clear()
-                    grouper = RecordGrouper(detect_envelope(chunk))
+                    grouper = RecordGrouper(detect_envelope(chunk), max_record_bytes=max_rec)
                 head.update(chunk)
                 tail.update(chunk)
                 fed += len(chunk)
@@ -526,7 +539,9 @@ class _Run:
             chunks.close()
         if grouper is None:  # source shorter than the detection size (possibly empty)
             data = b"".join(pending)
-            grouper = RecordGrouper(detect_envelope(data) if data else get_envelope(info.envelope))
+            grouper = RecordGrouper(
+                detect_envelope(data) if data else get_envelope(info.envelope), max_record_bytes=max_rec
+            )
             head.update(data)
             tail.update(data)
             fed += len(data)

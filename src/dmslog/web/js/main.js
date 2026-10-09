@@ -152,6 +152,7 @@ function start() {
   }, {
     onCase: (id) => {
       caseId = id;
+      detail.clear(); // drop the old case's entry right away, before /sources answers
     },
     onSources: (list, quiet) => {
       sources = list;

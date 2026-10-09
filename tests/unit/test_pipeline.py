@@ -432,6 +432,43 @@ def test_unreadable_source_is_marked_as_error_and_the_run_continues(tmp_path, db
     assert snapshot(db) == clean_snapshot(tmp_path, root, "clean")
 
 
+def test_record_too_large_marks_the_source_as_error_and_the_run_continues(tmp_path, db):
+    good = make_log(300)
+    huge = make_log(200, pid=2222) + mf.render(
+        [mf.header(5000, "INFO", "dump")] + [f"row {i}" for i in range(400)]
+    )
+    root = write_folder(tmp_path / "Log", {WFM: good, f"{LOGDIR}/OntAdapter_2222.log": huge})
+    opts = IngestOptions(chunk_size=1000, batch_bytes=4000, max_record_bytes=3000)
+    result = run_ingest(db, root, opts)
+    assert result.sources_failed == 1
+    assert [d.error for d in result.details if d.action == "error"][0].startswith("record_too_large")
+    rows = dict(db.execute("SELECT member, status FROM source").fetchall())
+    assert rows[WFM] == "ready" and rows[f"{LOGDIR}/OntAdapter_2222.log"] == "error"
+    assert (
+        db.execute("SELECT error FROM source WHERE status='error'")
+        .fetchone()[0]
+        .startswith("record_too_large")
+    )
+    assert_consistent_partial(db)
+    # Records committed before the oversized one stay complete and queryable.
+    sid = db.execute("SELECT id FROM source WHERE status='error'").fetchone()[0]
+    kept = db.execute("SELECT count(*) FROM entry WHERE source_id=?", (sid,)).fetchone()[0]
+    assert 0 < kept < 200 + 1
+    assert (
+        db.execute("SELECT count(*) FROM entry WHERE source_id=? AND msg='dump'", (sid,)).fetchone()[0] == 0
+    )
+    # Ingesting again with the same limit repeats the failure without duplicating anything.
+    before = db.execute("SELECT count(*) FROM entry").fetchone()[0]
+    again = run_ingest(db, root, opts)
+    assert again.sources_failed == 1
+    assert db.execute("SELECT count(*) FROM entry").fetchone()[0] == before
+    assert_consistent_partial(db)
+    # With the default limit the same content indexes normally.
+    final = run_ingest(db, root)
+    assert final.sources_failed == 0
+    assert snapshot(db) == clean_snapshot(tmp_path, root, "clean")
+
+
 # --------------------------------------------------------------------------- growth, rotation, truncation
 
 

@@ -15,8 +15,8 @@ Objetivo: qualidade onde importa, sem gastar tokens à toa. Subagentes recebem o
 
 | Modelo | Fica com |
 |---|---|
-| **Opus** | Decisões de arquitetura e estrutura (`docs/ARQUITETURA.md`, `docs/ROADMAP.md`); modelo de dados e de eventos; desenho do parser e dos templates; descoberta de formato em logs novos (mineração de templates, ciclo de vida, correlação); algoritmos difíceis (indexação incremental, correlação normal↔sensitive, desempenho); revisão final do trabalho do Codex; `/code-review` local como revisão complementar |
-| **Sonnet** | Implementação rotineira conforme a arquitetura (módulos, API, viewer, testes); empacotamento e CI; geração do pacote de conhecimento a partir do vault; documentação; git, commits e PRs; coordenação da sessão |
+| **Opus** | Decisões de arquitetura e estrutura (`docs/ARQUITETURA.md`, `docs/ROADMAP.md`); modelo de dados e de eventos; desenho do parser e dos templates; descoberta de formato em logs novos (mineração de templates, ciclo de vida, correlação); algoritmos difíceis (indexação incremental, correlação normal↔sensitive, desempenho); revisão de PR **apenas em caso extremamente complexo** (ver `docs/REVISAO-CRUZADA.md`) |
+| **Sonnet** | Implementação rotineira conforme a arquitetura (módulos, API, viewer, testes); empacotamento e CI; geração do pacote de conhecimento a partir do vault; documentação; git, commits e PRs; coordenação da sessão; **revisão cruzada padrão** dos PRs do Codex |
 | **Haiku** | Varreduras mecânicas e baratas: contagens, inventário de arquivos, grep em lote, checagem de anonimização das fixtures, conferência de formatação e links, atualização de tabelas |
 
 Regras:
@@ -32,12 +32,14 @@ Regras:
 
 ## Revisão e integração autônomas
 
-- **Claude revisa e aprova alterações do Codex; Codex revisa e aprova alterações do Claude.** A revisão final é feita pelo outro harness no papel de arquiteto (Opus no Claude; `arquiteto` no Codex). Uma revisão pelo mesmo harness não substitui essa etapa.
+- **Política vigente (decisão do Jefferson em 2026-10-09; substitui a de 2026-10-08):** a revisão cruzada está **reativada e otimizada**. Um agente do outro harness revisa e aprova o PR (Codex revisa o que o Claude escreve; Claude revisa o que o Codex escreve), em vez de o Jefferson aprovar manualmente. **Revisor padrão, barato:** `gpt-6.1-sol` no Codex (`medium` em T0, `high` em T1 e T2) e Sonnet no Claude. **Opus e `gpt-6-astra` só em caso extremamente complexo** (definição em `docs/REVISAO-CRUZADA.md`) ou a pedido do Jefferson. A sessão principal faz o merge depois da aprovação sem pendências bloqueantes e com CI verde; se o outro harness estiver indisponível, o PR fica aberto e o Jefferson pode aprovar manualmente.
+
+- **Claude revisa e aprova alterações do Codex; Codex revisa e aprova alterações do Claude.** A revisão é feita pelo outro harness com o revisor padrão barato (Sonnet no Claude; `gpt-6.1-sol` no Codex); Opus e `gpt-6-astra` só em caso extremamente complexo. Uma revisão pelo mesmo harness não substitui essa etapa.
 - A sessão principal conduz implementação, checks, commit em branch, PR, revisão pelo outro harness, correções e merge. Não espera uma nova confirmação do Jefferson para cada uma dessas ações.
 - A aprovação deve identificar o SHA final revisado e registrar parecer e verificações no PR. Novos commits invalidam a aprovação anterior. O merge exige aprovação cruzada sem pendências bloqueantes e CI obrigatório verde, incluindo Linux e Windows.
 - Se ambos os harnesses usam a mesma conta GitHub do autor do PR, registrar a aprovação do modelo em comentário no PR, pois o GitHub não permite uma review `APPROVE` do próprio autor. Usar review formal quando houver identidade distinta. Não simular outra identidade nem contornar proteções.
 - Sem acesso ao outro harness, com revisão reprovada ou checks falhando, não fazer merge: corrigir ou informar o bloqueio. Aprovações de sandbox e controles externos continuam valendo.
-- **Custo da revisão**: classificar o PR em T0/T1/T2 e seguir o orçamento de contexto, o pacote do autor e o prompt-modelo de `docs/REVISAO-CRUZADA.md`; `gpt-6-astra` em `xhigh` só em T2 com suspeita concreta ou a pedido do Jefferson. Se o outro harness estiver indisponível, o Jefferson pode aprovar manualmente (registrar em comentário no PR; a revisão cruzada daquele PR é dispensada e não é retomada). Exceção registrada: PR #10.
+- **Custo da revisão**: classificar o PR em T0/T1/T2 e seguir o orçamento de contexto, o pacote do autor e o prompt-modelo de `docs/REVISAO-CRUZADA.md`; o revisor padrão é `gpt-6.1-sol`/Sonnet em todos os níveis; Opus/`gpt-6-astra` só em caso extremamente complexo ou a pedido do Jefferson. Se o outro harness estiver indisponível, o Jefferson pode aprovar manualmente (registrar em comentário no PR; a revisão cruzada daquele PR é dispensada e não é retomada). Exceção registrada: PR #10.
 - Protocolo e evidências: `docs/REVISAO-CRUZADA.md`. Esta autorização substitui a antiga exigência de pedido separado para commit e aprovação manual de PR; subagentes continuam sem autorização para commit, push ou merge.
 
 ## Requisitos de portabilidade (Windows e Linux)
