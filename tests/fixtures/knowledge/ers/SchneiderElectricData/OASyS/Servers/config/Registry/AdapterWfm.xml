@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OASYSDNARegistry>
+  <Product Name="AdapterWfm">
+    <Value Name="LogLevel">Info</Value>
+    <Value Name="Created_ErrorConfigurationPath">%OASINSTALLDATADIR%ADMS\configuration\Example\Example_Created_ErrorConfiguration.xml</Value>
+  </Product>
+</OASYSDNARegistry>

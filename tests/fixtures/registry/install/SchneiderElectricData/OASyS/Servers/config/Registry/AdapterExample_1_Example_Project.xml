@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OASYSDNARegistry>
+  <Product Name="AdapterExample">
+    <Value Name="LogLevel">Debug</Value>
+    <Value Name="ProjectOnly">yes</Value>
+    <Key Name="ContactTypeIds">
+      <Value Name="0">20</Value>
+    </Key>
+  </Product>
+</OASYSDNARegistry>

@@ -43,10 +43,13 @@ from dmslog.ingest.fingerprint import (
     span_for,
 )
 from dmslog.ingest.reader import ReadLimitError, ReadLimits, SourceReader, relax_ratio_violations
+from dmslog.knowledge.installation import InstallationConfig, read_installation
+from dmslog.knowledge.registry import RegistryError
 from dmslog.parse.envelope import detect_envelope, get_envelope
 from dmslog.parse.records import DEFAULT_MAX_RECORD_BYTES, RecordGrouper, RecordTooLargeError
 from dmslog.parse.severity import generic_severity, infer_severity
 from dmslog.parse.templates import Catalog, load_catalog
+from dmslog.store.config import config_param_rows, product_for_process
 from dmslog.store.writer import MAX_BATCH_RECORDS, BatchStats, CollectionRow, IndexWriter, SourceRow
 
 CASE_DB_FILENAME = "case.sqlite"
@@ -207,6 +210,51 @@ def _identity_of(row: CollectionRow) -> ErsIdentity | None:
     )
 
 
+# --------------------------------------------------------------------------- severity by code
+
+
+class SeverityHook:
+    """``infer_severity`` with error codes resolved through ``Knowledge`` (ERS configuration first).
+
+    The writer calls it as ``hook(match, record)``; the run sets ``family`` before each source and
+    ``installation`` once the Registry has been read. Nothing is loaded until a template actually
+    exposes an error code; resolutions are memoized per ``(family, code)``.
+    """
+
+    def __init__(self) -> None:
+        self.family: str | None = None
+        self.installation: InstallationConfig | None = None
+        self._knowledge = None
+        self._memo: dict[tuple[str | None, str], int | None] = {}
+
+    def set_installation(self, installation: InstallationConfig | None) -> None:
+        self.installation = installation
+        self._knowledge = None
+        self._memo.clear()
+
+    def __call__(self, match, record) -> int:
+        return infer_severity(match, record, self._resolve)
+
+    def _resolve(self, code: str) -> int | None:
+        key = (self.family, code)
+        memo = self._memo
+        if key in memo:
+            return memo[key]
+        severity = None
+        if self.family:
+            try:
+                if self._knowledge is None:
+                    from dmslog.knowledge.resolve import Knowledge
+
+                    self._knowledge = Knowledge(installations=self.installation)
+                info = self._knowledge.error(self.family, code)
+                severity = None if info is None else info.severity
+            except Exception:  # a missing or broken pack must not stop the ingestion
+                severity = None
+        memo[key] = severity
+        return severity
+
+
 # --------------------------------------------------------------------------- the run
 
 
@@ -226,6 +274,7 @@ class _Run:
         self.current_member: str | None = None
         self.current_action: str | None = None
         self.catalog: Catalog = options.catalog if options.catalog is not None else default_catalog()
+        self.severity = SeverityHook()
 
     def emit(self, phase: str, source_bytes: int = 0, source_total: int = 0, source_records: int = 0) -> None:
         if self.progress is None:
@@ -275,6 +324,34 @@ class _Run:
             machine=plan.machine,
             label=plan.label,
         )
+
+    # ---- installation configuration
+
+    def store_installation(self, cid: int, selected: list[SourceInfo]) -> None:
+        """Read the Registry of the collection once and store ``config_param`` for the in-scope products.
+
+        In scope = products that configure a process among the selected sources (``WfmAdapter`` ->
+        ``AdapterWfm``); other products (CoreSDK, ...) are not stored. A collection without a Registry
+        (a plain Log folder, a loose file) stores nothing and leaves earlier rows alone.
+        """
+        if self.plan.kind == KIND_FILE:
+            return
+        processes = {s.process for s in selected if s.process}
+        if not processes:
+            return
+        try:
+            installation = read_installation(self.plan.path)
+        except (RegistryError, OSError, zipfile.BadZipFile):
+            return
+        self.severity.set_installation(installation)
+        names = {p.product for p in installation.products}
+        wanted = {product_for_process(proc, names) for proc in processes} - {None}
+        rows = []
+        for product in installation.products:
+            if product.product in wanted:
+                rows.extend(config_param_rows(product))
+        self.w.replace_config_params(self.w.collection_group(cid), rows)
+        self.w.commit()
 
     # ---- rotation
 
@@ -469,6 +546,7 @@ class _Run:
                 prev_ts = w.last_ts(row.id)
                 envelope = get_envelope(row.envelope)
                 head = HeadWindow(reader.read_head(info))  # the head of the file is already known to match
+        self.severity.family = info.family
         w.start_source(
             row.id, prev_ts, self.catalog.for_family(info.family, sensitive=info.sensitive), info.family
         )
@@ -545,6 +623,16 @@ class _Run:
         return fed - start_off
 
 
+def _bump_ingest_generation(conn) -> None:
+    """Increment ``meta.ingest_generation`` (readers use it to invalidate per-case caches)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'ingest_generation'").fetchone()
+    generation = int(row[0]) + 1 if row and str(row[0]).isdigit() else 1
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('ingest_generation', ?)", (str(generation),)
+    )
+    conn.commit()
+
+
 def run_ingest(
     conn,  # sqlite3.Connection of a migrated case database
     path: str | Path,
@@ -560,10 +648,13 @@ def run_ingest(
     if options.scope not in (SCOPE_DEFAULT, SCOPE_ALL):
         raise ValueError(f"scope must be 'default' or 'all', got {options.scope!r}")
     t0 = time.perf_counter()
+    changes_before = conn.total_changes
     plan = build_plan(path, options.limits)
-    writer = IndexWriter(conn, severity=generic_severity, infer_severity=infer_severity)
+    run_hook = SeverityHook()
+    writer = IndexWriter(conn, severity=generic_severity, infer_severity=run_hook)
     writer.init_meta(options.case_name or default_case_name(plan), __version__)
     run = _Run(writer, plan, options, progress)
+    run.severity = run_hook
     writer.sync_templates(run.catalog)
     writer.commit()
     cid = run.resolve_collection()
@@ -580,9 +671,12 @@ def run_ingest(
         by_member = {s.member: s for s in plan.sources}
         run.follow_rotations(cid, by_member, reader)
         run.register_sources(cid, list(plan.sources), selected_members)
+        run.store_installation(cid, list(selected))
         rows = writer.sources(cid)
         for info in selected:
             run.process(rows[info.member], info, reader)
+    if conn.total_changes != changes_before:  # a no-op re-ingest keeps the generation (and the caches)
+        _bump_ingest_generation(conn)
     run.result.seconds = time.perf_counter() - t0
     run.current_member = None
     run.emit("done")

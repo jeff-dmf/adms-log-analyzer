@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OASYSDNARegistry>
+  <Product Name="AdapterExample">
+    <Value Name="LogLevel">Information</Value>
+  </Product>
+</OASYSDNARegistry>

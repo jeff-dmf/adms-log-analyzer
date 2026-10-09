@@ -1,0 +1,235 @@
+# Curated hints for error/timeout templates (ROADMAP 3.8). Format: see knowledge/resolve.py.
+# Facts come from the vault (parameters, configuration notes) and docs/formato/*.md.
+[[hint]]
+code = "WFM-080"
+text = "The adapter forwarded a delta to CRS and got no callback within WaitForCRSCallback (default 35 s). Check that the CRS service is up and responsive."
+params = ["WaitForCRSCallback"]
+note = "12 Interfaces online/Workforce Management Interface/Arquivos/Configuration/AWFM Configuration.md"
+
+[[hint]]
+code = "WFM-081"
+text = "Processing a crew/vehicle/assignment event failed. A CRS timeout is governed by WaitForCRSCallback (35 s); 'Callback answers are not received from CRS after 10 seconds' by WaitForCallback (10 s)."
+params = ["WaitForCRSCallback", "WaitForCallback"]
+note = "12 Interfaces online/Workforce Management Interface/Arquivos/Configuration/AWFM Configuration.md"
+
+[[hint]]
+code = "WFM-060"
+text = "A remote call from the adapter to a CRS service failed; the reason after 'Reason =' is the error returned by that service. Check the CRS services named in the message."
+note = "12 Interfaces online/Workforce Management Interface/AWFM Index.md"
+
+[[hint]]
+code = "WFM-070A"
+text = "The adapter could not check in to its pub/sub service (for example CrewManagementPubSub); the reason follows. Check that the service is running."
+note = "12 Interfaces online/Workforce Management Interface/AWFM Index.md"
+
+[[hint]]
+code = "WFM-070B"
+text = "The adapter could not initialize its pub/sub subscriber; the reason follows. Check that the named pub/sub service is running."
+note = "12 Interfaces online/Workforce Management Interface/AWFM Index.md"
+
+[[hint]]
+code = "WFM-070C"
+text = "The adapter was disconnected from its pub/sub service; the reason follows. Check that the named service is running and reachable."
+note = "12 Interfaces online/Workforce Management Interface/AWFM Index.md"
+
+[[hint]]
+code = "WFM-063"
+text = "A service operation of the adapter threw an unexpected exception; the exception type and stack trace follow. Use them to find the failing operation."
+
+[[hint]]
+code = "WFM-064"
+text = "The exception raised by a service operation of the adapter is logged with its stack trace. The exception type tells the cause."
+
+[[hint]]
+code = "WFM-066A"
+text = "An error occurred while calling a service operation; the exception details follow in the next records."
+
+[[hint]]
+code = "WFM-066B"
+text = "The exception raised by a service operation is logged with its stack trace. The exception type tells the cause."
+
+[[hint]]
+code = "OAS-001"
+text = "A service operation threw an unexpected exception; the exception type and stack trace follow. Use them to find the failing operation."
+
+[[hint]]
+code = "OAS-002"
+text = "The exception raised by a service operation is logged with its stack trace. The exception type tells the cause."
+
+[[hint]]
+code = "WFM-130A"
+text = "A CRS request was rejected by the DMZ validation rules for the entity named in the message."
+note = "12 Interfaces online/Workforce Management Interface/AWFM Index.md"
+
+[[hint]]
+code = "WFM-130C"
+text = "A CRS request was rejected by the DMZ validation rules; the rejection reason is in the message."
+note = "12 Interfaces online/Workforce Management Interface/AWFM Index.md"
+
+[[hint]]
+code = "CRM-011"
+text = "After IMS created the OMS_REQUEST entities the adapter waits ImsCallbackWaitTime (default 15 s) for the IMS callback."
+params = ["ImsCallbackWaitTime"]
+note = "12 Interfaces online/Customer Relationship Management Interface/Arquivos/Configuration/ACRM Configuration.md"
+
+[[hint]]
+code = "CRM-014"
+text = "The IMS callback did not arrive within ImsCallbackWaitTime (default 15 s). The CreateTroubleTickets error configuration maps this case to ImsCallbackNotReceived (Warning, 5.3). Check IMS responsiveness."
+params = ["ImsCallbackWaitTime"]
+note = "12 Interfaces online/Customer Relationship Management Interface/Arquivos/Configuration/ACRM Configuration.md"
+
+[[hint]]
+code = "CLC-005"
+text = "A remote file system (SFTP) connection attempt failed and the adapter will retry. Attempts are set by RemoteFileSystemNumberOfRetries (default 3; -1 = infinite) and RemoteFileSystemRetryTimeout (10 s)."
+params = ["RemoteFileSystemNumberOfRetries", "RemoteFileSystemRetryTimeout"]
+note = "12 Interfaces online/File Claim Check Interface/Arquivos/Configuration/ACLC Configuration.md"
+
+[[hint]]
+code = "CLC-010"
+text = "Processing of a file notification message failed; the cause is the exception logged next. After SFTP connection failures this appears once RemoteFileSystemNumberOfRetries is exhausted."
+params = ["RemoteFileSystemNumberOfRetries"]
+note = "12 Interfaces online/File Claim Check Interface/Arquivos/Configuration/ACLC Configuration.md"
+
+[[hint]]
+code = "FMO-001"
+text = "The credential for source application AdapterFileMonitor and destination SFTP was not found in the credential store. Create the integration credential for this pair."
+note = "12 Interfaces online/File Monitoring Interface/Arquivos/Configuration/AFMO Configuration.md"
+
+[[hint]]
+code = "FMO-002"
+text = "The LocalPath configured for the file type is invalid. Check that it is a valid directory; the path must be unique per file type."
+params = ["LocalPath"]
+note = "12 Interfaces online/File Monitoring Interface/Arquivos/Configuration/AFMO Configuration.md"
+
+[[hint]]
+code = "ONT-020"
+text = "Sending a message to the external system failed on this attempt. Attempts are limited by NumOfRetries (default 5), spaced by RetryTimeout (5 s); a TimeoutException means SendTimeout (1 min) elapsed."
+params = ["NumOfRetries", "RetryTimeout", "SendTimeout"]
+note = "12 Interfaces online/Outage Management Notification Interface/Arquivos/Configuration/AONT Configuration.md"
+
+[[hint]]
+code = "ONT-S020"
+text = "Sending a message to the external system failed on this attempt (sensitive log). Retries follow NumOfRetries (default 5) and RetryTimeout (5 s); SendTimeout (1 min) limits each attempt."
+params = ["NumOfRetries", "RetryTimeout", "SendTimeout"]
+note = "12 Interfaces online/Outage Management Notification Interface/Arquivos/Configuration/AONT Configuration.md"
+
+[[hint]]
+code = "ONT-021"
+text = "The incident send finished unsuccessfully after the failed attempts; the reason is in the message or in the sensitive log. See the ONT-020 attempts and NumOfRetries."
+params = ["NumOfRetries"]
+note = "12 Interfaces online/Outage Management Notification Interface/Arquivos/Configuration/AONT Configuration.md"
+
+[[hint]]
+code = "ONT-022"
+text = "The request message was not delivered; the reason is in the message or in the sensitive log. Check the failed attempts that precede it and the external endpoint."
+params = ["NumOfRetries"]
+note = "12 Interfaces online/Outage Management Notification Interface/Arquivos/Configuration/AONT Configuration.md"
+
+[[hint]]
+code = "ONT-023"
+text = "The external system replied with a message that does not match the XSD (for example a SystemError fault); the reply body is not logged. Check the external system."
+params = ["DoMessageXsdValidation"]
+note = "12 Interfaces online/Outage Management Notification Interface/Arquivos/Configuration/AONT Configuration.md"
+
+[[hint]]
+code = "SMN-015"
+text = "The reply is invalid: no schema information for the element (for example a SystemError fault from the external system). The reply is rejected before its body is logged. Check the external system."
+params = ["DoMessageXsdValidation"]
+note = "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md"
+
+[[hint]]
+code = "SMN-016"
+text = "The send finished unsuccessfully; the real reason is written to the sensitive log on the same instant. Check the failed attempts and the external endpoint."
+params = ["NumOfRetries"]
+note = "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md"
+
+[[hint]]
+code = "SMN-S016"
+text = "The send finished unsuccessfully; this is the real reason with its stack trace (for example no endpoint listening, timeout or a SystemError fault)."
+params = ["NumOfRetries", "SendTimeout"]
+note = "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md"
+
+[[hint]]
+code = "SMN-017"
+text = "The request message was not delivered; the reason is in the message. Check the external endpoint and the failed attempts that precede it."
+params = ["NumOfRetries"]
+note = "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md"
+
+[[hint]]
+code = "SMN-018"
+text = "The request message was not delivered; the reason is in the sensitive log. Check the external endpoint and the failed attempts that precede it."
+params = ["NumOfRetries"]
+note = "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md"
+
+[[hint]]
+code = "SMN-019"
+text = "A send attempt failed and the adapter will retry (NumOfRetries, default 5; RetryTimeout 5 s). The real reason is in the sensitive log (DmsReason)."
+params = ["NumOfRetries", "RetryTimeout"]
+note = "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md"
+
+[[hint]]
+code = "SMN-S019"
+text = "A send attempt failed and the adapter will retry; DmsReason is the real reason. Retries follow NumOfRetries (default 5) and RetryTimeout (5 s)."
+params = ["NumOfRetries", "RetryTimeout"]
+note = "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md"
+
+[[hint]]
+code = "SMN-013"
+text = "The publication was ignored: the property value is not among the supported values listed in the message (subscriber filter)."
+params = ["SubscriberFilterConfigurationPath"]
+note = "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md"
+
+[[hint]]
+code = "ONT-009"
+text = "The incident was not processed: the property value is not among the supported values listed in the message (subscriber filter)."
+params = ["SubscriberFilterConfigurationPath"]
+note = "12 Interfaces online/Outage Management Notification Interface/Arquivos/Configuration/AONT Configuration.md"
+
+[[hint]]
+code = "GEN-XSD-02"
+text = "The message validator rejected a message against the XSD. With 'Could not find schema information for the element' the external system sent something outside the schema (for example a SystemError fault)."
+params = ["DoMessageXsdValidation"]
+
+[[hint]]
+code = "GEN-ERR-01"
+text = "Each line is an error code of the operation; resolve it in the ErrorConfiguration of the operation (or the vault error table). The details are in the sensitive log."
+
+[[hint]]
+code = "AVL-007"
+text = "The message references a vehicle mRID unknown to the system and was rejected; the operation still ends 'finished successfully'."
+note = "12 Interfaces online/Automatic Vehicle Location Interface/AAVL Index.md"
+
+[[hint]]
+code = "AVL-008"
+text = "The system event reports a received message as invalid; see the preceding Validation records (for example VehicleNotFound)."
+note = "12 Interfaces online/Automatic Vehicle Location Interface/AAVL Index.md"
+
+[[hint]]
+code = "OSR-007"
+text = "Business errors occurred while processing the request. The error codes are listed in the 'Detected errors' records and the details in the sensitive log."
+note = "12 Interfaces online/Outage Reporting Interface/AOSR Index.md"
+
+[[hint]]
+code = "OSR-022"
+text = "The hazards message failed data validation and all received incident hazards were discarded."
+note = "12 Interfaces online/Outage Reporting Interface/AOSR Index.md"
+
+[[hint]]
+code = "AMI-007"
+text = "The meter reading failed data validation and the process is aborted. A related DMS reason is NonExistingCorrelationId (no active smart meter request for the CorrelationID)."
+note = "12 Interfaces online/Advanced Metering Infrastructure Interface/AAMI Index.md"
+
+[[hint]]
+code = "SMR-006"
+text = "The WOM service returned errors when creating the work request (InternalServerError or InvalidRequestedEquipment). Analyze the work management service log."
+note = "12 Interfaces online/Switching Management Reporting Interface/ASMR Index.md"
+
+[[hint]]
+code = "SMR-007"
+text = "The CreatedWorks request was discarded as invalid; a related DMS reason is DuplicateNames (a work request with that name already exists in ADMS)."
+note = "12 Interfaces online/Switching Management Reporting Interface/ASMR Index.md"
+
+[[hint]]
+code = "GEN-EXC-01"
+text = "A non fatal exception was logged; the type and stack trace follow. Documented cases: SocketException on SFTP (followed by retries) and CredentialNotFoundException (missing credential)."
+

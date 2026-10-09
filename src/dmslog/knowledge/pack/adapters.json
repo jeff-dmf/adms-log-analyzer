@@ -1,0 +1,581 @@
+{
+  "adapters": [
+    {
+      "acronym": "AAMI",
+      "adapter": "AMI Adapter",
+      "aliases": [
+        "AMI Adapter",
+        "Advanced Metering Infrastructure Adapter",
+        "Advanced Metering Infrastructure Interface"
+      ],
+      "config_note": "12 Interfaces online/Advanced Metering Infrastructure Interface/Arquivos/Configuration/AAMI Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Advanced Metering Infrastructure Interface - Functional Specification",
+      "document_version": "1.6 (September 2024)",
+      "index_note": "12 Interfaces online/Advanced Metering Infrastructure Interface/AAMI Index.md",
+      "operations": [
+        "CreatedConfigurationEvents",
+        "CreatedEndDeviceEvents",
+        "CreatedMeterReadings",
+        "GetMeterReadings"
+      ],
+      "process_names": [],
+      "title": "Advanced Metering Infrastructure Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "AASP",
+      "adapter": "Approved Switching Plan Adapter",
+      "aliases": [
+        "Approved Switching Plan Adapter",
+        "Approved Switching Plan Integration"
+      ],
+      "config_note": "12 Interfaces online/Approved Switching Plan Integration/Arquivos/Configuration/AASP Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Approved Switching Plan Integration - Functional Specification",
+      "document_version": "1.0 (September 2026)",
+      "index_note": "12 Interfaces online/Approved Switching Plan Integration/AASP Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Approved Switching Plan Integration",
+      "type": "files",
+      "type_label": "Arquivos"
+    },
+    {
+      "acronym": "AAVL",
+      "adapter": "AVL Adapter",
+      "aliases": [
+        "AVL Adapter",
+        "Automatic Vehicle Location Adapter",
+        "Automatic Vehicle Location Interface"
+      ],
+      "config_note": "12 Interfaces online/Automatic Vehicle Location Interface/Arquivos/Configuration/AAVL Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Automatic Vehicle Location Interface - Functional Specification",
+      "document_version": "1.4 (September 2024)",
+      "index_note": "12 Interfaces online/Automatic Vehicle Location Interface/AAVL Index.md",
+      "operations": [
+        "ChangedVehiclesCoordinates"
+      ],
+      "process_names": [],
+      "title": "Automatic Vehicle Location Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ACLC",
+      "adapter": "CC Adapter",
+      "aliases": [
+        "CC Adapter",
+        "File Claim Check Adapter",
+        "File Claim Check Interface"
+      ],
+      "config_note": "12 Interfaces online/File Claim Check Interface/Arquivos/Configuration/ACLC Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 File Claim Check Interface - Functional Specification",
+      "document_version": "1.4 (September 2024)",
+      "index_note": "12 Interfaces online/File Claim Check Interface/ACLC Index.md",
+      "operations": [
+        "CreatedFileNotification"
+      ],
+      "process_names": [],
+      "title": "File Claim Check Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ACRM",
+      "adapter": "CRM Adapter",
+      "aliases": [
+        "CRM Adapter",
+        "Customer Relationship Management Adapter",
+        "Customer Relationship Management Interface"
+      ],
+      "config_note": "12 Interfaces online/Customer Relationship Management Interface/Arquivos/Configuration/ACRM Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Customer Relationship Management Interface - Functional Specification",
+      "document_version": "1.7 (January 2025)",
+      "index_note": "12 Interfaces online/Customer Relationship Management Interface/ACRM Index.md",
+      "operations": [
+        "ChangedTroubleTickets",
+        "CreatedCallBacks",
+        "CreatedCallBacksResults",
+        "CreatedTroubleTickets",
+        "GetCallBacks",
+        "GetTroubleTickets"
+      ],
+      "process_names": [
+        "CrmAdapter"
+      ],
+      "title": "Customer Relationship Management Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ADRM",
+      "adapter": "DERMS Adapter",
+      "aliases": [
+        "DERMS Adapter",
+        "DERMS Interface"
+      ],
+      "config_note": "12 Interfaces online/DERMS Interface/Arquivos/Configuration/ADRM Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 DERMS Interface - Functional Specification",
+      "document_version": "1.3 (September 2024)",
+      "index_note": "12 Interfaces online/DERMS Interface/ADRM Index.md",
+      "operations": [
+        "ChangedDERGroupStatuses",
+        "CreateDERGroupDispatches",
+        "CreatedDERGroupForecasts",
+        "QueryDERGroupForecasts",
+        "QueryDERGroupStatuses"
+      ],
+      "process_names": [
+        "DermsClientAdapter"
+      ],
+      "title": "DERMS Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "AFMO",
+      "adapter": "File Monitoring Adapter",
+      "aliases": [
+        "File Monitoring Adapter",
+        "File Monitoring Interface"
+      ],
+      "config_note": "12 Interfaces online/File Monitoring Interface/Arquivos/Configuration/AFMO Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 File Monitoring Interface - Functional Specification",
+      "document_version": "1.4 (September 2024)",
+      "index_note": "12 Interfaces online/File Monitoring Interface/AFMO Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "File Monitoring Interface",
+      "type": "files",
+      "type_label": "Arquivos"
+    },
+    {
+      "acronym": "AFUP",
+      "adapter": "File Uploading Adapter",
+      "aliases": [
+        "File Uploading Adapter",
+        "File Uploading Interface"
+      ],
+      "config_note": "12 Interfaces online/File Uploading Interface/Arquivos/Configuration/AFUP Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 File Uploading Interface - Functional Specification",
+      "document_version": "1.3 (September 2024)",
+      "index_note": "12 Interfaces online/File Uploading Interface/AFUP Index.md",
+      "operations": [
+        "CreatedFileNotification"
+      ],
+      "process_names": [],
+      "title": "File Uploading Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "AIEN",
+      "adapter": "IEN Adapter",
+      "aliases": [
+        "IEN Adapter",
+        "Internal External Notifications Adapter",
+        "Internal External Notifications Interface"
+      ],
+      "config_note": "12 Interfaces online/Internal External Notifications Interface/Arquivos/Configuration/AIEN Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Internal External Notifications Interface - Functional Specification",
+      "document_version": "1.6 (June 2026)",
+      "index_note": "12 Interfaces online/Internal External Notifications Interface/AIEN Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Internal External Notifications Interface",
+      "type": "files",
+      "type_label": "Arquivos"
+    },
+    {
+      "acronym": "AMDM",
+      "adapter": null,
+      "aliases": [],
+      "config_note": null,
+      "document_title": "ADMS GridOps Management Suite 3.9 Meter Data Management - MultiSpeak Interface",
+      "document_version": "1.0 (September 2024)",
+      "index_note": "12 Interfaces online/Meter Data Management - MultiSpeak Interface/AMDM Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Meter Data Management - MultiSpeak Interface",
+      "type": "multispeak",
+      "type_label": "MultiSpeak"
+    },
+    {
+      "acronym": "AMEM",
+      "adapter": "MEM Adapter",
+      "aliases": [
+        "MEM Adapter",
+        "Major Event Mitigation Adapter",
+        "Major Event Mitigation Interface"
+      ],
+      "config_note": "12 Interfaces online/Major Event Mitigation Interface/Arquivos/Configuration/AMEM Configuration.md",
+      "document_title": "ADMS 3.9 Major Event Mitigation Interface - Functional Specification",
+      "document_version": "1.2 (September 2024)",
+      "index_note": "12 Interfaces online/Major Event Mitigation Interface/AMEM Index.md",
+      "operations": [
+        "ChangedGeographicalAreaIndex"
+      ],
+      "process_names": [
+        "MemAdapter"
+      ],
+      "title": "Major Event Mitigation Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "AMPI",
+      "adapter": "Manual Points Adapter",
+      "aliases": [
+        "Manual Points Adapter",
+        "Manual Points Integration"
+      ],
+      "config_note": null,
+      "document_title": "ADMS GridOps Management Suite 3.9 Manual Points Integration - Functional Specification",
+      "document_version": "1.0 (September 2024)",
+      "index_note": "12 Interfaces online/Manual Points Integration/AMPI Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Manual Points Integration",
+      "type": "rest",
+      "type_label": "REST/OpenAPI"
+    },
+    {
+      "acronym": "ANIN",
+      "adapter": "NIN Adapter",
+      "aliases": [
+        "NIN Adapter",
+        "Network Import Notification Adapter",
+        "Network Import Notification Interface"
+      ],
+      "config_note": "12 Interfaces online/Network Import Notification Interface/Arquivos/Configuration/ANIN Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Network Import Notification Interface - Functional Specification",
+      "document_version": "1.3 (September 2024)",
+      "index_note": "12 Interfaces online/Network Import Notification Interface/ANIN Index.md",
+      "operations": [
+        "ChangedEquipmentStates",
+        "CreatedNetworkImportNotifications"
+      ],
+      "process_names": [],
+      "title": "Network Import Notification Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "AONT",
+      "adapter": "OMN Adapter",
+      "aliases": [
+        "OMN Adapter",
+        "Outage Management Notification Adapter",
+        "Outage Management Notification Interface"
+      ],
+      "config_note": "12 Interfaces online/Outage Management Notification Interface/Arquivos/Configuration/AONT Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Outage Management Notification Interface - Functional Specification",
+      "document_version": "1.5 (October 2025)",
+      "index_note": "12 Interfaces online/Outage Management Notification Interface/AONT Index.md",
+      "operations": [
+        "ChangedIncidentTroubleTickets",
+        "ChangedIncidentUsagePoints",
+        "ChangedIncidents",
+        "CreatedIncidentTroubleTickets",
+        "CreatedIncidentUsagePoints",
+        "CreatedIncidents",
+        "DeletedIncidentTroubleTickets",
+        "DeletedIncidentUsagePoints",
+        "DeletedIncidents"
+      ],
+      "process_names": [],
+      "title": "Outage Management Notification Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "AOSR",
+      "adapter": "OSR Adapter",
+      "aliases": [
+        "OSR Adapter",
+        "Outage Reporting Adapter",
+        "Outage Reporting Interface"
+      ],
+      "config_note": "12 Interfaces online/Outage Reporting Interface/Arquivos/Configuration/AOSR Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Outage Reporting Interface - Functional Specification",
+      "document_version": "1.6 (September 2026)",
+      "index_note": "12 Interfaces online/Outage Reporting Interface/AOSR Index.md",
+      "operations": [
+        "ChangedIncidentHazards",
+        "ChangedIncidents",
+        "CreatedIncidentHazards",
+        "GetIncidentHazards",
+        "GetIncidentUsagePoints",
+        "GetIncidents"
+      ],
+      "process_names": [
+        "OsrAdapter"
+      ],
+      "title": "Outage Reporting Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "AOUT",
+      "adapter": null,
+      "aliases": [],
+      "config_note": null,
+      "document_title": "ADMS GridOps Management Suite 3.9 Outage Analysis - MultiSpeak Interface",
+      "document_version": "1.0 (September 2024)",
+      "index_note": "12 Interfaces online/Outage Analysis - MultiSpeak Interface/AOUT Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Outage Analysis - MultiSpeak Interface",
+      "type": "multispeak",
+      "type_label": "MultiSpeak"
+    },
+    {
+      "acronym": "ARED",
+      "adapter": "RLN Adapter",
+      "aliases": [
+        "RLN Adapter",
+        "Redlining Adapter",
+        "Redlining Interface"
+      ],
+      "config_note": "12 Interfaces online/Redlining Interface/Arquivos/Configuration/ARED Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Redlining Interface - Functional Specification",
+      "document_version": "1.4 (July 2025)",
+      "index_note": "12 Interfaces online/Redlining Interface/ARED Index.md",
+      "operations": [
+        "ChangedRedLines",
+        "CreatedRedLines",
+        "DeletedRedLines"
+      ],
+      "process_names": [],
+      "title": "Redlining Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ASMN",
+      "adapter": "SMN Adapter",
+      "aliases": [
+        "SMN Adapter",
+        "Switching Management Notification Adapter",
+        "Switching Management Notification Interface"
+      ],
+      "config_note": "12 Interfaces online/Switching Management Notification Interface/Arquivos/Configuration/ASMN Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Switching Management Notification Interface - Functional Specification",
+      "document_version": "1.2 (September 2024)",
+      "index_note": "12 Interfaces online/Switching Management Notification Interface/ASMN Index.md",
+      "operations": [
+        "ChangedSwitchingPlans",
+        "ChangedSwitchingSteps",
+        "ChangedWorks",
+        "CreatedSwitchingPlans",
+        "CreatedSwitchingSteps",
+        "CreatedWorks",
+        "DeletedSwitchingPlans",
+        "DeletedSwitchingSteps",
+        "DeletedWorks"
+      ],
+      "process_names": [],
+      "title": "Switching Management Notification Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ASMR",
+      "adapter": "SMR Adapter",
+      "aliases": [
+        "SMR Adapter",
+        "Switching Management Reporting Adapter",
+        "Switching Management Reporting Interface"
+      ],
+      "config_note": "12 Interfaces online/Switching Management Reporting Interface/Arquivos/Configuration/ASMR Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Switching Management Reporting Interface - Functional Specification",
+      "document_version": "1.5 (October 2025)",
+      "index_note": "12 Interfaces online/Switching Management Reporting Interface/ASMR Index.md",
+      "operations": [
+        "ChangedSwitchingPlans",
+        "ChangedSwitchingSteps",
+        "ChangedWorks",
+        "CreatedSwitchingPlans",
+        "CreatedWorks",
+        "GetSwitchingPlans",
+        "GetWorks"
+      ],
+      "process_names": [
+        "SmrAdapter"
+      ],
+      "title": "Switching Management Reporting Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ASMS",
+      "adapter": "Email and SMS Adapter",
+      "aliases": [
+        "Email and SMS Adapter",
+        "Email and SMS Interface"
+      ],
+      "config_note": "12 Interfaces online/Email and SMS Interface/Arquivos/Configuration/ASMS Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Email and SMS Interface - Functional Specification",
+      "document_version": "1.3 (August 2024)",
+      "index_note": "12 Interfaces online/Email and SMS Interface/ASMS Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Email and SMS Interface",
+      "type": "files",
+      "type_label": "Arquivos"
+    },
+    {
+      "acronym": "ASNO",
+      "adapter": "SNI Adapter",
+      "aliases": [
+        "SNI Adapter",
+        "Site Note Adapter",
+        "Site Note Interface"
+      ],
+      "config_note": "12 Interfaces online/Site Note Interface/Arquivos/Configuration/ASNO Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Site Note Interface - Functional Specification",
+      "document_version": "1.3 (September 2024)",
+      "index_note": "12 Interfaces online/Site Note Interface/ASNO Index.md",
+      "operations": [
+        "ChangedUsagePointSiteNotes",
+        "CreateSiteNotes"
+      ],
+      "process_names": [
+        "SniAdapter"
+      ],
+      "title": "Site Note Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ASSS",
+      "adapter": "SSS Adapter",
+      "aliases": [
+        "SSS Adapter",
+        "Seamless Site Switch Adapter",
+        "Seamless Site Switch Interface"
+      ],
+      "config_note": "12 Interfaces online/Seamless Site Switch Interface/Arquivos/Configuration/ASSS Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Seamless Site Switch Interface - Functional Specification",
+      "document_version": "1.3 (September 2024)",
+      "index_note": "12 Interfaces online/Seamless Site Switch Interface/ASSS Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Seamless Site Switch Interface",
+      "type": "files",
+      "type_label": "Arquivos"
+    },
+    {
+      "acronym": "ATEL",
+      "adapter": "Temporary Elements Adapter",
+      "aliases": [
+        "Temporary Elements Adapter",
+        "Temporary Elements Integration"
+      ],
+      "config_note": null,
+      "document_title": "ADMS GridOps Management Suite 3.9 Temporary Elements Integration - Functional Specification",
+      "document_version": "1.0 (September 2024)",
+      "index_note": "12 Interfaces online/Temporary Elements Integration/ATEL Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Temporary Elements Integration",
+      "type": "rest",
+      "type_label": "REST/OpenAPI"
+    },
+    {
+      "acronym": "AWFM",
+      "adapter": "WFM Adapter",
+      "aliases": [
+        "WFM Adapter",
+        "Workforce Management Adapter",
+        "Workforce Management Interface"
+      ],
+      "config_note": "12 Interfaces online/Workforce Management Interface/Arquivos/Configuration/AWFM Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Workforce Management Interface - Functional Specification",
+      "document_version": "1.7 (September 2024)",
+      "index_note": "12 Interfaces online/Workforce Management Interface/AWFM Index.md",
+      "operations": [
+        "ChangedCrewAssignments",
+        "ChangedCrewMembers",
+        "ChangedCrews",
+        "ChangedVehicles",
+        "CreatedCrewAssignments",
+        "CreatedCrewMembers",
+        "CreatedCrewModel",
+        "CreatedCrews",
+        "CreatedVehicles",
+        "DeletedCrewAssignments",
+        "DeletedCrewMembers",
+        "DeletedCrews",
+        "DeletedVehicles"
+      ],
+      "process_names": [
+        "WfmAdapter"
+      ],
+      "title": "Workforce Management Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "AWMI",
+      "adapter": "WDI Adapter",
+      "aliases": [
+        "WDI Adapter",
+        "Weather Adapter",
+        "Weather Interface"
+      ],
+      "config_note": "12 Interfaces online/Weather Interface/Arquivos/Configuration/AWMI Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 Weather Interface - Functional Specification",
+      "document_version": "1.4 (September 2024)",
+      "index_note": "12 Interfaces online/Weather Interface/AWMI Index.md",
+      "operations": [
+        "ChangedActualWeatherData",
+        "ChangedForecastWeatherData"
+      ],
+      "process_names": [],
+      "title": "Weather Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "EIPL",
+      "adapter": null,
+      "aliases": [],
+      "config_note": null,
+      "document_title": "ADMS GridOps Management Suite 3.9 Enterprise Integration Platform - Functional Specification",
+      "document_version": "1.2 (April 2025)",
+      "index_note": "12 Interfaces online/Enterprise Integration Platform/EIPL Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Enterprise Integration Platform",
+      "type": null,
+      "type_label": null
+    },
+    {
+      "acronym": "ODIN",
+      "adapter": "ODIN Adapter",
+      "aliases": [
+        "ODIN Adapter",
+        "ODIN Interface"
+      ],
+      "config_note": "12 Interfaces online/ODIN Interface/Arquivos/Configuration/ODIN Configuration.md",
+      "document_title": "ADMS GridOps Management Suite 3.9 ODIN Interface - Functional Specification",
+      "document_version": "1.1 (April 2025)",
+      "index_note": "12 Interfaces online/ODIN Interface/ODIN Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "ODIN Interface",
+      "type": "files",
+      "type_label": "Arquivos"
+    }
+  ],
+  "process_map": {
+    "CrmAdapter": "ACRM",
+    "DermsClientAdapter": "ADRM",
+    "MemAdapter": "AMEM",
+    "OsrAdapter": "AOSR",
+    "SmrAdapter": "ASMR",
+    "SniAdapter": "ASNO",
+    "WfmAdapter": "AWFM"
+  }
+}

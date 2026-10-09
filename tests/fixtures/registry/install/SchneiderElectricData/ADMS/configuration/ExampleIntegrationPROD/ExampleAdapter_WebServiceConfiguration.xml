@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Adapter_WebServiceConfiguration>
+  <WebServicesConfiguration>
+    <WebServiceConfiguration Name="CreatedThing">
+      <ServiceUrl>http://example.invalid/svc</ServiceUrl>
+      <AuditingPeriod>30</AuditingPeriod>
+      <NumOfRetries>3</NumOfRetries>
+      <RetryTimeout>00:00:10</RetryTimeout>
+      <MessageLogLevel>Debug</MessageLogLevel>
+    </WebServiceConfiguration>
+    <WebServiceConfiguration Name="ChangedThing">
+      <MessageLogLevel>Information</MessageLogLevel>
+    </WebServiceConfiguration>
+  </WebServicesConfiguration>
+</Adapter_WebServiceConfiguration>

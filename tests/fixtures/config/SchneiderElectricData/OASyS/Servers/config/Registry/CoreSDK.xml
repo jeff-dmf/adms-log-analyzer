@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OASYSDNARegistry>
+  <Product Name="CoreSDK">
+    <Value Name="ExampleSetting">1</Value>
+  </Product>
+</OASYSDNARegistry>

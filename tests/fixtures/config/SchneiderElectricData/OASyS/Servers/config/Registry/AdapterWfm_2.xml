@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OASYSDNARegistry>
+  <Product Name="AdapterWfm">
+    <Value Name="LogLevel">DebugLog</Value>
+    <Value Name="WebServiceConfiguration">%OASINSTALLDATADIR%\ADMS\configuration\ExampleIntegrationPROD\ExampleAdapter_WebServiceConfiguration.xml</Value>
+  </Product>
+</OASYSDNARegistry>

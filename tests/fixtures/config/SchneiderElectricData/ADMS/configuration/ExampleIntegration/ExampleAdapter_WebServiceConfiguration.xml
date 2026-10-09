@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Adapter_WebServiceConfiguration>
+  <WebServicesConfiguration>
+    <WebServiceConfiguration Name="OldOperation">
+      <MessageLogLevel>Verbose</MessageLogLevel>
+    </WebServiceConfiguration>
+  </WebServicesConfiguration>
+</Adapter_WebServiceConfiguration>

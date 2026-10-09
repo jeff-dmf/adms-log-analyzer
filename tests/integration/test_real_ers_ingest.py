@@ -88,7 +88,10 @@ def test_default_scope_meets_the_acceptance_targets(tmp_path, capsys):
                         expected_lines += _physical_lines(head + fh.read())
         assert db_lines == expected_lines
         fts_rows = conn.execute("SELECT count(*) FROM entry_fts_docsize").fetchone()[0]
-        assert fts_rows == entries
+        not_indexed = conn.execute(
+            "SELECT count(*) FROM entry WHERE tpl_id IN (SELECT id FROM template WHERE fts = 0)"
+        ).fetchone()[0]
+        assert fts_rows == entries - not_indexed  # fts=0 templates (Verbose trace) stay out of the FTS
     finally:
         conn.close()
 

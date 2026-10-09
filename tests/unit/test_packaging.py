@@ -52,6 +52,25 @@ def test_pyz_contains_web_assets_and_build_info_without_bytecode(build_pyz):
         assert b"testcommit" in archive.read("dmslog/_build_info.py")
 
 
+def test_pyz_contains_knowledge_pack_and_loads_it(build_pyz):
+    pyz = build_pyz.build()
+    with zipfile.ZipFile(pyz) as archive:
+        names = set(archive.namelist())
+    pack_files = ("manifest.json", "adapters.json", "error_codes.json", "operations.json", "parameters.json")
+    assert {f"dmslog/knowledge/pack/{n}" for n in pack_files} <= names
+    curated = Path(__file__).resolve().parents[2] / "src" / "dmslog" / "knowledge" / "curated"
+    for toml in curated.glob("*.toml"):
+        assert f"dmslog/knowledge/curated/{toml.name}" in names
+    code = ("from dmslog.knowledge.pack import load_pack; p = load_pack(); "
+            "print(len(p.adapters) > 0)")
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code], capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONPATH": str(pyz)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True"
+
+
 def test_pyz_build_is_deterministic(build_pyz):
     first = build_pyz.build().read_bytes()
     second = build_pyz.build().read_bytes()

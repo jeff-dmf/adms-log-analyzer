@@ -6,7 +6,7 @@ import { S, format } from "./strings.js";
 import { formatTs } from "./time.js";
 
 export class Detail {
-  constructor(refs, { getCase, getSourceName, onError, getTemplateCode, onTemplate, onFields }) {
+  constructor(refs, { getCase, getSourceName, onError, getTemplateCode, onTemplate, onFields, onEntry }) {
     this.refs = refs;
     this.getCase = getCase;
     this.getSourceName = getSourceName;
@@ -14,6 +14,7 @@ export class Detail {
     this.getTemplateCode = getTemplateCode || (() => "");
     this.onTemplate = onTemplate || (() => {});
     this.onFields = onFields || (() => {});
+    this.onEntry = onEntry || (() => {}); // entry fetched (or null when cleared): Knowledge section
     this.entry = null;
     this.entryCase = null;
     this.terms = [];
@@ -54,6 +55,7 @@ export class Detail {
       this.refs.template.hidden = true;
     }
     this.closeContext();
+    this.onEntry(null);
   }
 
   async show(id, keepContext = false) {
@@ -72,6 +74,7 @@ export class Detail {
           this.closeContext();
         }
         this.renderEntry(entry);
+        this.onEntry(entry);
       }
     } catch (err) {
       if (this.entryGuard.isCurrent(ticket, this.getCase(), id) && !(err && err.name === "AbortError")) {

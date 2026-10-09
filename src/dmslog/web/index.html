@@ -31,6 +31,7 @@
       </div>
       <button type="button" id="filter-tree-button" aria-expanded="false" data-i18n="toolbarFilterTree"></button>
       <button type="button" id="unknown-button" aria-expanded="false" data-i18n="toolbarUnknown" hidden></button>
+      <button type="button" id="config-button" aria-expanded="false" data-i18n="toolbarConfig" hidden></button>
       <button type="button" id="theme-button" data-i18n-title="themeToggle" data-i18n-aria-label="themeToggle"></button>
     </header>
 
@@ -69,6 +70,7 @@
         <div id="timeline" class="timeline-host"></div>
         <section id="filter-tree-host" class="panel host-panel" hidden></section>
         <section id="unknown-panel-host" class="panel host-panel" hidden></section>
+        <section id="config-panel-host" class="panel host-panel" hidden></section>
         <form id="filter-form" class="filter-bar">
           <div class="field">
             <label for="sev-select" data-i18n="filterSeverity"></label>
@@ -112,6 +114,7 @@
         <button type="button" id="detail-template" class="tpl-link-button" hidden></button>
         <pre id="detail-text" class="detail-text"></pre>
         <div id="detail-fields" class="detail-fields"></div>
+        <section id="detail-knowledge" class="detail-knowledge" data-i18n-aria-label="knowTitle" hidden></section>
         <div id="context-box" class="context-box" hidden>
           <div class="context-head">
             <h3 data-i18n="contextTitle"></h3>

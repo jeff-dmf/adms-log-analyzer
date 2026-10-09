@@ -208,6 +208,7 @@ counter_examples = ["[SystemEventSender] System event message: [AdapterExample] 
 
 [[template]]
 code = "GEN-EXC-01"
+aliases = ["WFM-061"]
 class = "error"
 title = "Non fatal exception"
 sev = 2
@@ -221,7 +222,7 @@ counter_examples = ["Fatal Exception System.ObjectDisposedException: x", "Non Fa
 
 [[template]]
 code = "GEN-DBG-01"
-aliases = ["WFM-099"]
+aliases = ["WFM-099", "ONT-099"]
 class = "lifecycle"
 title = "Debug level changed"
 sev = 4
@@ -258,6 +259,7 @@ counter_examples = ["Client for endpoint ExampleService sent a request"]
 
 [[template]]
 code = "GEN-SUB-01"
+aliases = ["WFM-072"]
 class = "lifecycle"
 title = "Subscriber life cycle"
 sev = 4
@@ -305,6 +307,7 @@ counter_examples = ["IU received for topic"]
 
 [[template]]
 code = "GEN-MAP-01"
+aliases = ["WFM-002", "WFM-003"]
 class = "other"
 title = "Map dump and state markers"
 sev = 5

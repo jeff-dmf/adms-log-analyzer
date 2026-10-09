@@ -35,15 +35,16 @@ M6 e M7 podem andar em paralelo.
 |---|---|---|
 | M0 | concluído | PR #7 |
 | M1 | concluído | PRs #12 e #14 (revisão cruzada; 3 achados bloqueantes corrigidos no #14) |
-| M2 | implementado e mergeado, com pendências abaixo | PR #15 (dez rodadas de revisão do validador de regex) |
+| M2 | concluído, exceto 2.11 (aguarda a base do Jefferson) | PR #15 (dez rodadas de revisão do validador de regex) e PR do M3 (UI verificada no Chrome, lacunas fechadas, 2.4) |
 | M6.1 | concluído (descoberta de formato dos payloads) | PR #10 (aprovação manual do Jefferson) |
-| M3–M5, M6 (exceto 6.1), M7–M8 | não iniciados | |
+| M3 | implementado, exceto 3.10 (aguarda a base do Jefferson) e a parte por janelas de 3.9 (depende do M4) | PR do M3 (pack do vault, Registry em camadas, `config_observed`, `/api/config`, `/api/knowledge`, dicas curadas, mapa processo → sigla, UI) |
+| M4–M5, M6 (exceto 6.1), M7–M8 | não iniciados | |
 
 **M1, medido no ERS de exemplo (escopo padrão):** ingestão de 13,8 s só do Enterprise e 25,5 s com o Sensitive (meta 40 s), pico de 236 a 255 MB (meta 500 MB), reingestão idempotente em 0,3 s, página do grid e busca FTS com p95 de 0,8 ms. Interface verificada no Chrome com ERS sintético (horário igual ao do log com fuso de São Paulo, `<script>` literal no grid e no detalhe).
 
 **M2, medido:** 335 templates em 17 famílias; 99,86% dos 4.054.391 registros dos arquivos de amostra de escopo padrão têm template (os demais são a família `CustomAdapterChangeIncidentDevice`, tarefa 2.11, e 2 mensagens de 17.904 caracteres numa linha só); zero exceção .NET com severidade acima de 2 em 3.707 linhas; custo de ingestão 1,22x o do M1 com um catálogo realista (1,40x com 50 templates); histograma de 2,1 milhões de registros em 16 ms (tabela aditiva `bucket_sev`, esquema v2); cinco invariantes de contagem dos documentos passam.
 
-Tarefas do M2: 2.1, 2.2, 2.3, 2.5, 2.6, 2.7, 2.8, 2.9 e 2.10 feitas. **Pendentes:** 2.11 (aguarda a base de conhecimento no adms-v3.9, issue #22); 2.4 só coberta indiretamente (aliases e cobertura por script, sem verificador dedicado de "todo ID documentado existe"); **verificação visual da UI do M2 no Chrome** (timeline, árvore de filtros, filtros salvos, coluna e filtro por template, cores de severidade, atalhos, painel de desconhecidos), que não foi feita porque a extensão do navegador estava desconectada; três lacunas de template conhecidas (linha de auditoria do Ont sensitive sem endpoint, `Getting GIDs for provided UIDs succeeded.`, fechamento de socket TCP); o texto do site backup do SiteSwitch não existe nas amostras; decisão do Jefferson sobre indexar o texto `ResultSet` do `BLT-011` (97 mil registros sensitive).
+Tarefas do M2: todas feitas, exceto a 2.11 (aguarda a base de conhecimento no adms-v3.9, issue #22). A UI do M2 foi verificada no Chrome com ERS sintético (timeline, árvore de filtros, filtro salvo, template, cores nos dois temas, `n`, detalhe e contexto, painel de desconhecidos). As três lacunas de template já estavam cobertas por templates existentes; a 2.4 virou `tests/unit/test_docs_ids_exist.py` (achou 5 IDs sem alias, corrigidos). Em aberto: o texto do site backup do SiteSwitch não existe nas amostras; decisão do Jefferson sobre indexar o texto `ResultSet` do `BLT-011` (97 mil registros sensitive). A família `CustomAdapterChangeIncidentDevice` (46% dos 10.914 registros dela sem template: três formas genéricas `Processing message with Id <s> started/successfully finished/failed`) segue na 2.11.
 
 Decisões de desenho do M2 que valem para os próximos marcos: templates só se aplicam a mensagens que cabem na janela (padrão 4096; `window` por template); validador de regex por orçamento de passos (2^21) mais limites de construção (classe até 32 itens, capturas até 3 níveis); mudar o catálogo, a severidade ou o `fts` de um template exige reindexar o caso.
 
@@ -116,6 +117,8 @@ Aceite:
 - Histograma com 2 M registros < 50 ms.
 
 ## M3: conhecimento
+
+**Estado:** 3.1 a 3.9 feitas (3.1 e 3.4 foram implementadas por Sonnet seguindo as seções 7.1 e 7.2.1, sem decisão nova de desenho). Pendente: 3.10 (base do Jefferson) e, na 3.9, a expectativa de payload por janelas `level_window` (depende dos eventos do M4; o painel avisa e hoje usa só `LogLevel` × `MessageLogLevel`). Smoke no ERS de exemplo: 196 valores observados, 14 produtos em `config_param`, 0 divergências resolvido × observado depois de comparar TimeSpans por valor; sete adapters sem linha `[Configuration]` nos logs indexados (startup já rotacionado). `CoreSDK` fica fora do `config_param` (não é adapter). `families.toml` usa AWDI para o WDIAdapter e o vault diz AWMI: reconciliar (registrado em `curated/process_map.toml`).
 
 | # | Tarefa | Modelo |
 |---|---|---|

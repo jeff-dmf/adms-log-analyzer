@@ -1,0 +1,175 @@
+# Process -> acronym map for the in-scope adapters (ARQUITETURA U8, U11; ROADMAP 3.7).
+#
+# source = "vault"    the adms-v3.9 vault states the process name for this acronym
+#                     (usually the "Application" row of the Deployment Specification or a
+#                     configuration note).
+# source = "curated"  no vault statement; the mapping follows families.toml and the adapter
+#                     name in adapters.json. The note gives the justification.
+#
+# Ambiguous or conflicting cases are NOT guessed: they go under [[unresolved]].
+# Families that are not adapters go under [[out_of_scope]].
+# Checked by tests/unit/test_process_map.py.
+
+[[process]]
+name = "WfmAdapter"
+acronym = "AWFM"
+adapter = "WFM Adapter"
+source = "vault"
+note = "WfmAdapter named in the AWFM configuration notes."
+
+[[process]]
+name = "OntAdapter"
+acronym = "AONT"
+adapter = "OMN Adapter"
+source = "vault"
+note = "AONT Deployment Specification names the application AdapterONT (ONT = OMN); OntAdapter is listed in the vault SMAN usage events."
+
+[[process]]
+name = "AVLAdapter"
+acronym = "AAVL"
+adapter = "AVL Adapter"
+source = "vault"
+note = "AAVL Deployment Specification: Application = AVLAdapter."
+
+[[process]]
+name = "OsrAdapter"
+acronym = "AOSR"
+adapter = "OSR Adapter"
+source = "vault"
+note = "AOSR Deployment Specification names AdapterOSR; OsrAdapter is named in the AOSR configuration notes."
+
+[[process]]
+name = "SmnAdapter"
+acronym = "ASMN"
+adapter = "SMN Adapter"
+source = "vault"
+note = "ASMN Deployment Specification names AdapterSMN; SmnAdapter is listed in the vault SMAN usage events."
+
+[[process]]
+name = "SiteSwitchAdapter"
+acronym = "ASSS"
+adapter = "SSS Adapter"
+source = "curated"
+note = "The vault names the adapter SSS (Seamless Site Switch) but not the process name; families.toml maps SiteSwitchAdapter to ASSS."
+
+[[process]]
+name = "CrmAdapter"
+acronym = "ACRM"
+adapter = "CRM Adapter"
+source = "vault"
+note = "ACRM Deployment Specification: Application = CrmAdapter."
+
+[[process]]
+name = "AmiAdapter"
+acronym = "AAMI"
+adapter = "AMI Adapter"
+source = "vault"
+note = "AAMI Deployment Specification: Application = AmiAdapter."
+
+[[process]]
+name = "SmrAdapter"
+acronym = "ASMR"
+adapter = "SMR Adapter"
+source = "vault"
+note = "ASMR Deployment Specification: Application = SmrAdapter."
+
+[[process]]
+name = "WDIAdapter"
+acronym = "AWMI"
+adapter = "WDI Adapter"
+source = "vault"
+note = "AWMI Deployment Specification: Application = WDIAdapter. families.toml uses the code AWDI for this process; see [[unresolved]]."
+
+[[process]]
+name = "ClaimCheckAdapter"
+acronym = "ACLC"
+adapter = "CC Adapter"
+source = "vault"
+note = "ACLC Deployment: Application = ClaimCheckAdapter."
+
+[[process]]
+name = "FileUploadAdapter"
+acronym = "AFUP"
+adapter = "File Uploading Adapter"
+source = "vault"
+note = "FileUploadAdapter named in the AFUP Interface Configuration."
+
+[[process]]
+name = "FileMonitorAdapter"
+acronym = "AFMO"
+adapter = "File Monitoring Adapter"
+source = "vault"
+note = "AFMO Deployment: Application = FileMonitorAdapter."
+
+[[process]]
+name = "BLTHost"
+acronym = "BLTHOST"
+adapter = ""
+source = "curated"
+note = "Host log, not an adapter, so it has no adapters.json entry; BLTHOST is the families.toml family code. The process name is stated in the vault."
+
+# ---------------------------------------------------------------------------
+# Unresolved: no safe mapping yet.
+# ---------------------------------------------------------------------------
+
+[[unresolved]]
+family = "AEDP"
+name = "CustomAdapterChangeIncidentDevice"
+reason = "No vault index for this adapter yet (issue #22). AEDP is a provisional code in families.toml and is not in adapters.json. The name appears in the sample ERS file names."
+
+[[unresolved]]
+family = "AWDI"
+name = "WDIAdapter"
+reason = "families.toml uses AWDI, but the vault and adapters.json identify this adapter as AWMI (Weather Interface). The process is mapped to AWMI above. families.toml must be reconciled (outside this task's allowed files)."
+
+# ---------------------------------------------------------------------------
+# Out of scope: families that are not adapters (no process -> acronym entry).
+# ---------------------------------------------------------------------------
+
+[[out_of_scope]]
+family = "OASERR"
+reason = "oasErrLog: host error log, not an adapter."
+
+[[out_of_scope]]
+family = "SERVICE"
+reason = "Service framework logs (dnaService, ProcessMonitor, arb*): not adapters."
+
+[[out_of_scope]]
+family = "NMC"
+reason = "Other ERS log, optional scope."
+
+[[out_of_scope]]
+family = "PSENGINE"
+reason = "Other ERS log, optional scope."
+
+[[out_of_scope]]
+family = "ARBIP"
+reason = "Other ERS log, optional scope."
+
+[[out_of_scope]]
+family = "SHUTDOWN"
+reason = "Shutdown reason logs, not adapters."
+
+[[out_of_scope]]
+family = "INSTALL"
+reason = "Installer, hotfix and snapshot logs, not adapters."
+
+[[out_of_scope]]
+family = "ERS"
+reason = "ERS tool logs, not adapters."
+
+[[out_of_scope]]
+family = "PROCESS"
+reason = "Generic process logs; adapters outside the 1.0 scope are not mapped here."
+
+[[out_of_scope]]
+family = "SERVERLOG"
+reason = "Generic text logs of the Log folder, not adapters."
+
+[[out_of_scope]]
+family = "NONLOG"
+reason = "Non-text files (configuration, binaries, databases), not logs."
+
+[[out_of_scope]]
+family = "REPORT"
+reason = "Plain-text reports, not adapters."

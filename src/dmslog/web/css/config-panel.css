@@ -1,0 +1,124 @@
+/* Effective configuration panel. Colours come from the tokens of app.css (light and dark). */
+.cfg-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.cfg-title {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.cfg-filter {
+  min-width: 14em;
+}
+
+.cfg-status,
+.cfg-summary,
+.cfg-muted {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.cfg-status.is-error {
+  color: var(--sev-2);
+}
+
+.cfg-body {
+  overflow-x: auto;
+}
+
+.cfg-table,
+.cfg-layers {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 12px;
+}
+
+.cfg-table th,
+.cfg-table td,
+.cfg-layers th,
+.cfg-layers td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.cfg-caption,
+.cfg-layers caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 6px 0;
+}
+
+.cfg-mono {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.cfg-key {
+  white-space: nowrap;
+}
+
+.cfg-expand,
+.cfg-link {
+  min-width: 1.8em;
+}
+
+.cfg-row-diverges {
+  background: var(--error-bg);
+}
+
+.cfg-layers-row > td {
+  background: var(--panel-alt);
+}
+
+/* Status and divergence badges: the text carries the meaning, the border and colour reinforce it. */
+.cfg-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.cfg-neutral,
+.cfg-ok {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.cfg-muted.cfg-badge,
+.cfg-badge.cfg-muted {
+  background: var(--panel-alt);
+  color: var(--muted);
+}
+
+.cfg-warn {
+  border-color: var(--sev-3);
+  color: var(--sev-3);
+}
+
+.cfg-bad {
+  background: var(--error-bg);
+  border-color: var(--sev-2);
+  color: var(--error-text);
+  font-weight: 600;
+}
+
+.cfg-note {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.cfg-expand:focus-visible,
+.cfg-link:focus-visible,
+.cfg-product:focus-visible,
+.cfg-filter:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}

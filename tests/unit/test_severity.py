@@ -103,3 +103,37 @@ def test_unclassified_detected_errors_is_a_warning():
 def test_default_is_info():
     assert infer_severity(None, rec("Services started.")) == 4
     assert infer_severity(tm(None), rec("Services started.")) == 4
+
+
+# --- error code fields and Knowledge-backed resolver --------------------------------------------
+
+from dmslog.parse.severity import knowledge_code_resolver  # noqa: E402
+
+
+def test_single_code_field_resolves_severity():
+    resolver = {"E1": 1}.get
+    assert infer_severity(tm(None, code="E1"), rec("x"), resolver) == 1
+    assert infer_severity(tm(None, error_code="E1"), rec("x"), resolver) == 1
+    assert infer_severity(tm(3, code="E1"), rec("x"), resolver) == 1  # escalates a template severity
+
+
+def test_single_code_without_resolver_or_match_changes_nothing():
+    assert infer_severity(tm(None, code="E1"), rec("plain")) == 4
+    assert infer_severity(tm(None, code="E1"), rec("plain"), {}.get) == 4
+    assert infer_severity(tm(None, code=3), rec("plain"), {"E1": 1}.get) == 4
+
+
+def test_knowledge_code_resolver_uses_knowledge_lazily():
+    calls = []
+
+    class FakeKnowledge:
+        def error(self, family, code):
+            calls.append((family, code))
+            return SimpleNamespace(severity=2) if code == "E1" else None
+
+    resolver = knowledge_code_resolver("AAAA", FakeKnowledge())
+    assert calls == []
+    assert resolver("E1") == 2
+    assert resolver("E2") is None
+    assert calls == [("AAAA", "E1"), ("AAAA", "E2")]
+    assert infer_severity(tm(None, code="E1"), rec("x"), resolver) == 2

@@ -30,6 +30,11 @@ ALIASES = {
     "WFM-099": "GEN-DBG-01",
     "WFM-100": "GEN-MSG-01",
     "ONT-100": "GEN-MSG-01",
+    "ONT-099": "GEN-DBG-01",
+    "WFM-061": "GEN-EXC-01",
+    "WFM-072": "GEN-SUB-01",
+    "WFM-002": "GEN-MAP-01",
+    "WFM-003": "GEN-MAP-01",
 }
 
 # Every GEN-* ID that appears in docs/formato/*.md must resolve.

@@ -94,4 +94,12 @@ export const api = {
     request("GET", "/api/templates" + query({ case: caseId, family }), undefined, signal),
   unknown: (caseId, family, limit, signal) =>
     request("GET", "/api/unknown" + query({ case: caseId, family, limit }), undefined, signal),
+  knowledge: (caseId, template, signal) =>
+    request("GET", "/api/knowledge" + query({ case: caseId, template }), undefined, signal),
+  knowledgeError: (caseId, family, code, signal) =>
+    request("GET", "/api/knowledge/error" + query({ case: caseId, family, code }), undefined, signal),
+  configProducts: (caseId, signal) =>
+    request("GET", "/api/config" + query({ case: caseId }), undefined, signal),
+  config: (caseId, product, group, signal) =>
+    request("GET", "/api/config" + query({ case: caseId, product, group }), undefined, signal),
 };

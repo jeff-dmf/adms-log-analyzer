@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OASYSDNARegistry>
+  <Product Name="AdapterExample">
+    <Value Name="LogLevel">Warning</Value>
+    <Value Name="WebServiceConfiguration">%OASINSTALLDATADIR%\ADMS\configuration\ExampleIntegration\ExampleAdapter_WebServiceConfiguration.xml</Value>
+    <Value Name="Created_ErrorConfigurationPath">%OASINSTALLDATADIR%ADMS\configuration\ExampleIntegration\Example_Created_ErrorConfiguration.xml</Value>
+    <Value Name="Changed_ErrorConfigurationPath">C:\SchneiderElectricData\\ADMS\configuration\ExampleIntegration\Example_Changed_ErrorConfiguration.xml</Value>
+    <Value Name="FileUploadInterval">01:00:00</Value>
+    <Key Name="ContactTypeIds">
+      <Value Name="0">10</Value>
+      <Value Name="1">11</Value>
+    </Key>
+  </Product>
+</OASYSDNARegistry>

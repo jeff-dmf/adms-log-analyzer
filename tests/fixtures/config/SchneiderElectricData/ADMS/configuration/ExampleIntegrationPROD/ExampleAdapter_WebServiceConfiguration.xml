@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Adapter_WebServiceConfiguration>
+  <WebServicesConfiguration>
+    <WebServiceConfiguration Name="CreatedThing">
+      <AuditingPeriod>30</AuditingPeriod>
+      <NumOfRetries>3</NumOfRetries>
+      <RetryTimeout>00:00:10</RetryTimeout>
+      <MessageLogLevel>Info</MessageLogLevel>
+    </WebServiceConfiguration>
+    <WebServiceConfiguration Name="ChangedThing">
+      <MessageLogLevel>Verbose</MessageLogLevel>
+    </WebServiceConfiguration>
+    <WebServiceConfiguration Name="QuietThing">
+      <MessageLogLevel>None</MessageLogLevel>
+    </WebServiceConfiguration>
+    <WebServiceConfiguration Name="OddThing">
+      <MessageLogLevel>Sideways</MessageLogLevel>
+    </WebServiceConfiguration>
+  </WebServicesConfiguration>
+</Adapter_WebServiceConfiguration>

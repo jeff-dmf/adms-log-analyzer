@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OASYSDNARegistry>
+  <Product Name="AdapterExample">
+    <Value Name="LogLevel">Error</Value>
+    <Value Name="WebServiceConfiguration">%OASINSTALLDATADIR%\ADMS\configuration\ExampleIntegrationPROD\ExampleAdapter_WebServiceConfiguration.xml</Value>
+    <Value Name="FileUploadInterval">00:01:00</Value>
+  </Product>
+</OASYSDNARegistry>

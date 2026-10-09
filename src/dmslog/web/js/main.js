@@ -10,6 +10,7 @@ import { registerLeafType } from "./filter-tree-model.js";
 import { initFilterTree, registerLeafEditor } from "./filter-tree.js";
 import { initTimeline } from "./timeline.js";
 import { COLUMNS, Grid } from "./grid.js";
+import { KnowledgeSection } from "./knowledge.js";
 import { searchTerms } from "./search.js";
 import { SourcesPanel } from "./sources.js";
 import { S, format } from "./strings.js";
@@ -163,6 +164,9 @@ function start() {
   let filterTree = null;
   let timeline = null;
   let unknownPanel = null;
+  let configPanel = null;
+  let knowledge = null;
+  let sourceFamilies = new Map();
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
   let navSeq = 0;
@@ -224,6 +228,11 @@ function start() {
     template: byId("detail-template"),
     fields: byId("detail-fields"),
   }, {
+    onEntry: (entry) => {
+      if (knowledge) {
+        knowledge.show(entry);
+      }
+    },
     getTemplateCode: (id) => templateCodes.get(id) || "",
     onTemplate: (tplId) => addTemplateFilter(tplId),
     onFields: (names) => {
@@ -241,6 +250,12 @@ function start() {
     },
     getCase: () => caseId,
     getSourceName: (id) => sourceNames.get(id) || String(id),
+    onError: showError,
+  });
+
+  knowledge = new KnowledgeSection(byId("detail-knowledge"), {
+    getCase: () => caseId,
+    getFamily: (sourceId) => sourceFamilies.get(sourceId) || "",
     onError: showError,
   });
 
@@ -280,13 +295,18 @@ function start() {
         filterTree.setFilter(null);
       }
       loadTemplates(id);
+      knowledge.reset();
       if (unknownPanel) {
         unknownPanel.refresh();
+      }
+      if (configPanel) {
+        configPanel.refresh();
       }
     },
     onSources: (list, quiet) => {
       sources = list;
       sourceNames = new Map(list.map((s) => [s.id, s.name]));
+      sourceFamilies = new Map(list.map((s) => [s.id, s.family || ""]));
       grid.setSourceNames(sourceNames);
       if (!quiet) {
         applyView();
@@ -295,8 +315,12 @@ function start() {
     onSelection: () => applyView(),
     onDone: () => {
       loadTemplates(caseId);
+      knowledge.reset(); // the ERS configuration may have been read again
       if (unknownPanel) {
         unknownPanel.refresh();
+      }
+      if (configPanel) {
+        configPanel.refresh();
       }
       return applyView();
     },
@@ -468,6 +492,32 @@ function start() {
           });
         }
         unknownPanel.refresh();
+      }
+    });
+  }).catch(() => {
+    // Module missing or failing: the button stays hidden.
+  });
+
+  // Effective-configuration panel: optional module like the unknown-templates panel.
+  const configHost = byId("config-panel-host");
+  const configButton = byId("config-button");
+  import("./config-panel.js").then((module) => {
+    if (typeof module.initConfigPanel !== "function") {
+      return;
+    }
+    configButton.hidden = false;
+    configButton.addEventListener("click", () => {
+      configHost.hidden = !configHost.hidden;
+      configButton.setAttribute("aria-expanded", configHost.hidden ? "false" : "true");
+      if (!configHost.hidden) {
+        if (!configPanel) {
+          configPanel = module.initConfigPanel(configHost, {
+            api,
+            getCase: () => caseId,
+            onOpenEntry: (entryId) => detail.show(entryId),
+          });
+        }
+        configPanel.refresh();
       }
     });
   }).catch(() => {

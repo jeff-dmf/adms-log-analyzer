@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ErrorConfiguration>
+  <Adapter>ExampleAdapter</Adapter>
+  <Interface>Changed</Interface>
+  <ErrorSeverityEventingThreshold>Error</ErrorSeverityEventingThreshold>
+  <Error>
+    <Adms><Id>ADMS-1</Id><Severity>Error</Severity><Log>true</Log></Adms>
+    <ExternalSystem><Code>E100</Code><Severity>Error</Severity><Reason>Example reason</Reason><Details>Example details</Details></ExternalSystem>
+  </Error>
+</ErrorConfiguration>

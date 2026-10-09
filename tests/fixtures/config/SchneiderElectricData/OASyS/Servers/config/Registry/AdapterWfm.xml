@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OASYSDNARegistry>
+  <Product Name="AdapterWfm">
+    <Value Name="LogLevel">Info</Value>
+    <Value Name="WebServiceConfiguration">%OASINSTALLDATADIR%\ADMS\configuration\ExampleIntegration\ExampleAdapter_WebServiceConfiguration.xml</Value>
+    <Value Name="Created_ErrorConfigurationPath">%OASINSTALLDATADIR%ADMS\configuration\ExampleIntegration\Example_Created_ErrorConfiguration.xml</Value>
+    <Value Name="AddressingMode">Local</Value>
+    <Value Name="SendTimeout">00:01:00</Value>
+  </Product>
+</OASYSDNARegistry>

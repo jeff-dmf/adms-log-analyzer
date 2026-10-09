@@ -17,9 +17,11 @@ ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "src" / "dmslog" / "web"
 JS_DIR = WEB / "js"
 EXPECTED_MODULES = {
-    "api.js", "detail-model.js", "detail.js", "filter-tree-model.js", "filter-tree.js", "filters.js",
-    "grid.js", "grid-model.js", "main.js", "saved-views.js", "search.js", "sources.js", "strings.js",
-    "theme.js", "time.js", "timeline-model.js", "timeline.js", "unknown-panel-model.js", "unknown-panel.js",
+    "api.js", "config-panel-model.js", "config-panel.js", "detail-model.js", "detail.js",
+    "filter-tree-model.js", "filter-tree.js", "filters.js", "grid-model.js", "grid.js",
+    "knowledge-model.js", "knowledge.js", "main.js", "saved-views.js", "search.js", "sources.js",
+    "strings.js", "theme.js", "time.js", "timeline-model.js", "timeline.js", "unknown-panel-model.js",
+    "unknown-panel.js",
 }
 
 FORBIDDEN_JS = [
@@ -232,7 +234,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
     )
     paths = [
         "/", "/css/app.css", "/css/timeline.css", "/css/unknown-panel.css",
-        "/css/grid-extras.css", "/css/filter-tree.css",
+        "/css/grid-extras.css", "/css/filter-tree.css", "/css/config-panel.css", "/css/knowledge.css",
         "/vendor/uplot/uPlot.esm.js", "/vendor/uplot/uPlot.min.css",
         *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),
     ]  # fmt: skip

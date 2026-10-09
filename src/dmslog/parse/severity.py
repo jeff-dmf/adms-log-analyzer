@@ -11,7 +11,8 @@ count as severity evidence; ``WARNING`` is treated like a text marker.
 1. envelope level FATAL/EXIT -> 1, ERROR or ``(ERROR)`` prefix -> 2;
 2. ``sev`` declared by the matched template (including ``sev_field``/``sev_map``, resolved by the
    engine into ``TemplateMatch.sev_hint``);
-3. error codes of the record (``codes`` field), resolved through ``codes``;
+3. error codes of the record (``codes`` list, or ``code``/``error_code`` fields), resolved through
+   ``codes`` (see ``knowledge_code_resolver`` for the Knowledge-backed resolver);
 4. text markers in ``msg`` and in the first continuation line;
 5. known false positives skip the text markers;
 6. otherwise 4 (info), or 5 for VERBOSE tracing lines.
@@ -46,6 +47,8 @@ _FALSE_POSITIVES = re.compile(
     r"|can be found (?:in )?the adapters? sensi\w+ log"
     r"|can be found adapters sensistive log"
 )
+# Template fields that carry one error code (besides the list field ``codes``).
+_SINGLE_CODE_FIELDS = ("code", "error_code")
 _LEVEL_FATAL, _LEVEL_EXIT, _LEVEL_ERROR, _LEVEL_WARNING, _LEVEL_VERBOSE = 1, 2, 3, 6, 8
 
 
@@ -84,7 +87,11 @@ def generic_severity(level: int | None, msg: str) -> int:
 
 def _code_severity(codes: Any, resolver: CodeResolver | None) -> int | None:
     """Step 3: the most severe resolved code (lowest number)."""
-    if resolver is None or not isinstance(codes, (list, tuple)):
+    if resolver is None:
+        return None
+    if isinstance(codes, str):  # single-code fields (`code` / `error_code`)
+        codes = [codes]
+    if not isinstance(codes, (list, tuple)):
         return None
     found = [s for s in (resolver(str(c)) for c in codes) if s is not None]
     return min(found) if found else None
@@ -103,7 +110,12 @@ def infer_severity(match: Any, record: Any, codes: CodeResolver | None = None) -
         return sev
     resolved = None
     if match is not None and match.fields:
-        resolved = _code_severity(match.fields.get("codes"), codes)
+        fields = match.fields
+        resolved = _code_severity(fields.get("codes"), codes)
+        for name in _SINGLE_CODE_FIELDS:
+            single = _code_severity(fields.get(name), codes)
+            if single is not None and (resolved is None or single < resolved):
+                resolved = single
     if match is not None and match.sev_hint is not None:  # step 2
         hint = match.sev_hint
         return hint if resolved is None or hint <= resolved else resolved
@@ -117,3 +129,22 @@ def infer_severity(match: Any, record: Any, codes: CodeResolver | None = None) -
     if match is None and record.level == _LEVEL_VERBOSE:
         return SEV_NOISE
     return SEV_INFO
+
+
+def knowledge_code_resolver(family: str, knowledge: Any = None) -> CodeResolver:
+    """``CodeResolver`` backed by ``Knowledge.error`` (ERS configuration first, then the vault pack).
+
+    ``knowledge`` defaults to a ``Knowledge`` built on first use, so importing this module stays
+    cheap and nothing is loaded when no template exposes a code.
+    """
+    state: dict[str, Any] = {"knowledge": knowledge}
+
+    def resolve(code: str) -> int | None:
+        if state["knowledge"] is None:
+            from dmslog.knowledge.resolve import Knowledge
+
+            state["knowledge"] = Knowledge()
+        info = state["knowledge"].error(family, code)
+        return None if info is None else info.severity
+
+    return resolve

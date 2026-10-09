@@ -34,6 +34,10 @@ from ..ingest.ers import (
     parse_ers_name,
 )
 from ..ingest.reader import ReadLimitError
+from ..knowledge.installation import read_installation
+from ..knowledge.registry import RegistryError
+from ..knowledge.resolve import Knowledge
+from ..store import config as config_store
 from ..store import db, query, views
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
@@ -369,6 +373,9 @@ def _query_int(request: Request, name: str, default: int) -> int:
 
 
 _FAMILY = re.compile(r"[A-Za-z0-9_]{1,32}\Z")
+_PRODUCT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+_TEMPLATE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}\Z")
+_ERROR_CODE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}\Z")
 
 
 def _family_param(request: Request) -> str | None:
@@ -466,6 +473,9 @@ class Api:
         self.data_dir = Path(data_dir)
         self.store = CaseStore(self.data_dir)
         self.jobs = IngestJobs(self.store)
+        self._knowledge_lock = threading.Lock()
+        self._pack_knowledge: Knowledge | None = None
+        self._case_knowledge: dict[str, tuple[Any, Knowledge]] = {}
         self._routes: list[tuple[str, re.Pattern[str], Callable[[Request], Response | Stream]]] = [
             ("GET", re.compile(r"/api/cases\Z"), self.list_cases),
             ("POST", re.compile(r"/api/cases\Z"), self.create_case),
@@ -475,6 +485,9 @@ class Api:
             ("GET", re.compile(r"/api/sources\Z"), self.list_sources),
             ("GET", re.compile(r"/api/templates\Z"), self.list_templates),
             ("GET", re.compile(r"/api/unknown\Z"), self.list_unknown),
+            ("GET", re.compile(r"/api/config\Z"), self.get_config),
+            ("GET", re.compile(r"/api/knowledge\Z"), self.get_knowledge),
+            ("GET", re.compile(r"/api/knowledge/error\Z"), self.get_knowledge_error),
             ("POST", re.compile(r"/api/entries/page\Z"), self.entries_page),
             ("POST", re.compile(r"/api/entries/count\Z"), self.entries_count),
             ("POST", re.compile(r"/api/histogram\Z"), self.histogram),
@@ -614,6 +627,134 @@ class Api:
             rows = query.unknown_signatures(conn, family, limit)
             totals = query.unknown_totals(conn, family)
         return Response(200, {"case": cid, "family": family, "unknown": rows, **totals})
+
+    # -- installation configuration
+
+    def get_config(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        product = request.query.get("product")
+        group = request.query.get("group")
+        if group is not None and not _SMALL_INT.match(group):
+            raise ApiError(400, "invalid_field", messages.API_BAD_INT.format(field="group"))
+        if product is not None and not _PRODUCT.match(product):
+            raise ApiError(400, "invalid_field", messages.API_BAD_PRODUCT)
+        with self.store.reader(cid) as conn:
+            if product is None:
+                return Response(200, {"case": cid, "products": config_store.config_products(conn)})
+            result = config_store.config_for(conn, product, int(group) if group is not None else None)
+        if result is None:
+            raise ApiError(404, "config_not_found", messages.API_CONFIG_NOT_FOUND.format(product=product))
+        return Response(200, {"case": cid, **result})
+
+    # -- knowledge (vault pack + installation configuration)
+
+    def _knowledge(self, conn: sqlite3.Connection, cid: str, with_ers: bool) -> Knowledge:
+        """``Knowledge`` over the pack and, when ``with_ers``, the ERS of the case (read once per version)."""
+        if not with_ers:
+            with self._knowledge_lock:
+                if self._pack_knowledge is None:
+                    self._pack_knowledge = Knowledge()
+                return self._pack_knowledge
+        paths = [Path(r[0]) for r in conn.execute("SELECT path FROM collection ORDER BY id")]
+        stamps = []
+        for path in paths:
+            try:
+                stamps.append((str(path), path.stat().st_mtime_ns))
+            except OSError:
+                stamps.append((str(path), 0))
+        row = conn.execute("SELECT value FROM meta WHERE key = 'ingest_generation'").fetchone()
+        key = (cid, row[0] if row else None, tuple(stamps))
+        with self._knowledge_lock:
+            cached = self._case_knowledge.get(cid)
+            if cached is not None and cached[0] == key:
+                return cached[1]
+        installations: dict[int, Any] = {}
+        for path in paths:
+            try:
+                installation = read_installation(path)
+            except (RegistryError, OSError, zipfile.BadZipFile):
+                continue
+            if installation.products:
+                installations[len(installations)] = installation
+        knowledge = Knowledge(installations=installations)
+        with self._knowledge_lock:
+            self._case_knowledge[cid] = (key, knowledge)
+        return knowledge
+
+    def get_knowledge(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        code = request.query.get("template")
+        if code is None or not _TEMPLATE_CODE.match(code):
+            raise ApiError(400, "invalid_field", messages.API_BAD_TEMPLATE)
+        with self.store.reader(cid) as conn:
+            row = conn.execute("SELECT family, title FROM template WHERE code = ?", (code,)).fetchone()
+            if row is None:
+                message = messages.API_TEMPLATE_NOT_FOUND.format(template=code)
+                raise ApiError(404, "template_not_found", message)
+            knowledge = self._knowledge(conn, cid, with_ers=False)
+        family, title = row
+        hint = knowledge.hint(code)
+        adapter = knowledge.pack.adapter(family)
+        params = []
+        for name in hint.params if hint else ():
+            found = knowledge.param(0, family, name, scope="vault")
+            params.append({
+                "name": name,
+                "default": found.default if found else None,
+                "description": found.description if found else None,
+                "log_relevant": found.log_relevant if found else None,
+            })  # fmt: skip
+        return Response(200, {
+            "case": cid,
+            "template": code,
+            "family": family,
+            "title": title,
+            "hint": None if hint is None else {
+                "text": hint.text, "params": list(hint.params), "note": hint.note,
+            },
+            "params": params,
+            "adapter": None if adapter is None else {
+                "acronym": adapter.acronym,
+                "title": adapter.title,
+                "adapter": adapter.adapter,
+                "type": adapter.type_label or adapter.type,
+                "operations": list(adapter.operations),
+                "document_title": adapter.document_title,
+                "document_version": adapter.document_version,
+            },
+            "vault_note": hint.note if hint and hint.note else knowledge.vault_note(family),
+        })  # fmt: skip
+
+    def get_knowledge_error(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        family = _family_param(request)
+        if family is None:
+            raise ApiError(400, "invalid_field", messages.API_BAD_FAMILY)
+        code = request.query.get("code")
+        if code is None or not _ERROR_CODE.match(code):
+            raise ApiError(400, "invalid_field", messages.API_BAD_ERROR_CODE)
+        operation = request.query.get("operation")
+        if operation is not None and not _PRODUCT.match(operation):
+            raise ApiError(400, "invalid_field", messages.API_BAD_OPERATION)
+        with self.store.reader(cid) as conn:
+            knowledge = self._knowledge(conn, cid, with_ers=True)
+        info = knowledge.error(family, code, operation)
+        if info is None:
+            message = messages.API_ERROR_NOT_FOUND.format(code=code, family=family)
+            raise ApiError(404, "error_not_found", message)
+        return Response(200, {
+            "case": cid,
+            "family": info.family,
+            "code": info.code,
+            "operation": info.operation,
+            "severity": info.severity,
+            "adms_severity": info.adms_severity,
+            "reason": info.reason,
+            "details": info.details,
+            "source": info.source,
+            "out_of_vault": info.out_of_vault,
+            "config_path": info.config_path,
+        })  # fmt: skip
 
     # -- entries
 

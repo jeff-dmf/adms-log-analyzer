@@ -57,6 +57,12 @@ _FTS_INSERT_SQL = (
     "INSERT INTO entry_fts(rowid, msg, cont) SELECT rowid, msg, cont FROM entry_text"
     " WHERE rowid >= ? AND rowid < ?"
 )
+_CONFIG_OBSERVED_SQL = (
+    "INSERT OR REPLACE INTO config_observed(stream_id, name, value, is_default, entry_id) VALUES (?,?,?,?,?)"
+)
+# Startup templates of the _common catalog whose `param`/`value` fields feed config_observed
+# (docs/ARQUITETURA.md 7.2.1 item 6): GEN-CFG-01 = value read from the Registry, GEN-CFG-03 = default.
+CONFIG_OBSERVED_TEMPLATES = {"GEN-CFG-01": 0, "GEN-CFG-03": 1}  # code -> is_default
 _BUCKET_SQL = (
     "INSERT INTO bucket(source_id, minute, sev, tpl_id, n) VALUES (?,?,?,?,?)"
     " ON CONFLICT(source_id, minute, sev, tpl_id) DO UPDATE SET n = n + excluded.n"
@@ -169,6 +175,8 @@ class IndexWriter:
         self._buckets: dict[tuple[int, int, int, int], int] = {}
         self._keys: list[tuple[str, str, int]] = []
         self._unknown: dict[tuple[str, str], list[int]] = {}  # (family, signature) -> [n, first_entry_id]
+        self._config: list[tuple[Any, ...]] = []  # config_observed rows of the open batch
+        self._stream_id: int | None = None  # stream of the source being appended
         self._tset: TemplateSet | None = None
         self._family: str | None = None
         self._batch_first_id = self._next_id
@@ -198,6 +206,7 @@ class IndexWriter:
         self._buckets.clear()
         self._keys.clear()
         self._unknown.clear()
+        self._config.clear()
         if self._in_tx:
             self.conn.execute("ROLLBACK")
             self._in_tx = False
@@ -428,6 +437,29 @@ class IndexWriter:
         ).fetchone()
         return row[0] if row else None
 
+    # ------------------------------------------------------------------ installation configuration
+
+    def replace_config_params(self, collection_group: int, rows: list[tuple[Any, ...]]) -> None:
+        """Replace ``config_param`` for the products present in ``rows``.
+
+        Each row is ``(product, scope, key_path, name, value, source_file, layer, layer_label,
+        effective, status)``. Products absent from ``rows`` keep what they had (re-ingest of a
+        collection that does not carry the Registry must not wipe an earlier reading).
+        """
+        if not rows:
+            return
+        self.begin()
+        conn = self.conn
+        for product in sorted({r[0] for r in rows}):
+            conn.execute(
+                "DELETE FROM config_param WHERE collection_group=? AND product=?", (collection_group, product)
+            )
+        conn.executemany(
+            "INSERT OR REPLACE INTO config_param(collection_group, product, scope, key_path, name, value,"
+            " source_file, layer, layer_label, effective, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [(collection_group, *r) for r in rows],
+        )
+
     # ------------------------------------------------------------------ removal
 
     def truncate_from(self, source_id: int, byte_off: int, min_id: int | None = None) -> int:
@@ -483,6 +515,7 @@ class IndexWriter:
         )
         conn.execute(f"DELETE FROM entry_body WHERE entry_id IN ({ids})", params)
         conn.execute(f"DELETE FROM entry_key WHERE entry_id IN ({ids})", params)
+        conn.execute(f"DELETE FROM config_observed WHERE entry_id IN ({ids})", params)
         conn.execute(
             "UPDATE stream SET derive_checkpoint = ? WHERE derive_checkpoint > ?"
             " AND id = (SELECT stream_id FROM source WHERE id = ?)",
@@ -570,6 +603,8 @@ class IndexWriter:
         """
         self.flush()
         self.prev_ts = prev_ts
+        row = self.conn.execute("SELECT stream_id FROM source WHERE id=?", (source_id,)).fetchone()
+        self._stream_id = row[0] if row else None
         self._tset = templates
         self._family = family
 
@@ -604,6 +639,13 @@ class IndexWriter:
                 sev = infer(m, r) if infer is not None else (m.sev_hint or severity(r.level, r.msg))
                 if m.fields:
                     fields_json = dumps(m.fields, ensure_ascii=False, separators=(",", ":"), default=str)
+                if m.code in CONFIG_OBSERVED_TEMPLATES and self._stream_id is not None:
+                    param = m.fields.get("param")
+                    if param:
+                        self._config.append(
+                            (self._stream_id, param, m.fields.get("value"), CONFIG_OBSERVED_TEMPLATES[m.code],
+                             next_id)
+                        )  # fmt: skip
                 if m.keys:
                     for key_type, value in m.keys:
                         keys_out.append((key_type, value, next_id))
@@ -650,6 +692,8 @@ class IndexWriter:
         conn.execute(_FTS_INSERT_SQL, (self._batch_first_id, self._next_id))
         if self._keys:
             conn.executemany(_KEY_SQL, self._keys)
+        if self._config:
+            conn.executemany(_CONFIG_OBSERVED_SQL, self._config)
         if self._unknown:
             conn.executemany(_UNKNOWN_SQL, [(f, sg, v[0], v[1]) for (f, sg), v in self._unknown.items()])
         if self._buckets:
@@ -665,4 +709,5 @@ class IndexWriter:
         self._buckets.clear()
         self._keys.clear()
         self._unknown.clear()
+        self._config.clear()
         self._batch_first_id = self._next_id
