@@ -39,7 +39,7 @@ from ..knowledge.installation import read_installation
 from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
 from ..store import config as config_store
-from ..store import db, events, keys, query, views
+from ..store import db, events, keys, payloads, query, views
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
 from .sse import ProgressHub
@@ -573,6 +573,29 @@ def _entry_json(entry: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _pretty(text: str, fmt: str, truncated_display: bool) -> dict[str, Any]:
+    """Format a payload for display; any failure of the formatter is reported, never raised."""
+    try:
+        from ..payload.pretty import format_payload
+
+        res = format_payload(text, fmt)
+        return {
+            "text": res.text,
+            "ok": bool(res.ok),
+            "kind": res.kind,
+            "reason": res.reason,
+            "truncated_display": bool(res.truncated_display) or truncated_display,
+        }
+    except Exception:
+        return {
+            "text": text,
+            "ok": False,
+            "kind": fmt,
+            "reason": "format_error",
+            "truncated_display": truncated_display,
+        }
+
+
 # --------------------------------------------------------------------------- the API object
 
 
@@ -614,6 +637,9 @@ class Api:
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/context\Z"), self.entry_context),
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/links\Z"), self.entry_links),
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/side-by-side\Z"), self.entry_side_by_side),
+            ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/payloads\Z"), self.entry_payloads),
+            ("GET", re.compile(r"/api/payloads/page\Z"), self.payloads_page),
+            ("GET", re.compile(r"/api/payloads/(?P<id>[^/]+)\Z"), self.get_payload),
             ("GET", re.compile(r"/api/keys/types\Z"), self.key_types),
             ("GET", re.compile(r"/api/keys/(?P<type>[^/]+)/(?P<value>[^/]+)\Z"), self.key_records),
         ]
@@ -948,11 +974,13 @@ class Api:
         max_lines = _cont_lines_param(request)
         with self.store.reader(cid) as conn:
             entry = query.get_entry(conn, entry_id, max_cont_lines=max_lines)
+            n_payloads = payloads.payload_count(conn, entry_id) if entry is not None else 0
         if entry is None:
             raise ApiError(
                 404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
             )
         out = _entry_json(entry)
+        out["payload_count"] = n_payloads
         if max_lines is not None:
             out["cont_truncated"] = bool(entry.get("cont_truncated"))
         return Response(200, out)
@@ -1115,6 +1143,81 @@ class Api:
             item["sensitive"] = sides[id(side)]
             out.append(item)
         return Response(200, {"a": out[0], "b": out[1], "kind": other.kind, "confidence": other.confidence})
+
+    # -- payloads
+
+    def entry_payloads(self, request: Request) -> Response:
+        entry_id = self._entry_id(request)
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            self._require_entry(conn, entry_id, cid)
+            found = payloads.payloads_of_entry(conn, entry_id)
+        return Response(200, {"payloads": found})
+
+    def payloads_page(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+
+        def csv(name: str) -> tuple[str, ...]:
+            message = messages.API_BAD_PAYLOAD_LIST.format(field=name, limit=_EVENT_LIST_MAX)
+            return _csv_param(request, name, False, message)
+
+        orphan = None
+        raw_orphan = request.query.get("orphan")
+        if raw_orphan:
+            if raw_orphan not in ("0", "1"):
+                raise _bad(messages.API_BAD_ORPHAN)
+            orphan = raw_orphan == "1"
+        key_query = request.query.get("q")
+        if key_query and (len(key_query) > _EVENT_TEXT_MAX or not _printable(key_query)):
+            raise _bad(messages.API_BAD_PAYLOAD_QUERY)
+        flt = payloads.PayloadFilter(
+            roles=csv("role"),
+            directions=csv("direction"),
+            peers=csv("peer"),
+            operations=csv("operation"),
+            formats=csv("fmt"),
+            event_id=_id_param(request, "event"),
+            orphan=orphan,
+            key_query=key_query or None,
+        )
+        limit = payloads.DEFAULT_LIMIT
+        raw_limit = request.query.get("limit")
+        if raw_limit is not None:
+            if not _SMALL_INT.match(raw_limit) or not 1 <= int(raw_limit) <= payloads.MAX_LIMIT:
+                raise _bad(messages.API_BAD_EVENT_LIMIT.format(limit=payloads.MAX_LIMIT))
+            limit = int(raw_limit)
+        after = None
+        raw_after = request.query.get("after")
+        if raw_after:
+            after = events.Cursor.parse(raw_after)
+            if after is None or not (-_INT64 <= after.ts < _INT64 and 0 <= after.id < _INT64):
+                raise _bad(messages.API_BAD_CURSOR)
+        with self.store.reader(cid) as conn:
+            rows, nxt = payloads.list_payloads(conn, flt, limit, after)
+        return Response(200, {"payloads": rows, "next": nxt})
+
+    def get_payload(self, request: Request) -> Response:
+        raw = request.match["id"]
+        if not _ENTRY_ID.match(raw):
+            raise _bad(messages.API_BAD_PAYLOAD_ID)
+        payload_id = int(raw)
+        cid = _case_from_query(self.store, request)
+        fmt = request.query.get("format", "raw")
+        if fmt not in ("raw", "pretty"):
+            raise _bad(messages.API_BAD_PAYLOAD_FORMAT)
+        with self.store.reader(cid) as conn:
+            result = payloads.get_payload(conn, payload_id)
+        if result is None:
+            raise ApiError(
+                404,
+                "payload_not_found",
+                messages.API_PAYLOAD_NOT_FOUND.format(payload_id=payload_id, case=cid),
+            )
+        result["formatted"] = None
+        if fmt == "pretty":
+            fmt_name = result["payload"]["fmt"]
+            result["formatted"] = _pretty(result["text"], fmt_name, result["truncated_display"])
+        return Response(200, result)
 
     # -- saved filters (per case, table saved_view)
 

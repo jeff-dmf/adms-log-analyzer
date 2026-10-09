@@ -172,6 +172,9 @@ function start() {
   let linksSection = null;
   let sideBySide = null;
   let keyPanel = null;
+  let payloadSection = null;
+  let payloadList = null;
+  let openOperation = () => {};
   let sourceFamilies = new Map();
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
@@ -254,6 +257,9 @@ function start() {
       if (linksSection) {
         linksSection.show(entry);
       }
+      if (payloadSection) {
+        payloadSection.show(entry);
+      }
     },
     getTemplateCode: (id) => templateCodes.get(id) || "",
     onTemplate: (tplId) => addTemplateFilter(tplId),
@@ -323,6 +329,9 @@ function start() {
       }
       if (sideBySide) {
         sideBySide.reset();
+      }
+      if (payloadList) {
+        payloadList.close();
       }
       if (unknownPanel) {
         unknownPanel.refresh();
@@ -608,6 +617,39 @@ function start() {
     // Module missing or failing: the detail pane simply has no Links section.
   });
 
+  // Payload section of the entry detail and the payload list panel: optional modules.
+  import("./payload.js").then((module) => {
+    payloadSection = new module.PayloadSection(byId("detail-payload"), {
+      getCase: () => caseId,
+      onReveal: revealEntry,
+      onGoOperation: (eventId) => openOperation(eventId),
+      onError: showError,
+    });
+    if (detail.entry) {
+      payloadSection.show(detail.entry);
+    }
+  }).catch(() => {
+    // Module missing or failing: the detail pane simply has no Payload section.
+  });
+  const payloadHost = byId("payload-list-host");
+  const payloadButton = byId("payload-button");
+  import("./payload-list.js").then((module) => {
+    payloadButton.hidden = false;
+    payloadHost.addEventListener("payload-list-closed", () => payloadButton.setAttribute("aria-expanded", "false"));
+    payloadButton.addEventListener("click", () => {
+      payloadHost.hidden = !payloadHost.hidden;
+      payloadButton.setAttribute("aria-expanded", payloadHost.hidden ? "false" : "true");
+      if (!payloadHost.hidden) {
+        if (!payloadList) {
+          payloadList = module.initPayloadList(payloadHost, { api, getCase: () => caseId, onOpen: revealEntry });
+        }
+        payloadList.refresh();
+      }
+    });
+  }).catch(() => {
+    // Module missing or failing: the button stays hidden.
+  });
+
   // Operations panel, adapter dashboard and clock-jump banner: optional modules like the panels above.
   const eventsHost = byId("events-panel-host");
   const eventsButton = byId("events-button");
@@ -616,20 +658,35 @@ function start() {
       return;
     }
     eventsButton.hidden = false;
+    const ensureEventsPanel = () => {
+      if (!eventsPanel) {
+        eventsPanel = module.initEventsPanel(eventsHost, {
+          api,
+          getCase: () => caseId,
+          onShowInGrid: showEventInGrid,
+        });
+      }
+    };
     eventsButton.addEventListener("click", () => {
       eventsHost.hidden = !eventsHost.hidden;
       eventsButton.setAttribute("aria-expanded", eventsHost.hidden ? "false" : "true");
       if (!eventsHost.hidden) {
-        if (!eventsPanel) {
-          eventsPanel = module.initEventsPanel(eventsHost, {
-            api,
-            getCase: () => caseId,
-            onShowInGrid: showEventInGrid,
-          });
-        }
+        ensureEventsPanel();
         eventsPanel.refresh();
       }
     });
+    // "Go to operation" of the Payload section: shows the panel (loading its list when it was
+    // hidden) and opens the event in its detail pane.
+    openOperation = (eventId) => {
+      const wasHidden = eventsHost.hidden;
+      eventsHost.hidden = false;
+      eventsButton.setAttribute("aria-expanded", "true");
+      ensureEventsPanel();
+      if (wasHidden) {
+        eventsPanel.refresh();
+      }
+      eventsPanel.open(eventId);
+    };
   }).catch(() => {
     // Module missing or failing: the button stays hidden.
   });

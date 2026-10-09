@@ -23,3 +23,67 @@ OMS_CREW_CHANGE_REQ GID: 28823037, Errors count: 0 Status value: Accepted
 2030-01-15 10:00:00.350 [PID=1000][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
 2030-01-15 10:00:00.400 [PID=1000][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
 2030-01-15 10:00:00.450 [PID=1000][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:01:00.000 [PID=1000][TID=0x10] INFO - Changed crews request received. Request with ID "00000000-0000-4000-8000-0000a0000101" content:
+Identifier: CREW0001
+Availability: Disponível
+2030-01-15 10:01:00.005 [PID=1000][TID=0x2a] INFO - Message content: <ChangedCrews xmlns="http://iec.ch/TC57/2011/CrewsMessage">
+  <Header>
+    <Verb xmlns="http://iec.ch/TC57/2011/schema/message">changed</Verb>
+    <Noun xmlns="http://iec.ch/TC57/2011/schema/message">Crews</Noun>
+    <Source xmlns="http://iec.ch/TC57/2011/schema/message">ADMS</Source>
+    <MessageID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000101</MessageID>
+    <CorrelationID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000101</CorrelationID>
+  </Header>
+  <Payload>
+    <Crews xmlns="http://iec.ch/TC57/2007/Crews#">
+      <Crew>
+        <mRID>CREW0001</mRID>
+        <availability>Disponível</availability>
+        <fcConnectionStatus>Online</fcConnectionStatus>
+      </Crew>
+    </Crews>
+  </Payload>
+</ChangedCrews>.
+2030-01-15 10:01:00.042 [PID=1000][TID=0x10] INFO - <delta id="7">
+  <operation type="insert">
+    <ResourceDescription>
+      <id gid="28823001" type="1"/>
+    </ResourceDescription>
+  </operation>
+</delta>
+2030-01-15 10:01:00.066 [PID=1000][TID=0x10] INFO - Content being sent to IMS:
+<ArrayOfIncidentCrewAssigment xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <IncidentCrewAssigment>
+    <IncidentId>28823010</IncidentId>
+    <CrewId>28823011</CrewId>
+  </IncidentCrewAssigment>
+</ArrayOfIncidentCrewAssigment>
+2030-01-15 10:01:00.101 [PID=1000][TID=0x2b] INFO - Message content: <CrewsResponseMessage xmlns="http://iec.ch/TC57/2011/CrewsMessage">
+  <Header>
+    <Verb xmlns="http://iec.ch/TC57/2011/schema/message">reply</Verb>
+    <Noun xmlns="http://iec.ch/TC57/2011/schema/message">Crews</Noun>
+    <Source xmlns="http://iec.ch/TC57/2011/schema/message">ADMS</Source>
+    <MessageID xmlns="http://iec.ch/TC57/2011/schema/message">SYNT_0000001</MessageID>
+    <CorrelationID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000101</CorrelationID>
+  </Header>
+  <Reply>
+    <Result xmlns="http://iec.ch/TC57/2011/schema/message">OK</Result>
+  </Reply>
+</CrewsResponseMessage>.
+2030-01-15 10:01:00.206 [PID=1000][TID=0x2c] INFO - Message content: <s:Fault xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <faultcode>s:Client</faultcode>
+  <faultstring xml:lang="en-US">Synthetic failure while processing the request.</faultstring>
+  <detail>
+    <CrewsFaultMessage xmlns="http://iec.ch/TC57/2011/CrewsMessage">
+      <Reply>
+        <Result xmlns="http://iec.ch/TC57/2011/schema/message">FAILED</Result>
+        <Error>
+          <code>5.3</code>
+          <level>FATAL</level>
+          <reason>Synthetic reason</reason>
+        </Error>
+      </Reply>
+    </CrewsFaultMessage>
+  </detail>
+</s:Fault>.
+2030-01-15 10:01:00.300 [PID=1000][TID=0x10] INFO - Creating client proxy object for service URL: net.tcp://example.invalid:9000/CrsService

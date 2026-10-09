@@ -14,3 +14,62 @@ Stack trace:
 2030-01-15 10:00:00.350 [PID=1011][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
 2030-01-15 10:00:00.400 [PID=1011][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
 2030-01-15 10:00:00.450 [PID=1011][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:01:00.020 [PID=1011][TID=0x2a] INFO - Message: <ChangedIncidents xmlns="http://iec.ch/TC57/2011/IncidentsMessage">
+  <Header>
+    <Verb xmlns="http://iec.ch/TC57/2011/schema/message">changed</Verb>
+    <Noun xmlns="http://iec.ch/TC57/2011/schema/message">Incidents</Noun>
+    <Source xmlns="http://iec.ch/TC57/2011/schema/message">ADMS</Source>
+    <MessageID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000201</MessageID>
+    <CorrelationID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000201</CorrelationID>
+  </Header>
+  <Payload>
+    <Incidents>
+      <IncidentRecord>
+        <mRID>INC 1001</mRID>
+        <comment>Falta de energia &amp; manutenção
+segunda linha do comentário
+terceira linha</comment>
+      </IncidentRecord>
+    </Incidents>
+  </Payload>
+</ChangedIncidents>.
+2030-01-15 10:01:00.020 [PID=1011][TID=0x2b] INFO - Message: <ChangedIncidents xmlns="http://iec.ch/TC57/2011/IncidentsMessage">
+  <Header>
+    <Verb xmlns="http://iec.ch/TC57/2011/schema/message">changed</Verb>
+    <Noun xmlns="http://iec.ch/TC57/2011/schema/message">Incidents</Noun>
+    <Source xmlns="http://iec.ch/TC57/2011/schema/message">ADMS</Source>
+    <MessageID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000202</MessageID>
+    <CorrelationID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000202</CorrelationID>
+  </Header>
+  <Payload>
+    <Incidents>
+      <IncidentRecord>
+        <mRID>INC 1002</mRID>
+        <comment>Sem comentário adicional</comment>
+      </IncidentRecord>
+    </Incidents>
+  </Payload>
+</ChangedIncidents>.
+2030-01-15 10:01:00.060 [PID=1011][TID=0x2c] INFO - Message: <ns1:IncidentsResponseMessage xmlns:ns1="http://iec.ch/TC57/2011/IncidentsMessage">
+  <ns1:Header>
+    <ns9:Verb xmlns:ns9="http://iec.ch/TC57/2011/schema/message">reply</ns9:Verb>
+    <ns9:Noun xmlns:ns9="http://iec.ch/TC57/2011/schema/message">Incidents</ns9:Noun>
+  </ns1:Header>
+  <ns1:Reply>
+    <ns9:Result xmlns:ns9="http://iec.ch/TC57/2011/schema/message">OK</ns9:Result>
+  </ns1:Reply>
+</ns1:IncidentsResponseMessage>.
+2030-01-15 10:01:00.062 [PID=1011][TID=0x2d] INFO - Message: <ns1:IncidentsResponseMessage xmlns:ns1="http://iec.ch/TC57/2011/IncidentsMessage">
+  <ns1:Header>
+    <ns9:Verb xmlns:ns9="http://iec.ch/TC57/2011/schema/message">reply</ns9:Verb>
+    <ns9:Noun xmlns:ns9="http://iec.ch/TC57/2011/schema/message">Incidents</ns9:Noun>
+  </ns1:Header>
+  <ns1:Reply>
+    <ns9:Result xmlns:ns9="http://iec.ch/TC57/2011/schema/message">OK</ns9:Result>
+  </ns1:Reply>
+</ns1:IncidentsResponseMessage>.
+2030-01-15 10:01:00.080 [PID=1011][TID=0x32] INFO - Error: Sending "IncidentsEventMessageType" message failed. "System.TimeoutException" has occurred.
+Reason: The request channel timed out.
+Stack trace:
+   at Example.Client.Send(Message m) in F:\PD\1234567\1\Example\Client.cs:line 77
+2030-01-15 10:01:00.090 [PID=1011][TID=0x32] INFO - Creating client proxy object for service URL: http://sap-pi.example.invalid:50001/other

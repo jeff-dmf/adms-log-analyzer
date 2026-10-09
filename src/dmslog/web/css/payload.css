@@ -1,0 +1,90 @@
+/* "Payload" section of the entry detail. */
+.detail-payload {
+  margin-top: 10px;
+}
+
+.pl-title {
+  margin: 0 0 6px;
+  font-size: 1em;
+}
+
+.pl-muted {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.pl-error {
+  color: var(--error-text);
+}
+
+.pl-items,
+.pl-chips,
+.pl-links,
+.pl-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.pl-item[aria-pressed="true"],
+.pl-mode[aria-pressed="true"] {
+  background: var(--selected);
+  border-color: var(--accent);
+}
+
+.pl-chip,
+.pl-badge {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 8px;
+  font-size: 0.85em;
+  font-family: ui-monospace, monospace;
+  background: var(--panel-alt);
+}
+
+.pl-badge {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.pl-status {
+  margin-bottom: 6px;
+}
+
+.pl-panes {
+  display: block;
+}
+
+.pl-panes-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pl-pane {
+  min-width: 0;
+}
+
+.pl-pane-title {
+  font-size: 0.85em;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.pl-pre {
+  margin: 0;
+  padding: 6px;
+  max-height: 50vh;
+  overflow: auto;
+  white-space: pre;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+}
+
+.pl-more {
+  margin-top: 4px;
+}

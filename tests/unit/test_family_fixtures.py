@@ -225,3 +225,137 @@ def test_entry_keys_are_written_for_templates_that_declare_keys(ingested, catalo
     keyed_hit = {by_entry[e] for e, _, _ in expected}
     assert len(keyed_hit) >= len(keyed) * 0.8, "most keyed templates should produce keys"
     assert {k for _, k, _ in got} >= {s.type for t in keyed for s in t.keys if s.type in {"msgid"}}
+
+
+# ---------------------------------------------------------------- payload scenarios (tasks 6.2 and 6.4)
+
+SCENARIO_PROCESS = {"AWFM": "WfmAdapter", "AONT": "OntAdapter", "ASMN": "SmnAdapter"}
+
+
+def _scenario_stream(conn, catalog, family, sensitive):
+    """Entries of the scenario block of one stream: (id, ts, tid, flags, code, msg, cont), file order."""
+    n = len(mff.scenario_records(catalog, family, sensitive))
+    assert n > 0
+    rows = conn.execute(
+        "SELECT e.id, e.ts, e.tid, e.flags, COALESCE(t.code, ''), e.msg, COALESCE(b.cont, '') "
+        "FROM entry e JOIN source so ON so.id = e.source_id JOIN stream s ON s.id = so.stream_id "
+        "LEFT JOIN template t ON t.id = e.tpl_id LEFT JOIN entry_body b ON b.entry_id = e.id "
+        "WHERE so.member LIKE ? AND s.sensitive = ? ORDER BY e.id",
+        (f"%{SCENARIO_PROCESS[family]}_%", 1 if sensitive else 0),
+    ).fetchall()
+    return rows[-n:]
+
+
+def test_scenarios_are_classified_as_intended(ingested, catalog):
+    conn, _ = ingested
+    for family in mff.SCENARIO_FAMILIES:
+        for sensitive in (False, True):
+            recs = mff.scenario_records(catalog, family, sensitive)
+            rows = _scenario_stream(conn, catalog, family, sensitive)
+            assert [r[4] for r in rows] == [r.code for r in recs], (family, sensitive)
+
+
+def test_scenarios_cover_the_documented_cases(catalog):
+    files = mff.build_all()
+    text = {rel: data.decode("utf-8") for rel, data in files.items() if rel.endswith(".log")}
+    sens = "".join(t for rel, t in text.items() if ".sensitive." in rel)
+    normal = "".join(t for rel, t in text.items() if ".sensitive." not in rel)
+    # payload closed by ">." and elements with attributes on one line
+    assert "</ChangedCrews>.\r\n" in sens and "</s:Fault>.\r\n" in sens
+    # text with line breaks inside an element, XML escapes
+    assert "segunda linha do coment\u00e1rio\r\n" in sens and "&amp; manuten\u00e7\u00e3o" in sens
+    assert "Line one&#xD;&#xA;line two" in sens
+    # WMS content in one line, HTML error body, delta, IMS in the sensitive log
+    wms = '<ArrayOfDocumentCrewAssigment xmlns:xsd="http://www.w3.org/2001/XMLSchema" />'
+    assert f"Content being sent to WMS:\r\n{wms}" in normal
+    assert "<h1>Service Unavailable</h1>" in sens and '<delta id="7">' in sens
+    assert "Content being sent to IMS:\r\n<ArrayOfIncidentCrewAssigment" in sens
+    # announcements with and without MessageID
+    assert "Message with MessageID: ''" in normal and "Message with MessageID: 'SYNT_0000001'" in normal
+    # PSAttach / arb_pubSubLookup lines without [TID=...]
+    no_tid = [ln for ln in normal.split("\r\n") if " [PID=" in ln and "[TID=" not in ln]
+    assert len(no_tid) >= 4 and all("PSAttach" in ln or "arb_pubSubLookup" in ln for ln in no_tid)
+
+
+def test_psattach_without_tid_is_ingested_with_null_tid(ingested, catalog):
+    conn, _ = ingested
+    for family in mff.SCENARIO_FAMILIES:
+        rows = _scenario_stream(conn, catalog, family, False)
+        no_tid = [r for r in rows if r[2] is None]
+        assert no_tid and all(r[4] in ("GEN-PSA-01", "GEN-PSA-02") for r in no_tid)
+
+
+def test_smn_sensitive_timestamp_goes_back_two_seconds(ingested, catalog):
+    conn, _ = ingested
+    rows = _scenario_stream(conn, catalog, "ASMN", True)
+    back = [(a, b) for a, b in zip(rows, rows[1:], strict=False) if b[1] < a[1]]
+    assert len(back) == 1
+    a, b = back[0]
+    assert a[1] - b[1] == 2000
+    assert (a[4], b[4]) == ("SMN-S110", "SMN-S019")
+    assert b[3] & 32  # flagged as out of order
+
+
+def test_concurrent_operations_have_replies_without_ids(ingested, catalog):
+    conn, _ = ingested
+    normal = _scenario_stream(conn, catalog, "AONT", False)
+    sens = _scenario_stream(conn, catalog, "AONT", True)
+    empty = [r for r in normal if r[4] == "GEN-MSG-01" and "MessageID: ''" in r[5]]
+    replies = [r for r in sens if r[5].startswith("Message: <ns1:IncidentsResponseMessage")]
+    assert len(empty) == len(replies) == 2
+    assert len({r[2] for r in empty}) == 2 and len({r[2] for r in replies}) == 2  # different threads
+    assert not any("MessageID" in r[6] or "CorrelationID" in r[6] for r in replies)
+    # both operations are open at once: two starts before the first end
+    codes = [r[4] for r in normal]
+    assert codes.index("ONT-010") < codes.index("ONT-012")
+    assert codes.index("ONT-010", codes.index("ONT-010") + 1) < codes.index("ONT-012")
+
+
+def _payload_text(msg: str, cont: str) -> str:
+    """XML of a GEN-PLD-01 record: from the first `<` of the first line to the end, without the final dot."""
+    text = msg[msg.index("<") :] + ("\n" + cont if cont else "")
+    assert text.endswith(">.")
+    return text[:-1]
+
+
+def test_scenario_payloads_are_well_formed_xml(ingested, catalog):
+    import xml.etree.ElementTree as ET
+
+    conn, _ = ingested
+    n = 0
+    for family in mff.SCENARIO_FAMILIES:
+        for r in _scenario_stream(conn, catalog, family, True):
+            if r[4] == "GEN-PLD-01":
+                ET.fromstring(_payload_text(r[5], r[6].replace("\r\n", "\n")))
+                n += 1
+            elif r[4] in ("WFM-S112", "WFM-S121"):
+                ET.fromstring(r[5] + "\n" + r[6] if r[4] == "WFM-S112" else r[6])
+                n += 1
+            elif r[4] == "SMN-S110":
+                body = "\n".join(ln for ln in r[6].split("\n") if ln.startswith(("<", " ")))
+                ET.fromstring(f"<seq>{body}</seq>")
+                n += 1
+    assert n >= 14
+
+
+def test_large_publication_record_is_not_cut(tmp_path):
+    data, cont_chars = mff.large_publication_log()
+    assert cont_chars > 65_536
+    logs = tmp_path / "logs"
+    folder = logs / mff.FOLDER
+    folder.mkdir(parents=True)
+    (folder / "SmnAdapter_4242.sensitive.log").write_bytes(data)
+    conn = create_case_db(tmp_path / "case.sqlite")
+    try:
+        result = run_ingest(conn, logs, IngestOptions(scope="all"))
+        assert result.sources_failed == 0
+        rows = conn.execute(
+            "SELECT t.code, length(COALESCE(b.cont, '')), e.nlines FROM entry e "
+            "LEFT JOIN template t ON t.id = e.tpl_id "
+            "LEFT JOIN entry_body b ON b.entry_id = e.id ORDER BY e.id"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert [r[0] for r in rows] == ["GEN-PRX-S01", "SMN-S110", "GEN-PRX-S01"]
+    assert rows[1][1] >= cont_chars  # the whole continuation is stored (CR/LF aside)
+    assert rows[1][2] > 1000

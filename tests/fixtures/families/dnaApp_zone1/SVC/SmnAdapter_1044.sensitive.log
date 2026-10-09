@@ -13,4 +13,74 @@ DmsType: ExampleType
 Operation: Add
 <ResourceDescription xmlns="urn:example"/>
 2030-01-15 10:00:00.450 [PID=1044][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
-2030-01-15 10:00:00.500 [PID=1044][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.500 [PID=1044][TID=0x1a2b] ERROR - Error: Sending "WorksEventMessageType" message failed. "ProtocolException" has occurred. DmsReason: The content type text/html of the response message does not match the content type of the binding.
+<html>
+<body>
+<h1>Service Unavailable</h1>
+</body>
+</html>
+2030-01-15 10:00:00.550 [PID=1044][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:01:00.015 [PID=1044][TID=0x2a] INFO - Message: <ChangedWorks xmlns="http://iec.ch/TC57/2011/WorksMessage">
+  <Header>
+    <Verb xmlns="http://iec.ch/TC57/2011/schema/message">changed</Verb>
+    <Noun xmlns="http://iec.ch/TC57/2011/schema/message">Works</Noun>
+    <Source xmlns="http://iec.ch/TC57/2011/schema/message">ADMS</Source>
+    <MessageID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000301</MessageID>
+    <CorrelationID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000301</CorrelationID>
+  </Header>
+  <Payload>
+    <Works>
+      <mRID>WR 3000001</mRID>
+    </Works>
+  </Payload>
+</ChangedWorks>.
+2030-01-15 10:01:00.015 [PID=1044][TID=0x2b] INFO - Message: <ChangedSwitchingPlans xmlns="http://iec.ch/TC57/2011/SwitchingPlansMessage">
+  <Header>
+    <Verb xmlns="http://iec.ch/TC57/2011/schema/message">changed</Verb>
+    <Noun xmlns="http://iec.ch/TC57/2011/schema/message">SwitchingPlans</Noun>
+    <Source xmlns="http://iec.ch/TC57/2011/schema/message">ADMS</Source>
+    <MessageID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000302</MessageID>
+    <CorrelationID xmlns="http://iec.ch/TC57/2011/schema/message">00000000-0000-4000-8000-0000a0000302</CorrelationID>
+  </Header>
+  <Payload>
+    <SwitchingPlans>
+      <mRID>SP 1000001</mRID>
+    </SwitchingPlans>
+  </Payload>
+</ChangedSwitchingPlans>.
+2030-01-15 10:01:00.050 [PID=1044][TID=0x2c] INFO - Message: <ns0:WorksResponseMessage xmlns:ns0="http://iec.ch/TC57/2011/WorksMessage">
+  <ns0:Header>
+    <ns9:Verb xmlns:ns9="http://iec.ch/TC57/2011/schema/message">reply</ns9:Verb>
+    <ns9:Noun xmlns:ns9="http://iec.ch/TC57/2011/schema/message">Works</ns9:Noun>
+  </ns0:Header>
+  <ns0:Reply>
+    <ns9:Result xmlns:ns9="http://iec.ch/TC57/2011/schema/message">OK</ns9:Result>
+  </ns0:Reply>
+</ns0:WorksResponseMessage>.
+2030-01-15 10:01:00.052 [PID=1044][TID=0x2d] INFO - Message: <ns0:SwitchingPlansResponseMessage xmlns:ns0="http://iec.ch/TC57/2011/SwitchingPlansMessage">
+  <ns0:Header>
+    <ns9:Verb xmlns:ns9="http://iec.ch/TC57/2011/schema/message">reply</ns9:Verb>
+    <ns9:Noun xmlns:ns9="http://iec.ch/TC57/2011/schema/message">SwitchingPlans</ns9:Noun>
+  </ns0:Header>
+  <ns0:Reply>
+    <ns9:Result xmlns:ns9="http://iec.ch/TC57/2011/schema/message">OK</ns9:Result>
+  </ns0:Reply>
+</ns0:SwitchingPlansResponseMessage>.
+2030-01-15 10:01:02.100 [PID=1044][TID=0x43] INFO - [WmsSubscriber] - Data received from publication:
+DmsType: SwitchingPlan
+Operation: Add
+<ResourceDescription xmlns="urn:example:dms" gid="28823001">
+  <Property id="NAME" value="Line one&#xD;&#xA;line two" />
+  <Property id="TYPE" value="Example &amp; synthetic 1" />
+</ResourceDescription>
+<ResourceDescription xmlns="urn:example:dms" gid="28823002">
+  <Property id="NAME" value="SP 1000002" />
+  <Property id="TYPE" value="Example &amp; synthetic 2" />
+</ResourceDescription>
+2030-01-15 10:01:00.100 [PID=1044][TID=0x44] INFO - Error: Sending "WorksEventMessageType" message failed. "ProtocolException" has occurred. DmsReason: The content type text/html of the response message does not match the content type of the binding.
+<html>
+<head><title>Service Unavailable</title></head>
+<body>
+<h1>Service Unavailable</h1>
+</body>
+</html>

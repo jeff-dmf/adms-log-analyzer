@@ -39,3 +39,23 @@ Exception rethrown at [0]:
 2030-01-15 10:00:01.650 [PID=1044][TID=0x1a2b] DEBUGLOG - END NmsSignalsBySignalGidsQuery
 2030-01-15 10:00:01.700 [PID=1044][TID=0x1a2b] INFO - [UnsentMessagesPersister] - Deleting message with GID: '12345678', Identifier: 'WR 3000001' from smart cache succeeded.
 2030-01-15 10:00:01.750 [PID=1044][TID=0x1a2b] INFO - [CreatedEntityIdsPersister] - Deleting message with GID: '12345678', Mrid: 'ZZ-1' from smart cache.
+2030-01-15 10:01:00.000 [PID=1044][TID=0x41] DEBUGLOG - [SendWorks] Sending following Work Request: WR 3000001.
+2030-01-15 10:01:00.002 [PID=1044][TID=0x42] DEBUGLOG - [SendSwitchingPlans] Sending following Switching Plan: SP 1000001.
+2030-01-15 10:01:00.010 [PID=1044][TID=0x41] DEBUGLOG - Sending "WorksEventMessageType" message: 00000000-0000-4000-8000-0000a0000301 with verb: Changed...
+2030-01-15 10:01:00.011 [PID=1044][TID=0x42] DEBUGLOG - Sending "SwitchingPlansEventMessageType" message: 00000000-0000-4000-8000-0000a0000302 with verb: Changed...
+2030-01-15 10:01:00.015 [PID=1044][TID=0x2a] DEBUGLOG - Message with MessageID: '00000000-0000-4000-8000-0000a0000301' will be logged in sensitive log.
+2030-01-15 10:01:00.015 [PID=1044][TID=0x2b] DEBUGLOG - Message with MessageID: '00000000-0000-4000-8000-0000a0000302' will be logged in sensitive log.
+2030-01-15 10:01:00.050 [PID=1044][TID=0x2c] DEBUGLOG - Message with MessageID: '' will be logged in sensitive log.
+2030-01-15 10:01:00.052 [PID=1044][TID=0x2d] DEBUGLOG - Message with MessageID: '' will be logged in sensitive log.
+2030-01-15 10:01:00.050 [PID=1044][TID=0x41] DEBUGLOG - Sending "WorksEventMessageType" message: 00000000-0000-4000-8000-0000a0000301 with verb: Changed finished successfully.
+2030-01-15 10:01:00.052 [PID=1044][TID=0x42] DEBUGLOG - Sending "SwitchingPlansEventMessageType" message: 00000000-0000-4000-8000-0000a0000302 with verb: Changed finished successfully.
+2030-01-15 10:01:00.053 [PID=1044][TID=0x41] DEBUGLOG - [SendWorks] Sending Work Request finished successfully.
+2030-01-15 10:01:00.054 [PID=1044][TID=0x42] DEBUGLOG - [SendSwitchingPlans] Sending Switching Plan finished successfully.
+2030-01-15 10:01:02.100 [PID=1044][TID=0x43] INFO - [WmsSubscriber] - Data received from publication. Details are written in sensitive log.
+2030-01-15 10:01:02.101 [PID=1044][TID=0x43] INFO - [BusinessLogicResolver] - Processing received publication data.
+2030-01-15 10:01:02.102 [PID=1044][TID=0x43] INFO - [Subscriber] - Publication info:
+Sub-process - Example
+CacheOperation - Add
+DmsType - SwitchingPlan
+2030-01-15 10:01:02.200 [PID=1044][TID=0x45] INFO - [MessageValidator] Message: Could not find schema information for the element 'ns0:SystemError'.
+2030-01-15 10:01:02.300 [PID=1044] INFO - arb_pubSubLookup: Received update on topic: example.sys.svc.arb.host.states.syncstate with status 0

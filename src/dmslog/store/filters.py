@@ -15,7 +15,8 @@ Grammar (each node is an object with exactly one key)::
                | {"tpl": tpls} | {"text": {"fts": str} | {"substr": str}}
                | {"key": {"type": str, "eq": str} | {"type": str, "in": [str, ...]} | {"type": str}}
                | {"event_status": strs} | {"flags": flag | [flag, ...]}
-               | {"payload": {"role"|"direction"|"peer"|"operation"|"fmt"|"msg_id"|"corr_id"|"root": strs}}
+               | {"payload": {"role"|"roles"|"direction"|"peer"|"operation"|"fmt"|"msg_id"|"corr_id"
+                              |"root": strs, "orphan": bool}}
     ids       := int | [int, ...]
     strs      := str | [str, ...]
     tpls      := (str code | int id) | [...]
@@ -79,6 +80,7 @@ FLAG_BITS = {
 }
 
 _COMPARE_OPS = {"eq": "=", "ne": "<>", "lt": "<", "le": "<=", "gt": ">", "ge": ">="}
+_PAYLOAD_ALIASES = {"roles": "role"}
 _PAYLOAD_COLUMNS = ("role", "direction", "peer", "operation", "fmt", "msg_id", "corr_id", "root")
 _ID_COLUMNS = {"source": "source_id", "tid": "tid", "pid": "pid", "event": "event_id"}
 _NULLABLE = {"e.ts", "e.tid", "e.pid", "e.level", "e.event_id"}
@@ -443,13 +445,19 @@ class _Compiler:
             raise FilterError("bad_type", path, expected="an object of payload attributes")
         parts = []
         for name, value in arg.items():
-            if name not in _PAYLOAD_COLUMNS:
-                raise FilterError("unknown_operator", path, name=str(name)[:64])
             sub = f"{path}.{name}"
+            if name == "orphan":
+                if not isinstance(value, bool):
+                    raise FilterError("bad_type", sub, expected="a boolean")
+                parts.append("event_id IS NULL" if value else "event_id IS NOT NULL")
+                continue
+            column = _PAYLOAD_ALIASES.get(name, name)
+            if column not in _PAYLOAD_COLUMNS:
+                raise FilterError("unknown_operator", path, name=str(name)[:64])
             values = [_str(v, f"{sub}[{k}]") for k, v in enumerate(_as_list(value, sub))]
             self.bind(*values)
-            # name is one of the constant column names above, never user text.
-            parts.append(f"{name} IN ({_placeholders(len(values))})")
+            # column is one of the constant column names above, never user text.
+            parts.append(f"{column} IN ({_placeholders(len(values))})")
         where = (" WHERE " + " AND ".join(parts)) if parts else ""
         return f"e.id IN (SELECT entry_id FROM payload{where})"
 

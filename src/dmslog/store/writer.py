@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from dmslog.parse.payload import extract_payload
 from dmslog.parse.records import Record
 from dmslog.parse.signature import signature
 
@@ -63,6 +64,10 @@ _CONFIG_OBSERVED_SQL = (
 # Startup templates of the _common catalog whose `param`/`value` fields feed config_observed
 # (docs/ARQUITETURA.md 7.2.1 item 6): GEN-CFG-01 = value read from the Registry, GEN-CFG-03 = default.
 CONFIG_OBSERVED_TEMPLATES = {"GEN-CFG-01": 0, "GEN-CFG-03": 1}  # code -> is_default
+_PAYLOAD_SQL = (
+    "INSERT INTO payload(entry_id, role, direction, peer, operation, msg_id, corr_id, fmt, root, char_off,"
+    " char_len, well_formed, truncated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+)
 _BUCKET_SQL = (
     "INSERT INTO bucket(source_id, minute, sev, tpl_id, n) VALUES (?,?,?,?,?)"
     " ON CONFLICT(source_id, minute, sev, tpl_id) DO UPDATE SET n = n + excluded.n"
@@ -176,6 +181,8 @@ class IndexWriter:
         self._keys: list[tuple[str, str, int]] = []
         self._unknown: dict[tuple[str, str], list[int]] = {}  # (family, signature) -> [n, first_entry_id]
         self._config: list[tuple[Any, ...]] = []  # config_observed rows of the open batch
+        self._payloads: list[tuple[Any, ...]] = []  # payload rows of the open batch (entry_id first)
+        self.payloads_written = 0  # payload rows inserted by this writer (flushed)
         self._stream_id: int | None = None  # stream of the source being appended
         self._tset: TemplateSet | None = None
         self._family: str | None = None
@@ -207,6 +214,7 @@ class IndexWriter:
         self._keys.clear()
         self._unknown.clear()
         self._config.clear()
+        self._payloads.clear()
         if self._in_tx:
             self.conn.execute("ROLLBACK")
             self._in_tx = False
@@ -516,6 +524,7 @@ class IndexWriter:
         conn.execute(f"DELETE FROM entry_body WHERE entry_id IN ({ids})", params)
         conn.execute(f"DELETE FROM entry_key WHERE entry_id IN ({ids})", params)
         conn.execute(f"DELETE FROM config_observed WHERE entry_id IN ({ids})", params)
+        self._delete_payloads(ids, params)
         # Links incident to the removed records (any kind) go with them; the epoch tells the correlation that
         # entries were removed even when the sources look the same afterwards (a reindex).
         conn.execute(f"DELETE FROM link WHERE a_entry_id IN ({ids})", params)
@@ -533,6 +542,23 @@ class IndexWriter:
         if stale:
             self._repair_unknown_first(stale)
         return int(first[1])
+
+    def _delete_payloads(self, ids: str, params: list[Any]) -> None:
+        """Remove the payload rows of the removed records and the references other rows hold to them.
+
+        ``ref_entry_id`` (the announcing record) and ``pair_id`` (the paired payload) of the surviving rows
+        become NULL; ``derive/payloads.py`` recomputes the group because the epoch changes.
+        """
+        conn = self.conn
+        if conn.execute("SELECT 1 FROM payload LIMIT 1").fetchone() is None:
+            return
+        conn.execute(f"UPDATE payload SET ref_entry_id = NULL WHERE ref_entry_id IN ({ids})", params)
+        conn.execute(
+            "UPDATE payload SET pair_id = NULL WHERE pair_id IN"
+            f" (SELECT id FROM payload WHERE entry_id IN ({ids}))",
+            params,
+        )
+        conn.execute(f"DELETE FROM payload WHERE entry_id IN ({ids})", params)
 
     def _remove_unknown(self, where: str, params: list[Any], source_id: int) -> list[tuple[str, set[str]]]:
         """Subtract the removed records from ``unknown_sig``.
@@ -625,6 +651,8 @@ class IndexWriter:
         infer = self._infer
         tset = self._tset
         classify = tset.classify if tset is not None and len(tset) else None
+        payload_defaults = tset.payload_defaults if tset is not None else {}
+        payloads_out = self._payloads
         family = self._family
         keys_out = self._keys
         unknown = self._unknown
@@ -660,7 +688,10 @@ class IndexWriter:
                 if m.refs_sensitive:
                     flags |= FLAG_REF_SENSITIVE
                 if m.payload is not None:
-                    flags |= FLAG_HAS_PAYLOAD
+                    info = extract_payload(m.payload, r.msg, cont, m.match_end, r.partial, payload_defaults)
+                    if info is not None:
+                        flags |= FLAG_HAS_PAYLOAD
+                        payloads_out.append((next_id, *info.row()))
             else:
                 sev = infer(None, r) if infer is not None else severity(r.level, r.msg)
                 if family is not None:
@@ -702,6 +733,9 @@ class IndexWriter:
             conn.executemany(_KEY_SQL, self._keys)
         if self._config:
             conn.executemany(_CONFIG_OBSERVED_SQL, self._config)
+        if self._payloads:
+            conn.executemany(_PAYLOAD_SQL, self._payloads)
+            self.payloads_written += len(self._payloads)
         if self._unknown:
             conn.executemany(_UNKNOWN_SQL, [(f, sg, v[0], v[1]) for (f, sg), v in self._unknown.items()])
         if self._buckets:
@@ -718,4 +752,5 @@ class IndexWriter:
         self._keys.clear()
         self._unknown.clear()
         self._config.clear()
+        self._payloads.clear()
         self._batch_first_id = self._next_id

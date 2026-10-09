@@ -49,8 +49,22 @@ def _migrate_to_2(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_3(conn: sqlite3.Connection) -> None:
+    """Add ``payload.reason`` (why a payload has no operation) to databases created before v3."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(payload)")}
+    if "reason" not in columns:
+        conn.execute("ALTER TABLE payload ADD COLUMN reason TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_payload_ref ON payload(ref_entry_id) WHERE ref_entry_id IS NOT NULL"
+    )
+
+
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _migrate_to_1, 2: _migrate_to_2}
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migrate_to_1,
+    2: _migrate_to_2,
+    3: _migrate_to_3,
+}
 SCHEMA_VERSION = max(MIGRATIONS)
 
 

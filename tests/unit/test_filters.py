@@ -379,3 +379,60 @@ def test_read_guard_denies_writes(case):
     with pytest.raises(sqlite3.DatabaseError), Q.read_guard(conn, 1.0):
         conn.execute("SELECT 1; ").fetchall()
         conn.execute("DELETE FROM entry")
+
+
+# --- payload leaf: roles alias and orphan (M6 6.6) --------------------------------------------------
+
+
+def _payload_case(tmp_path):
+    conn = create_case_db(tmp_path / "index.sqlite")
+    for i in range(1, 6):
+        conn.execute(
+            "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, sev, tpl_id, msg)"
+            " VALUES (?, 1, ?, 0, 1, ?, 4, 0, 'x')",
+            (i, i, i),
+        )
+    rows = [  # entry_id, role, fmt, event_id
+        (1, "request", "xml", 7),
+        (2, "response", "xml", None),
+        (3, "fault", "json", None),
+        (4, "request", "json", 7),
+    ]
+    for entry_id, role, fmt, event_id in rows:
+        conn.execute(
+            "INSERT INTO payload(entry_id, event_id, role, direction, fmt, char_off, char_len)"
+            " VALUES (?, ?, ?, 'in', ?, 0, 1)",
+            (entry_id, event_id, role, fmt),
+        )
+    conn.commit()
+    conn.close()
+    return open_ro(tmp_path / "index.sqlite")
+
+
+def test_payload_leaf_roles_alias_and_orphan(tmp_path):
+    ro = _payload_case(tmp_path)
+    assert ids_for(ro, {"payload": {"roles": ["request", "fault"]}}) == {1, 3, 4}
+    assert ids_for(ro, {"payload": {"role": "request"}}) == {1, 4}
+    assert ids_for(ro, {"payload": {"orphan": True}}) == {2, 3}
+    assert ids_for(ro, {"payload": {"orphan": False}}) == {1, 4}
+    assert ids_for(ro, {"payload": {"orphan": True, "fmt": ["json"]}}) == {3}
+    assert ids_for(ro, {"payload": {"roles": "response", "orphan": True, "fmt": "xml"}}) == {2}
+    assert ids_for(ro, {"not": {"payload": {"orphan": True}}}) == {1, 4, 5}
+    assert ids_for(ro, {"payload": {"fmt": "xml", "roles": "fault"}}) == set()
+    ro.close()
+
+
+@pytest.mark.parametrize(
+    "tree",
+    [
+        {"payload": {"orphan": 1}},
+        {"payload": {"orphan": "yes"}},
+        {"payload": {"orphan": None}},
+        {"payload": {"roles": 5}},
+        {"payload": {"roles": []}},
+        {"payload": {"role": ["a"], "type": "payload"}},
+    ],
+)
+def test_payload_leaf_rejects_bad_values(tree):
+    with pytest.raises(F.FilterError):
+        F.compile_filter(tree)

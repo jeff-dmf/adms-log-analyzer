@@ -140,3 +140,12 @@ API_BAD_KEY_VALUE = "key value must be valid percent-encoded UTF-8 of 1 to {limi
 API_BAD_KEY_LIMIT = "limit must be an integer from 1 to {limit}"
 API_BAD_CONT_LINES = "cont_lines must be an integer from 1 to {limit}"
 API_NO_COUNTERPART = "Entry {entry_id} has no linked record"
+
+INGEST_PAYLOADS = "Payloads: {payloads} ({linked} linked to an operation, linking took {seconds:.1f} s)"
+
+API_BAD_PAYLOAD_ID = "Invalid payload id"
+API_PAYLOAD_NOT_FOUND = "Payload {payload_id} does not exist in case {case!r}"
+API_BAD_PAYLOAD_FORMAT = "format must be 'raw' or 'pretty'"
+API_BAD_PAYLOAD_LIST = "{field} must be a comma-separated list of 1 to {limit} values of at most 128 chars"
+API_BAD_ORPHAN = "orphan must be 0 or 1"
+API_BAD_PAYLOAD_QUERY = "q must be 1 to 128 printable characters"

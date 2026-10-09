@@ -126,6 +126,48 @@ export const LEAF_TYPES = {
       return isObject(arg) && Object.keys(arg).length === 1 && typeof arg.fts === "string" ? { fts: arg.fts } : null;
     },
   },
+  // Entries that hold a payload: {"payload": {"roles": [...], "fmt": [...], "orphan": bool}}.
+  // orphan true = payload without an operation, false = with one; empty lists = no restriction.
+  payload: {
+    defaults: () => ({ roles: [], fmt: [], orphan: null }),
+    validate: (d) => {
+      const okList = (v) => Array.isArray(v) && v.every((x) => typeof x === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(x));
+      if (!okList(d.roles) || !okList(d.fmt) || (d.orphan !== null && typeof d.orphan !== "boolean")) {
+        return "badValue";
+      }
+      return d.roles.length > MAX_LIST || d.fmt.length > MAX_LIST ? "listTooLong" : null;
+    },
+    toJson: (d) => {
+      const arg = {};
+      if (d.roles.length > 0) {
+        arg.roles = d.roles.slice();
+      }
+      if (d.fmt.length > 0) {
+        arg.fmt = d.fmt.slice();
+      }
+      if (d.orphan !== null) {
+        arg.orphan = d.orphan;
+      }
+      return { payload: arg };
+    },
+    fromJson: (j) => {
+      const arg = j.payload;
+      if (!isObject(arg) || !Object.keys(arg).every((k) => k === "roles" || k === "fmt" || k === "orphan")) {
+        return null;
+      }
+      const list = (v) => (v === undefined ? [] : Array.isArray(v) ? v : null);
+      const roles = list(arg.roles);
+      const fmt = list(arg.fmt);
+      const orphan = arg.orphan === undefined ? null : arg.orphan;
+      if (roles === null || fmt === null || (orphan !== null && typeof orphan !== "boolean")) {
+        return null;
+      }
+      if (![...roles, ...fmt].every((x) => typeof x === "string")) {
+        return null;
+      }
+      return { roles: roles.slice(), fmt: fmt.slice(), orphan };
+    },
+  },
   // JSON without a form in the editor: kept verbatim (validated by the server on use).
   raw: {
     defaults: () => ({ json: {} }),

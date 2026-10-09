@@ -41,3 +41,21 @@
 2030-01-15 10:00:01.950 [PID=1011][TID=0x1a2b] DEBUGLOG - [SendIncidentTroubleTickets] - Processing of 2 Trouble Tickets Resources started.
 2030-01-15 10:00:02.000 [PID=1011][TID=0x1a2b] DEBUGLOG - [CachedDataSynchronizer] - Updating 'IncidentsEventMessageType' message with GID: '28823037', Identifier: 'INC 1001' and MessageId: '00000000-0000-4000-8000-0000a0000001' in smart cache succeeded. Status changed from NotSent to Sent
 2030-01-15 10:00:02.050 [PID=1011][TID=0x1a2b] DEBUGLOG - [CachedDataSynchronizer] - Deleting 'IncidentsEventMessageType' message with GID: '28823037', Verb: 'Deleted' and Identifier: 'INC 1001' from smart cache.
+2030-01-15 10:01:00.000 [PID=1011][TID=0x31] DEBUGLOG - [SendIncidents] Sending following Incident: INC 1001.
+2030-01-15 10:01:00.002 [PID=1011][TID=0x32] DEBUGLOG - [SendIncidents] Sending following Incident: INC 1002.
+2030-01-15 10:01:00.008 [PID=1011][TID=0x31] INFO - [SendIncidents] - Processing of 1 Incident Resources started.
+2030-01-15 10:01:00.010 [PID=1011][TID=0x31] DEBUGLOG - Sending "IncidentsEventMessageType" message: 00000000-0000-4000-8000-0000a0000201 with verb: Changed...
+2030-01-15 10:01:00.011 [PID=1011][TID=0x32] DEBUGLOG - Sending "IncidentsEventMessageType" message: 00000000-0000-4000-8000-0000a0000202 with verb: Changed...
+2030-01-15 10:01:00.012 [PID=1011][TID=0x31] INFO - [CachedDataSynchronizer] - Saving 'IncidentsEventMessageType' message with GID: '28823050', Identifier: 'INC 1001' and MessageId: '00000000-0000-4000-8000-0000a0000201' to smart cache.
+2030-01-15 10:01:00.015 [PID=1011][TID=0x31] INFO - Sending request message is valid according to XML schema definition.
+2030-01-15 10:01:00.020 [PID=1011][TID=0x2a] DEBUGLOG - Message with MessageID: '00000000-0000-4000-8000-0000a0000201' will be logged in sensitive log.
+2030-01-15 10:01:00.020 [PID=1011][TID=0x2b] DEBUGLOG - Message with MessageID: '00000000-0000-4000-8000-0000a0000202' will be logged in sensitive log.
+2030-01-15 10:01:00.060 [PID=1011][TID=0x2c] DEBUGLOG - Message with MessageID: '' will be logged in sensitive log.
+2030-01-15 10:01:00.062 [PID=1011][TID=0x2d] DEBUGLOG - Message with MessageID: '' will be logged in sensitive log.
+2030-01-15 10:01:00.060 [PID=1011][TID=0x31] DEBUGLOG - Sending "IncidentsEventMessageType" message: 00000000-0000-4000-8000-0000a0000201 with verb: Changed finished successfully.
+2030-01-15 10:01:00.061 [PID=1011][TID=0x31] INFO - Request message with MessageId '00000000-0000-4000-8000-0000a0000201' successfully sent. Reply result 'OK' is returned in response message.
+2030-01-15 10:01:00.062 [PID=1011][TID=0x32] DEBUGLOG - Sending "IncidentsEventMessageType" message: 00000000-0000-4000-8000-0000a0000202 with verb: Changed finished successfully.
+2030-01-15 10:01:00.063 [PID=1011][TID=0x32] INFO - Request message with MessageId '00000000-0000-4000-8000-0000a0000202' successfully sent. Reply result 'OK' is returned in response message.
+2030-01-15 10:01:00.064 [PID=1011][TID=0x31] DEBUGLOG - [SendIncidents] Sending Incident finished successfully
+2030-01-15 10:01:00.065 [PID=1011][TID=0x32] DEBUGLOG - [SendIncidents] Sending Incident finished successfully
+2030-01-15 10:01:00.070 [PID=1011] INFO - PSAttach::PubSubReceiveCallBack: Received callback for config value 'ExampleKey' (no change from 'a' to 'a')

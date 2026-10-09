@@ -126,6 +126,9 @@ class IngestResult:
     derive_seconds: float = 0.0  # time of the derivation step (included in ``seconds``)
     links_created: int = 0  # links written by the correlation step of this run
     correlate_seconds: float = 0.0  # time of the correlation step (included in ``seconds``)
+    payloads: int = 0  # payload rows extracted in this run (parse/payload.py)
+    payloads_linked: int = 0  # payloads linked to an operation by the linking step of this run
+    payload_seconds: float = 0.0  # time of the payload linking step (included in ``seconds``)
 
     @property
     def mb_per_s(self) -> float:
@@ -263,6 +266,48 @@ class SeverityHook:
 # --------------------------------------------------------------------------- the run
 
 
+# Version of the payload extraction. A case written before the payloads existed (or by an older extraction)
+# has records without payload rows, and unchanged sources are not read again, so the version is tracked PER
+# SOURCE in ``meta["payload_extraction_version.<source_id>"]``: a source selected with a lower (or no) mark is
+# re-indexed once; a source that is not selected keeps its old mark and is upgraded when it is selected.
+# ``meta["payload_extraction_version"]`` only says "every indexed source is current".
+PAYLOAD_EXTRACTION_VERSION = 1
+PAYLOAD_VERSION_KEY = "payload_extraction_version"
+
+
+def _source_mark(conn, source_id: int) -> int:
+    key = f"{PAYLOAD_VERSION_KEY}.{source_id}"
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    try:
+        return int(row[0]) if row else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _mark_source(conn, source_id: int) -> None:
+    if _source_mark(conn, source_id) != PAYLOAD_EXTRACTION_VERSION:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+            (f"{PAYLOAD_VERSION_KEY}.{source_id}", str(PAYLOAD_EXTRACTION_VERSION)),
+        )
+
+
+def _store_global_version(conn) -> None:
+    """Set the global marker when every indexed source carries the current mark."""
+    stale = conn.execute(
+        "SELECT 1 FROM source s WHERE s.n_entries > 0 AND coalesce((SELECT CAST(value AS INTEGER) FROM meta"
+        " WHERE key = ? || '.' || s.id), 0) < ? LIMIT 1",
+        (PAYLOAD_VERSION_KEY, PAYLOAD_EXTRACTION_VERSION),
+    ).fetchone()
+    if stale is None:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (PAYLOAD_VERSION_KEY,)).fetchone()
+        if row is None or row[0] != str(PAYLOAD_EXTRACTION_VERSION):
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                (PAYLOAD_VERSION_KEY, str(PAYLOAD_EXTRACTION_VERSION)),
+            )
+
+
 class _Run:
     def __init__(
         self, writer: IndexWriter, plan: CollectionPlan, options: IngestOptions, progress: ProgressFn | None
@@ -344,6 +389,27 @@ class _Run:
             for group, message in summary.errors:
                 self.result.warnings.append(f"{name} failed for group {group}: {message}")
         self.result.correlate_seconds = time.perf_counter() - started
+
+    def link_payloads(self) -> None:
+        """Link the payloads of the groups that changed (after derivation and correlation): announcement,
+        operation and request/response pair (``dmslog.derive.payloads``).
+
+        A failure never aborts the ingestion: it is recorded in ``result.warnings``.
+        """
+        from dmslog.derive.payloads import link_payloads
+
+        started = time.perf_counter()
+        self.result.payloads = self.w.payloads_written
+        try:
+            summary = link_payloads(self.w.conn, self.catalog)
+        except Exception as exc:  # e.g. a locked database
+            self.result.payload_seconds = time.perf_counter() - started
+            self.result.warnings.append(f"payload linking failed: {type(exc).__name__}: {exc}")
+            return
+        self.result.payload_seconds = time.perf_counter() - started
+        self.result.payloads_linked = summary.linked
+        for group, message in summary.errors:
+            self.result.warnings.append(f"payload linking failed for group {group}: {message}")
 
     # ---- collection
 
@@ -514,6 +580,12 @@ class _Run:
         except (OSError, zipfile.BadZipFile, ReadLimitError) as exc:
             self._fail(row, info, exc)
             return
+        if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME) and (
+            _source_mark(self.w.conn, row.id) < PAYLOAD_EXTRACTION_VERSION
+        ):
+            action = Action.REINDEX  # its records predate the current payload extraction
+        if action in (Action.NEW, Action.REINDEX):
+            _mark_source(self.w.conn, row.id)  # from here on every record of it is extracted by this code
         self.current_action = action.value
         if action is Action.UNCHANGED:
             self.result.sources_unchanged += 1
@@ -752,8 +824,10 @@ def run_ingest(
         rows = writer.sources(cid)
         for info in _oldest_first(selected):
             run.process(rows[info.member], info, reader)
+    _store_global_version(conn)
     run.derive()
     run.correlate()
+    run.link_payloads()
     if conn.total_changes != changes_before:  # a no-op re-ingest keeps the generation (and the caches)
         _bump_ingest_generation(conn)
     run.result.seconds = time.perf_counter() - t0

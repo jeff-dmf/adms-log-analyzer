@@ -215,3 +215,16 @@ test("saved filter names are sanitized like the server does", () => {
   assert.equal(checkViewName("ERRORS", ["Errors"]).error, "duplicate");
   assert.equal(checkViewName("new", ["a", "b"], 2).error, "tooMany");
 });
+
+test("payload leaf round-trips the contract shape", async () => {
+  const { fromJson, buildFilter, findNode } = await import("../../src/dmslog/web/js/filter-tree-model.js");
+  const json = { payload: { roles: ["request"], fmt: ["xml", "json"], orphan: true } };
+  const root = fromJson(json);
+  const leaf = root.children[0];
+  assert.equal(leaf.type, "payload");
+  assert.deepEqual(buildFilter(root).filter, json);
+  assert.equal(findNode(root, leaf.id), leaf);
+  assert.deepEqual(buildFilter(fromJson({ payload: {} })).filter, { payload: {} });
+  assert.deepEqual(buildFilter(fromJson({ payload: { orphan: false } })).filter, { payload: { orphan: false } });
+  assert.equal(fromJson({ payload: { bogus: 1 } }).children[0].type, "raw");
+});

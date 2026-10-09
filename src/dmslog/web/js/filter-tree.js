@@ -64,7 +64,7 @@ const OP_LABEL = () => ({ and: S.ftOpAnd, or: S.ftOpOr, not: S.ftOpNot });
 const OP_SHORT = () => ({ and: S.ftOpShortAnd, or: S.ftOpShortOr, not: S.ftOpShortNot });
 const TYPE_LABEL = () => ({
   source: S.ftTypeSource, sev: S.ftTypeSev, level: S.ftTypeLevel, ts: S.ftTypeTs, text: S.ftTypeText,
-  raw: S.ftTypeRaw,
+  raw: S.ftTypeRaw, payload: S.ftTypePayload,
 });
 const ERROR_TEXT = () => ({
   emptyList: S.ftErrorEmptyList, listTooLong: S.ftErrorListTooLong, badValue: S.ftErrorBadValue,
@@ -180,6 +180,43 @@ registerLeafEditor("source", {
       ctx.update({ ids: Array.from(select.selectedOptions, (o) => Number(o.value)) }, "ids");
     });
     return labelled(S.ftSources, select, "ft-fields ft-grow");
+  },
+});
+
+const PAYLOAD_ROLES = ["request", "response", "fault", "delta", "content", "publication", "other"];
+const PAYLOAD_FORMATS = ["xml", "xml_seq", "html", "json", "text"];
+
+registerLeafEditor("payload", {
+  render(leaf, ctx) {
+    const wrap = el("span", "ft-fields ft-grow");
+    const multi = (labelText, values, key) => {
+      const select = el("select");
+      select.multiple = true;
+      select.size = Math.min(values.length, 5);
+      const chosen = new Set(leaf.data[key]);
+      for (const value of values) {
+        select.append(option(value, value, chosen.has(value)));
+      }
+      select.addEventListener("change", () => {
+        ctx.update({ [key]: Array.from(select.selectedOptions, (o) => o.value) }, key);
+      });
+      return labelled(labelText, select);
+    };
+    const orphan = el("select");
+    orphan.append(
+      option("", S.ftPayloadOrphanAny, leaf.data.orphan === null),
+      option("yes", S.ftPayloadOrphanYes, leaf.data.orphan === true),
+      option("no", S.ftPayloadOrphanNo, leaf.data.orphan === false),
+    );
+    orphan.addEventListener("change", () => {
+      ctx.update({ orphan: orphan.value === "" ? null : orphan.value === "yes" }, "orphan");
+    });
+    wrap.append(
+      multi(S.ftPayloadRoles, PAYLOAD_ROLES, "roles"),
+      multi(S.ftPayloadFormats, PAYLOAD_FORMATS, "fmt"),
+      labelled(S.ftPayloadOrphan, orphan),
+    );
+    return wrap;
   },
 });
 

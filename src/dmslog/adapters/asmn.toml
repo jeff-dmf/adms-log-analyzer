@@ -325,8 +325,13 @@ title = "Attempt failed (real reason)"
 regex = '''^Error: Sending "(?P<msg_type>[^"]*)" message failed\. "(?P<exc_type>[^"]*)" has occurred\. DmsReason: (?P<reason>.*)$'''
 cont = { parser = "dotnet_stack" }
 keys = [{ field = "exc_type", type = "exc_type" }]
+# The HTTP error body (HTML) of some failures follows the first line (payloads.md, section 3).
+payload = { fmt = "html", start = "first_cont_lt", role = "other", direction = "in", peer = "SAPPI" }
 stream = "sensitive"
-examples = [{ msg = 'Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. DmsReason: There was no endpoint listening at https://example.invalid/pi that could accept the message.', fields = { msg_type = "WorksEventMessageType", exc_type = "EndpointNotFoundException" } }]
+examples = [
+    { msg = 'Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. DmsReason: There was no endpoint listening at https://example.invalid/pi that could accept the message.', fields = { msg_type = "WorksEventMessageType", exc_type = "EndpointNotFoundException" } },
+    { msg = 'Error: Sending "WorksEventMessageType" message failed. "ProtocolException" has occurred. DmsReason: The content type text/html of the response message does not match the content type of the binding.', cont = "<html>\n<body>\n<h1>Service Unavailable</h1>\n</body>\n</html>", fields = { msg_type = "WorksEventMessageType", exc_type = "ProtocolException" } },
+]
 counter_examples = ['Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. Writing details in sensitive log.']
 
 [[template]]

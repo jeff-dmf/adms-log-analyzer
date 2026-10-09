@@ -140,7 +140,9 @@ CREATE TABLE payload(          -- the text is NOT duplicated: offsets into msg +
   root TEXT,                   -- 1st element, with prefix (e.g. ns0:SwitchingStepsResponseMessage, s:Fault)
   char_off INTEGER NOT NULL, char_len INTEGER NOT NULL,   -- without the trailing '.' the adapter appends
   well_formed INTEGER,         -- 1 ok, 0 malformed, NULL not checked
-  truncated INTEGER NOT NULL DEFAULT 0);
+  truncated INTEGER NOT NULL DEFAULT 0,
+  reason TEXT);                -- why no operation was linked (orphan): no_operation_for_key|ambiguous|not_in_operation|...
+CREATE INDEX ix_payload_ref ON payload(ref_entry_id) WHERE ref_entry_id IS NOT NULL;
 CREATE INDEX ix_payload_entry ON payload(entry_id);
 CREATE INDEX ix_payload_event ON payload(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX ix_payload_op ON payload(operation, role);

@@ -5,6 +5,7 @@
 import {
   EVENT_KINDS, OPERATION_KIND, STATUS_VALUES, buildDetailView, buildEventRow, createEventsFlow, kindLabel, statusLabel,
 } from "./events-model.js";
+import { createPayloadNoticeFlow } from "./payload-model.js";
 import { S, format } from "./strings.js";
 
 const STYLESHEET = "/css/events.css";
@@ -237,6 +238,8 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
 
   function renderDetail(state) {
     const current = state.detail;
+    notices.cancel();
+    noticeBox = null;
     detailPane.textContent = "";
     if (current.status === "none") {
       detailPane.appendChild(element("div", "ev-muted", S.evDetailNone));
@@ -273,7 +276,11 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
       dl.appendChild(element("dt", "", item.label));
       dl.appendChild(element("dd", "ev-mono", item.value));
     }
-    detailPane.append(dl, entriesTable(view), relatedList(view.related));
+    noticeBox = element("div", "ev-notice");
+    noticeBox.setAttribute("role", "status");
+    noticeBox.hidden = true;
+    detailPane.append(noticeBox, dl, entriesTable(view), relatedList(view.related));
+    notices.check(current.data.event);
   }
 
   function setStatus(text, isError) {
@@ -308,6 +315,20 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
 
   const flow = createEventsFlow({ api, getCase, onState });
 
+  // Payload expected / not expected notice of an operation (filled after the detail is drawn).
+  let noticeBox = null;
+  const notices = createPayloadNoticeFlow({
+    api,
+    getCase,
+    onResult: (notice) => {
+      if (noticeBox) {
+        noticeBox.textContent = notice ? notice.text : "";
+        noticeBox.className = "ev-notice" + (notice && notice.kind === "absent" ? " ev-notice-absent" : "");
+        noticeBox.hidden = notice === null;
+      }
+    },
+  });
+
   tbody.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target.closest("tr[data-id]") : null;
     if (target && tbody.contains(target)) {
@@ -339,7 +360,10 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
   refreshButton.addEventListener("click", () => flow.refresh());
 
   return {
-    refresh: () => flow.refresh(),
+    refresh: () => {
+      notices.clearCache();
+      return flow.refresh();
+    },
     // Opens one event (from another panel): a kind or name filter in force is kept as is.
     open: (id) => flow.select(id),
   };

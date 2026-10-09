@@ -53,7 +53,7 @@ def test_schema_objects_exist(conn):
     assert names(conn, "table") >= TABLES
     assert INDEXES <= names(conn, "index")
     assert names(conn, "view") == {"entry_text"}
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
 
 
 def test_pragmas(conn):
@@ -143,7 +143,7 @@ def test_schema_loaded_from_zipapp(tmp_path):
     out = subprocess.run(
         [sys.executable, "-I", "-c", code, str(pyz), str(db_path)], capture_output=True, text=True, check=True
     )
-    assert out.stdout.strip() == "2"
+    assert out.stdout.strip() == "3"
     check = sqlite3.connect(db_path)
     assert "entry_fts" in names(check, "table")
     check.close()

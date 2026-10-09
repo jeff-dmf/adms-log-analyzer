@@ -130,6 +130,13 @@ export const api = {
   sideBySide: (caseId, id, signal) =>
     request("GET", "/api/entries/" + encodeURIComponent(id) + "/side-by-side" + query({ case: caseId }),
       undefined, signal),
+  // Payloads: those of one entry, one payload (raw text and optional formatted text), keyset list.
+  entryPayloads: (caseId, id, signal) =>
+    request("GET", "/api/entries/" + encodeURIComponent(id) + "/payloads" + query({ case: caseId }), undefined, signal),
+  payload: (caseId, id, format, signal) =>
+    request("GET", "/api/payloads/" + encodeURIComponent(id) + query({ case: caseId, format }), undefined, signal),
+  payloadPage: (caseId, params, signal) =>
+    request("GET", "/api/payloads/page" + query({ ...params, case: caseId }), undefined, signal),
   keyTypes: (caseId, signal) =>
     request("GET", "/api/keys/types" + query({ case: caseId }), undefined, signal),
   keyRecords: (caseId, type, value, params, signal) =>

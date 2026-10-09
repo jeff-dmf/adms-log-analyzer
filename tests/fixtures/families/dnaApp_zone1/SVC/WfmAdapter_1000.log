@@ -98,3 +98,32 @@ OMS_REQUEST GID: 28823037, Status value: Approved
 2030-01-15 10:00:03.600 [PID=1000][TID=0x1a2b] DEBUGLOG - [ImsRequestManagerForProdRequests] Waiting for 1 more callbacks.
 2030-01-15 10:00:03.650 [PID=1000][TID=0x1a2b] DEBUGLOG - [RequestManagerForProdRequests] All callbacks received. Continuing with process.
 2030-01-15 10:00:03.700 [PID=1000][TID=0x1a2b] DEBUGLOG - IMS sent callback to the adapter for request with GID "28823037" with result "Approved".
+2030-01-15 10:01:00.000 [PID=1000][TID=0x10] DEBUGLOG - Changed crews request received. Request with ID "00000000-0000-4000-8000-0000a0000101". Message content written in sensitive log.
+2030-01-15 10:01:00.005 [PID=1000][TID=0x2a] DEBUGLOG - Message with MessageID: '00000000-0000-4000-8000-0000a0000101' will be logged in sensitive log.
+2030-01-15 10:01:00.006 [PID=1000][TID=0x10] INFO - Received valid request message according to XML schema definition.
+2030-01-15 10:01:00.020 [PID=1000][TID=0x10] VERBOSE - [Communication2] - TCP client connection id = 3 sending message msgId = 7, msgType = Request, msgSize = 120.
+2030-01-15 10:01:00.021 [PID=1000][TID=0x10] VERBOSE - [Communication2] - Tcp socket id = 5 send called with 120 bytes count.
+2030-01-15 10:01:00.040 [PID=1000][TID=0x10] INFO - Generating Delta...
+2030-01-15 10:01:00.041 [PID=1000][TID=0x10] INFO - 2 crews added to insert Delta operation.
+2030-01-15 10:01:00.042 [PID=1000][TID=0x10] INFO - Writting delta to log sensitive.
+2030-01-15 10:01:00.043 [PID=1000][TID=0x10] INFO - [CrsDataManager] Applying delta.
+2030-01-15 10:01:00.050 [PID=1000][TID=0x10] INFO - Content being sent to CRS:
+<ArrayOfAssignmentStatusInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <AssignmentStatusInfo>
+    <CrewId>28823011</CrewId>
+    <AssignmentStatusId>28823012</AssignmentStatusId>
+  </AssignmentStatusInfo>
+</ArrayOfAssignmentStatusInfo>
+2030-01-15 10:01:00.052 [PID=1000][TID=0x10] INFO - Calling ICRSBusinessContract.OrderedChangeAssignmentStatuses.
+2030-01-15 10:01:00.053 [PID=1000][TID=0x10] INFO - Request IDs returned by CRS are: "28823020".
+2030-01-15 10:01:00.060 [PID=1000][TID=0x10] INFO - Content being sent to WMS:
+<ArrayOfDocumentCrewAssigment xmlns:xsd="http://www.w3.org/2001/XMLSchema" />
+2030-01-15 10:01:00.066 [PID=1000][TID=0x10] INFO - Content being sent to IMS. Content details written in sensitive log.
+2030-01-15 10:01:00.070 [PID=1000] INFO - PSAttach::PubSubReceiveCallBack: Received callback for config value 'ExampleKey' (no change from 'a' to 'a')
+2030-01-15 10:01:00.071 [PID=1000] INFO - arb_pubSubLookup: Received update on topic: example.sys.svc.arb.host.states.syncstate with status 0
+2030-01-15 10:01:00.100 [PID=1000][TID=0x10] DEBUGLOG - Changed crews request with ID "00000000-0000-4000-8000-0000a0000101" successfully processed.
+2030-01-15 10:01:00.101 [PID=1000][TID=0x2b] DEBUGLOG - Message with MessageID: 'SYNT_0000001' will be logged in sensitive log.
+2030-01-15 10:01:00.200 [PID=1000][TID=0x11] DEBUGLOG - Changed vehicles request received. Request with ID "00000000-0000-4000-8000-0000a0000102". Message content written in sensitive log.
+2030-01-15 10:01:00.205 [PID=1000][TID=0x2c] DEBUGLOG - Message with MessageID: '' will be logged in sensitive log.
+2030-01-15 10:01:00.206 [PID=1000][TID=0x11] ERROR - ERROR - Processing "ChangedCrewsEvent" message failed. ExceptionType: "System.TimeoutException" Reason: Synthetic timeout. StackTrace: at Example.Wfm.Run() in F:\PD\1234567\1\Example\Run.cs:line 40
+   at Example.Wfm.Process() in F:\PD\1234567\1\Example\Process.cs:line 12

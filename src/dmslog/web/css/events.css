@@ -238,3 +238,18 @@
   color: var(--error-text);
   border-bottom: 1px solid var(--sev-3);
 }
+
+/* Payload expected / not expected notice in the operation detail. */
+.ev-notice {
+  margin: 6px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--info-bg);
+  color: var(--info-text);
+  font-size: 0.9em;
+}
+
+.ev-notice-absent {
+  background: var(--error-bg);
+  color: var(--error-text);
+}
