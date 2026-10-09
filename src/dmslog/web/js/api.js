@@ -64,6 +64,12 @@ function query(params) {
   return parts.length > 0 ? "?" + parts.join("&") : "";
 }
 
+// A path segment: "." and ".." would be resolved away by the browser, so their dots are escaped.
+function segment(value) {
+  const text = encodeURIComponent(String(value));
+  return /^\.+$/.test(text) ? text.replace(/\./g, "%2E") : text;
+}
+
 export const api = {
   cases: () => request("GET", "/api/cases"),
   createCase: (name) => request("POST", "/api/cases", { name }),
@@ -115,4 +121,18 @@ export const api = {
     request("GET", "/api/stats/methods" + query({ ...params, case: caseId }), undefined, signal),
   statsSeries: (caseId, params, signal) =>
     request("GET", "/api/stats/series" + query({ ...params, case: caseId }), undefined, signal),
+  // Correlation: links of an entry, the best counterpart pair, records by key.
+  entryLinks: (caseId, id, signal) =>
+    request("GET", "/api/entries/" + encodeURIComponent(id) + "/links" + query({ case: caseId }), undefined, signal),
+  entryHead: (caseId, id, contLines, signal) =>
+    request("GET", "/api/entries/" + encodeURIComponent(id) + query({ case: caseId, cont_lines: contLines }),
+      undefined, signal),
+  sideBySide: (caseId, id, signal) =>
+    request("GET", "/api/entries/" + encodeURIComponent(id) + "/side-by-side" + query({ case: caseId }),
+      undefined, signal),
+  keyTypes: (caseId, signal) =>
+    request("GET", "/api/keys/types" + query({ case: caseId }), undefined, signal),
+  keyRecords: (caseId, type, value, params, signal) =>
+    request("GET", "/api/keys/" + segment(type) + "/" + segment(value) +
+      query({ ...params, case: caseId }), undefined, signal),
 };

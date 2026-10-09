@@ -387,3 +387,39 @@ end_ok = ["SMN-009"]
 end_fail = ["SMN-016", "SMN-S016"]
 check_key = "plan"
 pair_by = ["tid"]
+
+# Failure reasons: the normal log says "see the sensitive log", the sensitive log has the real reason.
+[[sensitive_pair]]
+normal = "SMN-016"
+sensitive = "SMN-S016"
+match = ["pid", "tid"]
+max_dt_ms = 1000
+
+[[sensitive_pair]]
+normal = "SMN-018"
+sensitive = "SMN-017"
+match = ["pid", "tid"]
+max_dt_ms = 1000
+key = "msg_id"
+
+[[sensitive_pair]]
+normal = "SMN-019"
+sensitive = "SMN-S019"
+match = ["pid", "tid"]
+max_dt_ms = 1000
+key = "exc_type"
+
+# Retries of one message: every attempt logs "Sending ... message: <id>" with the same id.
+[[link_rule]]
+kind = "retry"
+a = "SMN-007"
+b = "SMN-007"
+key = "msgid"
+max_dt_ms = 600000
+
+[[link_rule]]
+kind = "response"
+a = "SMN-007"
+b = ["SMN-008", "SMN-010", "SMN-017", "SMN-018"]
+key = "msgid"
+max_dt_ms = 600000

@@ -131,3 +131,10 @@ normal = "FUP-005"
 sensitive = "FUP-S02"
 match = ["pid", "tid"]
 max_dt_ms = 100
+
+# Writing the file to the local share (host and path only in the sensitive log).
+[[sensitive_pair]]
+normal = "FUP-004"
+sensitive = "FUP-S01"
+match = ["pid", "tid"]
+max_dt_ms = 100

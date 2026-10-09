@@ -169,6 +169,9 @@ function start() {
   let dashboard = null;
   let clockBanner = null;
   let knowledge = null;
+  let linksSection = null;
+  let sideBySide = null;
+  let keyPanel = null;
   let sourceFamilies = new Map();
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
@@ -248,6 +251,9 @@ function start() {
       if (knowledge) {
         knowledge.show(entry);
       }
+      if (linksSection) {
+        linksSection.show(entry);
+      }
     },
     getTemplateCode: (id) => templateCodes.get(id) || "",
     onTemplate: (tplId) => addTemplateFilter(tplId),
@@ -312,6 +318,12 @@ function start() {
       }
       loadTemplates(id);
       knowledge.reset();
+      if (keyPanel) {
+        keyPanel.reset();
+      }
+      if (sideBySide) {
+        sideBySide.reset();
+      }
       if (unknownPanel) {
         unknownPanel.refresh();
       }
@@ -560,6 +572,41 @@ function start() {
       detail.show(entryId);
     }
   };
+
+  // Correlation: select a linked record in the grid (falls back to the detail pane when the
+  // record is filtered out), then the optional modules of the Links section, the side-by-side
+  // view and the "same key" panel.
+  const revealEntry = async ({ id, ts }) => {
+    const forCase = caseId;
+    try {
+      await grid.revealRow({ id, ts });
+    } catch (err) {
+      // The row may be filtered out: the detail pane still shows it.
+    }
+    if (forCase !== caseId) {
+      return;
+    }
+    const selected = grid.selectedRow();
+    if (!selected || selected.id !== id) {
+      detail.show(id);
+    }
+  };
+  Promise.all([import("./links.js"), import("./side-by-side.js"), import("./key-panel.js")]).then(([links, side, keys]) => {
+    sideBySide = side.initSideBySide(byId("side-by-side-host"), { getCase: () => caseId });
+    keyPanel = keys.initKeyPanel(byId("key-panel-host"), { getCase: () => caseId, onSelect: revealEntry });
+    linksSection = new links.LinksSection(byId("detail-links"), {
+      getCase: () => caseId,
+      onReveal: revealEntry,
+      onSideBySide: (id) => sideBySide.open(id),
+      onSameKey: (type, value) => keyPanel.open(type, value),
+      onError: showError,
+    });
+    if (detail.entry) {
+      linksSection.show(detail.entry);
+    }
+  }).catch(() => {
+    // Module missing or failing: the detail pane simply has no Links section.
+  });
 
   // Operations panel, adapter dashboard and clock-jump banner: optional modules like the panels above.
   const eventsHost = byId("events-panel-host");

@@ -385,3 +385,28 @@ end_fail = ["ONT-021"]
 fail = ["ONT-022"]
 pair_by = ["tid"]
 check_key = "mrid"
+
+# Final failure of a request message: same template in both streams, joined by the message id
+# (the sensitive record may be written a little before the normal one).
+[[sensitive_pair]]
+normal = "ONT-022"
+sensitive = "ONT-022"
+match = ["pid", "tid"]
+max_dt_ms = 1000
+key = "message_id"
+order = "any"
+
+# Retries of one message: every attempt logs "Sending ... message: <id>" with the same id.
+[[link_rule]]
+kind = "retry"
+a = ["ONT-011", "ONT-016A"]
+b = ["ONT-011", "ONT-016A"]
+key = "msgid"
+max_dt_ms = 600000
+
+[[link_rule]]
+kind = "response"
+a = ["ONT-011", "ONT-016A"]
+b = ["ONT-012", "ONT-016B", "ONT-014", "ONT-022"]
+key = "msgid"
+max_dt_ms = 600000

@@ -158,3 +158,10 @@ normal = "CLC-003"
 sensitive = "CLC-S01"
 match = ["pid", "tid"]
 max_dt_ms = 100
+
+# MessageRevisionMissing: the normal log has the code, the sensitive log the text.
+[[sensitive_pair]]
+normal = "CLC-007"
+sensitive = "CLC-S07"
+match = ["pid", "tid"]
+max_dt_ms = 100

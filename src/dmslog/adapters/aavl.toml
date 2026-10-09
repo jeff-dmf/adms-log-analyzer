@@ -200,3 +200,15 @@ end_ok = ["AVL-006"]
 check_key = "msgid"
 business_error = ["AVL-007", "AVL-008"]
 pair_by = ["tid"]
+
+[[sensitive_pair]]
+normal = "AVL-002"
+sensitive = "AVL-S002"
+match = ["pid", "tid"]
+max_dt_ms = 1000
+
+[[sensitive_pair]]
+normal = "AVL-007"
+sensitive = "AVL-S003"
+match = ["pid", "tid"]
+max_dt_ms = 1000

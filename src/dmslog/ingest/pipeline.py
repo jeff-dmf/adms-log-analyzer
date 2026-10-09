@@ -124,6 +124,8 @@ class IngestResult:
     warnings: list[str] = field(default_factory=list)  # non-fatal problems (derivation failures)
     events_derived: int = 0  # events written by the derivation step of this run
     derive_seconds: float = 0.0  # time of the derivation step (included in ``seconds``)
+    links_created: int = 0  # links written by the correlation step of this run
+    correlate_seconds: float = 0.0  # time of the correlation step (included in ``seconds``)
 
     @property
     def mb_per_s(self) -> float:
@@ -310,6 +312,38 @@ class _Run:
         self.result.events_derived = summary.events
         for stream_id, message in summary.errors:
             self.result.warnings.append(f"derivation failed for stream {stream_id}: {message}")
+
+    def correlate(self) -> None:
+        """Correlate the groups that changed (after the derivation): normal<->sensitive pairing and, when
+        the module exists, the callback/retry/response links (``dmslog.derive.links``).
+
+        A failure never aborts the ingestion: it is recorded in ``result.warnings``.
+        """
+        import importlib
+
+        from dmslog.derive.correlate import correlate_pending
+
+        started = time.perf_counter()
+        steps = [("correlation", correlate_pending)]
+        try:
+            links = importlib.import_module("dmslog.derive.links")
+        except ModuleNotFoundError as exc:
+            if exc.name != "dmslog.derive.links":
+                self.result.warnings.append(f"link rules failed: {type(exc).__name__}: {exc}")
+        except Exception as exc:  # a broken module must not abort the ingestion
+            self.result.warnings.append(f"link rules failed: {type(exc).__name__}: {exc}")
+        else:
+            steps.append(("link rules", links.link_pending))
+        for name, step in steps:
+            try:
+                summary = step(self.w.conn, self.catalog)
+            except Exception as exc:  # e.g. a locked database
+                self.result.warnings.append(f"{name} failed: {type(exc).__name__}: {exc}")
+                continue
+            self.result.links_created += summary.links
+            for group, message in summary.errors:
+                self.result.warnings.append(f"{name} failed for group {group}: {message}")
+        self.result.correlate_seconds = time.perf_counter() - started
 
     # ---- collection
 
@@ -719,6 +753,7 @@ def run_ingest(
         for info in _oldest_first(selected):
             run.process(rows[info.member], info, reader)
     run.derive()
+    run.correlate()
     if conn.total_changes != changes_before:  # a no-op re-ingest keeps the generation (and the caches)
         _bump_ingest_generation(conn)
     run.result.seconds = time.perf_counter() - t0

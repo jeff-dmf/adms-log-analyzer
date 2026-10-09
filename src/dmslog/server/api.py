@@ -20,6 +20,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from .. import __version__, messages
 from ..ingest import pipeline
@@ -38,7 +39,7 @@ from ..knowledge.installation import read_installation
 from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
 from ..store import config as config_store
-from ..store import db, events, query, views
+from ..store import db, events, keys, query, views
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
 from .sse import ProgressHub
@@ -387,6 +388,12 @@ def _family_param(request: Request) -> str | None:
     return raw
 
 
+_KEY_TYPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+_KEY_VALUE_MAX = 256
+_CONT_LINES_MAX = 20000
+_INT64 = 2**63
+_SIDE_BY_SIDE_LINES = 2000
+
 _EVENT_WORD = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
 _EVENT_LIST_MAX = 20
 _EVENT_TEXT_MAX = 128
@@ -459,6 +466,35 @@ def _event_filter(request: Request, default_kinds: tuple[str, ...] = ()) -> even
         ts_from=_time_param(request, "from"),
         ts_to=_time_param(request, "to"),
     )
+
+
+def _cont_lines_param(request: Request) -> int | None:
+    raw = request.query.get("cont_lines")
+    if raw is None or raw == "":
+        return None
+    if not _ENTRY_ID.match(raw) or not 1 <= int(raw) <= _CONT_LINES_MAX:
+        raise _bad(messages.API_BAD_CONT_LINES.format(limit=_CONT_LINES_MAX))
+    return int(raw)
+
+
+def _key_type_param(raw: str) -> str:
+    if not _KEY_TYPE.match(raw):
+        raise _bad(messages.API_BAD_KEY_TYPE)
+    return raw
+
+
+def _key_value_param(raw: str) -> str:
+    """Percent-decode a key value taken from the path; strict UTF-8, bounded, printable."""
+    bad = _bad(messages.API_BAD_KEY_VALUE.format(limit=_KEY_VALUE_MAX))
+    if len(raw) > _KEY_VALUE_MAX * 9:
+        raise bad
+    try:
+        value = unquote(raw, encoding="utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise bad from None
+    if not value or len(value) > _KEY_VALUE_MAX or not value.isprintable():
+        raise bad
+    return value
 
 
 def _case_from_body(store: CaseStore, body: dict[str, Any]) -> str:
@@ -576,6 +612,10 @@ class Api:
             ("GET", re.compile(r"/api/stats/methods\Z"), self.stats_methods),
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)\Z"), self.get_entry),
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/context\Z"), self.entry_context),
+            ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/links\Z"), self.entry_links),
+            ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/side-by-side\Z"), self.entry_side_by_side),
+            ("GET", re.compile(r"/api/keys/types\Z"), self.key_types),
+            ("GET", re.compile(r"/api/keys/(?P<type>[^/]+)/(?P<value>[^/]+)\Z"), self.key_records),
         ]
 
     def shutdown(self) -> None:
@@ -905,13 +945,17 @@ class Api:
     def get_entry(self, request: Request) -> Response:
         entry_id = self._entry_id(request)
         cid = _case_from_query(self.store, request)
+        max_lines = _cont_lines_param(request)
         with self.store.reader(cid) as conn:
-            entry = query.get_entry(conn, entry_id)
+            entry = query.get_entry(conn, entry_id, max_cont_lines=max_lines)
         if entry is None:
             raise ApiError(
                 404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
             )
-        return Response(200, _entry_json(entry))
+        out = _entry_json(entry)
+        if max_lines is not None:
+            out["cont_truncated"] = bool(entry.get("cont_truncated"))
+        return Response(200, out)
 
     def entry_context(self, request: Request) -> Response:
         entry_id = self._entry_id(request)
@@ -1004,6 +1048,73 @@ class Api:
         with self.store.reader(cid) as conn:
             methods = events.stat_methods(conn, stream_id)
         return Response(200, {"methods": methods})
+
+    # -- correlation keys and links
+
+    def key_types(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            types = keys.key_types(conn)
+        return Response(200, {"types": types})
+
+    def key_records(self, request: Request) -> Response:
+        key_type = _key_type_param(request.match["type"])
+        value = _key_value_param(request.match["value"])
+        cid = _case_from_query(self.store, request)
+        limit = keys.DEFAULT_LIMIT
+        raw_limit = request.query.get("limit")
+        if raw_limit is not None:
+            if not _SMALL_INT.match(raw_limit) or not 1 <= int(raw_limit) <= keys.MAX_LIMIT:
+                raise _bad(messages.API_BAD_KEY_LIMIT.format(limit=keys.MAX_LIMIT))
+            limit = int(raw_limit)
+        after = None
+        raw_after = request.query.get("after")
+        if raw_after:
+            after = events.Cursor.parse(raw_after)
+            if after is None or not (-_INT64 <= after.ts < _INT64 and 0 <= after.id < _INT64):
+                raise _bad(messages.API_BAD_CURSOR)
+        with self.store.reader(cid) as conn:
+            records, nxt = keys.records_with_key(conn, key_type, value, limit, after)
+        return Response(200, {"records": records, "next": nxt})
+
+    def _require_entry(self, conn: sqlite3.Connection, entry_id: int, cid: str) -> None:
+        if not keys.entry_exists(conn, entry_id):
+            raise ApiError(
+                404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
+            )
+
+    def entry_links(self, request: Request) -> Response:
+        entry_id = self._entry_id(request)
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            self._require_entry(conn, entry_id, cid)
+            links = keys.links_of(conn, entry_id)
+        return Response(200, {"links": links})
+
+    def entry_side_by_side(self, request: Request) -> Response:
+        entry_id = self._entry_id(request)
+        cid = _case_from_query(self.store, request)
+        max_lines = _cont_lines_param(request) or _SIDE_BY_SIDE_LINES
+        with self.store.reader(cid) as conn:
+            self._require_entry(conn, entry_id, cid)
+            other = keys.best_counterpart(conn, entry_id)
+            if other is None:
+                raise ApiError(404, "no_counterpart", messages.API_NO_COUNTERPART.format(entry_id=entry_id))
+            mine = query.get_entry(conn, entry_id, max_cont_lines=max_lines)
+            theirs = query.get_entry(conn, other.entry_id, max_cont_lines=max_lines)
+            mine_sensitive = keys.sensitivity_of(conn, entry_id)
+            their_sensitive = keys.sensitivity_of(conn, other.entry_id)
+        if mine is None or theirs is None:  # removed between the statements
+            raise ApiError(404, "no_counterpart", messages.API_NO_COUNTERPART.format(entry_id=entry_id))
+        left, right = (theirs, mine) if mine_sensitive and not their_sensitive else (mine, theirs)
+        sides = {id(mine): mine_sensitive, id(theirs): their_sensitive}
+        out = []
+        for side in (left, right):
+            item = _entry_json(side)
+            item["cont_truncated"] = bool(side.get("cont_truncated"))
+            item["sensitive"] = sides[id(side)]
+            out.append(item)
+        return Response(200, {"a": out[0], "b": out[1], "kind": other.kind, "confidence": other.confidence})
 
     # -- saved filters (per case, table saved_view)
 

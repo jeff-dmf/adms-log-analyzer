@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 import test_pipeline as tp
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from dmslog.derive import build_derivers
@@ -303,6 +303,10 @@ def snapshot(conn):
 
 
 @settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@example(  # an operation closed by the tail record (re-added by the ingestion) next to an open level window
+    actions=[(1, "begin")] * 7 + [(1, "level"), (1, "end"), (1, "begin")], cut=0, cut2=9
+)
+@example(actions=[(1, "begin")] * 7 + [(1, "level"), (1, "begin")], cut=0, cut2=8)
 @given(actions=ACTIONS, cut=st.integers(0, 40), cut2=st.integers(0, 40))
 def test_incremental_derivation_equals_one_shot(tmp_path_factory, actions, cut, cut2):
     lines = build_lines(actions)

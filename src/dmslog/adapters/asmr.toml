@@ -93,3 +93,9 @@ start = ["SMR-001"]
 end = ["SMR-005"]
 fail = ["SMR-006", "SMR-007"]
 pair_by = ["tid"]
+
+[[sensitive_pair]]
+normal = "GEN-ERR-01"
+sensitive = "GEN-ERR-03"
+match = ["pid", "tid"]
+max_dt_ms = 100

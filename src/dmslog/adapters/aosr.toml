@@ -431,3 +431,9 @@ end_fail = ["OSR-032"]
 check_key = "msgid"
 business_error = ["OSR-005", "OSR-007"]
 pair_by = ["tid"]
+
+[[sensitive_pair]]
+normal = "OSR-005"
+sensitive = "OSR-S005"
+match = ["pid", "tid"]
+max_dt_ms = 1000

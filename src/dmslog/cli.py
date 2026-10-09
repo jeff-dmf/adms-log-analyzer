@@ -197,6 +197,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     print(messages.INGEST_SUMMARY_DATA.format(records=result.records, lines=result.lines, size_mb=size_mb))
     print(messages.INGEST_SUMMARY_TIME.format(seconds=result.seconds, rate=result.mb_per_s))
     print(messages.INGEST_EVENTS.format(events=result.events_derived, seconds=result.derive_seconds))
+    print(messages.INGEST_LINKS.format(links=result.links_created, seconds=result.correlate_seconds))
     for warning in result.warnings:
         print(messages.INGEST_WARNING.format(message=warning))
     print(messages.INGEST_CASE_DB.format(path=db_path))

@@ -516,6 +516,14 @@ class IndexWriter:
         conn.execute(f"DELETE FROM entry_body WHERE entry_id IN ({ids})", params)
         conn.execute(f"DELETE FROM entry_key WHERE entry_id IN ({ids})", params)
         conn.execute(f"DELETE FROM config_observed WHERE entry_id IN ({ids})", params)
+        # Links incident to the removed records (any kind) go with them; the epoch tells the correlation that
+        # entries were removed even when the sources look the same afterwards (a reindex).
+        conn.execute(f"DELETE FROM link WHERE a_entry_id IN ({ids})", params)
+        conn.execute(f"DELETE FROM link WHERE b_entry_id IN ({ids})", params)
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('entries_epoch',"
+            " CAST(coalesce((SELECT value FROM meta WHERE key = 'entries_epoch'), '0') AS INTEGER) + 1)"
+        )
         conn.execute(
             "UPDATE stream SET derive_checkpoint = ? WHERE derive_checkpoint > ?"
             " AND id = (SELECT stream_id FROM source WHERE id = ?)",

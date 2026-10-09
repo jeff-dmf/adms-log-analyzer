@@ -60,7 +60,9 @@ PAYLOAD_FORMATS = ("xml", "xml_seq", "html", "json", "text")
 PAYLOAD_STARTS = ("match_end", "msg", "first_cont_lt")
 PAYLOAD_ROLES = ("request", "response", "fault", "delta", "content", "publication", "other", "by_root")
 DIRECTIONS = ("in", "out")
-CODE_REF_KEYS = frozenset({"start", "end", "end_ok", "end_fail", "fail", "normal", "sensitive", "codes"})
+CODE_REF_KEYS = frozenset(
+    {"start", "end", "end_ok", "end_fail", "fail", "normal", "sensitive", "codes", "a", "b"}
+)
 
 # Limits (see _schema.md, "Limits").
 MAX_MATCH_CHARS = 4096  # largest (and default) match window: characters of the stripped msg matched
@@ -224,6 +226,7 @@ class FamilyDef:
     payload_defaults: Mapping[str, Mapping[str, str]]
     operations: tuple[Mapping[str, Any], ...]
     sensitive_pairs: tuple[Mapping[str, Any], ...]
+    link_rules: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def is_library(self) -> bool:
@@ -989,6 +992,7 @@ _FILE_KEYS = frozenset(
         "template",
         "operation",
         "sensitive_pair",
+        "link_rule",
     }
 )
 _TEMPLATE_KEYS = frozenset(
@@ -1321,7 +1325,7 @@ def parse_family(data: bytes | str, source: str = "<string>") -> FamilyDef:
         _parse_template(t, family, i, src=source, version=version) for i, t in enumerate(raw_templates)
     )
     rules = {}
-    for section in ("operation", "sensitive_pair"):
+    for section in ("operation", "sensitive_pair", "link_rule"):
         items = _get(doc, section, list, src=source, where="", default=[])
         if not all(isinstance(i, dict) for i in items):
             raise SchemaError(f"[[{section}]] entries must be tables", source=source)
@@ -1336,6 +1340,7 @@ def parse_family(data: bytes | str, source: str = "<string>") -> FamilyDef:
         payload_defaults=MappingProxyType(defaults),
         operations=rules["operation"],
         sensitive_pairs=rules["sensitive_pair"],
+        link_rules=rules["link_rule"],
     )
 
 
@@ -1370,6 +1375,7 @@ class TemplateSet:
         "payload_defaults",
         "_ops",
         "_pairs",
+        "_links",
         "_ids",
         "_gidx",
         "_exact",
@@ -1392,6 +1398,7 @@ class TemplateSet:
         payload_defaults: Mapping[str, Mapping[str, str]],
         operations: tuple[Mapping[str, Any], ...] = (),
         sensitive_pairs: tuple[Mapping[str, Any], ...] = (),
+        link_rules: tuple[Mapping[str, Any], ...] = (),
     ) -> None:
         self.family = family
         self.sensitive = sensitive
@@ -1399,6 +1406,7 @@ class TemplateSet:
         self.payload_defaults = payload_defaults
         self._ops = operations
         self._pairs = sensitive_pairs
+        self._links = link_rules
         self._ids = ids  # shared with the catalog: bind_ids() updates it in place
         self._gidx = gidx
         self._gi = tuple(gidx[t.code] for t in templates)
@@ -1458,6 +1466,10 @@ class TemplateSet:
 
     def sensitive_pairs(self) -> tuple[Mapping[str, Any], ...]:
         return self._pairs
+
+    def link_rules(self) -> tuple[Mapping[str, Any], ...]:
+        """[[link_rule]] rules of the family (callbacks, retries, responses; codes canonical)."""
+        return self._links
 
     def candidates(self, msg: str) -> int:
         """Number of regex templates that would be tried for ``msg`` (diagnostics, benchmarks)."""
@@ -1608,10 +1620,14 @@ class Catalog:
 
     def _resolve_rules(
         self, fam: FamilyDef
-    ) -> tuple[tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
+    ) -> tuple[tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
         visible = {t.code for t in self._chain(fam.family)}
         out = []
-        for section, items in (("operation", fam.operations), ("sensitive_pair", fam.sensitive_pairs)):
+        for section, items in (
+            ("operation", fam.operations),
+            ("sensitive_pair", fam.sensitive_pairs),
+            ("link_rule", fam.link_rules),
+        ):
             resolved = []
             for n, item in enumerate(items, 1):
                 rule = dict(item)
@@ -1637,7 +1653,7 @@ class Catalog:
                     rule[key] = canon[0] if isinstance(value, str) else canon
                 resolved.append(MappingProxyType(rule))
             out.append(tuple(resolved))
-        return out[0], out[1]
+        return out[0], out[1], out[2]
 
     def _chain(self, family: str) -> list[TemplateDef]:
         fam = self.families.get(family)
@@ -1688,8 +1704,8 @@ class Catalog:
             chain = tuple(t for t in self._chain(family) if t.stream != excluded)
             fam = self.families.get(family)
             defaults = fam.payload_defaults if fam is not None else MappingProxyType({})
-            ops, pairs = self._rules.get(family, ((), ()))
-            tset = TemplateSet(family, sensitive, chain, self._ids, self._gidx, defaults, ops, pairs)
+            ops, pairs, links = self._rules.get(family, ((), (), ()))
+            tset = TemplateSet(family, sensitive, chain, self._ids, self._gidx, defaults, ops, pairs, links)
             self._sets[key] = tset
         return tset
 

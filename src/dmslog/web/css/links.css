@@ -1,0 +1,165 @@
+/* Links section of the entry detail and the side-by-side view. Confidence is always written as
+   text; the colour only reinforces it. Colours come from the tokens of app.css. */
+.detail-links {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.lnk-title,
+.sbs-title,
+.sbs-pane-title {
+  margin: 4px 0;
+  font-size: 1em;
+}
+
+.lnk-muted {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.lnk-error {
+  color: var(--error-text);
+}
+
+.lnk-mono {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.lnk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.lnk-chip {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-alt);
+  color: var(--text);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.lnk-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lnk-row {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.lnk-head,
+.lnk-actions,
+.sbs-head,
+.sbs-pane-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.lnk-kind {
+  font-weight: 600;
+}
+
+.lnk-conf,
+.lnk-side {
+  font-size: 0.85em;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.lnk-conf-high {
+  border-color: var(--ev-h-ok, #2e7d32);
+}
+
+.lnk-conf-good {
+  border-color: var(--accent);
+}
+
+.lnk-conf-fair {
+  border-color: var(--sev-3);
+}
+
+.lnk-conf-low {
+  border-style: dashed;
+  border-color: var(--muted);
+}
+
+.lnk-text {
+  max-height: 4.5em;
+  overflow: hidden;
+}
+
+.lnk-actions {
+  margin-top: 4px;
+}
+
+.lnk-pre,
+.sbs-text {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+.lnk-pre {
+  max-height: 14em;
+  overflow: auto;
+}
+
+.sbs-head {
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.sbs-panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .sbs-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sbs-pane {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  min-width: 0;
+}
+
+.sbs-meta {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 8px;
+  margin: 4px 0;
+}
+
+.sbs-meta dt {
+  color: var(--muted);
+}
+
+.sbs-meta dd {
+  margin: 0;
+}
+
+.sbs-text {
+  max-height: 50vh;
+  overflow: auto;
+}

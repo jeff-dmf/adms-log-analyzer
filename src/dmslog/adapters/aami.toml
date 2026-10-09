@@ -128,3 +128,4 @@ normal = "AMI-005"
 sensitive = "AMI-S02"
 match = ["pid", "tid"]
 max_dt_ms = 100
+key = "msg_id"

@@ -575,8 +575,20 @@ def _derive_chain(
     fed = 0
     last_id: int | None = None
 
+    tail = [-1, []]  # [highest entry id any event touches, start ids of the events touching it]
+
+    def track(events: list[Event]) -> None:
+        for ev in events:
+            top = max(ev.end_entry_id or 0, max(ev.entry_ids, default=0))
+            if top < tail[0] or ev.start_entry_id is None:
+                continue
+            if top > tail[0]:
+                tail[0], tail[1] = top, []
+            tail[1].append(ev.start_entry_id)
+
     def write() -> None:
         nonlocal pending, pending_samples
+        track(pending)
         for d in derivers:
             pending_samples.extend(_take_samples(d, seen))
         if multi:
@@ -611,6 +623,11 @@ def _derive_chain(
 
     end_mark = watermark()
     end_cp = end_mark if end_mark is not None else (last_id + 1 if last_id is not None else cp)
+    # The ingestion deletes and re-adds the tail record: an event that already touches the last entry is
+    # lost with it and the deriver state that produced it is gone, so the next pass must derive it again.
+    track(pending)
+    if last_id is not None and tail[0] == last_id:
+        end_cp = min(end_cp, *tail[1])
     states: dict[str, Any] = {}
     if snaps is not None:
         if last_id is not None:

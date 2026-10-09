@@ -19,6 +19,7 @@ global and unique, and each family has a fixed priority (below).
 | `[[template]]` | array of tables | no | Templates, in priority order. |
 | `[[operation]]` | array of tables | no | Operation life-cycle rules for the derivers (ARQUITETURA 6.5). |
 | `[[sensitive_pair]]` | array of tables | no | Normal-to-sensitive pairing rules (ARQUITETURA 8). |
+| `[[link_rule]]` | array of tables | no | Callback, retry and response link rules inside a collection (ARQUITETURA 8). |
 
 Unknown keys are errors (typos never pass silently).
 
@@ -26,6 +27,21 @@ Unknown keys are errors (typos never pass silently).
 loader only checks that the values of `start`, `end`, `end_ok`, `end_fail`, `fail`, `normal`,
 `sensitive` and `codes` (a code or a list of codes) name templates visible to the family (its own
 or its libraries'); aliases are accepted and replaced by the canonical code.
+
+### Correlation rules (M5)
+
+`[[sensitive_pair]]`: `normal` (code of the normal record that points to the sensitive log),
+`sensitive` (code of the paired sensitive record), `match` (`["pid", "tid"]` by default: fields that
+must be equal), `max_dt_ms` (default 1000: the sensitive record is the next one of that code at most
+this far after the normal one, in order), optional `key` (field name present on both templates; when
+equal on both sides the link has confidence 3).
+
+`[[link_rule]]`: `kind` (`callback`, `retry` or `response`), `a` and `b` (a code or a list of codes:
+the first and the later record), `key` (an `entry_key` type or a field name that must be equal on
+both sides; required for `callback`, `retry` and `response`, except when `window_only = true`),
+`scope` (`stream`, the default, or `group`: normal and sensitive streams of the same process),
+`max_dt_ms` (default 60000) and `window_only` (`true` = no shared key: heuristic by time window,
+stored with confidence 0). Rules of one family never link records of another family.
 
 Families without a file (`UNKNOWN`, service logs, ...) get the `_common` library.
 

@@ -689,3 +689,48 @@ end_fail = ["WFM-081"]
 pair_by = ["tid"]
 check_key = "msgid"
 business_error = ["GEN-ERR-01", "GEN-EVT-01"]
+
+# Request received: the sensitive log repeats the request id with the same timestamp and thread.
+[[sensitive_pair]]
+normal = "WFM-010"
+sensitive = "WFM-S010"
+match = ["pid", "tid"]
+max_dt_ms = 1000
+key = "request_id"
+
+[[sensitive_pair]]
+normal = "WFM-030"
+sensitive = "WFM-S030"
+match = ["pid", "tid"]
+max_dt_ms = 1000
+key = "gid"
+
+[[sensitive_pair]]
+normal = "GEN-ERR-01"
+sensitive = "GEN-ERR-03"
+match = ["pid", "tid"]
+max_dt_ms = 100
+
+# CRS/IMS callbacks arrive on other threads, joined by the request gid. The gid lines (WFM-123,
+# WFM-124, WFM-126) are INFO records, so they exist only in the elevated-level windows.
+[[link_rule]]
+kind = "callback"
+a = ["WFM-123", "WFM-124A", "WFM-124B"]
+b = "WFM-126"
+key = "gid"
+max_dt_ms = 60000
+
+[[link_rule]]
+kind = "callback"
+a = "WFM-126"
+b = "WFM-030"
+key = "gid"
+max_dt_ms = 60000
+
+# Without INFO lines the callback has no key back to its request: time window only.
+[[link_rule]]
+kind = "callback"
+a = "WFM-010"
+b = "WFM-030"
+window_only = true
+max_dt_ms = 35000

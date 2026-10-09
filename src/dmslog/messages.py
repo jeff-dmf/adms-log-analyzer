@@ -53,6 +53,7 @@ INGEST_PROGRESS = "  {member}: {percent:3d}%"
 INGEST_SOURCE_DONE = "  [{action}] {member}: {records} records, {size_mb:.1f} MB"
 INGEST_SOURCE_FAILED = "  [error] {member}: {error}"
 INGEST_EVENTS = "Derived events: {events} (derivation took {seconds:.1f} s)"
+INGEST_LINKS = "Links: {links} (correlation took {seconds:.1f} s)"
 INGEST_WARNING = "  [warning] {message}"
 INGEST_SUMMARY = (
     "Sources: {selected} selected of {listed} listed ({indexed} indexed, {unchanged} unchanged, "
@@ -133,3 +134,9 @@ JOB_DONE_WITH_FAILURES = "Indexed {records} records; {failed} of {sources} sourc
 JOB_CANCELLED = "Indexing was cancelled because the server is stopping"
 JOB_FAILED = "Indexing failed: {error}"
 JOB_UNSAFE = "Unsafe or invalid archive: {error}"
+
+API_BAD_KEY_TYPE = "key type must be 1 to 64 letters, digits, '.', '_' or '-'"
+API_BAD_KEY_VALUE = "key value must be valid percent-encoded UTF-8 of 1 to {limit} printable characters"
+API_BAD_KEY_LIMIT = "limit must be an integer from 1 to {limit}"
+API_BAD_CONT_LINES = "cont_lines must be an integer from 1 to {limit}"
+API_NO_COUNTERPART = "Entry {entry_id} has no linked record"

@@ -158,3 +158,27 @@ normal = "CRM-010"
 sensitive = "CRM-S01"
 match = ["pid", "tid"]
 max_dt_ms = 100
+key = "msg_id"
+
+# "Detected errors:" (codes in the normal log, detail text in the sensitive one), same thread.
+[[sensitive_pair]]
+normal = "GEN-ERR-01"
+sensitive = "GEN-ERR-03"
+match = ["pid", "tid"]
+max_dt_ms = 100
+
+# Callbacks of one OMS_REQUEST: the IMS callback arrives on another thread, joined by gid.
+[[link_rule]]
+kind = "callback"
+a = "CRM-011"
+b = "CRM-012"
+key = "gid"
+max_dt_ms = 60000
+
+# Same OMS_REQUEST: the wait ends with the success line on the thread that waited.
+[[link_rule]]
+kind = "response"
+a = "CRM-011"
+b = "CRM-013"
+key = "gid"
+max_dt_ms = 60000
