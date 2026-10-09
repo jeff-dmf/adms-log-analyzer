@@ -40,7 +40,9 @@ ENTERPRISE = re.compile(r"^ERS_CL_.*_\d{14}_Enterprise_.*\.zip$")
 SENSITIVE = re.compile(r"^ERS_CL_.*_\d{14}_Sensitive_Enterprise_.*\.zip$")
 MIN_REAL_SIZE = 1_000_000  # smaller files are Git LFS pointers or placeholders
 
-TIME_TARGET_S = 40.0
+TIME_TARGET_S = 40.0  # indexing only (M1 acceptance); derivation is checked separately
+DERIVE_TARGET_S = 20.0
+DERIVE_SECONDS = [0.0]  # filled by _ingest_default_scope
 PAGE_TARGET_MS = 50.0
 FTS_TARGET_MS = 100.0
 RSS_TARGET_MB = 500.0
@@ -48,6 +50,7 @@ RSS_TARGET_MB = 500.0
 # Acceptance: envelope coverage, line counts, and out-of-scope log access
 ACCEPTANCE_CRITERIA = {
     "ingest_time_s": (0, TIME_TARGET_S, "<="),
+    "derive_time_s": (0, DERIVE_TARGET_S, "<="),
     "page_p95_ms": (0, PAGE_TARGET_MS, "<"),
     "fts_p95_ms": (0, FTS_TARGET_MS, "<"),
     "rss_mb": (0, RSS_TARGET_MB, "<"),
@@ -75,8 +78,12 @@ def _find_samples() -> tuple[Path | None, Path | None]:
             # Verify they're from the same timestamp (same GUID and timestamp)
             ent_parts = enterprise.stem.split("_")
             sens_parts = sensitive.stem.split("_")
-            if (len(ent_parts) >= 3 and len(sens_parts) >= 3 and
-                ent_parts[2] == sens_parts[2] and ent_parts[3] == sens_parts[3]):
+            if (
+                len(ent_parts) >= 3
+                and len(sens_parts) >= 3
+                and ent_parts[2] == sens_parts[2]
+                and ent_parts[3] == sens_parts[3]
+            ):
                 return (enterprise, sensitive)
             # If timestamps don't match, reset and continue
             enterprise = None
@@ -101,24 +108,36 @@ def _ingest_default_scope(
     # Measure peak RSS of the ingest subprocess (similar to test_real_ers_ingest.py)
     try:
         import resource
+
         before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     except (ImportError, AttributeError):
         before = None
 
     started = time.perf_counter()
+    derive_s = 0.0
     for path in [enterprise_zip, sensitive_zip]:
         cmd = [sys.executable, "-I", "-m", "dmslog", "--data-dir", str(data_dir), "ingest", str(path)]
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
             return time.perf_counter() - started, f"ingest {path.name} failed: {proc.stderr[-200:]}", None
+        found = re.search(r"derivation took ([0-9.]+) s", proc.stdout)
+        elapsed_now = time.perf_counter() - started
+        if found is None:
+            return elapsed_now, f"ingest {path.name}: derivation line missing from the output", None
+        if "[warning]" in proc.stdout:
+            return elapsed_now, f"ingest {path.name} printed a warning (derivation or ingest)", None
+        derive_s += float(found.group(1))
 
-    elapsed = time.perf_counter() - started
+    # M1 target covers indexing; the M4 derivation pass is reported and checked on its own.
+    DERIVE_SECONDS[0] = derive_s
+    elapsed = time.perf_counter() - started - derive_s
 
     # Measure peak RSS of the child processes
     rss_mb = None
     if before is not None:
         try:
             import resource
+
             peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
             if peak > before:
                 rss_mb = peak / 1024.0  # Linux reports KiB
@@ -274,9 +293,7 @@ def _choose_fts_terms(data_dir: Path) -> tuple[str, str]:
         conn.close()
 
 
-def _measure_http_requests(
-    server: DmslogServer, case_id: str
-) -> dict[str, Any]:
+def _measure_http_requests(server: DmslogServer, case_id: str) -> dict[str, Any]:
     """Measure HTTP request performance: page (fwd/back), count, FTS, get_entry.
     Return dict with p50/p95/max in ms for each endpoint.
     """
@@ -356,9 +373,7 @@ def _measure_http_requests(
                 {"case": case_id, "limit": 200, "dir": "back"},
             )
         )
-        results["count"].append(
-            measure_request("POST", "/api/entries/count", {"case": case_id})
-        )
+        results["count"].append(measure_request("POST", "/api/entries/count", {"case": case_id}))
         results["fts_rare"].append(
             measure_request(
                 "POST",
@@ -373,9 +388,7 @@ def _measure_http_requests(
                 {"case": case_id, "filter": {"fts": common_term}},
             )
         )
-        results["get_entry"].append(
-            measure_request("GET", f"/api/entries/{entry_id}", None)
-        )
+        results["get_entry"].append(measure_request("GET", f"/api/entries/{entry_id}", None))
 
     # Compute stats (excluding error key)
     stats = {}
@@ -455,6 +468,7 @@ def main() -> int:
         # Build results table
         results = {
             "ingest_time_s": ingest_time,
+            "derive_time_s": DERIVE_SECONDS[0],
             "page_p95_ms": max(
                 http_stats.get("page_fwd", {}).get("p95_ms", 0),
                 http_stats.get("page_back", {}).get("p95_ms", 0),
@@ -470,9 +484,7 @@ def main() -> int:
         print("\n" + "=" * 70)
         print("M1 ACCEPTANCE RESULTS")
         print("=" * 70)
-        print(
-            f"{'Metric':<30} {'Value':<20} {'Target':<20} {'Status':<10}"
-        )
+        print(f"{'Metric':<30} {'Value':<20} {'Target':<20} {'Status':<10}")
         print("-" * 70)
 
         all_pass = True
@@ -488,8 +500,9 @@ def main() -> int:
                 value_str = f"{value:.0f} MB" if value > 0 else "n/a"
                 target_str = f"< {target:.0f} MB"
             else:
-                value_str = f"{value:.1f}" if key == "ingest_time_s" else f"{value:.1f} ms"
-                target_str = f"{op} {target:.0f}" if key == "ingest_time_s" else f"{op} {target:.0f} ms"
+                is_seconds = key in ("ingest_time_s", "derive_time_s")
+                value_str = f"{value:.1f}" if is_seconds else f"{value:.1f} ms"
+                target_str = f"{op} {target:.0f}" if is_seconds else f"{op} {target:.0f} ms"
 
             print(f"{key:<30} {value_str:<20} {target_str:<20} {status:<10}")
 

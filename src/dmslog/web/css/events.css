@@ -1,0 +1,240 @@
+/* Operations panel, adapter dashboard and clock-jump banner. Colours come from the tokens of
+   app.css (light and dark); status is always written as text, colour only reinforces it. */
+:root {
+  --ev-h-ok: #2e7d32;
+  --ev-h-business_error: #9a6700;
+  --ev-h-fail: #c62828;
+  --ev-h-open: #7d8798;
+  --ev-h-truncated: #98a2b3;
+  --ev-h-other: #7a6fc9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ev-h-ok: #5ec26a;
+    --ev-h-business_error: #f2c14e;
+    --ev-h-fail: #ff8a80;
+    --ev-h-open: #8d97a8;
+    --ev-h-truncated: #6b7686;
+    --ev-h-other: #a79cf0;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ev-h-ok: #5ec26a;
+  --ev-h-business_error: #f2c14e;
+  --ev-h-fail: #ff8a80;
+  --ev-h-open: #8d97a8;
+  --ev-h-truncated: #6b7686;
+  --ev-h-other: #a79cf0;
+}
+
+.ev-toolbar,
+.dash-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.ev-title {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.ev-name,
+.ev-query {
+  min-width: 12em;
+}
+
+.ev-status,
+.ev-muted {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.ev-status.is-error,
+.ev-error {
+  color: var(--error-text);
+}
+
+.ev-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .ev-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ev-list,
+.ev-detail,
+.dash-scroll {
+  overflow-x: auto;
+}
+
+.ev-list {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.ev-detail {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.ev-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+
+.ev-table th,
+.ev-table td {
+  text-align: left;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.ev-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+
+.ev-mono {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.ev-key,
+.ev-text {
+  max-width: 28em;
+}
+
+.ev-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ev-row.is-selected {
+  background: var(--selected);
+}
+
+.ev-open,
+.ev-related-open,
+.dash-pick,
+.dash-show {
+  min-height: 0;
+  padding: 0 4px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.ev-open,
+.dash-pick,
+.dash-show {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.ev-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.ev-ok,
+.ev-neutral {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.ev-muted.ev-badge,
+.ev-badge.ev-muted {
+  background: var(--panel-alt);
+  color: var(--muted);
+}
+
+.ev-warn {
+  border-color: var(--sev-3);
+  color: var(--sev-3);
+}
+
+.ev-bad {
+  background: var(--error-bg);
+  border-color: var(--sev-2);
+  color: var(--error-text);
+  font-weight: 600;
+}
+
+.ev-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ev-detail-head h3,
+.ev-entries h3,
+.ev-related h3,
+.dash-block h3 {
+  margin: 4px 0;
+  font-size: 1em;
+}
+
+.ev-fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 8px 0;
+}
+
+.ev-fields dt {
+  color: var(--muted);
+}
+
+.ev-fields dd {
+  margin: 0;
+}
+
+.ev-related-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ev-sev-1 .ev-text,
+.ev-sev-2 .ev-text {
+  color: var(--error-text);
+}
+
+.ev-open:focus-visible,
+.ev-related-open:focus-visible,
+.dash-pick:focus-visible,
+.dash-show:focus-visible,
+.dash-legend-item:focus-visible,
+.ev-detail:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* Clock-jump banner above the timeline. */
+.clock-banner {
+  padding: 6px 12px;
+  background: var(--error-bg);
+  color: var(--error-text);
+  border-bottom: 1px solid var(--sev-3);
+}

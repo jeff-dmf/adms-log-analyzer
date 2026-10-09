@@ -31,6 +31,8 @@
       </div>
       <button type="button" id="filter-tree-button" aria-expanded="false" data-i18n="toolbarFilterTree"></button>
       <button type="button" id="unknown-button" aria-expanded="false" data-i18n="toolbarUnknown" hidden></button>
+      <button type="button" id="events-button" aria-expanded="false" data-i18n="toolbarEvents" hidden></button>
+      <button type="button" id="dashboard-button" aria-expanded="false" data-i18n="toolbarDashboard" hidden></button>
       <button type="button" id="config-button" aria-expanded="false" data-i18n="toolbarConfig" hidden></button>
       <button type="button" id="theme-button" data-i18n-title="themeToggle" data-i18n-aria-label="themeToggle"></button>
     </header>
@@ -67,10 +69,13 @@
 
       <section id="grid-panel" class="panel" aria-labelledby="grid-title">
         <h2 id="grid-title" class="visually-hidden" data-i18n="panelGrid"></h2>
+        <div id="clock-banner" class="clock-banner" role="status" hidden></div>
         <div id="timeline" class="timeline-host"></div>
         <section id="filter-tree-host" class="panel host-panel" hidden></section>
         <section id="unknown-panel-host" class="panel host-panel" hidden></section>
         <section id="config-panel-host" class="panel host-panel" hidden></section>
+        <section id="events-panel-host" class="panel host-panel" hidden></section>
+        <section id="dashboard-host" class="panel host-panel" hidden></section>
         <form id="filter-form" class="filter-bar">
           <div class="field">
             <label for="sev-select" data-i18n="filterSeverity"></label>

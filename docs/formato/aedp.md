@@ -1,6 +1,6 @@
 # Formato de log: CustomAdapterChangeIncidentDevice (família AEDP, "ACID" no vault)
 
-Base: ERS de 2026-10-08 (captura 1, zona `dnaApp_mpdmz/DMS_INTEGRATION`). Só essa captura traz o log do adapter: `CustomAdapterChangeIncidentDevice_<pid>.log`, sem `.sensitive.log` e sem `.log.0`. Contagens vêm de varredura completa por script; nenhum texto de log, GUID ou valor real é reproduzido aqui. Placeholders: `<msgid>`, `<n>`.
+Base: ERS de 2026-10-08 (captura 1, zona `dnaApp_mpdmz/DMS_INTEGRATION`). Na captura 1 o adapter aparece só em: `CustomAdapterChangeIncidentDevice_<pid>.log`, sem `.sensitive.log` e sem `.log.0` (a captura 3, de 2026-10-09, traz também um `.sensitive.log` com 2 registros, cobertos por `GEN-PLD-01`). Contagens vêm de varredura completa por script; nenhum texto de log, GUID ou valor real é reproduzido aqui. Placeholders: `<msgid>`, `<n>`.
 
 | Arquivo | Início | Fim | Linhas | Cabeçalhos | Continuações |
 |---|---|---|---|---|---|
@@ -11,7 +11,7 @@ Cobre o processo inteiro (do start até o fim da captura). Mesmo envelope dos de
 ## 1. O que foi descoberto
 
 - Só **3 formas de mensagem são específicas do adapter**, todas no serviço `[ReceiveIncidentDeviceService]` (AEDP-001..003). O resto (startup, configuração, estatísticas Communication2, conexões de clientes, pool) já é coberto pela biblioteca `_common`.
-- **Sem payload**: nenhuma mensagem traz o corpo do request/response (`MessageLogLevel=Info`, confirmado na linha de configuração `[MessageLogLevel] : Info` lida no startup). Não há stream sensitive; a URL do serviço aparece só como "written in sensitive log" (GEN-CFG-05).
+- **Sem payload**: nenhuma mensagem traz o corpo do request/response (`MessageLogLevel=Info`, confirmado na linha de configuração `[MessageLogLevel] : Info` lida no startup). Na captura 1 não há stream sensitive (a captura 3 tem 2 registros sensitive); a URL do serviço aparece só como "written in sensitive log" (GEN-CFG-05).
 - **Chave de correlação**: o `Id` da mensagem (`'<msgid>'`, entre aspas simples), igual no início e no fim. Em 2.931 ids, 2.918 terminam em `started` + `successfully finished` e 13 em `started` + `failed`, sempre na mesma TID; nenhum id ficou sem fim.
 - **Falha com continuação**: o `failed.` (termina com espaço) é seguido de 4 linhas: `Reason: '<texto>'. `, `Full exception: '<tipo>: <texto>` e 2 frames `   at ...` nos namespaces `RequestProcessors` e `WebServices` do adapter. As 13 falhas têm a mesma forma (mesmo texto de razão, só muda o número do dispositivo). O parser `dotnet_stack` extrai o `frame`; o texto da razão não é campo.
 - Volume: ~2,9 mil mensagens em ~41 dias (1 a cada ~20 min em média); o log é dominado pelas estatísticas Communication2 (a cada hora, ~4,9 mil linhas de cabeçalho e 35 mil de continuação).
@@ -42,6 +42,7 @@ Registros cobertos por `_common` nesta amostra (contagens): GEN-STA-01/02 (988 c
 ## 4. O que continua sem documentação
 
 - Texto da razão da falha amostrada (dispositivo inexistente no modelo do ADMS): **não consta** entre os erros do vault (que documentam `DeviceNotExistInList` e `EntityNotFound`). Essa falha vem de uma exceção não tratada do processador, não de um código da planilha de erros; mapear essa falha a um código `Error.code` exige o log do lado do cliente ou o payload.
+- **Esclarecido pelo Jefferson (2026-10-10):** o erro é devolvido por outro serviço do ADMS: o processo não encontrou o elemento no modelo da rede elétrica. O adapter troca o dispositivo de um incidente (INC do ADMS) e a falha ocorre quando o código do dispositivo recebido na interface não existe no modelo da rede. Tratamento no analisador: erro de negócio da operação `ReceiveIncidentDevice`, sem código `Error.code` no log (hint em `hints.toml`; a 4.8 classifica como `business_error` quando a razão tem esse formato).
 - Divergência de códigos entre o design document e a planilha de configuração (1.2 × 2.7 etc.): não resolvível pelo log, que não imprime o código.
 - Formatos de log de `InvalidMessage`, `InvalidHeaderNoun`/`Verb`, `OperationNotAllowed`, `MissingIncidentId`, `MissingDeviceId`: **não observados** na amostra; se aparecerem como outra forma de mensagem, cairão em registros desconhecidos.
 - Auditoria (`AuditingType` aparece como `None` na configuração da amostra): as mensagens de auditoria da `_common` não ocorrem.

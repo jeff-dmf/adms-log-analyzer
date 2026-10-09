@@ -382,3 +382,52 @@ regex = '''^Endpoint (?P<service>\w+) on (?P<url>\S+) was not invoked more than 
 stream = "sensitive"
 examples = [{ msg = "Endpoint ExampleService on http://localhost:9999/example/Service was not invoked more than 12:00:00", fields = { service = "ExampleService", idle = "12:00:00" } }]
 counter_examples = ["Endpoint ExampleService on http://localhost:9999/example/Service was invoked"]
+
+# Operations: "[<Op> start]" -> "[<Op> end]" per thread. "processed." is a completed request (a business
+# error is the "Detected errors" block plus the system event inside the pair); "failed." plus an
+# exception is a failure. OSR-032 is the generic failed end of the other operations.
+[[operation]]
+name = "GetIncidents"
+start = ["OSR-001"]
+end_ok = ["OSR-003"]
+end_fail = ["OSR-004"]
+check_key = "msgid"
+business_error = ["OSR-005", "OSR-007"]
+pair_by = ["tid"]
+
+[[operation]]
+name = "GetIncidentUsagePoints"
+start = ["OSR-011"]
+end_ok = ["OSR-013"]
+end_fail = ["OSR-032"]
+check_key = "msgid"
+business_error = ["OSR-005", "OSR-007"]
+pair_by = ["tid"]
+
+[[operation]]
+name = "ChangeIncidents"
+start = ["OSR-014"]
+end_ok = ["OSR-017"]
+end_fail = ["OSR-032"]
+check_key = "msgid"
+business_error = ["OSR-005", "OSR-007"]
+pair_by = ["tid"]
+
+[[operation]]
+name = "ChangedIncidentHazards"
+start = ["OSR-018"]
+end_ok = ["OSR-021"]
+end_fail = ["OSR-032"]
+fail = ["OSR-022"]
+check_key = "msgid"
+business_error = ["OSR-005", "OSR-007"]
+pair_by = ["tid"]
+
+[[operation]]
+name = "CreatedIncidentHazards"
+start = ["OSR-026"]
+end_ok = ["OSR-030"]
+end_fail = ["OSR-032"]
+check_key = "msgid"
+business_error = ["OSR-005", "OSR-007"]
+pair_by = ["tid"]

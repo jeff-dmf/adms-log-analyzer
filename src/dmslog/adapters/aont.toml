@@ -360,3 +360,28 @@ title = "Smart cache dequeue"
 text = "[CachedDataSynchronizer] - Dequeuing message from internal queue..."
 examples = ["[CachedDataSynchronizer] - Dequeuing message from internal queue..."]
 counter_examples = ["[CachedDataSynchronizer] - Dequeuing message"]
+
+# ---------------------------------------------------------------------------------------------
+# Operations (ARQUITETURA 6.5). Pairing by TID (one of the send threads). The mrid ties the
+# start (ONT-010/ONT-015); the later templates of the thread carry the MessageId instead.
+# ONT-021 ("finished unsuccessfully") is the terminal failure of a send; ONT-020 (each retry
+# attempt) is not a failure by itself, the send can still succeed afterwards.
+# ---------------------------------------------------------------------------------------------
+
+[[operation]]
+name = "SendIncident"
+start = ["ONT-010"]
+end_ok = ["ONT-014"]
+end_fail = ["ONT-021"]
+fail = ["ONT-022"]
+pair_by = ["tid"]
+check_key = "mrid"
+
+[[operation]]
+name = "SendIncidentTroubleTickets"
+start = ["ONT-015"]
+end_ok = ["ONT-014"]
+end_fail = ["ONT-021"]
+fail = ["ONT-022"]
+pair_by = ["tid"]
+check_key = "mrid"

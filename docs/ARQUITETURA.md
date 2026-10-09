@@ -830,9 +830,12 @@ JSON sobre HTTP em `127.0.0.1`. Todas as rotas exigem o cookie de sessão (seç�
 | `GET /api/entries/{id}` | registro completo: texto, campos, template, evento, links, conhecimento ligado |
 | `GET /api/entries/{id}/context?before=50&after=50&same=tid\|source\|merge` | vizinhança |
 | `POST /api/histogram` `{filter, bucket_ms, split: sev\|source\|tpl}` | timeline |
-| `POST /api/events/page` `{kind, name, status, filter, cursor}` · `GET /api/events/{id}` | eventos e seus registros |
-| `POST /api/events/stats` `{kind, name, group_by}` | n, p50, p90, p99, máx. de duração; contagem por status |
-| `GET /api/stats/series?stream=&side=&method=` | série de `stat_sample` (delta por hora) |
+| `GET /api/events?kind=&name=&status=&stream=&source=&q=&from=&to=&limit=&after=` | eventos (paginação por keyset `(ts_start, id)`; listas separadas por vírgula; `q` = chave exata ou prefixo) |
+| `GET /api/events/{id}` | evento, seus primeiros 200 registros e eventos relacionados (`retry_seq`/`exception` com a mesma chave) |
+| `GET /api/events/stats?kind=&stream=&from=&to=` | por (família, nome): n, contagem por status, p50, p90, p99, máx. e média (percentil exato por posto) |
+| `GET /api/events/histogram?kind=&name=&bucket=minute\|hour` | contagem por balde e status (até 5.000 baldes) |
+| `GET /api/stats/methods?stream=` · `GET /api/stats/series?stream=&side=&method=&from=&to=` | métodos com chamadas acumuladas; série de `stat_sample` (acumulado e delta, até 5.000 amostras) |
+| `GET /api/knowledge?template=` · `GET /api/knowledge/error?family=&code=&operation=` | dica, parâmetros e nota do vault; severidade e razão do código (ERS > vault, `out_of_vault`) |
 | `GET /api/keys/{type}/{value}` | todos os registros com a chave, em todas as fontes |
 | `GET /api/knowledge/error/{family}/{code}` · `/param/{product}/{name}` · `/adapter/{family}` | conhecimento (ERS > vault) |
 | `GET /api/config?group=&product=` | configuração por camada (`config_param`) com efetivo, status e valor observado no log (`config_observed`); por operação, se o payload é esperado (`LogLevel` × `MessageLogLevel`) |
@@ -1004,3 +1007,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-09 | Validador de regex, rodada 6: casamento em texto maior que a janela (borda descartada, `$`/lookahead nunca casam texto cortado, linhas de exatamente a janela não são cortadas); `MAX_REGEX_STEPS` = 2²¹ recalibrado com o pior fator observado (~19 ns/passo); 18 janelas do catálogo reduzidas (a maior aceita) e SMN-S016 passa a declarar 2.320 (seção 6.3) | Sonnet (sessão principal) |
 | 2026-10-09 | Validador de regex, rodada 7: semântica exata "o template só se aplica a mensagens que cabem na janela" (remove o casamento em texto cortado e os casos especiais de `$`/lookahead); limites por lista branca (classe ≤ 32 itens, capturas com profundidade ≤ 3 e ≤ 24 por regex) no lugar de modelar fatores constantes; testes sem dependência de velocidade absoluta (limiar de catástrofe 0,25 s) (seção 6.3) | Sonnet (sessão principal) |
 | 2026-10-09 | Validador de regex, rodada 8: `check_examples` aplica a `other` a mesma normalização (`strip`) e a mesma regra de caber na janela antes de acusar conflito; `_cont_lines` descarta a linha cortada pelo limite de 256 KiB (sem capturas parciais); texto desta seção e de `_schema.md` sem resquícios do casamento em texto cortado | Sonnet (sessão principal) |
+| 2026-10-10 | M4: contrato dos derivadores em `derive/base.py`; derivação por **cadeia de rotação** (`.log` + `.log.N`; checkpoint, estado e assinatura por cadeia em `meta['derive.<stream>.<cadeia>']`) porque o stream do BLTHost reúne arquivos independentes; recargas de mapa do Wfm logam `closed` duas vezes (duplicata em até 1 s não reinicia a recarga); `fail` visto vence `truncated`; rotas de eventos e de estatísticas como `GET` (seção 10) | Sessão principal (decisões baseadas em medições nas amostras) |

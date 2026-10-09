@@ -1,0 +1,108 @@
+{
+  "family": "AOSR",
+  "scenarios": [
+    {
+      "name": "get_incidents_processed",
+      "lines": [
+        [1000, 3, "[GetIncidents start] - Get incidents request message Message Id: \"1234567890123456\" Context: \"Active\" Search filter: \"100200300400500\" received from user . Processing message..."],
+        [1003, 3, "[GetIncidents] - Returning 1 incident(s) for provided search criteria."],
+        [1004, 3, "[GetIncidents end] - Get incidents request message Message Id: \"1234567890123456\" Context: \"Active\" Search filter: \"100200300400500\" processed."]
+      ],
+      "expect": [
+        {"name": "GetIncidents", "status": "ok", "duration_ms": 4, "n_entries": 3}
+      ]
+    },
+    {
+      "name": "get_incidents_business_error",
+      "lines": [
+        [2000, 3, "[GetIncidents start] - Get incidents request message Message Id: \"1234567890123456\" Context: \"Active\" Search filter: \"100200300400500\" received from user . Processing message..."],
+        [2001, 3, "Detected errors:"],
+        [2002, 3, "[SystemEventSender] System event message: [AdapterOsr] [GetIncidents] Errors occurred while processing received message"],
+        [2020, 3, "[GetIncidents end] - Get incidents request message Message Id: \"1234567890123456\" Context: \"Active\" Search filter: \"100200300400500\" processed."]
+      ],
+      "expect": [
+        {"name": "GetIncidents", "status": "business_error", "duration_ms": 20, "n_entries": 4}
+      ]
+    },
+    {
+      "name": "get_incidents_detected_errors_without_system_event_stays_ok",
+      "lines": [
+        [2500, 3, "[GetIncidents start] - Get incidents request message Message Id: \"1234567890123456\" Context: \"Active\" Search filter: \"100200300400500\" received from user . Processing message..."],
+        [2501, 3, "Detected errors:"],
+        [2510, 3, "[GetIncidents end] - Get incidents request message Message Id: \"1234567890123456\" Context: \"Active\" Search filter: \"100200300400500\" processed."]
+      ],
+      "expect": [
+        {"name": "GetIncidents", "status": "ok", "duration_ms": 10}
+      ]
+    },
+    {
+      "name": "get_incidents_failed",
+      "lines": [
+        [3000, 3, "[GetIncidents start] - Get incidents request message Message Id: \"\" Context: \"archived\" Search filter: \"\" received from user . Processing message..."],
+        [23000, 3, "[GetIncidents end] - Get incidents request message Message Id: \"\" Context: \"archived\" Search filter: \"\" failed."]
+      ],
+      "expect": [
+        {"name": "GetIncidents", "status": "fail", "duration_ms": 20000, "fail_how": "end_fail"}
+      ]
+    },
+    {
+      "name": "usage_points_ok",
+      "lines": [
+        [4000, 4, "[GetIncidentUsagePoints start] - Get incidents usage points request message Message Id: \"\" Context: \"Unrestored\" Search filter: \"INC 77\" received from user . Processing message..."],
+        [4001, 4, "[GetIncidentUsagePoints] - Returning 3 usage points(s) for incident \"INC 77\"."],
+        [4016, 4, "[GetIncidentUsagePoints end] - Get incidents usage points request message Message Id: \"\" Context: \"Unrestored\" Search filter: \"INC 77\" processed."]
+      ],
+      "expect": [
+        {"name": "GetIncidentUsagePoints", "status": "ok", "duration_ms": 16, "n_entries": 3}
+      ]
+    },
+    {
+      "name": "change_incidents_ok_and_failed_generic_end",
+      "lines": [
+        [5000, 6, "[ChangeIncidents start] - Change incidents request message 11111111-1111-4111-8111-111111111111 received from user jdoe. Processing message..."],
+        [5002, 6, "Message validating changed incidents from request message for incident IDs \"INC 5\"..."],
+        [6830, 6, "[ChangeIncidents end] - Change incidents request message 11111111-1111-4111-8111-111111111111 processed."],
+        [7000, 6, "[ChangeIncidents start] - Change incidents request message 22222222-2222-4222-8222-222222222222 received from user jdoe. Processing message..."],
+        [7500, 6, "[ChangeIncidents end] - Change incidents request message 22222222-2222-4222-8222-222222222222 failed."]
+      ],
+      "expect": [
+        {"name": "ChangeIncidents", "status": "ok", "duration_ms": 1830, "n_entries": 3},
+        {"name": "ChangeIncidents", "status": "fail", "duration_ms": 500, "fail_how": "end_fail"}
+      ]
+    },
+    {
+      "name": "hazards_discarded_is_fail",
+      "lines": [
+        [8000, 7, "[ChangedIncidentHazards start] - Changed incident hazards message: Message ID: 11111111-1111-4111-8111-111111111111"],
+        [8001, 7, "[ERROR] - Data validation: Changed incident hazard request message with message ID \"11111111-1111-4111-8111-111111111111\" is not valid. All received incident hazards will be discarded."],
+        [8047, 7, "[ChangedIncidentHazards end] -  Changed incident hazards message with ID \"11111111-1111-4111-8111-111111111111\" processed."]
+      ],
+      "expect": [
+        {"name": "ChangedIncidentHazards", "status": "fail", "duration_ms": 47, "fail_how": "fail_code"}
+      ]
+    },
+    {
+      "name": "created_hazards_ok",
+      "lines": [
+        [9000, 8, "[CreatedIncidentHazards start] - Created incident hazards message: Message ID: 33333333-3333-4333-8333-333333333333"],
+        [9016, 8, "[CreatedIncidentHazards end] -  Created incident hazards message \"33333333-3333-4333-8333-333333333333\" processed."]
+      ],
+      "expect": [
+        {"name": "CreatedIncidentHazards", "status": "ok", "duration_ms": 16}
+      ]
+    },
+    {
+      "name": "interleaved_threads",
+      "lines": [
+        [10000, 3, "[ChangeIncidents start] - Change incidents request message 11111111-1111-4111-8111-111111111111 received from user jdoe. Processing message..."],
+        [10001, 4, "[ChangeIncidents start] - Change incidents request message 22222222-2222-4222-8222-222222222222 received from user jdoe. Processing message..."],
+        [10300, 4, "[ChangeIncidents end] - Change incidents request message 22222222-2222-4222-8222-222222222222 processed."],
+        [10500, 3, "[ChangeIncidents end] - Change incidents request message 11111111-1111-4111-8111-111111111111 processed."]
+      ],
+      "expect": [
+        {"name": "ChangeIncidents", "status": "ok", "duration_ms": 299, "tid": 4},
+        {"name": "ChangeIncidents", "status": "ok", "duration_ms": 500, "tid": 3}
+      ]
+    }
+  ]
+}

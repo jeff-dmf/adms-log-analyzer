@@ -189,3 +189,14 @@ examples = [
     { msg = "\t\t[Validation Critical]: Invalid vehicle mRID(s): \"ZZZ0A00\"", fields = { vsev = "Critical" } },
 ]
 counter_examples = ["Validation Info: Message revision is not provided."]
+
+# Operation: one vehicle event, AVL-001 -> AVL-006 on the same thread, checked by message id. The end
+# is always "finished successfully", so there is no fail code; a rejected message (VehicleNotFound
+# AVL-007 plus the system event AVL-008 inside the pair) becomes a business error.
+[[operation]]
+name_field = "event"
+start = ["AVL-001"]
+end_ok = ["AVL-006"]
+check_key = "msgid"
+business_error = ["AVL-007", "AVL-008"]
+pair_by = ["tid"]

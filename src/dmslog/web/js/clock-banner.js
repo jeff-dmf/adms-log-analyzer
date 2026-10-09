@@ -1,0 +1,45 @@
+// Clock-jump warning above the timeline: shown when the case has a clock_jump event (or a gap
+// flagged as a possible clock change). Texts come from strings.js and the formatted time only.
+import { bannerText, createClockJumpFlow } from "./events-model.js";
+import { S } from "./strings.js";
+
+const STYLESHEET = "/css/events.css";
+
+function ensureStylesheet() {
+  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = STYLESHEET;
+    document.head.appendChild(link);
+  }
+}
+
+// container: the (hidden) banner element. Options:
+//   api               needs events(caseId, params, signal)
+//   getCase()         current case id or null
+//   onShowInGrid(t)   t = { from, to, entryId }
+// Returns { refresh() }; call it when the case changed or indexing finished.
+export function initClockBanner(container, { api, getCase, onShowInGrid }) {
+  ensureStylesheet();
+  container.textContent = "";
+  const text = document.createElement("span");
+  const show = document.createElement("button");
+  show.type = "button";
+  show.textContent = S.clkShow;
+  container.append(text, " ", show);
+
+  function onState(state) {
+    const summary = state.summary;
+    container.hidden = summary === null;
+    text.textContent = summary === null ? "" : bannerText(summary);
+  }
+
+  const flow = createClockJumpFlow({ api, getCase, onState });
+  show.addEventListener("click", () => {
+    const summary = flow.state.summary;
+    if (summary && summary.target && flow.state.caseId !== null && flow.state.caseId === getCase()) {
+      onShowInGrid(summary.target);
+    }
+  });
+  return { refresh: () => flow.refresh() };
+}

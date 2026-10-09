@@ -236,4 +236,4 @@ text = "A non fatal exception was logged; the type and stack trace follow. Docum
 
 [[hint]]
 code = "AEDP-003"
-text = "ChangeIncidentDevice processing failed and the adapter replied FAILED to the caller. Documented causes: missing IncidentId or DeviceId, unknown incident, device not in the traced list, incident already confirmed. The exception that follows gives the actual reason."
+text = "ChangeIncidentDevice processing failed and the adapter replied FAILED. Common reason: the device code received is not in the ADMS network model (reported by another ADMS service), so the incident device was not changed. Other documented causes: missing IncidentId or DeviceId, unknown incident."

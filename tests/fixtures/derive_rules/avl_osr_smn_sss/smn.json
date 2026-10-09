@@ -1,0 +1,81 @@
+{
+  "family": "ASMN",
+  "scenarios": [
+    {
+      "name": "steps_ok",
+      "lines": [
+        [1000, 2, "[SendSwitchingSteps] Sending following Switching Step: SP 2780000001 - ISS 2780000002."],
+        [1001, 2, "Sending \"SwitchingStepsEventMessageType\" message: 11111111-1111-4111-8111-111111111111 with verb: Changed..."],
+        [1140, 2, "Sending \"SwitchingStepsEventMessageType\" message: 11111111-1111-4111-8111-111111111111 with verb: Changed finished successfully."],
+        [1141, 2, "[SendSwitchingSteps] Sending Switching Step finished successfully."]
+      ],
+      "expect": [
+        {"name": "SendSwitchingSteps", "status": "ok", "duration_ms": 141, "n_entries": 4, "key": "2780000001"}
+      ]
+    },
+    {
+      "name": "steps_failed_after_retries",
+      "lines": [
+        [2000, 2, "[SendSwitchingSteps] Sending following Switching Step: SP 2780000001 - ISS 2780000002."],
+        [2001, 2, "Sending \"SwitchingStepsEventMessageType\" message: 11111111-1111-4111-8111-111111111111 with verb: Changed..."],
+        [2002, 2, "Error: Sending \"SwitchingStepsEventMessageType\" message failed. \"EndpointNotFoundException\" has occurred. Writing details in sensitive log."],
+        [279000, 2, "[SendSwitchingSteps] Sending Switching Step finished unsuccessfully. Reason: Written in sensitive log. StackTrace:"]
+      ],
+      "expect": [
+        {"name": "SendSwitchingSteps", "status": "fail", "duration_ms": 277000, "fail_how": "end_fail"}
+      ]
+    },
+    {
+      "name": "works_ok",
+      "lines": [
+        [3000, 3, "[SendWorks] Sending following Work Request: WR 77."],
+        [3170, 3, "[SendWorks] Sending Work Request finished successfully."]
+      ],
+      "expect": [
+        {"name": "SendWorks", "status": "ok", "duration_ms": 170, "key": "77"}
+      ]
+    },
+    {
+      "name": "works_failed",
+      "lines": [
+        [4000, 3, "[SendWorks] Sending following Work Request: WR 78."],
+        [4032, 3, "[SendWorks] Sending Work Request finished unsuccessfully. Reason: Written in sensitive log. StackTrace:"]
+      ],
+      "expect": [
+        {"name": "SendWorks", "status": "fail", "duration_ms": 32}
+      ]
+    },
+    {
+      "name": "plans_ok",
+      "lines": [
+        [5000, 4, "[SendSwitchingPlans] Sending following Switching Plan: SP 2780000009."],
+        [5172, 4, "[SendSwitchingPlans] Sending Switching Plan finished successfully."]
+      ],
+      "expect": [
+        {"name": "SendSwitchingPlans", "status": "ok", "duration_ms": 172}
+      ]
+    },
+    {
+      "name": "shared_end_closes_only_the_open_operation",
+      "lines": [
+        [6000, 4, "[SendWorks] Sending following Work Request: WR 80."],
+        [6010, 4, "[SendWorks] Sending Work Request finished successfully."],
+        [6020, 4, "[SendSwitchingPlans] Sending following Switching Plan: SP 2780000010."],
+        [6030, 4, "[SendSwitchingPlans] Sending Switching Plan finished successfully."]
+      ],
+      "expect": [
+        {"name": "SendWorks", "status": "ok", "duration_ms": 10},
+        {"name": "SendSwitchingPlans", "status": "ok", "duration_ms": 10}
+      ]
+    },
+    {
+      "name": "no_end_at_eof_is_open",
+      "lines": [
+        [7000, 4, "[SendWorks] Sending following Work Request: WR 81."]
+      ],
+      "expect": [
+        {"name": "SendWorks", "status": "open", "duration_ms": null}
+      ]
+    }
+  ]
+}

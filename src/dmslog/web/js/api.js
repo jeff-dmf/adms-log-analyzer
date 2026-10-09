@@ -102,4 +102,17 @@ export const api = {
     request("GET", "/api/config" + query({ case: caseId }), undefined, signal),
   config: (caseId, product, group, signal) =>
     request("GET", "/api/config" + query({ case: caseId, product, group }), undefined, signal),
+  // Derived events. `params` may hold kind, name, status, stream, q, from, to, limit, after.
+  events: (caseId, params, signal) =>
+    request("GET", "/api/events" + query({ ...params, case: caseId }), undefined, signal),
+  event: (caseId, id, signal) =>
+    request("GET", "/api/events/" + encodeURIComponent(id) + query({ case: caseId }), undefined, signal),
+  eventStats: (caseId, params, signal) =>
+    request("GET", "/api/events/stats" + query({ ...params, case: caseId }), undefined, signal),
+  eventHistogram: (caseId, params, signal) =>
+    request("GET", "/api/events/histogram" + query({ ...params, case: caseId }), undefined, signal),
+  statsMethods: (caseId, params, signal) =>
+    request("GET", "/api/stats/methods" + query({ ...params, case: caseId }), undefined, signal),
+  statsSeries: (caseId, params, signal) =>
+    request("GET", "/api/stats/series" + query({ ...params, case: caseId }), undefined, signal),
 };

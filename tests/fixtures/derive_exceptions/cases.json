@@ -1,0 +1,25 @@
+[
+  {
+    "name": "wcf_endpoint_not_found_template_fields",
+    "entry": {"tpl_code": "ONT-020", "tpl_class": "error", "sev": 2,
+              "msg": "Error: Sending \"ExampleEventMessageType\" message failed. \"System.ServiceModel.EndpointNotFoundException\" has occurred. More details are possible in sensitive log on info level.",
+              "fields": {"msg_type": "ExampleEventMessageType", "exc_type": "System.ServiceModel.EndpointNotFoundException"}},
+    "expect": {"type": "System.ServiceModel.EndpointNotFoundException", "signature": "System.ServiceModel.EndpointNotFoundException", "n_frames": 0}
+  },
+  {
+    "name": "sql_exception_with_ids",
+    "entry": {"tpl_code": null, "tpl_class": "error", "sev": 2,
+              "msg": "[GetExamples end] - request 11111111-2222-4333-8444-555555555555 failed. ",
+              "cont": "Reason: 'x'. \nStack trace: System.Data.SqlClient.SqlException: Timeout expired after 30000 ms on object 'Example_4711'\n   at Example.Data.Run(String q) in F:\\PD\\7000001\\1\\Example\\Data.cs:line 10\n   at Example.Data.Open() in F:\\PD\\7000001\\1\\Example\\Data.cs:line 20\n",
+              "fields": {}},
+    "expect": {"type": "System.Data.SqlClient.SqlException", "signature": "System.Data.SqlClient.SqlException: Timeout expired after <n> ms on object <s>", "build": "7000001", "n_frames": 2}
+  },
+  {
+    "name": "ci_build_path",
+    "entry": {"tpl_code": null, "tpl_class": "error", "sev": 2,
+              "msg": "Non Fatal Exception System.ObjectDisposedException: Cannot access a disposed object.",
+              "cont": "\tManaged Code Stack Trace:\n   at Example.Client.Send() in F:\\CI\\3.9.1\\7000002\\Example\\Client.cs:line 5\n",
+              "fields": {}},
+    "expect": {"type": "System.ObjectDisposedException", "signature": "System.ObjectDisposedException: Cannot access a disposed object.", "build": "7000002", "ci_version": "3.9.1", "n_frames": 1}
+  }
+]

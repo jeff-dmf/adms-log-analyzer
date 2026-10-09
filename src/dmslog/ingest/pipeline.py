@@ -121,6 +121,9 @@ class IngestResult:
     bytes: int = 0  # stream bytes read and parsed in this run
     seconds: float = 0.0
     details: list[SourceResult] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)  # non-fatal problems (derivation failures)
+    events_derived: int = 0  # events written by the derivation step of this run
+    derive_seconds: float = 0.0  # time of the derivation step (included in ``seconds``)
 
     @property
     def mb_per_s(self) -> float:
@@ -286,6 +289,27 @@ class _Run:
                 self.bytes_total, self.result.records, self.sources_done, self.sources_total,
             )
         )  # fmt: skip
+
+    # ---- derivation
+
+    def derive(self) -> None:
+        """Derive the events of the streams that changed (after the entries are committed).
+
+        A failure never aborts the ingestion: it is recorded in ``result.warnings``.
+        """
+        from dmslog.derive.engine import derive_pending
+
+        started = time.perf_counter()
+        try:
+            summary = derive_pending(self.w.conn, self.catalog)
+        except Exception as exc:  # e.g. a locked database
+            self.result.derive_seconds = time.perf_counter() - started
+            self.result.warnings.append(f"derivation failed: {type(exc).__name__}: {exc}")
+            return
+        self.result.derive_seconds = time.perf_counter() - started
+        self.result.events_derived = summary.events
+        for stream_id, message in summary.errors:
+            self.result.warnings.append(f"derivation failed for stream {stream_id}: {message}")
 
     # ---- collection
 
@@ -623,6 +647,25 @@ class _Run:
         return fed - start_off
 
 
+def _oldest_first(selected: list[SourceInfo]) -> list[SourceInfo]:
+    """Order the sources so that the files of one stream come oldest first (``.log.N`` ... ``.log``).
+
+    Entry ids then grow along the stream order, which the derivation checkpoint relies on. Streams keep
+    the position of their first source; the order of the streams themselves is unchanged.
+    """
+    first: dict[tuple, int] = {}
+    for i, info in enumerate(selected):
+        first.setdefault(info.stream_key, i)
+    return sorted(
+        selected,
+        key=lambda s: (
+            first[s.stream_key],
+            s.rotation is None,
+            -(s.rotation if s.rotation is not None else 0),
+        ),
+    )
+
+
 def _bump_ingest_generation(conn) -> None:
     """Increment ``meta.ingest_generation`` (readers use it to invalidate per-case caches)."""
     row = conn.execute("SELECT value FROM meta WHERE key = 'ingest_generation'").fetchone()
@@ -673,8 +716,9 @@ def run_ingest(
         run.register_sources(cid, list(plan.sources), selected_members)
         run.store_installation(cid, list(selected))
         rows = writer.sources(cid)
-        for info in selected:
+        for info in _oldest_first(selected):
             run.process(rows[info.member], info, reader)
+    run.derive()
     if conn.total_changes != changes_before:  # a no-op re-ingest keeps the generation (and the caches)
         _bump_ingest_generation(conn)
     run.result.seconds = time.perf_counter() - t0

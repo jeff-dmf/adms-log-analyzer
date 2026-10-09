@@ -5,8 +5,9 @@
 # adapter; everything else seen in its log (startup, configuration, Communication2 statistics,
 # client connections, pools) is covered by _common. Examples are synthetic.
 #
-# The log carries no request/response payload (MessageLogLevel=Info) and no sensitive stream was
-# observed, so there are no sensitive templates and no [[sensitive_pair]].
+# The log carries no request/response payload (MessageLogLevel=Info). The only sensitive records
+# seen (2, in the 2026-10-09 capture) are covered by GEN-PLD-01, so there are no sensitive
+# templates and no [[sensitive_pair]].
 
 schema = 1
 family = "AEDP"

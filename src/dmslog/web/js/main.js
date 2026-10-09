@@ -165,11 +165,27 @@ function start() {
   let timeline = null;
   let unknownPanel = null;
   let configPanel = null;
+  let eventsPanel = null;
+  let dashboard = null;
+  let clockBanner = null;
   let knowledge = null;
   let sourceFamilies = new Map();
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
   let navSeq = 0;
+
+  // Panels fed by the derived events: visible ones reload, hidden ones load when opened.
+  const refreshDerived = () => {
+    if (clockBanner) {
+      clockBanner.refresh();
+    }
+    if (eventsPanel && !byId("events-panel-host").hidden) {
+      eventsPanel.refresh();
+    }
+    if (dashboard && !byId("dashboard-host").hidden) {
+      dashboard.refresh();
+    }
+  };
 
   const setUserFilter = (filter) => {
     userFilter = filter;
@@ -302,6 +318,7 @@ function start() {
       if (configPanel) {
         configPanel.refresh();
       }
+      refreshDerived();
     },
     onSources: (list, quiet) => {
       sources = list;
@@ -322,6 +339,7 @@ function start() {
       if (configPanel) {
         configPanel.refresh();
       }
+      refreshDerived();
       return applyView();
     },
     onMessage: showMessage,
@@ -522,6 +540,90 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: the button stays hidden.
+  });
+
+  // "Show in grid" of the derived-event panels: the grid's time filter becomes the event's window
+  // and its first entry is selected.
+  const showEventInGrid = async ({ from, to, entryId }) => {
+    const forCase = caseId;
+    await setUserFilter(withTsRange(userFilter, { from, to }));
+    if (forCase !== caseId || !entryId) {
+      return;
+    }
+    try {
+      await grid.revealRow({ id: entryId, ts: from });
+    } catch (err) {
+      // The row may be filtered out (noise toggle): the detail pane still shows it.
+    }
+    const selected = grid.selectedRow();
+    if (!selected || selected.id !== entryId) {
+      detail.show(entryId);
+    }
+  };
+
+  // Operations panel, adapter dashboard and clock-jump banner: optional modules like the panels above.
+  const eventsHost = byId("events-panel-host");
+  const eventsButton = byId("events-button");
+  import("./events-panel.js").then((module) => {
+    if (typeof module.initEventsPanel !== "function") {
+      return;
+    }
+    eventsButton.hidden = false;
+    eventsButton.addEventListener("click", () => {
+      eventsHost.hidden = !eventsHost.hidden;
+      eventsButton.setAttribute("aria-expanded", eventsHost.hidden ? "false" : "true");
+      if (!eventsHost.hidden) {
+        if (!eventsPanel) {
+          eventsPanel = module.initEventsPanel(eventsHost, {
+            api,
+            getCase: () => caseId,
+            onShowInGrid: showEventInGrid,
+          });
+        }
+        eventsPanel.refresh();
+      }
+    });
+  }).catch(() => {
+    // Module missing or failing: the button stays hidden.
+  });
+
+  const dashboardHost = byId("dashboard-host");
+  const dashboardButton = byId("dashboard-button");
+  import("./dashboard.js").then((module) => {
+    if (typeof module.initDashboard !== "function") {
+      return;
+    }
+    dashboardButton.hidden = false;
+    dashboardButton.addEventListener("click", () => {
+      dashboardHost.hidden = !dashboardHost.hidden;
+      dashboardButton.setAttribute("aria-expanded", dashboardHost.hidden ? "false" : "true");
+      if (!dashboardHost.hidden) {
+        if (!dashboard) {
+          dashboard = module.initDashboard(dashboardHost, {
+            api,
+            getCase: () => caseId,
+            onShowInGrid: showEventInGrid,
+          });
+        }
+        dashboard.refresh();
+      }
+    });
+  }).catch(() => {
+    // Module missing or failing: the button stays hidden.
+  });
+
+  import("./clock-banner.js").then((module) => {
+    if (typeof module.initClockBanner !== "function") {
+      return;
+    }
+    clockBanner = module.initClockBanner(byId("clock-banner"), {
+      api,
+      getCase: () => caseId,
+      onShowInGrid: showEventInGrid,
+    });
+    clockBanner.refresh();
+  }).catch(() => {
+    // Module missing or failing: no banner.
   });
 
   // Shortcuts: n/N next/previous error, t/T next/previous entry of the selected row's template.

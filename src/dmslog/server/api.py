@@ -38,7 +38,7 @@ from ..knowledge.installation import read_installation
 from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
 from ..store import config as config_store
-from ..store import db, query, views
+from ..store import db, events, query, views
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
 from .sse import ProgressHub
@@ -387,6 +387,80 @@ def _family_param(request: Request) -> str | None:
     return raw
 
 
+_EVENT_WORD = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
+_EVENT_LIST_MAX = 20
+_EVENT_TEXT_MAX = 128
+_METHOD_MAX = 256
+
+
+def _printable(value: str) -> bool:
+    return value.isprintable()
+
+
+def _bad(message: str) -> ApiError:
+    return ApiError(400, "invalid_field", message)
+
+
+def _csv_param(request: Request, name: str, word_only: bool, message: str) -> tuple[str, ...]:
+    raw = request.query.get(name)
+    if raw is None or raw == "":
+        return ()
+    values = tuple(dict.fromkeys(raw.split(",")))
+    if len(values) > _EVENT_LIST_MAX or any(
+        not v or len(v) > _EVENT_TEXT_MAX or not _printable(v) or (word_only and not _EVENT_WORD.match(v))
+        for v in values
+    ):
+        raise _bad(message)
+    return values
+
+
+def _id_param(request: Request, name: str) -> int | None:
+    raw = request.query.get(name)
+    if raw is None or raw == "":
+        return None
+    if not _ENTRY_ID.match(raw):
+        raise _bad(messages.API_BAD_STREAM_ID.format(field=name))
+    return int(raw)
+
+
+def _time_param(request: Request, name: str) -> int | None:
+    raw = request.query.get(name)
+    if raw is None or raw == "":
+        return None
+    value = events.parse_log_time(raw)
+    if value is None:
+        raise _bad(messages.API_BAD_TIME.format(field=name))
+    return value
+
+
+def _event_filter(request: Request, default_kinds: tuple[str, ...] = ()) -> events.EventFilter:
+    kinds = _csv_param(request, "kind", True, messages.API_BAD_EVENT_KIND) or default_kinds
+    statuses = _csv_param(request, "status", True, messages.API_BAD_EVENT_STATUS)
+    names = _csv_param(
+        request,
+        "name",
+        False,
+        messages.API_BAD_EVENT_LIST.format(field="name", limit=_EVENT_LIST_MAX),
+    )
+    key_query = request.query.get("q")
+    if (
+        key_query is not None
+        and key_query != ""
+        and (len(key_query) > _EVENT_TEXT_MAX or not _printable(key_query))
+    ):
+        raise _bad(messages.API_BAD_EVENT_QUERY)
+    return events.EventFilter(
+        kinds=kinds,
+        names=names,
+        statuses=statuses,
+        stream_id=_id_param(request, "stream"),
+        source_id=_id_param(request, "source"),
+        key_query=key_query or None,
+        ts_from=_time_param(request, "from"),
+        ts_to=_time_param(request, "to"),
+    )
+
+
 def _case_from_body(store: CaseStore, body: dict[str, Any]) -> str:
     return store.require(body.get("case"))
 
@@ -494,6 +568,12 @@ class Api:
             ("GET", re.compile(r"/api/views\Z"), self.list_views),
             ("POST", re.compile(r"/api/views\Z"), self.create_view),
             ("DELETE", re.compile(r"/api/views/(?P<id>[^/]+)\Z"), self.delete_view),
+            ("GET", re.compile(r"/api/events\Z"), self.list_events),
+            ("GET", re.compile(r"/api/events/stats\Z"), self.events_stats),
+            ("GET", re.compile(r"/api/events/histogram\Z"), self.events_histogram),
+            ("GET", re.compile(r"/api/events/(?P<id>[^/]+)\Z"), self.get_event),
+            ("GET", re.compile(r"/api/stats/series\Z"), self.stats_series),
+            ("GET", re.compile(r"/api/stats/methods\Z"), self.stats_methods),
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)\Z"), self.get_entry),
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/context\Z"), self.entry_context),
         ]
@@ -846,6 +926,84 @@ class Api:
                 404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
             )
         return Response(200, {"rows": ctx.rows, "anchor": ctx.anchor, "same": ctx.same})
+
+    # -- derived events and statistics
+
+    def list_events(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        flt = _event_filter(request)
+        raw_limit = request.query.get("limit")
+        limit = events.DEFAULT_LIMIT
+        if raw_limit is not None:
+            if not _SMALL_INT.match(raw_limit) or not 1 <= int(raw_limit) <= events.MAX_LIMIT:
+                raise _bad(messages.API_BAD_EVENT_LIMIT.format(limit=events.MAX_LIMIT))
+            limit = int(raw_limit)
+        after = None
+        raw_after = request.query.get("after")
+        if raw_after:
+            after = events.Cursor.parse(raw_after)
+            if after is None:
+                raise _bad(messages.API_BAD_CURSOR)
+        with self.store.reader(cid) as conn:
+            rows, nxt = events.list_events(conn, flt, limit, after)
+        return Response(200, {"events": rows, "next": nxt})
+
+    def get_event(self, request: Request) -> Response:
+        raw = request.match["id"]
+        if not _ENTRY_ID.match(raw):
+            raise _bad(messages.API_BAD_EVENT_ID)
+        event_id = int(raw)
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            result = events.get_event(conn, event_id)
+        if result is None:
+            raise ApiError(
+                404, "event_not_found", messages.API_EVENT_NOT_FOUND.format(event_id=event_id, case=cid)
+            )
+        return Response(200, result)
+
+    def events_stats(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        flt = _event_filter(request, default_kinds=("operation",))
+        with self.store.reader(cid) as conn:
+            result = events.event_stats(conn, flt)
+        return Response(200, {"kind": ",".join(flt.kinds), **result})
+
+    def events_histogram(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        flt = _event_filter(request)
+        bucket = request.query.get("bucket", "minute")
+        if bucket not in events.BUCKET_MS:
+            raise _bad(messages.API_BAD_BUCKET)
+        with self.store.reader(cid) as conn:
+            result = events.event_histogram(conn, flt, bucket)
+        return Response(200, result)
+
+    def stats_series(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        side = request.query.get("side") or None
+        if side is not None and side not in ("client", "service"):
+            raise _bad(messages.API_BAD_STAT_SIDE)
+        method = request.query.get("method") or None
+        if method is not None and (len(method) > _METHOD_MAX or not _printable(method)):
+            raise _bad(messages.API_BAD_STAT_METHOD)
+        with self.store.reader(cid) as conn:
+            samples, truncated = events.stat_series(
+                conn,
+                stream_id=_id_param(request, "stream"),
+                side=side,
+                method=method,
+                ts_from=_time_param(request, "from"),
+                ts_to=_time_param(request, "to"),
+            )
+        return Response(200, {"samples": samples, "truncated": truncated})
+
+    def stats_methods(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        stream_id = _id_param(request, "stream")
+        with self.store.reader(cid) as conn:
+            methods = events.stat_methods(conn, stream_id)
+        return Response(200, {"methods": methods})
 
     # -- saved filters (per case, table saved_view)
 

@@ -360,3 +360,30 @@ regex = '''^Client for endpoint (?P<endpoint>\w+) didn't send request to (?P<url
 stream = "sensitive"
 examples = [{ msg = "Client for endpoint XISOAPAdapter didn't send request to https://example.invalid/pi for more than 12:00:00.", fields = { endpoint = "XISOAPAdapter", idle = "12:00:00" } }]
 counter_examples = ["Client for endpoint XISOAPAdapter sent request to https://example.invalid/pi"]
+
+# Operations: outgoing SOAP send, "[SendX] Sending following ..." -> "[SendX] ... finished (un)successfully"
+# on the same thread. The end templates are shared by the three operations (the open one of the thread
+# is closed). SMN-016 / SMN-S016 are the unsuccessful ends (reason in the sensitive log / real reason).
+[[operation]]
+name = "SendSwitchingSteps"
+start = ["SMN-004"]
+end_ok = ["SMN-009"]
+end_fail = ["SMN-016", "SMN-S016"]
+check_key = "plan"
+pair_by = ["tid"]
+
+[[operation]]
+name = "SendWorks"
+start = ["SMN-005"]
+end_ok = ["SMN-009"]
+end_fail = ["SMN-016", "SMN-S016"]
+check_key = "wr"
+pair_by = ["tid"]
+
+[[operation]]
+name = "SendSwitchingPlans"
+start = ["SMN-006"]
+end_ok = ["SMN-009"]
+end_fail = ["SMN-016", "SMN-S016"]
+check_key = "plan"
+pair_by = ["tid"]

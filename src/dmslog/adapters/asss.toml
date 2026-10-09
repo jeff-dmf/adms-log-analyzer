@@ -26,3 +26,10 @@ title = "Health check: adapter responded HTTP OK 200"
 text = "Adapter responded with HTTP OK 200 response"
 examples = [" Adapter responded with HTTP OK 200 response "]
 counter_examples = ["Adapter responded with HTTP 503 response"]
+
+# Operation: one health check = two lines in the same millisecond on the same thread.
+[[operation]]
+name = "HealthCheck"
+start = ["SSS-001"]
+end_ok = ["SSS-002"]
+pair_by = ["tid"]

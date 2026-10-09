@@ -1,0 +1,78 @@
+/* Adapter dashboard. Status colours are the --ev-h-* tokens of events.css. */
+.dash-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dash-block {
+  min-width: 0;
+}
+
+.dash-total td {
+  font-weight: 600;
+  border-top: 2px solid var(--border);
+}
+
+.dash-chart-head,
+.dash-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 4px;
+}
+
+.dash-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-plot {
+  position: relative;
+  width: 100%;
+  min-height: 160px;
+}
+
+.dash-readout {
+  min-height: 16px;
+}
+
+.dash-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.dash-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  font-size: 12px;
+}
+
+.dash-legend-item[aria-pressed="false"] {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.dash-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.ev-h-ok { background: var(--ev-h-ok); }
+.ev-h-business_error { background: var(--ev-h-business_error); }
+.ev-h-fail { background: var(--ev-h-fail); }
+.ev-h-open { background: var(--ev-h-open); }
+.ev-h-truncated { background: var(--ev-h-truncated); }
+.ev-h-other { background: var(--ev-h-other); }

@@ -47,19 +47,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__, help=messages.HELP_VERSION)
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    serve = sub.add_parser("serve", help=messages.HELP_SERVE, description=messages.HELP_SERVE,
-                           parents=[data_dir_parent])
+    serve = sub.add_parser(
+        "serve", help=messages.HELP_SERVE, description=messages.HELP_SERVE, parents=[data_dir_parent]
+    )
     serve.add_argument("--port", type=_port, default=0, metavar="PORT", help=messages.HELP_PORT)
     serve.add_argument("--no-browser", action="store_true", help=messages.HELP_NO_BROWSER)
 
-    ingest = sub.add_parser("ingest", help=messages.HELP_INGEST, description=messages.HELP_INGEST,
-                            parents=[data_dir_parent])
+    ingest = sub.add_parser(
+        "ingest", help=messages.HELP_INGEST, description=messages.HELP_INGEST, parents=[data_dir_parent]
+    )
     ingest.add_argument("path", metavar="PATH", help=messages.HELP_INGEST_PATH)
     ingest.add_argument("--case", metavar="NAME", default=None, help=messages.HELP_INGEST_CASE)
     ingest.add_argument("--all-logs", action="store_true", help=messages.HELP_INGEST_ALL)
 
-    sub.add_parser("info", help=messages.HELP_INFO, description=messages.HELP_INFO,
-                   parents=[data_dir_parent])
+    sub.add_parser("info", help=messages.HELP_INFO, description=messages.HELP_INFO, parents=[data_dir_parent])
 
     for name, (help_text, _milestone) in STUB_COMMANDS.items():
         stub = sub.add_parser(name, help=help_text, description=help_text, parents=[data_dir_parent])
@@ -195,6 +196,9 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     size_mb = result.bytes / 1e6
     print(messages.INGEST_SUMMARY_DATA.format(records=result.records, lines=result.lines, size_mb=size_mb))
     print(messages.INGEST_SUMMARY_TIME.format(seconds=result.seconds, rate=result.mb_per_s))
+    print(messages.INGEST_EVENTS.format(events=result.events_derived, seconds=result.derive_seconds))
+    for warning in result.warnings:
+        print(messages.INGEST_WARNING.format(message=warning))
     print(messages.INGEST_CASE_DB.format(path=db_path))
     return EXIT_FAILED if result.sources_failed else 0
 

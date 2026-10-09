@@ -663,3 +663,29 @@ sev = 2
 regex = '''^CRS request is rejected by DMZ validation rules: (?P<reason>.*)$'''
 examples = [{ msg = "CRS request is rejected by DMZ validation rules: rule X failed", fields = { reason = "rule X failed" } }]
 counter_examples = ['''ERROR: CRS request is rejected in DMZ zone for entity: "CREW0001".''']
+
+# ---------------------------------------------------------------------------------------------
+# Operations (ARQUITETURA 6.5). Pairing by TID; the request_id (msgid key) must agree.
+# A request without WFM-012 is a failure: every one matches a WFM-081 on the same TID
+# (docs/formato/wfm-ont.md, section 4), so WFM-081 closes the operation as failed.
+# "Detected errors" + SystemEventSender inside the request = business_error (the event is
+# sent only when a code reaches ErrorSeverityEventingThreshold; Info-only codes stay ok).
+# ---------------------------------------------------------------------------------------------
+
+[[operation]]
+name_field = "op"
+start = ["WFM-010"]
+end_ok = ["WFM-012"]
+end_fail = ["WFM-081"]
+pair_by = ["tid"]
+check_key = "msgid"
+business_error = ["GEN-ERR-01", "GEN-EVT-01"]
+
+[[operation]]
+name = "Created crew model"
+start = ["WFM-011"]
+end_ok = ["WFM-012"]
+end_fail = ["WFM-081"]
+pair_by = ["tid"]
+check_key = "msgid"
+business_error = ["GEN-ERR-01", "GEN-EVT-01"]

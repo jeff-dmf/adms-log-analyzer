@@ -1,0 +1,25 @@
+{
+  "family": "ASSS",
+  "scenarios": [
+    {
+      "name": "health_check_pair",
+      "lines": [
+        [1000, 9, "Adapter is on ACTIVE site."],
+        [1000, 9, "Adapter responded with HTTP OK 200 response"],
+        [6000, 9, "Adapter is on ACTIVE site."],
+        [6002, 9, "Adapter responded with HTTP OK 200 response"]
+      ],
+      "expect": [
+        {"name": "HealthCheck", "status": "ok", "duration_ms": 0, "n_entries": 2},
+        {"name": "HealthCheck", "status": "ok", "duration_ms": 2, "n_entries": 2}
+      ]
+    },
+    {
+      "name": "second_response_line_without_start_is_ignored",
+      "lines": [
+        [1000, 9, "Adapter responded with HTTP OK 200 response"]
+      ],
+      "expect": []
+    }
+  ]
+}
