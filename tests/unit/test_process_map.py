@@ -49,7 +49,7 @@ def test_adapter_acronyms_exist_in_adapters_json():
 def test_in_scope_anchor_families_are_covered():
     """Every anchor (adapter) rule in families.toml is mapped or listed as unresolved."""
     data = _load(PROCESS_MAP)
-    names = {e["name"] for e in data["process"]} | {u["name"] for u in data["unresolved"]}
+    names = {e["name"] for e in data["process"]} | {u["name"] for u in data.get("unresolved", [])}
     rules = _load(FAMILIES)["rule"]
     for rule in rules:
         if rule.get("anchor"):
@@ -59,8 +59,8 @@ def test_in_scope_anchor_families_are_covered():
 def test_every_family_is_covered_or_out_of_scope():
     data = _load(PROCESS_MAP)
     covered = (
-        {e["acronym"] for e in data["process"]}
-        | {u["family"] for u in data["unresolved"]}
+        {e.get("family", e["acronym"]) for e in data["process"]}
+        | {u["family"] for u in data.get("unresolved", [])}
         | {o["family"] for o in data["out_of_scope"]}
     )
     families = {rule["family"] for rule in _load(FAMILIES)["rule"]}
@@ -71,5 +71,5 @@ def test_every_family_is_covered_or_out_of_scope():
 def test_out_of_scope_and_unresolved_do_not_overlap_mapped_acronyms():
     data = _load(PROCESS_MAP)
     acronyms = {e["acronym"] for e in data["process"]}
-    for entry in data["out_of_scope"] + data["unresolved"]:
+    for entry in data["out_of_scope"] + data.get("unresolved", []):
         assert entry["family"] not in acronyms, entry["family"]

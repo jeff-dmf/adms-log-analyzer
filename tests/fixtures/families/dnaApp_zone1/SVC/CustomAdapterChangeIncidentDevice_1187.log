@@ -1,0 +1,18 @@
+﻿2030-01-15 10:00:00.000 [PID=1187][TID=0x1a2b] INFO - [ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-0000a0000001' started.
+2030-01-15 10:00:00.050 [PID=1187][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.100 [PID=1187][TID=0x1a2b] INFO - [ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-0000a0000002' successfully finished.
+2030-01-15 10:00:00.150 [PID=1187][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.200 [PID=1187][TID=0x1a2b] ERROR - [ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-0000a0000003' failed. 
+Reason: 'There is no device with ID: 1 in the ADMS model.'. 
+Full exception: 'System.Exception: There is no device with ID: 1 in the ADMS model.
+   at Example.Adapter.Process()
+   at Example.Adapter.Receive()
+2030-01-15 10:00:00.250 [PID=1187][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.300 [PID=1187][TID=0x1a2b] INFO - [ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-0000a0000001' started.
+2030-01-15 10:00:00.350 [PID=1187][TID=0x1a2b] INFO - [ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-0000a0000002' successfully finished.
+2030-01-15 10:00:00.400 [PID=1187][TID=0x1a2b] ERROR - [ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-0000a0000003' failed. 
+Reason: 'There is no device with ID: 1 in the ADMS model.'. 
+Full exception: 'System.Exception: There is no device with ID: 1 in the ADMS model.
+   at Example.Adapter.Process()
+   at Example.Adapter.Receive()
+2030-01-15 10:00:00.450 [PID=1187][TID=0x1a2b] INFO - [ReceiveIncidentDeviceService] - Processing message with Id 'EXAMPLE_2' started.

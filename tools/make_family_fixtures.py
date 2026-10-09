@@ -66,6 +66,8 @@ PROCESSES: dict[str, tuple[str, str]] = {
     "SERVICE": ("service", "ProcessMonitor"),
     "OASERR": ("single", "oasErrLog"),
     COMMON: ("adapter", "GenericProc"),  # family PROCESS: only the generic library applies
+    # Last, so that the pids of the earlier fixtures do not change.
+    "AEDP": ("adapter", "CustomAdapterChangeIncidentDevice"),
 }
 # Family the discovery rules give to each file (for the tests).
 EXPECTED_FAMILY = {fam: ("PROCESS" if fam == COMMON else fam) for fam in PROCESSES}

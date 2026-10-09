@@ -3,7 +3,7 @@
 # by the arbitration and site switch infrastructure. Only the startup lines carry the source
 # suffix ` {<path>:<line>}`. In the sensitive log the IsReadyForModeSwitch result (BLT-011)
 # is written for every query: 97 thousand records (2.2 million lines) in the documented sample,
-# so its hint is noise (sev 5) unless the node is not ready.
+# so its hint is noise (sev 5) unless the node is not ready. BLT-011 is kept out of the FTS (fts = false).
 
 schema = 1
 family = "BLTHOST"
@@ -84,6 +84,7 @@ code = "BLT-011"
 class = "end"
 title = "IsReadyForModeSwitch completed"
 sev = 5
+fts = false  # user decision A4 (2026-10-09, issue #18): the ResultSet text stays out of the FTS
 regex = '''^\[IsReadyForModeSwitchProcessor\] IsReadyForModeSwitch BLT execution completed\. Result: LocalAndDownstreamNodesReady status: ['"]?(?P<ready>True|False)['"]?$'''
 sev_field = "ready"
 sev_map = { False = 3, True = 5 }

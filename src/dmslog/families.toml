@@ -141,8 +141,8 @@ envelope = "adms"
 scope = "default"
 anchor = true
 
-# U11: in the 1.0 scope with its own analysis; the family code is provisional until
-# the format discovery of task 2.11 settles it.
+# U11: in the 1.0 scope with its own analysis (format: docs/formato/aedp.md). The vault
+# calls it ACID; AEDP is the family code used here.
 [[rule]]
 family = "AEDP"
 layout = "adapter"

@@ -151,3 +151,12 @@ def test_error_of_adapter_wfm_is_not_returned_for_another_family(pack):
     k = Knowledge(pack, installation(entry, product_name="AdapterWfm"))
     assert k.error("AAAA", "ExampleCodeOne") is None
     assert k.error("ABBB", "ExampleCodeOne") is None
+
+
+def test_family_codes_translate_to_vault_acronyms():
+    knowledge = Knowledge()
+    assert knowledge.acronym_for_family("AEDP") == "ACID"
+    assert knowledge.acronym_for_family("AWDI") == "AWMI"
+    assert knowledge.acronym_for_family("AWFM") == "AWFM"  # no translation needed
+    assert knowledge.vault_note("AEDP") is not None
+    assert knowledge.adapter_for_process("CustomAdapterChangeIncidentDevice").acronym == "ACID"

@@ -76,9 +76,10 @@ note = "ASMR Deployment Specification: Application = SmrAdapter."
 [[process]]
 name = "WDIAdapter"
 acronym = "AWMI"
+family = "AWDI"
 adapter = "WDI Adapter"
 source = "vault"
-note = "AWMI Deployment Specification: Application = WDIAdapter. families.toml uses the code AWDI for this process; see [[unresolved]]."
+note = "AWMI Deployment Specification: Application = WDIAdapter. families.toml uses the family code AWDI for this process (`family` key); the resolver translates it to the vault acronym."
 
 [[process]]
 name = "ClaimCheckAdapter"
@@ -108,19 +109,17 @@ adapter = ""
 source = "curated"
 note = "Host log, not an adapter, so it has no adapters.json entry; BLTHOST is the families.toml family code. The process name is stated in the vault."
 
+[[process]]
+name = "CustomAdapterChangeIncidentDevice"
+acronym = "ACID"
+family = "AEDP"
+adapter = "Change Incident Device Adapter"
+source = "vault"
+note = "families.toml uses AEDP as the family code for this adapter (the vault acronym is ACID). ACID Index lists CustomAdapterChangeIncidentDevice as an alias of the Change Incident Device Interface (Custom)."
+
 # ---------------------------------------------------------------------------
 # Unresolved: no safe mapping yet.
 # ---------------------------------------------------------------------------
-
-[[unresolved]]
-family = "AEDP"
-name = "CustomAdapterChangeIncidentDevice"
-reason = "No vault index for this adapter yet (issue #22). AEDP is a provisional code in families.toml and is not in adapters.json. The name appears in the sample ERS file names."
-
-[[unresolved]]
-family = "AWDI"
-name = "WDIAdapter"
-reason = "families.toml uses AWDI, but the vault and adapters.json identify this adapter as AWMI (Weather Interface). The process is mapped to AWMI above. families.toml must be reconciled (outside this task's allowed files)."
 
 # ---------------------------------------------------------------------------
 # Out of scope: families that are not adapters (no process -> acronym entry).

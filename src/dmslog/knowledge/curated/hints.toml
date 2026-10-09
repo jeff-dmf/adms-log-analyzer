@@ -233,3 +233,7 @@ note = "12 Interfaces online/Switching Management Reporting Interface/ASMR Index
 code = "GEN-EXC-01"
 text = "A non fatal exception was logged; the type and stack trace follow. Documented cases: SocketException on SFTP (followed by retries) and CredentialNotFoundException (missing credential)."
 
+
+[[hint]]
+code = "AEDP-003"
+text = "ChangeIncidentDevice processing failed and the adapter replied FAILED to the caller. Documented causes: missing IncidentId or DeviceId, unknown incident, device not in the traced list, incident already confirmed. The exception that follows gives the actual reason."

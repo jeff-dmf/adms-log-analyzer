@@ -92,6 +92,7 @@ class Knowledge:
         self._installations: dict[int, InstallationConfig] = dict(installations or {})
         self._hints_path = Path(hints_path) if hints_path is not None else None
         self._hints: dict[str, Hint] | None = None
+        self._curated: tuple[dict[str, str], dict[str, str]] | None = None
 
     @property
     def pack(self) -> Pack:
@@ -103,7 +104,7 @@ class Knowledge:
 
     def adapter_for_process(self, process: str) -> AdapterInfo | None:
         pack = self.pack
-        acronym = pack.process_map.get(process)
+        acronym = pack.process_map.get(process) or self._curated_maps()[0].get(process)
         if acronym is None:
             wanted = _norm(process)
             for item in pack.adapters:
@@ -112,8 +113,33 @@ class Knowledge:
                     break
         return pack.adapter(acronym) if acronym else None
 
+    def _curated_maps(self) -> tuple[dict[str, str], dict[str, str]]:
+        """(process -> acronym, family code -> acronym) from ``curated/process_map.toml``."""
+        if self._curated is None:
+            processes: dict[str, str] = {}
+            families: dict[str, str] = {}
+            try:
+                raw = (resources.files("dmslog.knowledge") / "curated" / "process_map.toml").read_bytes()
+                data = tomllib.loads(raw.decode("utf-8-sig"))
+            except (OSError, FileNotFoundError, tomllib.TOMLDecodeError):
+                data = {}
+            for row in data.get("process", []):
+                acronym = row.get("acronym")
+                if not acronym:
+                    continue
+                if row.get("name"):
+                    processes[row["name"]] = acronym
+                if row.get("family"):
+                    families[row["family"]] = acronym
+            self._curated = (processes, families)
+        return self._curated
+
+    def acronym_for_family(self, family: str) -> str:
+        """Vault acronym of a log family code (they differ for AEDP/ACID and AWDI/AWMI)."""
+        return self._curated_maps()[1].get(family, family)
+
     def vault_note(self, family: str) -> str | None:
-        adapter = self.pack.adapter(family)
+        adapter = self.pack.adapter(self.acronym_for_family(family))
         if adapter is None:
             return None
         return adapter.index_note or adapter.config_note
@@ -156,6 +182,7 @@ class Knowledge:
 
     def _vault_error(self, family: str, code: str, operation: str | None) -> VaultError | None:
         best: tuple[int, VaultError] | None = None
+        family = self.acronym_for_family(family)
         for row in self.pack.errors:
             if row.acronym != family or code not in (row.code, row.id):
                 continue
@@ -169,10 +196,12 @@ class Knowledge:
     def _family_processes(self, family: str) -> set[str]:
         """Process names bound to a family: the adapter's process names plus the process map."""
         names: set[str] = set()
+        family = self.acronym_for_family(family)
         adapter = self.pack.adapter(family)
         if adapter is not None:
             names.update(adapter.process_names)
         names.update(proc for proc, acronym in self.pack.process_map.items() if acronym == family)
+        names.update(proc for proc, acronym in self._curated_maps()[0].items() if acronym == family)
         return {_norm(n) for n in names if n}
 
     def _product_bound_to(self, family: str, product: str) -> bool:

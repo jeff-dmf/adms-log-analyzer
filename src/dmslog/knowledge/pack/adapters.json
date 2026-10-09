@@ -61,6 +61,28 @@
       "type_label": "SOAP/WSDL"
     },
     {
+      "acronym": "ACID",
+      "adapter": "CustomAdapterChangeIncidentDevice",
+      "aliases": [
+        "ACID Adapter",
+        "AdapterChangeIncidentDeviceEDP",
+        "Change Incident Device Adapter",
+        "Change Incident Device Interface",
+        "CustomAdapterChangeIncidentDevice"
+      ],
+      "config_note": "12 Interfaces online/Change Incident Device Interface (Custom)/Arquivos/Configuration/ACID Configuration.md",
+      "document_title": "Custom Change Incident Device Design Document",
+      "document_version": "1.0 (November 2024)",
+      "index_note": "12 Interfaces online/Change Incident Device Interface (Custom)/ACID Index.md",
+      "operations": [
+        "ChangedIncidentDevice"
+      ],
+      "process_names": [],
+      "title": "Change Incident Device Interface (Custom)",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
       "acronym": "ACLC",
       "adapter": "CC Adapter",
       "aliases": [
@@ -104,6 +126,38 @@
         "CrmAdapter"
       ],
       "title": "Customer Relationship Management Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ACUS",
+      "adapter": "Custom Product Interfaces Customizations",
+      "aliases": [
+        "ACUS Adapter customizations",
+        "Custom Product Interfaces Customizations"
+      ],
+      "config_note": null,
+      "document_title": "Custom ADMS ADD Product Interfaces Customizations",
+      "document_version": null,
+      "index_note": "12 Interfaces online/Custom Product Interfaces Customizations/ACUS Index.md",
+      "operations": [
+        "ChangedIncidentHazards",
+        "ChangedIncidentTroubleTickets",
+        "ChangedIncidentUsagePoints",
+        "ChangedIncidents",
+        "CreatedIncidentHazards",
+        "CreatedIncidentTroubleTickets",
+        "CreatedIncidentUsagePoints",
+        "CreatedIncidents",
+        "DeletedIncidentTroubleTickets",
+        "DeletedIncidentUsagePoints",
+        "DeletedIncidents",
+        "GetIncidentHazards",
+        "GetIncidentUsagePoints",
+        "GetIncidents"
+      ],
+      "process_names": [],
+      "title": "Custom Product Interfaces Customizations",
       "type": "soap",
       "type_label": "SOAP/WSDL"
     },

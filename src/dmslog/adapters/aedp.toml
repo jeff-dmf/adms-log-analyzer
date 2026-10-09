@@ -1,0 +1,71 @@
+# Templates of the CustomAdapterChangeIncidentDevice (family AEDP, "ACID" in the vault): SOAP
+# server (ReceiveIncidentDevice service) that receives the new device of an OMS incident.
+#
+# Source: docs/formato/aedp.md. Only the three message-processing markers are specific to this
+# adapter; everything else seen in its log (startup, configuration, Communication2 statistics,
+# client connections, pools) is covered by _common. Examples are synthetic.
+#
+# The log carries no request/response payload (MessageLogLevel=Info) and no sensitive stream was
+# observed, so there are no sensitive templates and no [[sensitive_pair]].
+
+schema = 1
+family = "AEDP"
+description = "CustomAdapterChangeIncidentDevice: incident device change received from the external system"
+extends = ["_common"]
+
+[[template]]
+code = "AEDP-001"
+class = "start"
+title = "Incident device message processing started"
+sev = 4
+stream = "normal"
+regex = '''^\[ReceiveIncidentDeviceService\] - Processing message with Id '(?P<msg_id>[^']+)' started\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000001' started.", fields = { msg_id = "00000000-0000-4000-8000-000000000001" } },
+    "[ReceiveIncidentDeviceService] - Processing message with Id 'EXAMPLE_2' started.",
+]
+counter_examples = [
+    "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000001' successfully finished.",
+    "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000001' failed.",
+]
+
+[[template]]
+code = "AEDP-002"
+class = "end"
+title = "Incident device message processed successfully"
+sev = 4
+stream = "normal"
+regex = '''^\[ReceiveIncidentDeviceService\] - Processing message with Id '(?P<msg_id>[^']+)' successfully finished\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000002' successfully finished.", fields = { msg_id = "00000000-0000-4000-8000-000000000002" } },
+]
+counter_examples = [
+    "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000002' started.",
+    "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000002' failed.",
+]
+
+[[template]]
+code = "AEDP-003"
+class = "error"
+title = "Incident device message processing failed"
+sev = 2
+stream = "normal"
+regex = '''^\[ReceiveIncidentDeviceService\] - Processing message with Id '(?P<msg_id>[^']+)' failed\.$'''
+cont = "dotnet_stack"
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000003' failed. ", cont = "Reason: 'There is no device with ID: 1 in the ADMS model.'. \nFull exception: 'System.Exception: There is no device with ID: 1 in the ADMS model.\n   at Example.Adapter.Process()\n   at Example.Adapter.Receive()", fields = { msg_id = "00000000-0000-4000-8000-000000000003" } },
+]
+counter_examples = [
+    "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000003' started.",
+    "[ReceiveIncidentDeviceService] - Processing message with Id '00000000-0000-4000-8000-000000000003' successfully finished.",
+]
+
+[[operation]]
+name = "ReceiveIncidentDevice"
+start = ["AEDP-001"]
+end = ["AEDP-002"]
+fail = ["AEDP-003"]
+pair_by = ["tid"]

@@ -165,7 +165,7 @@ def _real_zips():
 REAL = _real_zips()
 
 
-@pytest.mark.skipif(len(REAL) < 4, reason="real ERS zips not available (missing or LFS pointers)")
+@pytest.mark.skipif(len(REAL) < 6, reason="real ERS zips not available (missing or LFS pointers)")
 def test_real_ers_zips_every_member_gets_a_family_by_name_only():
     total = 0
     unknown = []
@@ -177,7 +177,7 @@ def test_real_ers_zips_every_member_gets_a_family_by_name_only():
         assert all(s.family for s in sources)
         total += len(sources)
         unknown += [s.member for s in sources if s.family == "UNKNOWN"]
-    assert total == 3095 + 12 + 3099 + 12
+    assert total == sum(members for members, _default, _indexable in REAL_COUNTS.values())
     assert unknown == []
 
 
@@ -204,10 +204,12 @@ REAL_COUNTS = {
     ("20261008124051", "sensitive"): (12, 12, 12),
     ("20261008145350", "enterprise"): (3099, 48, 2368),
     ("20261008145350", "sensitive"): (12, 12, 12),
+    ("20261009145038", "enterprise"): (3095, 44, 2364),
+    ("20261009145038", "sensitive"): (13, 13, 13),
 }
 
 
-@pytest.mark.skipif(len(REAL) < 4, reason="real ERS zips not available (missing or LFS pointers)")
+@pytest.mark.skipif(len(REAL) < 6, reason="real ERS zips not available (missing or LFS pointers)")
 def test_real_ers_default_scope_counts():
     for path in REAL:
         plan = plan_collection(path)
@@ -240,6 +242,7 @@ def test_real_ers_default_scope_counts():
                     "ACLC",
                     "AFUP",
                     "BLTHOST",
+                    *(("AEDP",) if ident.timestamp == "20261009145038" else ()),
                 ),
                 1,
             )
