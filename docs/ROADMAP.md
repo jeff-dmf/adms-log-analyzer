@@ -24,10 +24,12 @@ Modelos: **haiku** = varredura mecânica barata; **sonnet** = implementação ro
 | M5 | Correlação normal↔sensitive, callbacks, retries, busca por chave entre as fontes do caso | M4 |
 | M6 | **Payloads** (request/response): descoberta de formato (6.1 concluída), templates Info/Verbose, extração, visualização XML, ligação ao evento | M5 (amostras Verbose recebidas em 2026-10-08) |
 | M7 | Incremental ao vivo (pasta de instalação), bookmarks, exportação `.txt` anonimizada para chamado | M5 (payload na exportação: M6) |
-| M8 | Endurecimento, desempenho no pior caso (inclusive ERS Verbose), release 1.0 | M6, M7 |
+| M8 | Endurecimento, desempenho no pior caso (inclusive ERS Verbose), **release 0.1.0** | M6, M7 |
 | Pós-1.0 | P1: templates/eventos para os demais logs do ERS. P2: múltiplos ERS por caso, correlação entre máquinas, ajuste de relógio | M8 |
 
 M6 e M7 podem andar em paralelo.
+
+**Versão (U17, 2026-10-10):** a primeira release será a **0.1.0**; a 1.0.0 só quando tudo estiver muito maduro. Neste documento, "1.0" ("antes da 1.0", "aceite da 1.0", "pós-1.0") significa o escopo da 0.1.0 e o que vem depois dela.
 
 ## Estado em 2026-10-09 (atualizado em 2026-10-10)
 
@@ -219,7 +221,7 @@ Aceite:
 - Export anonimizado de fixture não contém nenhum valor da lista de termos sensíveis da fixture; desligar uma categoria faz o valor dela aparecer; payload só entra com `include_payloads` e, quando entra, sai anonimizado por elemento.
 - O `.txt` colado num campo de texto simples mantém a formatação (teste manual do Jefferson num chamado de teste).
 
-## M8: endurecimento e 1.0
+## M8: endurecimento e release 0.1.0
 
 | # | Tarefa | Modelo |
 |---|---|---|
