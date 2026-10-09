@@ -53,7 +53,7 @@ def test_schema_objects_exist(conn):
     assert names(conn, "table") >= TABLES
     assert INDEXES <= names(conn, "index")
     assert names(conn, "view") == {"entry_text"}
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
 
 
 def test_pragmas(conn):
@@ -143,7 +143,26 @@ def test_schema_loaded_from_zipapp(tmp_path):
     out = subprocess.run(
         [sys.executable, "-I", "-c", code, str(pyz), str(db_path)], capture_output=True, text=True, check=True
     )
-    assert out.stdout.strip() == "1"
+    assert out.stdout.strip() == "2"
     check = sqlite3.connect(db_path)
     assert "entry_fts" in names(check, "table")
     check.close()
+
+
+def test_migration_2_backfills_bucket_sev_from_bucket(tmp_path):
+    path = tmp_path / "old.sqlite"
+    conn = connect(path)
+    from dmslog.store.db import MIGRATIONS
+
+    MIGRATIONS[1](conn)  # version 1 schema (created with the current schema.sql)
+    conn.execute("DROP TABLE bucket_sev")  # what a version-1 database looks like
+    conn.execute("PRAGMA user_version=1")
+    conn.executemany(
+        "INSERT INTO bucket(source_id, minute, sev, tpl_id, n) VALUES (?,?,?,?,?)",
+        [(1, 10, 2, 0, 3), (1, 10, 2, 7, 4), (1, 10, 4, 7, 5), (2, 11, 2, 0, 1)],
+    )
+    assert migrate(conn) == SCHEMA_VERSION
+    rows = conn.execute("SELECT source_id, minute, sev, n FROM bucket_sev ORDER BY 1, 2, 3").fetchall()
+    assert rows == [(1, 10, 2, 7), (1, 10, 4, 5), (2, 11, 2, 1)]
+    assert migrate(conn) == SCHEMA_VERSION
+    conn.close()

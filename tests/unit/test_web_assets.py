@@ -1,5 +1,6 @@
 """Static checks of the viewer assets, the Node unit tests, and serving from the built .pyz."""
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -16,8 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "src" / "dmslog" / "web"
 JS_DIR = WEB / "js"
 EXPECTED_MODULES = {
-    "api.js", "detail-model.js", "detail.js", "filters.js", "grid.js", "grid-model.js", "main.js",
-    "search.js", "sources.js", "strings.js", "theme.js", "time.js",
+    "api.js", "detail-model.js", "detail.js", "filter-tree-model.js", "filter-tree.js", "filters.js",
+    "grid.js", "grid-model.js", "main.js", "saved-views.js", "search.js", "sources.js", "strings.js",
+    "theme.js", "time.js", "timeline-model.js", "timeline.js", "unknown-panel-model.js", "unknown-panel.js",
 }
 
 FORBIDDEN_JS = [
@@ -32,7 +34,7 @@ def js_files():
 
 
 def web_files():
-    return [WEB / "index.html", WEB / "css" / "app.css", *js_files()]
+    return [WEB / "index.html", *sorted((WEB / "css").glob("*.css")), *js_files()]
 
 
 def test_expected_modules_exist():
@@ -44,6 +46,23 @@ def test_no_unsafe_dom_or_code_execution_apis(pattern):
     for path in web_files():
         text = path.read_text(encoding="utf-8")
         assert not re.search(pattern, text), f"{path.name}: {pattern}"
+
+
+def test_vendored_uplot_matches_its_recorded_checksums():
+    folder = WEB / "vendor" / "uplot"
+    notes = (folder / "VENDOR.md").read_text(encoding="utf-8")
+    assert "MIT" in (folder / "LICENSE").read_text(encoding="utf-8")
+    for name in ("uPlot.esm.js", "uPlot.min.css", "LICENSE"):
+        digest = hashlib.sha256((folder / name).read_bytes()).hexdigest()
+        assert re.search(rf"\|\s*{re.escape(name)}\s*\|\s*{digest}\s*\|", notes), name
+
+
+def test_app_code_does_not_load_anything_from_outside_vendor():
+    # vendor/ is third-party code and is exempt from the scans above; app code is not.
+    assert all("vendor" not in path.parts for path in web_files())
+    for path in js_files():
+        for target in re.findall(r"""from\s+["'](\.\./[^"']+)["']""", path.read_text(encoding="utf-8")):
+            assert target.startswith("../vendor/") and (JS_DIR / target).resolve().is_file(), target
 
 
 def test_no_absolute_urls_anywhere():
@@ -211,7 +230,12 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         "    out[path] = [r.status, r.getheader('Content-Type'), len(body)]\n"
         "print(json.dumps(out))\n"
     )
-    paths = ["/", "/css/app.css", *(f"/js/{name}" for name in sorted(EXPECTED_MODULES))]
+    paths = [
+        "/", "/css/app.css", "/css/timeline.css", "/css/unknown-panel.css",
+        "/css/grid-extras.css", "/css/filter-tree.css",
+        "/vendor/uplot/uPlot.esm.js", "/vendor/uplot/uPlot.min.css",
+        *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),
+    ]  # fmt: skip
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(pyz), *paths],
         capture_output=True, text=True, encoding="utf-8", check=False,

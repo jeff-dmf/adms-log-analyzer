@@ -1,0 +1,384 @@
+# Osr adapter (OsrAdapter_<pid>[.sensitive].log). Source: docs/formato/avl-osr-smn-siteswitch.md.
+# Operations: GetIncidents, GetIncidentUsagePoints, ChangeIncidents, Changed/CreatedIncidentHazards.
+# Start and end of an operation come on the same thread; the key (Message Id / Context / Search
+# filter, or message id) repeats on the end line.
+
+schema = 1
+family = "AOSR"
+description = "Osr adapter: incident queries and changes, hazards, validation error codes"
+extends = ["_common"]
+
+[payload_defaults]
+request = { direction = "in", peer = "EXT" }
+response = { direction = "out", peer = "EXT" }
+
+# --- GetIncidents -----------------------------------------------------------------------
+
+[[template]]
+code = "OSR-001"
+class = "start"
+sev = 4
+title = "GetIncidents start"
+regex = '''^\[GetIncidents start\] - Get incidents request message Message Id: "(?P<msg_id>[^"]*)" Context: "(?P<ctx>[^"]*)" Search filter: "(?P<filter>[^"]*)" received from user (?P<user>[^ ]*)\. Processing message\.\.\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = '[GetIncidents start] - Get incidents request message Message Id: "1234567890123456" Context: "Active" Search filter: "123456789012345" received from user . Processing message...', fields = { msg_id = "1234567890123456", ctx = "Active", filter = "123456789012345", user = "" } },
+    { msg = '[GetIncidents start] - Get incidents request message Message Id: "" Context: "active" Search filter: "INC 42" received from user USER_A1. Processing message...', fields = { msg_id = "", ctx = "active", filter = "INC 42", user = "USER_A1" } },
+]
+counter_examples = ['[GetIncidentUsagePoints start] - Get incidents usage points request message Message Id: "" Context: "Unrestored" Search filter: "INC 42" received from user . Processing message...']
+
+[[template]]
+code = "OSR-002"
+class = "other"
+sev = 4
+title = "GetIncidents result"
+regex = '''^\[GetIncidents\] - Returning (?P<n>\d+) incident\(s\) for provided search criteria\.$'''
+fields = { n = "int" }
+examples = [{ msg = "[GetIncidents] - Returning 0 incident(s) for provided search criteria.", fields = { n = 0 } }]
+counter_examples = ['[GetIncidentUsagePoints] - Returning 3 usage points(s) for incident "INC 42".']
+
+[[template]]
+code = "OSR-003"
+class = "end"
+sev = 4
+title = "GetIncidents end (processed)"
+regex = '''^\[GetIncidents end\] - Get incidents request message Message Id: "(?P<msg_id>[^"]*)" Context: "(?P<ctx>[^"]*)" Search filter: "(?P<filter>[^"]*)" processed\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = '[GetIncidents end] - Get incidents request message Message Id: "" Context: "All" Search filter: "INC 42" processed.', fields = { ctx = "All", filter = "INC 42" } }]
+counter_examples = ['[GetIncidents end] - Get incidents request message Message Id: "" Context: "archived" Search filter: "" failed.']
+
+[[template]]
+code = "OSR-004"
+class = "end"
+sev = 2
+title = "GetIncidents end (failed, with exception)"
+regex = '''^\[GetIncidents end\] - Get incidents request message Message Id: "(?P<msg_id>[^"]*)" Context: "(?P<ctx>[^"]*)" Search filter: "(?P<filter>[^"]*)" failed\.$'''
+cont = { parser = "dotnet_stack" }
+keys = [{ field = "msg_id", type = "msgid" }, { field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = '[GetIncidents end] - Get incidents request message Message Id: "" Context: "archived" Search filter: "" failed. ', cont = "Reason: One or more errors occurred.\nStack trace: System.AggregateException: One or more errors occurred. ---> System.Data.SqlClient.SqlException: An expression services limit has been reached.\n   at Example.Reader.Read() in F:\\PD\\1234567\\1\\Example\\Reader.cs:line 83\n", fields = { ctx = "archived", filter = "" } },
+]
+counter_examples = ['[GetIncidents end] - Get incidents request message Message Id: "" Context: "All" Search filter: "INC 42" processed.']
+
+# Validation and system event of one operation.
+[[template]]
+code = "OSR-005"
+class = "validation"
+sev = 4
+title = "Detected errors (codes)"
+text = "Detected errors:"
+cont = "codes_per_line"
+keys = [{ field = "codes", type = "errcode" }]
+stream = "normal"
+examples = [{ msg = "Detected errors:", cont = "EntityNotFoundForIncidentSdpMrId\nNoIncidentsFoundForProvidedValidSearchCriteria", fields = { codes = ["EntityNotFoundForIncidentSdpMrId", "NoIncidentsFoundForProvidedValidSearchCriteria"] } }]
+counter_examples = ["Detected errors"]
+
+[[template]]
+code = "OSR-006"
+class = "validation"
+sev = 4
+title = "Error details are in the sensitive log"
+text = "A detailed description of these errors can be found in the adapters sensitive log."
+refs_sensitive = true
+examples = ["A detailed description of these errors can be found in the adapters sensitive log."]
+counter_examples = ["A detailed description of these errors can be found in the log."]
+
+[[template]]
+code = "OSR-007"
+class = "error"
+sev = 2
+title = "System event: errors while processing the message"
+regex = '''^\[SystemEventSender\] System event message: \[AdapterOsr\] \[(?P<op>\w+)\] Errors occurred while processing received message$'''
+keys = ["op"]
+examples = [{ msg = "[SystemEventSender] System event message: [AdapterOsr] [GetIncidents] Errors occurred while processing received message", fields = { op = "GetIncidents" } }]
+counter_examples = ["[SystemEventSender] System event message: [AdapterAVL] Received message is invalid"]
+
+[[template]]
+code = "OSR-008"
+class = "other"
+sev = 4
+title = "Archived incidents read started"
+regex = '''^\[ArchivedIncidentsDataReader\] - Reading archived full set incidents data started\. Number of incidents to fetch (?P<n>\d+)\.$'''
+fields = { n = "int" }
+examples = [{ msg = "[ArchivedIncidentsDataReader] - Reading archived full set incidents data started. Number of incidents to fetch 70000.", fields = { n = 70000 } }]
+counter_examples = ["[ArchivedIncidentsDataReader] - Reading archived full set incidents data finished."]
+
+[[template]]
+code = "OSR-009"
+class = "other"
+sev = 4
+title = "Archived incidents read finished"
+text = "[ArchivedIncidentsDataReader] - Reading archived full set incidents data finished."
+examples = ["[ArchivedIncidentsDataReader] - Reading archived full set incidents data finished."]
+counter_examples = ["[ArchivedIncidentsDataReader] - Reading archived full set incidents data started. Number of incidents to fetch 70000."]
+
+[[template]]
+code = "OSR-010"
+class = "other"
+sev = 4
+title = "Archived reduced set read started"
+text = "[IncidentsDataReader] - Reading archived reduced set incidents data started."
+examples = ["[IncidentsDataReader] - Reading archived reduced set incidents data started."]
+counter_examples = ["[IncidentsDataReader] - Reading archived reduced set incidents data finished."]
+
+# --- GetIncidentUsagePoints -------------------------------------------------------------
+
+[[template]]
+code = "OSR-011"
+class = "start"
+sev = 4
+title = "GetIncidentUsagePoints start"
+regex = '''^\[GetIncidentUsagePoints start\] - Get incidents usage points request message Message Id: "(?P<msg_id>[^"]*)" Context: "(?P<ctx>[^"]*)" Search filter: "(?:INC (?P<inc>\d+)|[^"]*)" received from user (?P<user>[^ ]*)\. Processing message\.\.\.$'''
+fields = { inc = "int" }
+keys = [{ field = "msg_id", type = "msgid" }, "inc"]
+examples = [{ msg = '[GetIncidentUsagePoints start] - Get incidents usage points request message Message Id: "" Context: "Unrestored" Search filter: "INC 42" received from user . Processing message...', fields = { ctx = "Unrestored", inc = 42, user = "" } }]
+counter_examples = ['[GetIncidents start] - Get incidents request message Message Id: "" Context: "active" Search filter: "INC 42" received from user . Processing message...']
+
+[[template]]
+code = "OSR-012"
+class = "other"
+sev = 4
+title = "GetIncidentUsagePoints result"
+regex = '''^\[GetIncidentUsagePoints\] - Returning (?P<n>\d+) usage points\(s\) for incident "(?:INC (?P<inc>\d+)|[^"]*)"\.$'''
+fields = { n = "int", inc = "int" }
+keys = ["inc"]
+examples = [{ msg = '[GetIncidentUsagePoints] - Returning 3 usage points(s) for incident "INC 42".', fields = { n = 3, inc = 42 } }]
+counter_examples = ["[GetIncidents] - Returning 0 incident(s) for provided search criteria."]
+
+[[template]]
+code = "OSR-013"
+class = "end"
+sev = 4
+title = "GetIncidentUsagePoints end"
+regex = '''^\[GetIncidentUsagePoints end\] - Get incidents usage points request message Message Id: "(?P<msg_id>[^"]*)" Context: "(?P<ctx>[^"]*)" Search filter: "(?:INC (?P<inc>\d+)|[^"]*)" processed\.$'''
+fields = { inc = "int" }
+keys = [{ field = "msg_id", type = "msgid" }, "inc"]
+examples = [{ msg = '[GetIncidentUsagePoints end] - Get incidents usage points request message Message Id: "" Context: "affected" Search filter: "INC 42" processed.', fields = { ctx = "affected", inc = 42 } }]
+counter_examples = ['[GetIncidents end] - Get incidents request message Message Id: "" Context: "All" Search filter: "INC 42" processed.']
+
+# --- ChangeIncidents --------------------------------------------------------------------
+
+[[template]]
+code = "OSR-014"
+class = "start"
+sev = 4
+title = "ChangeIncidents start"
+regex = '''^\[ChangeIncidents start\] - Change incidents request message (?P<msg_id>\S+) received from user (?P<user>[^ ]*)\. Processing message\.\.\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = "[ChangeIncidents start] - Change incidents request message 00000000-0000-4000-8000-000000000002 received from user WPA_AAA1. Processing message...", fields = { msg_id = "00000000-0000-4000-8000-000000000002", user = "WPA_AAA1" } },
+    { msg = "[ChangeIncidents start] - Change incidents request message UPDATE-FIELD-COMPLETE-INC42-1 received from user SVC. Processing message...", fields = { msg_id = "UPDATE-FIELD-COMPLETE-INC42-1" } },
+]
+counter_examples = ["[ChangeIncidents end] - Change incidents request message 00000000-0000-4000-8000-000000000002 processed."]
+
+[[template]]
+code = "OSR-015"
+class = "validation"
+sev = 4
+title = "Message validation of changed incidents"
+regex = '''^Message validating changed incidents from request message for incident IDs "(?P<ids>[^"]*)"\.\.\.$'''
+examples = [{ msg = 'Message validating changed incidents from request message for incident IDs "INC 42"...', fields = { ids = "INC 42" } }]
+counter_examples = ['Data validating changed incidents from request message for incident IDs "INC 42"...']
+
+[[template]]
+code = "OSR-016"
+class = "validation"
+sev = 4
+title = "Data validation of changed incidents"
+regex = '''^Data validating changed incidents from request message for incident IDs "(?P<ids>[^"]*)"\.\.\.$'''
+examples = [{ msg = 'Data validating changed incidents from request message for incident IDs "INC 42"...', fields = { ids = "INC 42" } }]
+counter_examples = ['Message validating changed incidents from request message for incident IDs "INC 42"...']
+
+[[template]]
+code = "OSR-017"
+class = "end"
+sev = 4
+title = "ChangeIncidents end"
+regex = '''^\[ChangeIncidents end\] - Change incidents request message (?P<msg_id>\S+) processed\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = "[ChangeIncidents end] - Change incidents request message 00000000-0000-4000-8000-000000000002 processed.", fields = { msg_id = "00000000-0000-4000-8000-000000000002" } }]
+counter_examples = ["[ChangeIncidents start] - Change incidents request message 00000000-0000-4000-8000-000000000002 received from user WPA_AAA1. Processing message..."]
+
+# --- Hazards ----------------------------------------------------------------------------
+
+[[template]]
+code = "OSR-018"
+class = "start"
+sev = 4
+title = "ChangedIncidentHazards start"
+regex = '''^\[ChangedIncidentHazards start\] - Changed incident hazards message: Message ID: (?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'''
+fields = { msg_id = "guid" }
+cont = { parser = "line_regex", regex = '''^\s*\S+ received from user (?P<user>[^ ]*)\. Processing message\.\.\.$''' }
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = "[ChangedIncidentHazards start] - Changed incident hazards message: Message ID: 00000000-0000-4000-8000-000000000003", cont = "Example.Ns.IncidentHazardsPayloadType received from user WPA_AAA1. Processing message...", fields = { msg_id = "00000000-0000-4000-8000-000000000003", user = "WPA_AAA1" } }]
+counter_examples = ["[CreatedIncidentHazards start] - Created incident hazards message: Message ID: 00000000-0000-4000-8000-000000000003"]
+
+[[template]]
+code = "OSR-019"
+class = "validation"
+sev = 4
+title = "Validation: value not provided, default applied"
+regex = '''^\[Validation message\] - Value "(?P<prop>[^"]*)" is not provided and will be set to default value "(?P<default>[^"]*)"\.$'''
+examples = [{ msg = '[Validation message] - Value "IsHazard" is not provided and will be set to default value "false".', fields = { prop = "IsHazard", default = "false" } }]
+counter_examples = ['[Validation message] - Damage is not provided and will be set to default value "none".']
+
+[[template]]
+code = "OSR-020"
+class = "validation"
+sev = 4
+title = "Validation: Damage not provided, default applied"
+regex = '''^\[Validation message\] - Damage is not provided and will be set to default value "(?P<default>[^"]*)"\.$'''
+examples = [{ msg = '[Validation message] - Damage is not provided and will be set to default value "none".', fields = { default = "none" } }]
+counter_examples = ['[Validation message] - Value "IsHazard" is not provided and will be set to default value "false".']
+
+# The adapter writes two spaces after the dash on this line.
+[[template]]
+code = "OSR-021"
+class = "end"
+sev = 4
+title = "ChangedIncidentHazards end"
+regex = '''^\[ChangedIncidentHazards end\] - +Changed incident hazards message with ID "(?P<msg_id>[^"]*)" processed\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = '[ChangedIncidentHazards end] -  Changed incident hazards message with ID "00000000-0000-4000-8000-000000000003" processed.', fields = { msg_id = "00000000-0000-4000-8000-000000000003" } }]
+counter_examples = ['[CreatedIncidentHazards end] - Created incident hazards message "00000000-0000-4000-8000-000000000003" processed.']
+
+[[template]]
+code = "OSR-022"
+class = "error"
+sev = 2
+title = "Hazards message discarded (data validation)"
+regex = '''^\[ERROR\] - Data validation: Changed incident hazard request message with message ID "(?P<msg_id>[^"]*)" is not valid\. All received incident hazards will be discarded\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = '[ERROR] - Data validation: Changed incident hazard request message with message ID "00000000-0000-4000-8000-000000000003" is not valid. All received incident hazards will be discarded.', fields = { msg_id = "00000000-0000-4000-8000-000000000003" } }]
+counter_examples = ["[ERROR] - Something else failed."]
+
+# --- IMS calls --------------------------------------------------------------------------
+
+[[template]]
+code = "OSR-023"
+class = "other"
+sev = 4
+title = "IMS delta applied"
+regex = '''^\[ImsDataManager\]Applying delta result: "(?P<result>[^"]*)"\.$'''
+examples = [{ msg = '[ImsDataManager]Applying delta result: "SUCCESSFULLY".', fields = { result = "SUCCESSFULLY" } }]
+counter_examples = ["[ImsDataManager]Applying delta result: SUCCESSFULLY."]
+
+[[template]]
+code = "OSR-024"
+class = "other"
+sev = 4
+title = "IMS CloseIncidentDevices"
+regex = '''^IMS CloseIncidentDevices for incidentId: (?P<gid>\d+) returned DMSError: (?P<result>\w+)\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "IMS CloseIncidentDevices for incidentId: 1234567890 returned DMSError: SUCCESSFULLY.", fields = { gid = 1234567890, result = "SUCCESSFULLY" } }]
+counter_examples = ["IMS OpenIncidentDevices for incidentId: 1234567890 returned DMSError: SUCCESSFULLY."]
+
+[[template]]
+code = "OSR-025"
+class = "other"
+sev = 4
+title = "IMS OpenIncidentDevices"
+regex = '''^IMS OpenIncidentDevices for incidentId: (?P<gid>\d+) returned DMSError: (?P<result>\w+)\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "IMS OpenIncidentDevices for incidentId: 1234567890 returned DMSError: SUCCESSFULLY.", fields = { gid = 1234567890, result = "SUCCESSFULLY" } }]
+counter_examples = ["IMS CloseIncidentDevices for incidentId: 1234567890 returned DMSError: SUCCESSFULLY."]
+
+# --- CreatedIncidentHazards -------------------------------------------------------------
+
+[[template]]
+code = "OSR-026"
+class = "start"
+sev = 4
+title = "CreatedIncidentHazards start"
+regex = '''^\[CreatedIncidentHazards start\] - Created incident hazards message: Message ID: (?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'''
+fields = { msg_id = "guid" }
+cont = { parser = "line_regex", regex = '''^\s*\S+ received from user (?P<user>[^ ]*)\. Processing message\.\.\.$''' }
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = "[CreatedIncidentHazards start] - Created incident hazards message: Message ID: 00000000-0000-4000-8000-000000000004", cont = "Example.Ns.IncidentHazardsPayloadType received from user WPA_AAA1. Processing message...", fields = { msg_id = "00000000-0000-4000-8000-000000000004", user = "WPA_AAA1" } }]
+counter_examples = ["[ChangedIncidentHazards start] - Changed incident hazards message: Message ID: 00000000-0000-4000-8000-000000000004"]
+
+[[template]]
+code = "OSR-027"
+class = "other"
+sev = 4
+title = "Connecting to OMSBusinessService"
+text = "Connecting to OMSBusinessService."
+examples = ["Connecting to OMSBusinessService."]
+counter_examples = ["Successfully connected to OMSBusinessService."]
+
+[[template]]
+code = "OSR-028"
+class = "other"
+sev = 4
+title = "Client connection added"
+regex = '''^\[ClientConnectionRouter\] Add connection for ClientId = (?P<client_id>\d+)$'''
+fields = { client_id = "int" }
+keys = ["client_id"]
+examples = [{ msg = "[ClientConnectionRouter] Add connection for ClientId = 7", fields = { client_id = 7 } }]
+counter_examples = ["[ClientConnectionRouter] Remove connection for ClientId = 7"]
+
+[[template]]
+code = "OSR-029"
+class = "other"
+sev = 4
+title = "Connected to OMSBusinessService"
+text = "Successfully connected to OMSBusinessService."
+examples = ["Successfully connected to OMSBusinessService."]
+counter_examples = ["Connecting to OMSBusinessService."]
+
+[[template]]
+code = "OSR-030"
+class = "end"
+sev = 4
+title = "CreatedIncidentHazards end"
+regex = '''^\[CreatedIncidentHazards end\] - +Created incident hazards message "(?P<msg_id>[^"]*)" processed\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = '[CreatedIncidentHazards end] - Created incident hazards message "00000000-0000-4000-8000-000000000004" processed.', fields = { msg_id = "00000000-0000-4000-8000-000000000004" } }]
+counter_examples = ['[ChangedIncidentHazards end] -  Changed incident hazards message with ID "00000000-0000-4000-8000-000000000004" processed.']
+
+[[template]]
+code = "OSR-031"
+class = "other"
+sev = 4
+title = "IMS callback received"
+regex = '''^IMS callback received for OMS_REQUEST GID: (?P<gid>\d+) - (?P<status>\w+)\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "IMS callback received for OMS_REQUEST GID: 1234567890 - Approved.", fields = { gid = 1234567890, status = "Approved" } }]
+counter_examples = ["IMS callback received for OMS_RESPONSE GID: 1234567890 - Approved."]
+
+# Failed end of any other operation (GetIncidents has its own template, OSR-004).
+[[template]]
+code = "OSR-032"
+class = "end"
+sev = 2
+title = "Operation end (failed, other operations)"
+regex = '''^\[(?!GetIncidents end\])(?P<op>\w+) end\] - (?P<detail>.*?) failed\.$'''
+cont = { parser = "dotnet_stack" }
+keys = ["op", { field = "exc_type", type = "exc_type" }]
+examples = [{ msg = "[ChangeIncidents end] - Change incidents request message 00000000-0000-4000-8000-000000000002 failed.", fields = { op = "ChangeIncidents" } }]
+counter_examples = ["[ChangeIncidents end] - Change incidents request message 00000000-0000-4000-8000-000000000002 processed."]
+
+# --- sensitive log ----------------------------------------------------------------------
+
+[[template]]
+code = "OSR-S005"
+class = "validation"
+sev = 4
+title = "Detected errors (details)"
+regex = '''^Detected errors:$'''
+stream = "sensitive"
+examples = [{ msg = "Detected errors:", cont = "Invalid Incident Record mRID: 42." }]
+counter_examples = ["Detected errors"]
+
+[[template]]
+code = "OSR-S010"
+class = "other"
+sev = 4
+title = "Endpoint not invoked for a long time"
+regex = '''^Endpoint (?P<service>\w+) on (?P<url>\S+) was not invoked more than (?P<idle>[\d:.]+)$'''
+stream = "sensitive"
+examples = [{ msg = "Endpoint ExampleService on http://localhost:9999/example/Service was not invoked more than 12:00:00", fields = { service = "ExampleService", idle = "12:00:00" } }]
+counter_examples = ["Endpoint ExampleService on http://localhost:9999/example/Service was invoked"]

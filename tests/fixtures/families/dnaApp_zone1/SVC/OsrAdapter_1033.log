@@ -1,0 +1,47 @@
+﻿2030-01-15 10:00:00.000 [PID=1033][TID=0x1a2b] INFO - [GetIncidents start] - Get incidents request message Message Id: "12345678" Context: "Active" Search filter: "12345678" received from user . Processing message...
+2030-01-15 10:00:00.050 [PID=1033][TID=0x1a2b] INFO - [GetIncidents] - Returning 0 incident(s) for provided search criteria.
+2030-01-15 10:00:00.100 [PID=1033][TID=0x1a2b] INFO - [GetIncidents end] - Get incidents request message Message Id: "" Context: "All" Search filter: "INC 42" processed.
+2030-01-15 10:00:00.150 [PID=1033][TID=0x1a2b] ERROR - [GetIncidents end] - Get incidents request message Message Id: "" Context: "archived" Search filter: "" failed. 
+Reason: One or more errors occurred.
+Stack trace: System.AggregateException: One or more errors occurred. ---> System.Data.SqlClient.SqlException: An expression services limit has been reached.
+   at Example.Reader.Read() in F:\PD\1234567\1\Example\Reader.cs:line 83
+2030-01-15 10:00:00.200 [PID=1033][TID=0x1a2b] INFO - Detected errors
+2030-01-15 10:00:00.250 [PID=1033][TID=0x1a2b] INFO - Detected errors:
+EntityNotFoundForIncidentSdpMrId
+NoIncidentsFoundForProvidedValidSearchCriteria
+2030-01-15 10:00:00.300 [PID=1033][TID=0x1a2b] INFO - A detailed description of these errors can be found in the adapters sensitive log.
+2030-01-15 10:00:00.350 [PID=1033][TID=0x1a2b] ERROR - [SystemEventSender] System event message: [AdapterOsr] [GetIncidents] Errors occurred while processing received message
+2030-01-15 10:00:00.400 [PID=1033][TID=0x1a2b] INFO - [ArchivedIncidentsDataReader] - Reading archived full set incidents data started. Number of incidents to fetch 70000.
+2030-01-15 10:00:00.450 [PID=1033][TID=0x1a2b] INFO - A detailed description of these errors can be found in the log.
+2030-01-15 10:00:00.500 [PID=1033][TID=0x1a2b] INFO - [ArchivedIncidentsDataReader] - Reading archived full set incidents data finished.
+2030-01-15 10:00:00.550 [PID=1033][TID=0x1a2b] INFO - [IncidentsDataReader] - Reading archived reduced set incidents data started.
+2030-01-15 10:00:00.600 [PID=1033][TID=0x1a2b] INFO - [GetIncidentUsagePoints start] - Get incidents usage points request message Message Id: "" Context: "Unrestored" Search filter: "INC 42" received from user . Processing message...
+2030-01-15 10:00:00.650 [PID=1033][TID=0x1a2b] INFO - [GetIncidentUsagePoints] - Returning 3 usage points(s) for incident "INC 42".
+2030-01-15 10:00:00.700 [PID=1033][TID=0x1a2b] INFO - [IncidentsDataReader] - Reading archived reduced set incidents data finished.
+2030-01-15 10:00:00.750 [PID=1033][TID=0x1a2b] INFO - [GetIncidentUsagePoints end] - Get incidents usage points request message Message Id: "" Context: "affected" Search filter: "INC 42" processed.
+2030-01-15 10:00:00.800 [PID=1033][TID=0x1a2b] INFO - [ChangeIncidents start] - Change incidents request message 00000000-0000-4000-8000-0000a0000002 received from user WPA_AAA1. Processing message...
+2030-01-15 10:00:00.850 [PID=1033][TID=0x1a2b] INFO - Message validating changed incidents from request message for incident IDs "INC 42"...
+2030-01-15 10:00:00.900 [PID=1033][TID=0x1a2b] INFO - Data validating changed incidents from request message for incident IDs "INC 42"...
+2030-01-15 10:00:00.950 [PID=1033][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:01.000 [PID=1033][TID=0x1a2b] INFO - [ChangeIncidents end] - Change incidents request message 00000000-0000-4000-8000-0000a0000002 processed.
+2030-01-15 10:00:01.050 [PID=1033][TID=0x1a2b] INFO - [ChangedIncidentHazards start] - Changed incident hazards message: Message ID: 00000000-0000-4000-8000-0000a0000003
+Example.Ns.IncidentHazardsPayloadType received from user WPA_AAA1. Processing message...
+2030-01-15 10:00:01.100 [PID=1033][TID=0x1a2b] INFO - [Validation message] - Value "IsHazard" is not provided and will be set to default value "false".
+2030-01-15 10:00:01.150 [PID=1033][TID=0x1a2b] INFO - [Validation message] - Damage is not provided and will be set to default value "none".
+2030-01-15 10:00:01.200 [PID=1033][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:01.250 [PID=1033][TID=0x1a2b] INFO - [ChangedIncidentHazards end] -  Changed incident hazards message with ID "00000000-0000-4000-8000-0000a0000003" processed.
+2030-01-15 10:00:01.300 [PID=1033][TID=0x1a2b] ERROR - [ERROR] - Data validation: Changed incident hazard request message with message ID "00000000-0000-4000-8000-0000a0000003" is not valid. All received incident hazards will be discarded.
+2030-01-15 10:00:01.350 [PID=1033][TID=0x1a2b] INFO - [ImsDataManager]Applying delta result: "SUCCESSFULLY".
+2030-01-15 10:00:01.400 [PID=1033][TID=0x1a2b] INFO - IMS CloseIncidentDevices for incidentId: 12345678 returned DMSError: SUCCESSFULLY.
+2030-01-15 10:00:01.450 [PID=1033][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:01.500 [PID=1033][TID=0x1a2b] INFO - IMS OpenIncidentDevices for incidentId: 12345678 returned DMSError: SUCCESSFULLY.
+2030-01-15 10:00:01.550 [PID=1033][TID=0x1a2b] INFO - [CreatedIncidentHazards start] - Created incident hazards message: Message ID: 00000000-0000-4000-8000-0000a0000004
+Example.Ns.IncidentHazardsPayloadType received from user WPA_AAA1. Processing message...
+2030-01-15 10:00:01.600 [PID=1033][TID=0x1a2b] INFO - Connecting to OMSBusinessService.
+2030-01-15 10:00:01.650 [PID=1033][TID=0x1a2b] INFO - [ClientConnectionRouter] Add connection for ClientId = 7
+2030-01-15 10:00:01.700 [PID=1033][TID=0x1a2b] INFO - Successfully connected to OMSBusinessService.
+2030-01-15 10:00:01.750 [PID=1033][TID=0x1a2b] INFO - [CreatedIncidentHazards end] - Created incident hazards message "00000000-0000-4000-8000-0000a0000004" processed.
+2030-01-15 10:00:01.800 [PID=1033][TID=0x1a2b] INFO - IMS callback received for OMS_REQUEST GID: 12345678 - Approved.
+2030-01-15 10:00:01.850 [PID=1033][TID=0x1a2b] ERROR - [ChangeIncidents end] - Change incidents request message 00000000-0000-4000-8000-0000a0000002 failed.
+2030-01-15 10:00:01.900 [PID=1033][TID=0x1a2b] INFO - [GetIncidents start] - Get incidents request message Message Id: "" Context: "active" Search filter: "INC 42" received from user USER_A1. Processing message...
+2030-01-15 10:00:01.950 [PID=1033][TID=0x1a2b] INFO - [ChangeIncidents start] - Change incidents request message UPDATE-FIELD-COMPLETE-INC42-1 received from user SVC. Processing message...

@@ -1,0 +1,71 @@
+/* Unknown-templates panel. Colours come from the tokens of app.css. */
+.unk-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.unk-title {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.unk-filter {
+  min-width: 14em;
+}
+
+.unk-summary,
+.unk-status {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.unk-status.is-error {
+  color: var(--sev-2);
+}
+
+.unk-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.unk-table th,
+.unk-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.unk-table .unk-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.unk-signature {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.unk-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.unk-fallback {
+  width: 100%;
+  min-height: 10em;
+  font-family: ui-monospace, monospace;
+  margin-top: 8px;
+}
+
+.unk-fallback-label {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}

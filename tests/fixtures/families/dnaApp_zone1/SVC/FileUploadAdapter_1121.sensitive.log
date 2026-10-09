@@ -1,0 +1,10 @@
+﻿2030-01-15 10:00:00.000 [PID=1121][TID=0x1a2b] DEBUGLOG - Writing file to computer HOST01 on local path: \\share.invalid\OutageReports\SP 1_Example.csv started...
+2030-01-15 10:00:00.050 [PID=1121][TID=0x1a2b] INFO - FileUploadService Received file - Name: "x"
+2030-01-15 10:00:00.100 [PID=1121][TID=0x1a2b] DEBUGLOG - Uploading file: SP 1_Example.csv to remote location: /PROD/OutageReports/
+2030-01-15 10:00:00.150 [PID=1121][TID=0x1a2b] INFO - FileUploadService File content can be observed.
+2030-01-15 10:00:00.200 [PID=1121][TID=0x1a2b] DEBUGLOG - Writing file to computer HOST01 on local path: \\share.invalid\OutageReports\SP 1_Example.csv succeeded.
+2030-01-15 10:00:00.250 [PID=1121][TID=0x1a2b] INFO - Writing file to computer on a local path failed...
+2030-01-15 10:00:00.300 [PID=1121][TID=0x1a2b] DEBUGLOG - Uploading file: SP 1_Example.csv to remote location /PROD/OutageReports/ succeeded.
+2030-01-15 10:00:00.350 [PID=1121][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1121][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1121][TID=0x1a2b] INFO - Qqq synthetic noise without template

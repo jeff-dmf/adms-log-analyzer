@@ -18,6 +18,8 @@
   --sev-1: #b00020;
   --sev-2: #c62828;
   --sev-3: #9a6700;
+  --sev-4: #5d6778;
+  --sev-5: #8a93a3;
   --focus: #0a58ca;
   --row-height: 22px;
   font-family: system-ui, "Segoe UI", sans-serif;
@@ -44,6 +46,8 @@
     --sev-1: #ff6b81;
     --sev-2: #ff8a80;
     --sev-3: #f2c14e;
+  --sev-4: #9aa5b8;
+  --sev-5: #6b7686;
     --focus: #8ab4ff;
   }
 }
@@ -67,6 +71,8 @@
   --sev-1: #ff6b81;
   --sev-2: #ff8a80;
   --sev-3: #f2c14e;
+  --sev-4: #9aa5b8;
+  --sev-5: #6b7686;
   --focus: #8ab4ff;
 }
 
@@ -390,6 +396,15 @@ progress {
 
 .grid-row[data-sev="3"] .col-level {
   color: var(--sev-3);
+}
+
+.grid-row[data-sev="4"] .col-level {
+  color: var(--sev-4);
+}
+
+.grid-row[data-sev="5"] .col-level,
+.grid-row[data-sev="5"] .col-msg {
+  color: var(--sev-5);
 }
 
 .grid-cell {

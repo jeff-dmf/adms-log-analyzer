@@ -1,0 +1,43 @@
+# FileMonitor adapter (FileMonitorAdapter_<pid>.log, no sensitive log). Source:
+# docs/formato/crm-e-demais.md, section 2.9. In the documented sample the adapter only runs the
+# startup and one CredentialNotFoundException every hour from the HOT transition (no file
+# processing and no statistics).
+
+schema = 1
+family = "AFMO"
+description = "FileMonitor adapter: monitors file locations by file type"
+extends = ["_common"]
+
+[[template]]
+code = "FMO-001"
+window = 704  # worst case quadratic: see _schema.md, Regex safety
+class = "error"
+title = "Credential not found (hourly)"
+sev = 2
+regex = '''^Non Fatal Exception (?P<exc_type>[\w.]*CredentialNotFoundException): Credential with with source application '(?P<src_app>[^']*)' and destination application '(?P<dst_app>[^']*)' not found\. Reason: (?P<reason>.*)$'''
+cont = "dotnet_stack"
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = "Non Fatal Exception Example.CredentialNotFoundException: Credential with with source application 'AdapterExample' and destination application 'SFTP' not found. Reason: The ADAMEntry 'CN=AdapterExample|SFTP' doesn't exist.", cont = "\tManaged Code Stack Trace:\n   at Example.CredentialProvider.GetCredential() in F:\\PD\\1234567\\1\\Example\\CredentialProvider.cs:line 10\n", fields = { exc_type = "Example.CredentialNotFoundException", src_app = "AdapterExample", dst_app = "SFTP" } },
+]
+counter_examples = ["Non Fatal Exception System.IO.IOException: The process cannot access the file."]
+
+[[template]]
+code = "FMO-002"
+window = 1008  # worst case quadratic: see _schema.md, Regex safety
+class = "startup"
+title = "Local path of a file type is invalid"
+sev = 2
+regex = '''^LocalPath: "(?P<path>.*)" for FileType: "(?P<file_type>[^"]*)" is invalid\.$'''
+examples = [{ msg = 'LocalPath: "\\\\share.invalid\\example" for FileType: "GIS" is invalid.', fields = { file_type = "GIS" } }]
+counter_examples = ['LocalPath: "x" for FileType: "GIS" is valid.']
+
+[[template]]
+code = "FMO-003"
+class = "startup"
+title = "File types found in the configuration"
+sev = 4
+regex = '''^(?P<n>\d+) file types found in FileConfiguration XML file\.$'''
+fields = { n = "int" }
+examples = [{ msg = "2 file types found in FileConfiguration XML file.", fields = { n = 2 } }]
+counter_examples = ["File types found in FileConfiguration XML file."]

@@ -1,0 +1,153 @@
+/* Timeline panel (uPlot stacked histogram). Colour tokens follow the theme of app.css. */
+:root {
+  --tl-c0: var(--sev-1);
+  --tl-c1: var(--sev-2);
+  --tl-c2: var(--sev-3);
+  --tl-c3: #3b82c4;
+  --tl-c4: #98a2b3;
+  --tl-c5: #0072b2;
+  --tl-c6: #e69f00;
+  --tl-c7: #009e73;
+  --tl-c8: #cc79a7;
+  --tl-c9: #56b4e9;
+  --tl-c10: #d55e00;
+  --tl-c11: #7a6fc9;
+  --tl-c12: #6b8e23;
+  --tl-c13: #7d8798;
+  --tl-selection: rgba(31, 111, 235, 0.22);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tl-c3: #6aa7e8;
+    --tl-c4: #6b7686;
+    --tl-c5: #4aa3df;
+    --tl-c6: #f2b83d;
+    --tl-c7: #35c29a;
+    --tl-c8: #e29bc3;
+    --tl-c9: #8ccbf2;
+    --tl-c10: #f28a4a;
+    --tl-c11: #a79cf0;
+    --tl-c12: #a3c25a;
+    --tl-c13: #8d97a8;
+    --tl-selection: rgba(76, 141, 255, 0.28);
+  }
+}
+
+:root[data-theme="dark"] {
+  --tl-c3: #6aa7e8;
+  --tl-c4: #6b7686;
+  --tl-c5: #4aa3df;
+  --tl-c6: #f2b83d;
+  --tl-c7: #35c29a;
+  --tl-c8: #e29bc3;
+  --tl-c9: #8ccbf2;
+  --tl-c10: #f28a4a;
+  --tl-c11: #a79cf0;
+  --tl-c12: #a3c25a;
+  --tl-c13: #8d97a8;
+  --tl-selection: rgba(76, 141, 255, 0.28);
+}
+
+.tl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+.tl-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.tl-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tl-status.tl-error {
+  color: var(--error-text);
+}
+
+.tl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.tl-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tl-legend-item[aria-pressed="false"] {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.tl-legend-item:focus-visible {
+  outline: 2px solid var(--focus);
+}
+
+.tl-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.tl-c0 { background: var(--tl-c0); }
+.tl-c1 { background: var(--tl-c1); }
+.tl-c2 { background: var(--tl-c2); }
+.tl-c3 { background: var(--tl-c3); }
+.tl-c4 { background: var(--tl-c4); }
+.tl-c5 { background: var(--tl-c5); }
+.tl-c6 { background: var(--tl-c6); }
+.tl-c7 { background: var(--tl-c7); }
+.tl-c8 { background: var(--tl-c8); }
+.tl-c9 { background: var(--tl-c9); }
+.tl-c10 { background: var(--tl-c10); }
+.tl-c11 { background: var(--tl-c11); }
+.tl-c12 { background: var(--tl-c12); }
+.tl-c13 { background: var(--tl-c13); }
+
+.tl-plot {
+  position: relative;
+  width: 100%;
+  min-height: 120px;
+}
+
+.tl-plot .u-select {
+  background: var(--tl-selection);
+}
+
+.tl-plot .u-cursor-x,
+.tl-plot .u-cursor-y {
+  border-color: var(--muted);
+}
+
+.tl-readout {
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

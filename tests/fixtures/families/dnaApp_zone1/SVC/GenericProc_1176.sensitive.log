@@ -1,0 +1,12 @@
+﻿2030-01-15 10:00:00.000 [PID=1176][TID=0x1a2b] WARNING - Detected errors:
+2030-01-15 10:00:00.050 [PID=1176][TID=0x1a2b] INFO - Endpoint ReceiveExampleService on https://localhost:9999/x was invoked
+2030-01-15 10:00:00.100 [PID=1176][TID=0x1a2b] DEBUGLOG - Message content: <ChangedExamples xmlns="urn:example">
+  <Header/>
+</ChangedExamples>.
+2030-01-15 10:00:00.150 [PID=1176][TID=0x1a2b] INFO - Client for endpoint ExampleService sent a request
+2030-01-15 10:00:00.200 [PID=1176][TID=0x1a2b] INFO - Creating client proxy object for service URL: net.tcp://example.invalid:1234/Service
+2030-01-15 10:00:00.250 [PID=1176][TID=0x1a2b] INFO - [Communication2] - Compression client channel destroyed.
+2030-01-15 10:00:00.300 [PID=1176][TID=0x1a2b] DEBUGLOG - Message: <ExampleResponseMessage>
+2030-01-15 10:00:00.350 [PID=1176][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1176][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1176][TID=0x1a2b] INFO - Qqq synthetic noise without template

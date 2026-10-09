@@ -1,0 +1,22 @@
+﻿2030-01-15 10:00:00.000 [PID=1066][TID=0x1a2b] INFO - [GetTroubleTickets started] - Processing message: Message Id: "00000000-0000-4000-8000-0000a0000001" Context: "All" Search filter: "INC 1001"
+2030-01-15 10:00:00.050 [PID=1066][TID=0x1a2b] DEBUGLOG - [GetTroubleTickets] - Returning 3 trouble ticket(s) for context "All" and search filter: INC 1001
+2030-01-15 10:00:00.100 [PID=1066][TID=0x1a2b] INFO - [GetTroubleTickets] - Returning x trouble ticket(s) for context "All" and search filter: INC 1
+2030-01-15 10:00:00.150 [PID=1066][TID=0x1a2b] INFO - [GetTroubleTickets finished] - Message with message ID 00000000-0000-4000-8000-0000a0000001 processed.
+2030-01-15 10:00:00.200 [PID=1066][TID=0x1a2b] ERROR - [GetTroubleTickets failed] - Processing message with messageId: "00000000-0000-4000-8000-0000a0000001" failed. 
+Reason: Example failure
+Stack trace:    at Example.Service.Call()
+2030-01-15 10:00:00.250 [PID=1066][TID=0x1a2b] INFO - [CreatedTroubleTickets started] - Processing message: Message ID: EXAMPLE_1
+2030-01-15 10:00:00.300 [PID=1066][TID=0x1a2b] INFO - [CreatedTroubleTickets started] - Processing message with Message ID "EXAMPLE_1". Writing message data to sensitive log.
+2030-01-15 10:00:00.350 [PID=1066][TID=0x1a2b] DEBUGLOG - [OMSBusinessManagerCallbackHandler] IMS created OMS_REQUEST entities: 28823037. Now adapter will wait (00:00:15) for IMS callback.
+2030-01-15 10:00:00.400 [PID=1066][TID=0x1a2b] INFO - [OMSBusinessManagerCallbackHandler] IMS created OMS_REQUEST entities: x.
+2030-01-15 10:00:00.450 [PID=1066][TID=0x1a2b] DEBUGLOG - IMS callback received for OMS_REQUEST GID: 28823037 - Approved.
+2030-01-15 10:00:00.500 [PID=1066][TID=0x1a2b] DEBUGLOG - SUCCESS: OMS_REQUEST entities (28823037) are successfully processed by IMS.
+2030-01-15 10:00:00.550 [PID=1066][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.600 [PID=1066][TID=0x1a2b] WARNING - [OMSBusinessManagerCallbackHandler] WARNING - Call creation has been forwarded to IMS, but callback is not received within 00:00:15 interval
+2030-01-15 10:00:00.650 [PID=1066][TID=0x1a2b] INFO - [CreatedTroubleTickets finished] - Message with message ID "EXAMPLE_1" processed.
+2030-01-15 10:00:00.700 [PID=1066][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.750 [PID=1066][TID=0x1a2b] INFO - [GetTroubleTickets started] - Processing message: Message Id: "" Context: "All" Search filter: "CALL 2002"
+2030-01-15 10:00:00.800 [PID=1066][TID=0x1a2b] DEBUGLOG - [GetTroubleTickets] - Returning 0 trouble ticket(s) for context "All" and search filter: 2002
+2030-01-15 10:00:00.850 [PID=1066][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.900 [PID=1066][TID=0x1a2b] INFO - [GetTroubleTickets finished] - Message with message ID  processed.
+2030-01-15 10:00:00.950 [PID=1066][TID=0x1a2b] INFO - [GetTroubleTickets finished] - Message with message ID EXAMPLE_GET_1 processed.

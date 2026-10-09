@@ -1,0 +1,10 @@
+﻿2030-01-15 10:00:00.000 [PID=1099][TID=0x1a2b] ALWAYS - UpdateExampleService is hosted on https://localhost:9999/UpdateExampleService
+2030-01-15 10:00:00.050 [PID=1099][TID=0x1a2b] INFO - UpdateExampleService is stopped
+2030-01-15 10:00:00.100 [PID=1099][TID=0x1a2b] ALWAYS - UpdateExampleService is hosted on https://localhost:9999/UpdateExampleService
+2030-01-15 10:00:00.150 [PID=1099][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.200 [PID=1099][TID=0x1a2b] ALWAYS - [ReceiveExampleData] Starting web service on : https://localhost:9999/ReceiveExampleService
+2030-01-15 10:00:00.250 [PID=1099][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.300 [PID=1099][TID=0x1a2b] ALWAYS - UpdateExampleService is hosted on https://localhost:9999/UpdateExampleService
+2030-01-15 10:00:00.350 [PID=1099][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.400 [PID=1099][TID=0x1a2b] ALWAYS - [ReceiveExampleData] Starting web service on : https://localhost:9999/ReceiveExampleService
+2030-01-15 10:00:00.450 [PID=1099][TID=0x1a2b] ALWAYS - [ReceiveExampleData] Starting web service on : https://localhost:9999/ReceiveExampleService

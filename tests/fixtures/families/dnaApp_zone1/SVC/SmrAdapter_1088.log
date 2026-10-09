@@ -1,0 +1,17 @@
+﻿2030-01-15 10:00:00.000 [PID=1088][TID=0x1a2b] INFO - [CreatedWorks] - Processing message with messageId: "EXAMPLE_1" started.
+2030-01-15 10:00:00.050 [PID=1088][TID=0x1a2b] INFO - [CreatedWorks] - Work (name, customId): (Example work, WR 1001) failed.
+2030-01-15 10:00:00.100 [PID=1088][TID=0x1a2b] DEBUGLOG - [CreatedWorks] - Getting Nms data for the following devices: CS_0001.
+2030-01-15 10:00:00.150 [PID=1088][TID=0x1a2b] INFO - [CreatedWorks] - Unable to create something else.
+2030-01-15 10:00:00.200 [PID=1088][TID=0x1a2b] DEBUGLOG - [CreatedWorks] - Getting Wms data for the following works: 1001.
+2030-01-15 10:00:00.250 [PID=1088][TID=0x1a2b] INFO - [ERROR] - CreatedWorks request message with message ID "EXAMPLE_1" was kept.
+2030-01-15 10:00:00.300 [PID=1088][TID=0x1a2b] DEBUGLOG - [CreatedWorks] - Work (name, customId): (Example work, WR 1001) successfully added to Adms.
+2030-01-15 10:00:00.350 [PID=1088][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1088][TID=0x1a2b] INFO - [CreatedWorks] - Processing message with messageId: "EXAMPLE_1" successfully finished.
+2030-01-15 10:00:00.450 [PID=1088][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.500 [PID=1088][TID=0x1a2b] ERROR - [CreatedWorks] -  Unable to create work request. WOM service returned some errors. For more details analyze work management service log.
+2030-01-15 10:00:00.550 [PID=1088][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.600 [PID=1088][TID=0x1a2b] ERROR - [ERROR] - CreatedWorks request message with message ID "EXAMPLE_1" contains invalid data. It will be discarded.
+2030-01-15 10:00:00.650 [PID=1088][TID=0x1a2b] DEBUGLOG - [CreatedWorks] - Getting Nms data for the following devices: TD_0002 succeeded.
+2030-01-15 10:00:00.700 [PID=1088][TID=0x1a2b] DEBUGLOG - [CreatedWorks] - Getting Nms data for the following devices:.
+2030-01-15 10:00:00.750 [PID=1088][TID=0x1a2b] DEBUGLOG - [CreatedWorks] - Getting Wms data for the following works: 1001 succeeded.
+2030-01-15 10:00:00.800 [PID=1088][TID=0x1a2b] ERROR - [ERROR] - CreatedWorks request message with message ID "EXAMPLE_1" is not valid. It will be discarded.

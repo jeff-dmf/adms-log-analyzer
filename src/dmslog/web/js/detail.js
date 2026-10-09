@@ -6,11 +6,14 @@ import { S, format } from "./strings.js";
 import { formatTs } from "./time.js";
 
 export class Detail {
-  constructor(refs, { getCase, getSourceName, onError }) {
+  constructor(refs, { getCase, getSourceName, onError, getTemplateCode, onTemplate, onFields }) {
     this.refs = refs;
     this.getCase = getCase;
     this.getSourceName = getSourceName;
     this.onError = onError;
+    this.getTemplateCode = getTemplateCode || (() => "");
+    this.onTemplate = onTemplate || (() => {});
+    this.onFields = onFields || (() => {});
     this.entry = null;
     this.entryCase = null;
     this.terms = [];
@@ -19,6 +22,13 @@ export class Detail {
     refs.contextButton.addEventListener("click", () => this.loadContext());
     refs.contextClose.addEventListener("click", () => this.closeContext());
     refs.copyButton.addEventListener("click", () => this.copyText());
+    if (refs.template) {
+      refs.template.addEventListener("click", () => {
+        if (this.entry && this.entry.tpl_id > 0) {
+          this.onTemplate(this.entry.tpl_id);
+        }
+      });
+    }
     this.clear();
   }
 
@@ -37,6 +47,12 @@ export class Detail {
     this.refs.meta.textContent = "";
     this.refs.text.textContent = S.detailEmpty;
     this.refs.actions.hidden = true;
+    if (this.refs.fields) {
+      this.refs.fields.textContent = "";
+    }
+    if (this.refs.template) {
+      this.refs.template.hidden = true;
+    }
     this.closeContext();
   }
 
@@ -74,6 +90,57 @@ export class Detail {
     });
     renderHighlighted(this.refs.text, entry.text === undefined || entry.text === null ? "" : String(entry.text), this.terms);
     this.refs.actions.hidden = false;
+    this.renderTemplate(entry);
+    this.renderFields(entry);
+  }
+
+  renderTemplate(entry) {
+    const button = this.refs.template;
+    if (!button) {
+      return;
+    }
+    const known = entry.tpl_id > 0;
+    button.hidden = !known;
+    button.textContent = known ? this.getTemplateCode(entry.tpl_id) || String(entry.tpl || entry.tpl_id) : "";
+  }
+
+  // Parsed fields as a name/value table; every value is placed as a text node.
+  renderFields(entry) {
+    const box = this.refs.fields;
+    if (!box) {
+      return;
+    }
+    box.textContent = "";
+    const fields = entry.fields && typeof entry.fields === "object" ? entry.fields : {};
+    const names = Object.keys(fields);
+    this.onFields(names);
+    if (names.length === 0) {
+      return;
+    }
+    const table = document.createElement("table");
+    table.className = "fields-table";
+    const caption = document.createElement("caption");
+    caption.textContent = S.detailFieldsTitle;
+    table.appendChild(caption);
+    const head = document.createElement("tr");
+    for (const label of [S.detailFieldName, S.detailFieldValue]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      head.appendChild(th);
+    }
+    table.appendChild(head);
+    for (const name of names) {
+      const value = fields[name];
+      const row = document.createElement("tr");
+      const key = document.createElement("td");
+      key.textContent = name;
+      const cell = document.createElement("td");
+      cell.textContent = value === null || value === undefined ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
+      row.appendChild(key);
+      row.appendChild(cell);
+      table.appendChild(row);
+    }
+    box.appendChild(table);
   }
 
   async copyText() {

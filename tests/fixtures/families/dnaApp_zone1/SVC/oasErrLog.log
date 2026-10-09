@@ -1,0 +1,11 @@
+﻿2030-01-15 10:00:00.000 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) [Communication2] - Service operation ExampleContractResults threw unexpected exception.
+2030-01-15 10:00:00.050 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Executing nothing
+2030-01-15 10:00:00.100 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) [Communication2] - Example.Platform.ServiceModel.ServiceOperationException:
+   at Example.Service.Call() in F:\PD\1234567\1\Example\Service.cs:line 10
+2030-01-15 10:00:00.150 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) The 'Example' application is connecting
+2030-01-15 10:00:00.200 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Executing command: C:\Example\tool.exe 'x' --PerformanceCountersData --Logs -o 'y'
+2030-01-15 10:00:00.250 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.300 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) DAL The 'Example' application is connecting using SSO credentials 'x' with a TokenImpersonationLevel of 'Impersonation'. If the application is NOT running on the hot RCS server, then you have configured delegation incorrectly.
+2030-01-15 10:00:00.350 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.400 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Removing old logs from location: C:\Example\Logs
+2030-01-15 10:00:00.450 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Qqq synthetic noise without template

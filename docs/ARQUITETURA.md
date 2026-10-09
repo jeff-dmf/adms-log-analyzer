@@ -342,6 +342,16 @@ CREATE TABLE bucket(           -- contagens por minuto para timeline e painéis
   n INTEGER NOT NULL,
   PRIMARY KEY(source_id, minute, sev, tpl_id)) WITHOUT ROWID;
 
+CREATE TABLE bucket_sev(       -- rollup de bucket sem template (migração 2, `user_version` = 2)
+  source_id INTEGER NOT NULL, minute INTEGER NOT NULL, sev INTEGER NOT NULL,
+  n INTEGER NOT NULL,
+  PRIMARY KEY(source_id, minute, sev)) WITHOUT ROWID;
+CREATE INDEX bucket_sev_minute ON bucket_sev(minute, sev, n);   -- cobertura: histograma de todas as fontes lê em ordem
+-- Mantida pelo writer junto de `bucket` (soma na inserção, subtrai na remoção da cauda/reindexação, desfeita no rollback).
+-- A migração 2 cria a tabela e o índice e preenche a partir de `bucket`. `query.histogram` a usa (exata) quando o filtro não
+-- usa `tpl`/`ts` e a divisão é `sev` ou `source`; divisão `tpl` continua em `bucket`. Medido (2 M registros, 20 fontes, 2 dias,
+-- 10 min, 13 templates): 148 ms por `bucket` -> 16 ms por `bucket_sev`. Mudança aditiva decidida pela sessão principal (sem Opus).
+
 -- Configuração efetiva da instalação (lida do ERS) -------------------------------
 CREATE TABLE config_param(                                     -- uma linha por (camada, chave): todas as camadas ficam visíveis
   collection_group INTEGER NOT NULL, product TEXT NOT NULL,     -- AdapterWfm, ... (atributo Name de <Product>)
@@ -448,29 +458,41 @@ def parse_bytes(data, env, *, start_off=0, start_line=1, final=True) -> list[Rec
 
 ### 6.3 Camada 2: templates declarativos por adapter
 
-Um arquivo TOML por família em `src/dmslog/adapters/`. Exemplo (abreviado):
+Um arquivo TOML por família em `src/dmslog/adapters/`. Referência completa do esquema (em inglês, junto dos arquivos): `src/dmslog/adapters/_schema.md`; exemplo mínimo com todos os recursos: `_example.toml` (não é carregado). O mapeamento processo → família fica só no `families.toml` (seção 9.1a); o TOML de templates não repete o processo. Exemplo (abreviado):
 
 ```toml
-family = "AWFM"
-process = ['^WfmAdapter$']                       # nome do processo no arquivo <Processo>_<pid>.log
+schema = 1
+family = "AWFM"                                  # código de families.toml
 extends = ["_common"]                            # GEN-*: estatística, conexões, Detected errors, SystemEventSender...
 
 [[template]]
 code = "WFM-010"
 class = "start"
-regex = '''^(?P<op>.+?) request received\. Request with ID "(?P<request_id>[0-9a-f-]{36})"\. Message content wr\w+ in sensitive log\.$'''
-keys = ["request_id"]
+regex = '''^(?P<op>[A-Z][\w ]+?) request received\. Request with ID "(?P<request_id>[0-9a-fA-F-]{36})"\. Message content w\w+ in sensitive log\.$'''
+fields = { request_id = "guid" }                 # tipos: str|int|hex|guid|float|list
+keys = ["request_id"]                            # ou { field = "message_id", type = "msgid" }
 refs_sensitive = true
+examples = ['Changed crews request received. Request with ID "0b5c…". Message content written in sensitive log.']
+
+[[template]]                                     # texto fixo: busca exata, antes de qualquer regex
+code = "WFM-030"
+class = "req_resp"
+text = "Callback received:"
+cont = { parser = "line_regex", regex = '''^(?P<cb_type>\w+) GID: (?P<gid>\d+), Errors count: (?P<errors>\d+)\.''' }
+fields = { gid = "int", errors = "int" }
+keys = ["gid"]
 
 [[template]]
 code = "WFM-081"
 class = "error"
 sev = 2
 regex = '''^ERROR - Processing "(?P<event_type>\w+)" message failed\. ExceptionType: "(?P<exc_type>[^"]+)" Reason: (?P<reason>.*)$'''
-keys = ["exc_type"]
+cont = "dotnet_stack"                            # frame, build e inner_type das continuações
+keys = [{ field = "exc_type", type = "exc_type" }]
 
 [[template]]                                     # anúncio no normal (comum; aqui só para ilustrar)
 code = "GEN-MSG-01"
+aliases = ["WFM-100", "ONT-100"]                 # IDs antigos continuam resolvíveis
 class = "req_resp"
 regex = '''^Message with MessageID: '(?P<msgid>[^']*)' will be logged in sensitive log\.$'''
 keys = ["msgid"]
@@ -479,6 +501,7 @@ refs_sensitive = true
 [[template]]                                     # payload no sensitive (seção 6.6)
 code = "GEN-PLD-01"
 class = "req_resp"
+stream = "sensitive"                             # normal | sensitive | any (padrão)
 regex = '''^Message(?: content)?: (?=<)'''
 payload = { fmt = "xml", start = "match_end", strip_suffix = ".", role = "by_root" }
 
@@ -513,45 +536,66 @@ max_dt_ms = 1000
 
 ```python
 @dataclass(frozen=True, slots=True)
-class TemplateDef:
-    code: str; family: str; cls: str; sev: int | None; regex: re.Pattern[str]
-    keys: tuple[str, ...]; refs_sensitive: bool; literal_prefix: str | None
-    fts: bool = True                                  # False: registro fora do FTS (rastreio Verbose)
-    payload: PayloadSpec | None = None                # seção 6.6
+class TemplateDef:                                    # parse/templates.py
+    code: str; family: str; cls: str; sev: int | None
+    regex: re.Pattern[str] | None; text: str | None   # exatamente um dos dois
+    keys: tuple[KeySpec, ...]; refs_sensitive: bool; literal_prefix: str | None
+    fts: bool = True; payload: PayloadSpec | None = None
+    aliases: tuple[str, ...] = (); stream: str = "any"; cont: ContSpec | None = None
+    field_types: Mapping[str, str]; sev_field: str | None; sev_map: Mapping[str, int] | None
+    examples / counter_examples; source: str; def_version: str  # sha1 (12 hex) do arquivo
 
 @dataclass(frozen=True, slots=True)
 class PayloadSpec:
     fmt: str                                          # xml | xml_seq | html | json | text
     start: str                                        # match_end | msg | first_cont_lt (1ª continuação que começa com '<')
     strip_suffix: str | None                          # "." nos request/response
-    role: str                                         # request|response|fault|delta|content|publication|by_root
+    role: str                                         # request|response|fault|delta|content|publication|other|by_root
     direction: str | None = None; peer: str | None = None   # senão vem de [payload_defaults] da família
 
 @dataclass(slots=True)
-class TplMatch:
-    tpl: TemplateDef | None; fields: dict[str, str]
+class TemplateMatch:                                  # resultado de classify()
+    tpl_id: int; code: str; cls: str; sev_hint: int | None; fts: bool; payload: PayloadSpec | None
+    fields: dict[str, Any]                            # tipados; vão para entry.fields (JSON)
+    keys: list[tuple[str, str]]                       # (key_type, valor) para entry_key
+    refs_sensitive: bool; match_end: int              # offset no msg original (não no strip)
 
-class TemplateSet:
-    @classmethod
-    def for_family(cls, family: str, *, sensitive: bool) -> "TemplateSet": ...
-    def classify(self, msg: str) -> TplMatch          # sobre msg.strip()
-    def operations(self) -> list[OperationRule]: ...
-    def sensitive_pairs(self) -> list[SensitivePairRule]: ...
+class TemplateSet:                                    # uma família × tipo de stream (normal/sensitive)
+    def classify(self, record) -> TemplateMatch | None        # record.msg/.cont; nunca lança
+    def classify_text(self, msg, cont=None) -> TemplateMatch | None
+    def operations(self) / sensitive_pairs(self)              # regras com códigos canônicos
+    payload_defaults: Mapping[str, Mapping[str, str]]
 
-def load_all(dirpath: Traversable) -> dict[str, TemplateSet]   # valida esquema, códigos únicos, regex compiláveis
+class Catalog:
+    def for_family(self, family, *, sensitive: bool) -> TemplateSet   # sem arquivo → _common
+    def resolve(self, code_or_alias) -> str | None; def template(code) -> TemplateDef
+    def tpl_id(self, code) -> int; def bind_ids(self, {code: template.id})  # ids do banco do caso
+    def check_examples(self) -> list[str]
+
+def load_catalog(*, check_examples=False) -> Catalog  # adapters/*.toml via importlib.resources (menos _example.toml)
+def load_dir(dir) / load_texts({nome: texto})         # testes e ferramentas
+# erros tipados (TemplateError): SchemaError, DuplicateError, InvalidRegexError, UnsafeRegexError,
+# TemplateReferenceError, ExampleError; mensagem com arquivo e código do template
 ```
 
-- Ordem de teste: templates da família, depois `_common`. Despacho por prefixo literal (o trecho fixo no início da regex, como `[GetIncidents start]`) num dicionário; só os templates sem prefixo literal vão para a lista sequencial. A versão ingênua já custa ~5 µs por registro (medido), então o despacho é otimização opcional.
-- Templates só olham a 1ª linha (`msg`). Para templates multilinha (`Detected errors:`, estatística, stack trace), um `cont_parser` nomeado extrai campos das continuações: `codes_per_line`, `stats_csv`, `dotnet_stack` (tipo e mensagem da exceção, 1º frame), `kv_tab` (dump de mapa: conta itens, não guarda pares).
-- Registro sem template recebe `tpl_id=0` e entra em `unknown_sig` com a assinatura normalizada (GUID, timestamps, números, aspas, caminhos → marcadores; lógica de `minelib.norm` dos analistas).
+- Prioridade: textos exatos (`text`) primeiro, por dicionário; depois as regex na ordem da família e de cada biblioteca de `extends` (bibliotecas = famílias com `_`, ex.: `_common`; não estendem outras). A primeira que casa vence. Templates casam o `msg` completo, sem espaços/TABs nas pontas, e só se ele **couber na janela** do template: no máximo 4.096 caracteres (padrão e máximo) ou menos, se o template declara `window = N` (128 a 4.096); um texto maior não casa esse template. Registros nunca têm quebra de linha. Continuações: o limite de 256 KiB descarta a linha que ele corta (nenhum parser vê linha parcial).
+- Despacho: chave = primeiros K caracteres do `msg` (K escolhido por conjunto); cada template entra pelo prefixo literal da regex (ou um por alternativa de uma alternação inicial, `(?:Creating new|New dal) proxy`), e os sem prefixo são filtrados pelo 1º caractere possível e pelo maior literal obrigatório (`needle`, teste com `in`). A lista de candidatos por chave é memorizada (até 8.192 chaves). Medido (1 M de registros sintéticos, 57 templates): classify 1,25 µs/registro (0,8 M/s), contra 2,3 µs do parse do M1 e 9,2 µs da ingestão completa do M1 (+14% na ingestão). Uma propriedade testada garante que o despacho dá o mesmo resultado da varredura linear.
+- Segurança das regex (na carga, `UnsafeRegexError`; regras completas em `adapters/_schema.md`, "Regex safety"). **Modelo de ameaça:** as regex são conteúdo confiável do catálogo, escrito pelos mantenedores; o dado não confiável é o texto do log. O objetivo é impedir que uma regex patológica por descuido congele a ingestão, não defender contra um autor hostil. **Estratégia (decisão final após 5 rodadas de revisão): limitar o dano por construção**, não provar ausência de explosão por análise fina de caminhos. Cada rodada achou um canto novo da análise (alternativas, lookarounds, classes); por isso a regra passou a ser um **orçamento de trabalho em passos numa janela conhecida**, com um modelo de custo simples e conservador. **Regras:** (1) lista branca (literais, classes, âncoras, grupos sem flags, alternação, repetições gulosas/preguiçosas com limites até 64, lookarounds; nada de flags, possessivos, grupos atômicos, retrorreferências, condicionais); (2) repetição que itera mais de uma vez só repete tokens de um caractere; (3) cota de trabalho: `work(janela) ≤ MAX_REGEX_STEPS` (2²¹ ≈ 2,1 M passos). `work` é um polinômio em N = n+1: em sequência `work(PR) = work(P) + out(P)·work(R)`, onde `out(P)` conta as saídas de P cujo próximo caractere R aceita (conjuntos **exatos** de code points; `\d \w \s` calculados com o próprio `re`); alternativas **sempre somam** seu trabalho (cada uma pode ser tentada) e só o `out` usa máximo quando nenhuma começa pelo mesmo caractere; repetição de token lê ≤ N caracteres e tem ≤ N contagens; um lookaround custa o trabalho inteiro do corpo a cada visita e conta como "pode começar por qualquer caractere", de modo que nenhuma escolha antes dele (em sequência ou entre alternativas) é descontada pela discriminação (achado da rodada 5); uma cauda que não pode falhar (`.*$` guloso, texto de uma linha) é paga uma vez por casamento. **Janela por template:** padrão 4.096; um template cuja regex tem pior caso quadrático declara `window = N` menor, e a cota é avaliada nessa janela. No catálogo, 19 dos 335 templates declaram janela (lista gerada dos TOML): 2320 (SMN-S016), 1008 (FMO-002, GEN-C2L-01, GEN-CCH-02, GEN-MAP-02, SMR-004), 992 (SMN-007, SMN-008, WFM-010), 704 (CLC-S01, FMO-001, GEN-C2O-02, GEN-SUB-05), 576 (BLT-001, BLT-005), 400 (GEN-STU-06), 352 (BLT-022), 320 (FUP-S02, SVC-017). **Linha maior que a janela (rodada 7, regra exata):** um template só se aplica a mensagens que **cabem** na sua janela: `len(msg sem espaços) > janela` ⇒ o template não casa e o registro segue para os candidatos seguintes (ou fica desconhecido). A regex nunca vê texto cortado (o corte dava resultado errado em construções gulosas, p. ex. `^(?P<x>.*)b` em 129 caracteres), então não há tratamento especial de `$`, lookahead ou borda; uma mensagem com exatamente `janela` caracteres casa normalmente. Consequência documentada: um template de prefixo também não casa uma mensagem longa. Medido nas amostras reais: nenhum registro a mais ficou sem template. **Limites por lista branca (rodada 7):** o modelo não conta fatores constantes, então certas construções são limitadas em vez de modeladas: classe de caracteres com no máximo 32 itens (faixas, literais e categorias contam 1 cada), grupos de captura aninhados até profundidade 3 e no máximo 24 grupos por regex (o catálogo precisa de 4 itens, profundidade 2 e 8 grupos; nenhum template foi reescrito). **Garantia (honesta):** limitado é o número de passos de **um** `re.match` de uma regex do catálogo sobre o `msg` sem espaços nas pontas, que cabe na janela (texto maior não casa o template): ≤ 2,1 M passos contados, qualquer que seja o grau do polinômio: o grau só decide que janela cabe (grau 1 em 4.096, grau 2 entre 320 e 2.320, grau 3 só em 128). **Calibração empírica (rodadas 6 e 7):** o pior custo observado foi ~19 ns por passo contado (classes com muitas faixas e capturas profundas: 70 a 110 ms), contra 0,8 a 5 ns no catálogo e no fuzz; essas formas agora são recusadas pelos limites acima. Medição **local**: as formas aceitas no limite custam ~20 a 40 ms (um runner de CI chegou a medir 87 ms numa forma artificial). Formas aceitas e artificiais podem custar mais por passo que a média; o orçamento inclui essa folga de segurança, não é uma prova. Os testes não dependem da velocidade do runner: só falham num limiar de catástrofe de 0,25 s por sonda (tolera um runner 5x mais lento). Medido localmente: regex do catálogo na própria janela ≤ 4 ms; fuzz com ~1.000 regex aceitas (de 2.500 geradas) com alternações de lookarounds, lookarounds aninhados, alternações em opcionais, Unicode, preguiçosos e repetições limitadas encadeadas, pior medido ~3 a 20 ms conforme a semente. O tempo por linha é esse limite vezes o número de candidatos tentados. **Não coberto:** `re.search`, texto sem `strip` ou com quebra de linha, regex fora do carregador do catálogo, e a velocidade de outra máquina (o limite é em passos; o tempo é medido). O modelo superestima (há regex seguras recusadas ou que precisam de janela menor); a afirmação antiga "grau ≤ 1 por registro" valia para caminhos, não para tempo, e foi retirada (`^a*(?!a*$)b$` é quadrática: recusada na janela de 4.096 e aceita, por exemplo, com 720). **Defesa em profundidade:** sonda de ataque de toda regex do catálogo na própria janela, num processo filho com timeout (igual no Windows), mais a tabela de achados R1 a R5 (recusados em toda janela ou aceitos só numa janela pequena, e então medidos), e o fuzz com tamanho crescente (passo de 2 caracteres até 32, depois ×1,25) que aborta na 1ª sonda > 0,25 s, para nada travar. Sonda dinâmica na carga e contabilidade de custo em tempo de execução **não** foram adotadas (catálogo empacotado e estático; resultado não pode depender de tempo). Regex que gera aviso de compilação é recusada.
+- Campos: grupos nomeados, com tipo opcional (`int`, `hex`, `guid` em minúsculas, `float`, `list` separada por vírgula); valor que não converte fica texto; número com mais de 18 dígitos fica texto. `keys` copia campos (inclusive listas, um por item) para `entry_key`. `sev_field` + `sev_map` dão o `sev_hint` a partir de um campo (ex.: `[Validation Critical]` do ClaimCheck); a decisão final continua na 6.4.
+- Templates só olham a 1ª linha (`msg`). Para templates multilinha, um `cont_parser` nomeado extrai campos das continuações (lê no máximo 256 KiB; campo da regex vence): `codes_per_line` (`codes`), `stats_csv` (`rows`, `n_rows`), `dotnet_stack` (`exc_type`, `exc_msg`, `frame`, `build`, `inner_type`), `kv_tab` (dump de mapa: só conta `items`), `kv_colon`/`kv_dash` (`kv`, para no 1º `<`) e `line_regex` (regex validada como as outras, numa linha dada da continuação). A lista é fechada: formato novo = parser novo em Python, nunca código no TOML.
+- `[[operation]]` e `[[sensitive_pair]]` ficam livres para os derivadores; a carga só confere que os códigos citados (`start`, `end`, `end_ok`, `end_fail`, `fail`, `normal`, `sensitive`, `codes`) existem para a família, e troca aliases pelo código canônico.
+- `tpl_id`: provisório (1..N na ordem dos códigos) até o writer chamar `bind_ids` com os ids da tabela `template` do caso.
+- Registro sem template recebe `tpl_id=0` e entra em `unknown_sig` com a assinatura de `parse/signature.py` (seção 6.7).
 - Famílias já analisadas nas amostras (19 arquivos, cobertura de 100% medida pelos analistas): AVL, Osr, Smn, SiteSwitch, Wfm, Ont, Crm, Ami, Smr, WDI, ClaimCheck, FileUpload, FileMonitor, BLTHost. A **1.0 inclui também `CustomAdapterChangeIncidentDevice` com templates e eventos específicos** (U11). Sua base de conhecimento ainda será criada por Jefferson no `adms-v3.9` ([issue #22](the ADMS knowledge-base repository)); formato, identificador da família e regras de análise serão definidos a partir das fontes e amostras, sem extrapolar a cobertura já medida. Até essa implementação, seu log pode ser indexado provisoriamente como `UNKNOWN`, preservando o processo, com envelope + `_common` + assinaturas desconhecidas. Essa pendência não bloqueia M0, mas base e análise específica são obrigatórias para a release 1.0. Os demais adapters do vault sem amostra continuam fora do escopo (U8). Os IDs de `docs/formato/` viram os `code` dos templates. Os IDs genéricos dos três documentos são unificados em `_common` (`COM-*` e `WFM-090`/`ONT-030` = `GEN-STA-*`; `WFM-020..022` = `GEN-CON-*`; `WFM-050..052` = `GEN-ERR-*`/`GEN-EVT-01`), mantendo o código antigo como alias no TOML.
 
 ### 6.4 Camada 3a: severidade
 
 ```python
-def infer_severity(level: int | None, tm: TplMatch, cont: str | None,
-                   codes: CodeResolver, family: str) -> int
+def infer_severity(match: TemplateMatch | None, record: Record,
+                   codes: CodeResolver | None = None) -> int
 ```
+
+Implementado em `parse/severity.py` (`generic_severity` continua exportado: passos 1, 4 e 6 sem template). O `sev_field`/`sev_map` do template é resolvido pelo motor em `TemplateMatch.sev_hint`. O nível do envelope só conta como severidade em FATAL/EXIT/ERROR e no prefixo `(ERROR)`; `DEBUGLOG`/`ALWAYS`/`INFO` não indicam gravidade e `VERBOSE` sem template vale 5. Um código resolvido (passo 3) só pode escalar o `sev` declarado pelo template, nunca rebaixá-lo.
 
 Ordem (o primeiro que decide vence):
 1. Nível do envelope FATAL/EXIT → 1; ERROR → 2; `ALWAYS - (ERROR)` → 2.
@@ -614,7 +658,9 @@ Desenho:
 
 ### 6.7 Mineração auxiliar de templates
 
-`tools/mine_templates.py` (dev) agrupa registros desconhecidos de um ERS (lógica de `signature.py`) e propõe esboço de TOML com exemplos. Na 1.0 serve à descoberta Verbose (seção 6.6); depois da 1.0, à inclusão dos demais logs do ERS (seção 9.1a).
+`parse/signature.py`: `signature(msg) -> str` normaliza a 1ª linha para agrupar registros sem template (`unknown_sig`, painel de desconhecidos, mineração). Ordem: espaços colapsados; timestamp → `<ts>`, GUID (com ou sem chaves) → `<guid>`, URL → `<url>`, caminho Windows/UNC/POSIX → `<path>`, IP → `<ip>`, `0x…` e hex longo com dígito → `<hex>`, texto entre aspas simples ou duplas → `<s>`, números (inclusive decimais) → `<n>`. Lê no máximo 2.048 caracteres e devolve no máximo 240. Pura, determinística e idempotente (`signature(signature(x)) == signature(x)`, testado por propriedade): nenhum marcador tem dígito, aspas ou barra. ~0,4 µs por registro.
+
+`tools/mine_templates.py` (dev) agrupa registros desconhecidos de um ERS por essa assinatura e propõe esboço de TOML com exemplos. Na 1.0 serve à descoberta Verbose (seção 6.6); depois da 1.0, à inclusão dos demais logs do ERS (seção 9.1a).
 
 ## 7. Camada de conhecimento
 
@@ -945,3 +991,11 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-08 | `Record` ganha `nbytes`, `process` e `orphan` (com default); `RecordGrouper` (feed/finish) e `parse_bytes`; `iter_records` lê em pedaços de 1 MiB, não faz seek (stream já em `start_off`) e devolve o último registro com `partial=True` para retomada (seção 6.2) | Opus |
 | 2026-10-08 | Decisão: logs UTF-16 com BOM (67 de 130 classificados como `plain` nas amostras; instaladores) são transcodificados para UTF-8 na leitura (tarefa 1.6), tratados como `final` e sem retomada incremental; até lá, `source.status='skipped'` com motivo (seção 6.1) | Opus |
 | 2026-10-08 | `.hypothesis/` no `.gitignore` (banco de exemplos do hypothesis, só dev) | Opus |
+| 2026-10-09 | Tarefa 2.1 (motor de templates): esquema TOML 1 documentado em `adapters/_schema.md` (+ `_example.toml`, não carregado); `process` sai do TOML de templates (fica no `families.toml`); novos atributos `text` (busca exata, antes das regex), `fields` (tipos `str/int/hex/guid/float/list`), `keys` com tipo de chave, `stream` (`normal/sensitive/any`), `sev_field`+`sev_map`, `aliases`, `examples`/`counter_examples`, `cont` com opções e `line_regex`, `kv_colon`/`kv_dash`; bibliotecas `_*` sem `extends`; `[[operation]]`/`[[sensitive_pair]]` livres, só com códigos conferidos. API: `Catalog`/`load_catalog` (substitui `load_all`), `TemplateSet.classify(record) -> TemplateMatch` (substitui `TplMatch`; nunca lança; `tpl_id` provisório até `bind_ids`), erros tipados. Regras de segurança das regex e limite de 4.096 caracteres casados. Despacho por prefixo/alternativas/1º caractere com memo (seção 6.3). `parse/signature.py` definido (seção 6.7) | Opus |
+| 2026-10-09 | Tarefa 2.5 (severidade): `infer_severity(match, record, codes)` em `parse/severity.py` (6.4, `TplMatch` -> `TemplateMatch`); tabela aditiva `bucket_sev` (+ índice de cobertura `bucket_sev_minute`) e migração 2 com preenchimento a partir de `bucket`; `query.histogram` a usa para `sev`/`source` sem `tpl`/`ts` (seção 5). Decidido pela sessão principal para evitar uma rodada de Opus; revisar | Sonnet (sessão principal) |
+| 2026-10-09 | Validador de regex dos templates redesenhado após 3 rodadas de revisão (ReDoS): lista branca + análise de pontos de escolha com conjuntos exatos de code points + polinômio de caminhos limitado por `MAX_BACKTRACK_PATHS` (substitui `MAX_DOT_REPEATS`, `MAX_ADJACENT_UNITS`, `MAX_ADJACENT_REPEATS`); lookarounds e preguiçosos analisados, não ignorados; modelo de ameaça explícito; sonda de ataque do catálogo em processo filho com timeout nos testes; janela de 4.096 mantida; sem sonda na carga nem contabilidade de custo em runtime (seção 6.3) | Opus |
+| 2026-10-09 | Validador de regex, rodada 4 de revisão: o trabalho do corpo de um lookaround (reexecutado a cada tentativa da repetição anterior, aninhamento incluído) entra no polinômio antes de qualquer discriminação pelo próximo caractere; garantia da seção 6.3 e de `_schema.md` reescrita com precisão | Sonnet (sessão principal) |
+| 2026-10-09 | Validador de regex, rodada 5 (decisão final): troca de estratégia para **limitar o dano por construção**: orçamento de trabalho em passos (`MAX_REGEX_STEPS` = 2²²) avaliado na janela do template, com alternativas sempre somando trabalho e lookarounds sem discriminação antes deles (substitui `MAX_BACKTRACK_PATHS` e o "grau ≤ 1"); atributo `window = N` (128..4.096, padrão 4.096) declarado por 19 templates do catálogo; texto casado cortado na 1ª quebra de linha; sondas e fuzz exigem < 50 ms na janela (seção 6.3) | Opus |
+| 2026-10-09 | Validador de regex, rodada 6: casamento em texto maior que a janela (borda descartada, `$`/lookahead nunca casam texto cortado, linhas de exatamente a janela não são cortadas); `MAX_REGEX_STEPS` = 2²¹ recalibrado com o pior fator observado (~19 ns/passo); 18 janelas do catálogo reduzidas (a maior aceita) e SMN-S016 passa a declarar 2.320 (seção 6.3) | Sonnet (sessão principal) |
+| 2026-10-09 | Validador de regex, rodada 7: semântica exata "o template só se aplica a mensagens que cabem na janela" (remove o casamento em texto cortado e os casos especiais de `$`/lookahead); limites por lista branca (classe ≤ 32 itens, capturas com profundidade ≤ 3 e ≤ 24 por regex) no lugar de modelar fatores constantes; testes sem dependência de velocidade absoluta (limiar de catástrofe 0,25 s) (seção 6.3) | Sonnet (sessão principal) |
+| 2026-10-09 | Validador de regex, rodada 8: `check_examples` aplica a `other` a mesma normalização (`strip`) e a mesma regra de caber na janela antes de acusar conflito; `_cont_lines` descarta a linha cortada pelo limite de 256 KiB (sem capturas parciais); texto desta seção e de `_schema.md` sem resquícios do casamento em texto cortado | Sonnet (sessão principal) |

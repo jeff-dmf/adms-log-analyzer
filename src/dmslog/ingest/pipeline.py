@@ -45,6 +45,8 @@ from dmslog.ingest.fingerprint import (
 from dmslog.ingest.reader import ReadLimitError, ReadLimits, SourceReader, relax_ratio_violations
 from dmslog.parse.envelope import detect_envelope, get_envelope
 from dmslog.parse.records import DEFAULT_MAX_RECORD_BYTES, RecordGrouper, RecordTooLargeError
+from dmslog.parse.severity import generic_severity, infer_severity
+from dmslog.parse.templates import Catalog, load_catalog
 from dmslog.store.writer import MAX_BATCH_RECORDS, BatchStats, CollectionRow, IndexWriter, SourceRow
 
 CASE_DB_FILENAME = "case.sqlite"
@@ -60,31 +62,6 @@ SKIP_OUT_OF_SCOPE = "out_of_scope"
 SKIP_NOT_INDEXABLE = "not_indexable"
 FAIL_RECORD_TOO_LARGE = "record_too_large"
 
-_ERROR_MARKERS = re.compile(
-    r"Non Fatal Exception|Exception:|failed|unsuccessfully|\[ERROR\]|ERROR -|Errors occurred"
-    r"|\[Validation Critical\]"
-)
-_WARNING_MARKERS = re.compile(r"WARNING|\[Validation Warning\]|not received within|timed out")
-_LEVEL_FATAL, _LEVEL_EXIT, _LEVEL_ERROR, _LEVEL_WARNING = 1, 2, 3, 6
-
-
-def generic_severity(level: int | None, msg: str) -> int:
-    """Provisional severity (1 critical .. 4 info) from the envelope level and text markers.
-
-    Implements steps 1, 4 and 6 of docs/ARQUITETURA.md section 6.4 (no templates yet); the
-    template-aware ``infer_severity`` of M2 replaces it.
-    """
-    if level is not None:
-        if level <= _LEVEL_EXIT:
-            return 1
-        if level == _LEVEL_ERROR or msg.startswith("(ERROR)"):
-            return 2
-    if _ERROR_MARKERS.search(msg):
-        return 2
-    if level == _LEVEL_WARNING or _WARNING_MARKERS.search(msg):
-        return 3
-    return 4
-
 
 @dataclass(frozen=True)
 class IngestOptions:
@@ -94,6 +71,7 @@ class IngestOptions:
     chunk_size: int = 1 << 20
     limits: ReadLimits = field(default_factory=ReadLimits)
     max_record_bytes: int = DEFAULT_MAX_RECORD_BYTES
+    catalog: Catalog | None = None  # template catalog; None = the packaged adapters/*.toml
 
 
 @dataclass(frozen=True)
@@ -182,6 +160,17 @@ def build_plan(path: str | Path, limits: ReadLimits) -> CollectionPlan:
     )
 
 
+_DEFAULT_CATALOG: Catalog | None = None
+
+
+def default_catalog() -> Catalog:
+    """The packaged catalog, loaded once per process."""
+    global _DEFAULT_CATALOG
+    if _DEFAULT_CATALOG is None:
+        _DEFAULT_CATALOG = load_catalog()
+    return _DEFAULT_CATALOG
+
+
 def _slug(text: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-.")
     return slug[:80] or "case"
@@ -236,6 +225,7 @@ class _Run:
         self.sources_done = 0
         self.current_member: str | None = None
         self.current_action: str | None = None
+        self.catalog: Catalog = options.catalog if options.catalog is not None else default_catalog()
 
     def emit(self, phase: str, source_bytes: int = 0, source_total: int = 0, source_records: int = 0) -> None:
         if self.progress is None:
@@ -479,7 +469,9 @@ class _Run:
                 prev_ts = w.last_ts(row.id)
                 envelope = get_envelope(row.envelope)
                 head = HeadWindow(reader.read_head(info))  # the head of the file is already known to match
-        w.start_source(row.id, prev_ts)
+        w.start_source(
+            row.id, prev_ts, self.catalog.for_family(info.family, sensitive=info.sensitive), info.family
+        )
 
         read_from = start_off - min(start_off, HASH_SPAN)  # bytes before the cut only feed the tail hash
         skip = start_off - read_from
@@ -569,9 +561,11 @@ def run_ingest(
         raise ValueError(f"scope must be 'default' or 'all', got {options.scope!r}")
     t0 = time.perf_counter()
     plan = build_plan(path, options.limits)
-    writer = IndexWriter(conn, severity=generic_severity)
+    writer = IndexWriter(conn, severity=generic_severity, infer_severity=infer_severity)
     writer.init_meta(options.case_name or default_case_name(plan), __version__)
     run = _Run(writer, plan, options, progress)
+    writer.sync_templates(run.catalog)
+    writer.commit()
     cid = run.resolve_collection()
     writer.commit()
     run.result.collection_id = cid

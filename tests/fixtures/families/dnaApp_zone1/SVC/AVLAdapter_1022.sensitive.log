@@ -1,0 +1,10 @@
+﻿2030-01-15 10:00:00.000 [PID=1022][TID=0x1a2b] INFO - Position is updated for the following vehicle(s): ZZZ0A00.
+2030-01-15 10:00:00.050 [PID=1022][TID=0x1a2b] INFO - "ChangedVehiclesCoordinatesEvent": 00000000-0000-4000-8000-0000a0000001 message processing finished successfully.
+2030-01-15 10:00:00.100 [PID=1022][TID=0x1a2b] INFO - 		[Validation Info]: Message revision is not provided.
+2030-01-15 10:00:00.150 [PID=1022][TID=0x1a2b] INFO - "ChangedVehiclesCoordinatesEvent": not-a-guid message processing started...
+2030-01-15 10:00:00.200 [PID=1022][TID=0x1a2b] INFO - Position is updated for the following vehicle(s): ZZZ-0000 .
+2030-01-15 10:00:00.250 [PID=1022][TID=0x1a2b] INFO - Details regarding validation errors can be found adapters sensitive log.
+2030-01-15 10:00:00.300 [PID=1022][TID=0x1a2b] INFO - 		[Validation Critical]: Invalid vehicle mRID(s): "ZZZ0A00"
+2030-01-15 10:00:00.350 [PID=1022][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1022][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1022][TID=0x1a2b] INFO - Qqq synthetic noise without template

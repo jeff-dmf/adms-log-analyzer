@@ -1,0 +1,12 @@
+﻿2030-01-15 10:00:00.000 [PID=1033][TID=0x1a2b] INFO - Detected errors:
+Invalid Incident Record mRID: 42.
+2030-01-15 10:00:00.050 [PID=1033][TID=0x1a2b] INFO - Detected errors
+2030-01-15 10:00:00.100 [PID=1033][TID=0x1a2b] INFO - Endpoint ExampleService on http://localhost:9999/example/Service was not invoked more than 12:00:00
+2030-01-15 10:00:00.150 [PID=1033][TID=0x1a2b] INFO - A detailed description of these errors can be found in the log.
+2030-01-15 10:00:00.200 [PID=1033][TID=0x1a2b] INFO - Detected errors:
+Invalid Incident Record mRID: 42.
+2030-01-15 10:00:00.250 [PID=1033][TID=0x1a2b] INFO - [IncidentsDataReader] - Reading archived reduced set incidents data finished.
+2030-01-15 10:00:00.300 [PID=1033][TID=0x1a2b] INFO - Endpoint ExampleService on http://localhost:9999/example/Service was not invoked more than 12:00:00
+2030-01-15 10:00:00.350 [PID=1033][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1033][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1033][TID=0x1a2b] INFO - Qqq synthetic noise without template

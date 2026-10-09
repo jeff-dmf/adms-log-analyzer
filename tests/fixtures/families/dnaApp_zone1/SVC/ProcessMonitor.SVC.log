@@ -1,0 +1,47 @@
+﻿2030-01-15 10:00:00.000 [PID=1154][TID=0x1a2b] INFO - The EXAMPLE_SVC service on HOST01 changed from STANDBY to HOT. {E:\Builds\1\Example\Arb.cpp:100}
+2030-01-15 10:00:00.050 [PID=1154][TID=0x1a2b] WARNING - The EXAMPLE_SVC service on HOST01 is not communicating with the partner service on HOST02. Setting the state of the EXAMPLE_SVC service on HOST01 to FAIL. {E:\Builds\1\Example\Arb.cpp:100}
+2030-01-15 10:00:00.100 [PID=1154][TID=0x1a2b] INFO - The EXAMPLE_SVC service on HOST01 is now communicating with the partner on HOST02.
+2030-01-15 10:00:00.150 [PID=1154][TID=0x1a2b] WARNING - Neither EXAMPLE_SVC service is hot, HOST01 will assert. {E:\Builds\1\Example\Arb.cpp:100}
+2030-01-15 10:00:00.200 [PID=1154][TID=0x1a2b] WARNING - Non-Critical EXAMPLE_SVC process 'ExampleAdapter' dead on HOST01. Restarting process. {E:\Builds\1\Example\Pm.cpp:100}
+2030-01-15 10:00:00.250 [PID=1154][TID=0x1a2b] INFO - The EXAMPLE_SVC service on HOST01 is not communicating with the partner service on HOST02.
+2030-01-15 10:00:00.300 [PID=1154][TID=0x1a2b] WARNING - RestartProcess: Process ExampleAdapter (pid 1234) belonging to the EXAMPLE_SVC service is being restarted using command: 'ExampleAdapter.exe -serviceName EXAMPLE_SVC' {E:\Builds\1\Example\Pm.cpp:100}
+2030-01-15 10:00:00.350 [PID=1154][TID=0x1a2b] WARNING - Health Monitor has received warning notification from sys.svc.processmonitor.host01.ExampleAdapter_1234_1.healthstate for the EXAMPLE_SVC service on computer HOST01. [Non-Critical EXAMPLE_SVC process 'ExampleAdapter' dead on HOST01]
+2030-01-15 10:00:00.400 [PID=1154][TID=0x1a2b] INFO - sys.svc.processmonitor.host01.ExampleAdapter_1234_1.healthstate warning condition has been cleared for the EXAMPLE_SVC service on computer HOST01. {E:\Builds\1\Example\Hm.cpp:100}
+2030-01-15 10:00:00.450 [PID=1154][TID=0x1a2b] ERROR - Health Monitor has received request from sys.svc.processmonitor.host01.ExampleAdapter_1234_1.healthstate to shutdown service EXAMPLE_SVC on computer HOST01. [Critical EXAMPLE_SVC process 'ExampleAdapter' dead on HOST01]
+2030-01-15 10:00:00.500 [PID=1154][TID=0x1a2b] INFO - Server Starting {E:\Builds\1\Example\Dna.cpp:100}
+2030-01-15 10:00:00.550 [PID=1154][TID=0x1a2b] INFO - Neither service is hot
+2030-01-15 10:00:00.600 [PID=1154][TID=0x1a2b] INFO - Service EXAMPLE_SVC startup complete. {E:\Builds\1\Example\Dna.cpp:100}
+2030-01-15 10:00:00.650 [PID=1154][TID=0x1a2b] INFO - Shutting down service EXAMPLE_SVC. {E:\Builds\1\Example\Dna.cpp:100}
+2030-01-15 10:00:00.700 [PID=1154][TID=0x1a2b] WARNING - Socket error in send 10054 (An established connection was aborted by the software in your host machine. [10053]) {E:\Builds\1\Example\Sock.cpp:100}
+2030-01-15 10:00:00.750 [PID=1154][TID=0x1a2b] WARNING - decodeMessage: Received message from HOST02 which is more than 5 seconds different than this machine. This implies that time synchronization is not working correctly.
+2030-01-15 10:00:00.800 [PID=1154][TID=0x1a2b] INFO - decodeMessage: Time synchronization appears to be working again. Time stamps in received messages from HOST02 are now less than 5 seconds different. {E:\Builds\1\Example\Arb.cpp:100}
+2030-01-15 10:00:00.850 [PID=1154][TID=0x1a2b] INFO - Non-Critical process ExampleAdapter (1234) belonging to EXAMPLE_SVC service is alive.
+2030-01-15 10:00:00.900 [PID=1154][TID=0x1a2b] ALWAYS - ProcessMonitor configuration override for service 'EXAMPLE_SVC' loaded successfully from file: C:\Example\pm.xml
+2030-01-15 10:00:00.950 [PID=1154][TID=0x1a2b] WARNING - Error getting process handle for pid 1234. This is not an error if this is the PID of WMI Monitor. Windows error is: (The parameter is incorrect. [87]) {E:\Builds\1\Example\Pm.cpp:100}
+2030-01-15 10:00:01.000 [PID=1154][TID=0x1a2b] ERROR - warm_start failed to execute for the EXAMPLE_SVC service on computer HOST01. Process took more than the timeout of 600 seconds to complete.
+2030-01-15 10:00:01.050 [PID=1154][TID=0x1a2b] ERROR - Initiating automatic shutdown for service EXAMPLE_SVC. Reasons written after this message: {E:\Builds\1\Example\Dna.cpp:100}
+2030-01-15 10:00:01.100 [PID=1154][TID=0x1a2b] INFO - The EXAMPLE_SVC service on HOST01 changed from HOT to FAIL.
+2030-01-15 10:00:01.150 [PID=1154][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:01.200 [PID=1154][TID=0x1a2b] WARNING - Both EXAMPLE_SVC services are hot! HOST01 will stand down.
+2030-01-15 10:00:01.250 [PID=1154][TID=0x1a2b] WARNING - Waiting for replication before asserting
+2030-01-15 10:00:01.300 [PID=1154][TID=0x1a2b] WARNING - Replication timeout. Asserting HOT while updates are still occurring (backflow).
+2030-01-15 10:00:01.350 [PID=1154][TID=0x1a2b] WARNING - Critical process ExampleAdapter (1234) belonging to EXAMPLE_SVC service is dead.
+2030-01-15 10:00:01.400 [PID=1154][TID=0x1a2b] INFO - Starting service EXAMPLE_SVC
+2030-01-15 10:00:01.450 [PID=1154][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:01.500 [PID=1154][TID=0x1a2b] INFO - Starting the EXAMPLE_SVC service on computer HOST01 as requested by the control panel.
+2030-01-15 10:00:01.550 [PID=1154][TID=0x1a2b] INFO - The EXAMPLE_SVC service on computer HOST01 has been started (as requested by the control panel).
+2030-01-15 10:00:01.600 [PID=1154][TID=0x1a2b] INFO - User commanded shutdown in progress
+2030-01-15 10:00:01.650 [PID=1154][TID=0x1a2b] INFO - Running EXAMPLE_SVC\shutdown script
+2030-01-15 10:00:01.700 [PID=1154][TID=0x1a2b] INFO - Stopping the EXAMPLE_SVC service on computer HOST01 as requested by the control panel.
+2030-01-15 10:00:01.750 [PID=1154][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:01.800 [PID=1154][TID=0x1a2b] WARNING - RobustRecv - recv() failed. Could not rx data [WSAECONNRESET (10054): An existing connection was forcibly closed by the remote host.]
+2030-01-15 10:00:01.850 [PID=1154][TID=0x1a2b] WARNING - Server did not give a context reply during 'x' negotiation.
+2030-01-15 10:00:01.900 [PID=1154][TID=0x1a2b] WARNING - Process 'ExampleAdapter' (pid 1234) belonging to service 'EXAMPLE_SVC' has not shutdown within 30 seconds. Issuing 'Terminate' call.
+2030-01-15 10:00:01.950 [PID=1154][TID=0x1a2b] WARNING - ShutdownProcessThread: 'Terminate' timed out (retVal = 258) on ExampleAdapter (1234) for EXAMPLE_SVC.
+2030-01-15 10:00:02.000 [PID=1154][TID=0x1a2b] WARNING - 'Terminate' failed with retVal = 5 on process ExampleAdapter (1234) belonging to service EXAMPLE_SVC (Access is denied. [5])
+2030-01-15 10:00:02.050 [PID=1154][TID=0x1a2b] WARNING - WARNING: Unable to TERMINATE process 'ExampleAdapter'
+2030-01-15 10:00:02.100 [PID=1154][TID=0x1a2b] ERROR - Failed to perform warm start. {E:\Builds\1\Example\Dna.cpp:100}
+2030-01-15 10:00:02.150 [PID=1154][TID=0x1a2b] ERROR - Initiating automatic shutdown for service EXAMPLE_SVC on computer HOST01. (Reason: 'x').
+2030-01-15 10:00:02.200 [PID=1154][TID=0x1a2b] ERROR - Received automated request to shutdown the EXAMPLE_SVC service on computer HOST01. Explanation given 'x' (related topic 'y').
+2030-01-15 10:00:02.250 [PID=1154][TID=0x1a2b] ERROR - The service EXAMPLE_SVC on computer HOST01 is now in a shutdown condition. The service will be shutdown at the first available chance.
+2030-01-15 10:00:02.300 [PID=1154][TID=0x1a2b] ERROR - Automated shutdown in progress {E:\Builds\1\Example\Dna.cpp:100}

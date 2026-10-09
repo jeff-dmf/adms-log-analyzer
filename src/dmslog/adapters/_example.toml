@@ -1,0 +1,86 @@
+# Minimal example of an adapter template file (schema 1). Documentation only: load_catalog()
+# skips this file. The full reference is _schema.md, next to this file.
+#
+# Every feature of the schema appears once. Values are fictitious.
+
+schema = 1
+family = "AEXAMPLE"                 # family code from families.toml (stream.family)
+description = "Example adapter: one template per schema feature"
+# extends = ["_common"]             # libraries tried after this file's templates (in this order)
+
+[payload_defaults]                  # role -> direction and peer, for payloads without their own
+request = { direction = "in", peer = "EXT" }
+response = { direction = "out", peer = "EXT" }
+fault = { direction = "out", peer = "EXT" }
+
+# 1. Exact text: fastest dispatch (one dict lookup). Old IDs stay resolvable as aliases.
+[[template]]
+code = "EXA-001"
+aliases = ["EXA-OLD-01"]
+class = "lifecycle"
+title = "Health check answered"
+sev = 5
+fts = false                         # high-volume noise: kept out of the full-text index
+stream = "normal"
+text = "Adapter responded with HTTP OK 200 response"
+examples = [" Adapter responded with HTTP OK 200 response "]   # msg is stripped before matching
+
+# 2. Regex with typed fields and correlation keys; the record points to the sensitive log.
+[[template]]
+code = "EXA-010"
+class = "start"
+regex = '''^\[(?P<op>Get\w+) start\] - Request (?P<msg_id>[0-9a-fA-F-]{36}) for incident INC (?P<inc>\d+) from client (?P<client_id>\d+)\. Details in sensitive log\.$'''
+fields = { msg_id = "guid", inc = "int", client_id = "int" }
+keys = [{ field = "msg_id", type = "msgid" }, "inc"]
+refs_sensitive = true
+examples = [
+    { msg = "[GetIncidents start] - Request 0B5C1F7E-1111-2222-3333-444455556666 for incident INC 42 from client 7. Details in sensitive log.", fields = { op = "GetIncidents", msg_id = "0b5c1f7e-1111-2222-3333-444455556666", inc = 42, client_id = 7 } },
+]
+counter_examples = ["[GetIncidents end] - Request 0b5c1f7e-1111-2222-3333-444455556666 processed."]
+
+# 3. Continuation parser: exception type, first frame and build from the stack trace.
+[[template]]
+code = "EXA-020"
+class = "error"
+sev = 2
+regex = '''^Non Fatal Exception (?P<exc_type>[\w.]+): (?P<exc_msg>.*)$'''
+cont = { parser = "dotnet_stack", max_lines = 200 }
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = "Non Fatal Exception System.ObjectDisposedException: Cannot access a disposed object.", cont = "\tManaged Code Stack Trace:\n   at Example.Service.Call() in F:\\PD\\1234567\\1\\Example\\Service.cs:line 83\n", fields = { exc_type = "System.ObjectDisposedException", frame = "Example.Service.Call", build = "1234567" } },
+]
+
+# 4. Payload: the XML starts right after the match; the adapter appends a "." to the root.
+[[template]]
+code = "EXA-030"
+class = "req_resp"
+stream = "sensitive"
+regex = '''^Message(?: content)?: (?=<)'''
+payload = { fmt = "xml", start = "match_end", strip_suffix = ".", role = "by_root" }
+examples = [{ msg = "Message content: <ChangedThings xmlns=\"urn:example\">", cont = "  <Header/>\n</ChangedThings>." }]
+
+# 5. Severity from a field, and fields from a continuation line.
+[[template]]
+code = "EXA-040"
+class = "validation"
+regex = '''^\[Validation (?P<vsev>Info|Warning|Error|Critical)\]: (?P<code>\w+)$'''
+sev_field = "vsev"
+sev_map = { Critical = 2, Error = 2, Warning = 3, Info = 4 }
+cont = { parser = "line_regex", regex = '''^Entity (?P<gid>\d+)$''' }
+fields = { gid = "int" }
+keys = [{ field = "code", type = "errcode" }, "gid"]
+examples = [{ msg = "\t\t[Validation Critical]: VehicleNotFound", cont = "Entity 288230376151711744", fields = { code = "VehicleNotFound", gid = 288230376151711744 } }]
+
+# Rules for the derivers (validated here: every code must exist; their meaning belongs to
+# the deriver tasks, ARQUITETURA 6.5 and 8).
+[[operation]]
+name_field = "op"
+start = ["EXA-010"]
+fail = ["EXA-020"]
+pair_by = ["tid"]
+
+[[sensitive_pair]]
+normal = "EXA-010"
+sensitive = "EXA-030"
+match = ["pid", "tid"]
+max_dt_ms = 1000

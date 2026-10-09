@@ -34,7 +34,7 @@ from ..ingest.ers import (
     parse_ers_name,
 )
 from ..ingest.reader import ReadLimitError
-from ..store import db, query
+from ..store import db, query, views
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
 from .sse import ProgressHub
@@ -50,6 +50,7 @@ SCOPES = (pipeline.SCOPE_DEFAULT, pipeline.SCOPE_ALL)
 SCOPE_LEAVES = frozenset({"source", "stream", "family", "ts"})
 _ENTRY_ID = re.compile(r"\d{1,18}\Z")
 _SMALL_INT = re.compile(r"\d{1,6}\Z")
+_VIEW_STATUS = {"filter_too_large": 413, "duplicate_name": 409, "too_many_views": 409, "not_found": 404}
 
 
 class ApiError(Exception):
@@ -367,6 +368,18 @@ def _query_int(request: Request, name: str, default: int) -> int:
     return int(raw)
 
 
+_FAMILY = re.compile(r"[A-Za-z0-9_]{1,32}\Z")
+
+
+def _family_param(request: Request) -> str | None:
+    raw = request.query.get("family")
+    if raw is None or raw == "":
+        return None
+    if not _FAMILY.match(raw):
+        raise ApiError(400, "invalid_field", messages.API_BAD_FAMILY)
+    return raw
+
+
 def _case_from_body(store: CaseStore, body: dict[str, Any]) -> str:
     return store.require(body.get("case"))
 
@@ -460,8 +473,14 @@ class Api:
             ("POST", re.compile(r"/api/cases/(?P<case>[^/]+)/collections\Z"), self.add_collection),
             ("GET", re.compile(r"/api/cases/(?P<case>[^/]+)/progress\Z"), self.progress),
             ("GET", re.compile(r"/api/sources\Z"), self.list_sources),
+            ("GET", re.compile(r"/api/templates\Z"), self.list_templates),
+            ("GET", re.compile(r"/api/unknown\Z"), self.list_unknown),
             ("POST", re.compile(r"/api/entries/page\Z"), self.entries_page),
             ("POST", re.compile(r"/api/entries/count\Z"), self.entries_count),
+            ("POST", re.compile(r"/api/histogram\Z"), self.histogram),
+            ("GET", re.compile(r"/api/views\Z"), self.list_views),
+            ("POST", re.compile(r"/api/views\Z"), self.create_view),
+            ("DELETE", re.compile(r"/api/views/(?P<id>[^/]+)\Z"), self.delete_view),
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)\Z"), self.get_entry),
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/context\Z"), self.entry_context),
         ]
@@ -487,6 +506,9 @@ class Api:
             raise ApiError(404, "not_found", messages.API_NOT_FOUND)
         except ApiError as exc:
             return Response(exc.status, exc.body())
+        except views.ViewError as exc:
+            status = _VIEW_STATUS.get(exc.code, 400)
+            return Response(status, {"error": exc.code, "message": str(exc)})
         except QueryInputError as exc:
             return Response(400, {"error": exc.code, "message": str(exc), "path": exc.path})
         except query.QueryTimeout:
@@ -573,6 +595,26 @@ class Api:
         ]  # fmt: skip
         return Response(200, {"sources": sources})
 
+    # -- templates and unknown signatures
+
+    def list_templates(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        family = _family_param(request)
+        with self.store.reader(cid) as conn:
+            templates = query.list_templates(conn, family)
+        return Response(200, {"case": cid, "family": family, "templates": templates})
+
+    def list_unknown(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        family = _family_param(request)
+        limit = _query_int(request, "limit", DEFAULT_PAGE_LIMIT)
+        if not 1 <= limit <= MAX_PAGE_LIMIT:
+            raise ApiError(400, "bad_limit", messages.API_BAD_LIMIT.format(limit=MAX_PAGE_LIMIT))
+        with self.store.reader(cid) as conn:
+            rows = query.unknown_signatures(conn, family, limit)
+            totals = query.unknown_totals(conn, family)
+        return Response(200, {"case": cid, "family": family, "unknown": rows, **totals})
+
     # -- entries
 
     def entries_page(self, request: Request) -> Response:
@@ -609,6 +651,29 @@ class Api:
             result = query.count(conn, flt)
         return Response(200, {"count": result.n, "exact": result.exact})
 
+    def histogram(self, request: Request) -> Response:
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        flt = body.get("filter")
+        if flt is not None and not isinstance(flt, dict):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
+        _check_scan_filter(flt)
+        with self.store.reader(cid) as conn:
+            result = query.histogram(conn, flt, body.get("bucket_ms"), body.get("split", "sev"))
+        return Response(
+            200,
+            {
+                "bucket_ms": result.bucket_ms,
+                "start": result.start,
+                "n_buckets": result.n_buckets,
+                "split": result.split,
+                "series": result.series,
+                "total": result.total,
+                "exact": result.exact,
+                "method": result.method,
+            },
+        )
+
     @staticmethod
     def _entry_id(request: Request) -> int:
         raw = request.match["id"]
@@ -640,3 +705,37 @@ class Api:
                 404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
             )
         return Response(200, {"rows": ctx.rows, "anchor": ctx.anchor, "same": ctx.same})
+
+    # -- saved filters (per case, table saved_view)
+
+    def list_views(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            return Response(200, {"views": views.list_views(conn)})
+
+    def create_view(self, request: Request) -> Response:
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        flt = body.get("filter")
+        if flt is not None and isinstance(flt, dict) and flt:
+            _check_scan_filter(flt)
+        with self._writer(cid) as conn:
+            created = views.create_view(conn, body.get("name"), flt, body.get("columns"))
+        return Response(201, created)
+
+    def delete_view(self, request: Request) -> Response:
+        raw = request.match["id"]
+        if not _ENTRY_ID.match(raw):
+            raise ApiError(400, "invalid_view_id", messages.API_VIEW_BAD_ID)
+        cid = _case_from_query(self.store, request)
+        with self._writer(cid) as conn:
+            views.delete_view(conn, int(raw))
+        return Response(204)
+
+    @contextmanager
+    def _writer(self, case_id: str) -> Iterator[sqlite3.Connection]:
+        """A short-lived read-write connection (user data only; the ingest has its own)."""
+        cid = self.store.require(case_id)
+        conn = db.connect(self.store.db_path(cid))
+        with closing(conn):
+            yield conn

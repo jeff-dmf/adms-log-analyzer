@@ -1,0 +1,191 @@
+# AVL adapter (AVLAdapter_<pid>[.sensitive].log). Source: docs/formato/avl-osr-smn-siteswitch.md.
+# High-volume adapter that only writes DEBUGLOG. Statistics (COM-*), cache map trio and the
+# generic system-event/debug lines come from the shared library.
+
+schema = 1
+family = "AAVL"
+description = "AVL adapter: vehicle coordinate events, validations, periodic quality task"
+extends = ["_common"]
+
+# Event life-cycle: one event, always on the same thread. The end is always "finished
+# successfully", even when the message was rejected (see AVL-007/AVL-008).
+[[template]]
+code = "AVL-001"
+class = "start"
+sev = 5
+title = "Vehicle event processing started"
+regex = '''^"(?P<event>[^"]+)": (?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}) message processing started\.\.\.$'''
+fields = { msg_id = "guid" }
+keys = [{ field = "msg_id", type = "msgid" }]
+stream = "normal"
+examples = [
+    { msg = '"ChangedVehiclesCoordinatesEvent": 00000000-0000-4000-8000-000000000001 message processing started...', fields = { event = "ChangedVehiclesCoordinatesEvent", msg_id = "00000000-0000-4000-8000-000000000001" } },
+]
+counter_examples = [
+    '"ChangedVehiclesCoordinatesEvent": 00000000-0000-4000-8000-000000000001 message processing finished successfully.',
+    '"ChangedVehiclesCoordinatesEvent": not-a-guid message processing started...',
+]
+
+[[template]]
+code = "AVL-002"
+class = "other"
+sev = 5
+title = "Position updated (details in the sensitive log)"
+text = "Position is updated for vehicle(s). For more details check sensitive log."
+refs_sensitive = true
+stream = "normal"
+examples = ["Position is updated for vehicle(s). For more details check sensitive log."]
+counter_examples = ["Position is updated for the following vehicle(s): ABC1D23."]
+
+[[template]]
+code = "AVL-003"
+class = "validation"
+sev = 5
+title = "Validation Info: MessageRevisionMissing"
+regex = '''^\[Validation Info\]: (?P<code>MessageRevisionMissing)$'''
+keys = [{ field = "code", type = "errcode" }]
+stream = "normal"
+examples = [{ msg = "\t\t[Validation Info]: MessageRevisionMissing", fields = { code = "MessageRevisionMissing" } }]
+counter_examples = ["[Validation Info]: HeaderTimestampMissing"]
+
+[[template]]
+code = "AVL-004"
+class = "validation"
+sev = 5
+title = "Validation Info: HeaderTimestampMissing"
+regex = '''^\[Validation Info\]: (?P<code>HeaderTimestampMissing)$'''
+keys = [{ field = "code", type = "errcode" }]
+stream = "normal"
+examples = [{ msg = "\t\t[Validation Info]: HeaderTimestampMissing", fields = { code = "HeaderTimestampMissing" } }]
+counter_examples = ["[Validation Info]: MessageRevisionMissing"]
+
+# The word "sensistive" is literal in the adapter text.
+[[template]]
+code = "AVL-005"
+class = "validation"
+sev = 5
+title = "Validation details are in the sensitive log"
+text = "Details regarding validation errors can be found adapters sensistive log."
+refs_sensitive = true
+stream = "normal"
+examples = ["\t\t Details regarding validation errors can be found adapters sensistive log."]
+counter_examples = ["Details regarding validation errors can be found adapters sensitive log."]
+
+[[template]]
+code = "AVL-006"
+class = "end"
+sev = 5
+title = "Vehicle event processing finished"
+regex = '''^"(?P<event>[^"]+)": (?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}) message processing finished successfully\.$'''
+fields = { msg_id = "guid" }
+keys = [{ field = "msg_id", type = "msgid" }]
+stream = "normal"
+examples = [
+    { msg = '"ChangedVehiclesCoordinatesEvent": 00000000-0000-4000-8000-000000000001 message processing finished successfully.', fields = { event = "ChangedVehiclesCoordinatesEvent", msg_id = "00000000-0000-4000-8000-000000000001" } },
+]
+counter_examples = ['"ChangedVehiclesCoordinatesEvent": 00000000-0000-4000-8000-000000000001 message processing started...']
+
+[[template]]
+code = "AVL-007"
+class = "validation"
+sev = 2
+title = "Validation Critical: VehicleNotFound"
+regex = '''^\[Validation Critical\]: (?P<code>VehicleNotFound)$'''
+keys = [{ field = "code", type = "errcode" }]
+stream = "normal"
+examples = [{ msg = "\t\t[Validation Critical]: VehicleNotFound", fields = { code = "VehicleNotFound" } }]
+counter_examples = ["[Validation Info]: VehicleNotFound"]
+
+[[template]]
+code = "AVL-008"
+class = "error"
+sev = 2
+title = "System event: received message is invalid"
+regex = '''^\[SystemEventSender\] System event message: \[AdapterAVL\] (?P<event_text>.+)$'''
+stream = "normal"
+examples = [{ msg = "[SystemEventSender] System event message: [AdapterAVL] Received message is invalid", fields = { event_text = "Received message is invalid" } }]
+counter_examples = ["[SystemEventSender] System event message: [AdapterOsr] [GetIncidents] Errors occurred while processing received message"]
+
+[[template]]
+code = "AVL-009"
+class = "other"
+sev = 4
+title = "Coordinate quality task started"
+text = "Checking quality of coordinates..."
+examples = ["Checking quality of coordinates..."]
+counter_examples = ["Checking quality of coordinates"]
+
+[[template]]
+code = "AVL-010"
+class = "other"
+sev = 4
+title = "Updating stale coordinates"
+regex = '''^Updating quality for (?P<n>\d+) staled coordinate\(s\)\.\.\.$'''
+fields = { n = "int" }
+examples = [{ msg = "Updating quality for 5 staled coordinate(s)...", fields = { n = 5 } }]
+counter_examples = ["Updating quality for staled coordinate(s) successfully finished."]
+
+[[template]]
+code = "AVL-011"
+class = "other"
+sev = 4
+title = "Stale coordinates update finished"
+text = "Updating quality for staled coordinate(s) successfully finished."
+examples = ["Updating quality for staled coordinate(s) successfully finished."]
+counter_examples = ["Updating quality for 5 staled coordinate(s)..."]
+
+[[template]]
+code = "AVL-012"
+class = "other"
+sev = 4
+title = "No stale coordinates"
+text = "There is no coordinates to be set on stale."
+examples = ["There is no coordinates to be set on stale."]
+counter_examples = ["There are no coordinates to be set on stale."]
+
+# Generic validation line for any other Error Configuration code (the three known codes above
+# are excluded, so that every template owns its own examples).
+[[template]]
+code = "AVL-016"
+class = "validation"
+sev = 4
+sev_field = "vsev"
+sev_map = { Critical = 2, Error = 2, Warning = 3, Info = 4 }
+title = "Validation (other code)"
+regex = '''^\[Validation (?P<vsev>Info|Warning|Error|Critical)\]: (?!(?:MessageRevisionMissing|HeaderTimestampMissing|VehicleNotFound)$)(?P<code>\w+)$'''
+keys = [{ field = "code", type = "errcode" }]
+stream = "normal"
+examples = [{ msg = "\t\t[Validation Critical]: InvalidSomething", fields = { vsev = "Critical", code = "InvalidSomething" } }]
+counter_examples = ["[Validation Critical]: VehicleNotFound", "[Validation Info]: Message revision is not provided."]
+
+# --- sensitive log ---------------------------------------------------------------------
+
+[[template]]
+code = "AVL-S002"
+class = "other"
+sev = 4
+title = "Position updated for the following vehicles"
+regex = '''^Position is updated for the following vehicle\(s\): (?P<vehicles>[^.]*?) ?\.$'''
+fields = { vehicles = "list" }
+keys = [{ field = "vehicles", type = "vehicle" }]
+stream = "sensitive"
+examples = [
+    { msg = "Position is updated for the following vehicle(s): ZZZ0A00.", fields = { vehicles = ["ZZZ0A00"] } },
+    { msg = "Position is updated for the following vehicle(s): ZZZ-0000 .", fields = { vehicles = ["ZZZ-0000"] } },
+]
+counter_examples = ["Position is updated for vehicle(s). For more details check sensitive log."]
+
+[[template]]
+code = "AVL-S003"
+class = "validation"
+sev = 4
+sev_field = "vsev"
+sev_map = { Critical = 2, Error = 2, Warning = 3, Info = 4 }
+title = "Validation detail"
+regex = '''^\[Validation (?P<vsev>Info|Warning|Error|Critical)\]: (?P<detail>.+)$'''
+stream = "sensitive"
+examples = [
+    { msg = "\t\t[Validation Info]: Message revision is not provided.", fields = { vsev = "Info", detail = "Message revision is not provided." } },
+    { msg = "\t\t[Validation Critical]: Invalid vehicle mRID(s): \"ZZZ0A00\"", fields = { vsev = "Critical" } },
+]
+counter_examples = ["Validation Info: Message revision is not provided."]

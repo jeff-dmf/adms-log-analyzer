@@ -1,0 +1,156 @@
+/* Filter tree editor and saved filters. Uses the theme tokens of app.css (light and dark). */
+.filter-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  color: var(--text);
+}
+
+.filter-tree .ft-title,
+.filter-tree .sv-title {
+  margin: 0;
+  font-size: 1em;
+}
+
+.ft-bar,
+.ft-head,
+.ft-leaf,
+.ft-actions,
+.ft-fields,
+.sv-form,
+.sv-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ft-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.ft-info.ft-bad,
+.ft-error,
+.sv-message.sv-error {
+  color: var(--error-text);
+}
+
+.ft-error:not(:empty) {
+  flex-basis: 100%;
+  padding: 2px 6px;
+  background: var(--error-bg);
+  border-radius: 3px;
+}
+
+.ft-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 4px;
+}
+
+.ft-group.ft-op-and { border-left-color: var(--accent); }
+.ft-group.ft-op-or { border-left-color: var(--sev-3); }
+.ft-group.ft-op-not { border-left-color: var(--sev-2); }
+
+.ft-children {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 12px;
+}
+
+.ft-leaf {
+  padding: 4px 6px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.ft-field,
+.ft-fields > .ft-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ft-fields .ft-field label,
+.ft-head label,
+.ft-leaf label {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.ft-grow {
+  flex: 1 1 220px;
+}
+
+.ft-grow input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 8em;
+}
+
+.ft-raw {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft-empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+.filter-tree button[disabled] {
+  opacity: 0.5;
+}
+
+.ft-remove,
+.sv-danger {
+  color: var(--error-text);
+}
+
+.sv-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.sv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-date,
+.sv-empty {
+  color: var(--muted);
+}
+
+.sv-apply {
+  max-width: 24em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-tree button:focus-visible,
+.filter-tree select:focus-visible,
+.filter-tree input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}

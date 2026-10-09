@@ -1,0 +1,160 @@
+# CRM adapter (CrmAdapter_<pid>[.sensitive].log). Source: docs/formato/crm-e-demais.md, section 2.3.
+# GetTroubleTickets is synchronous (same thread, started -> Returning -> finished); in
+# CreatedTroubleTickets the IMS callback (CRM-012) arrives on another thread and is paired by GID.
+# Validation lines (GEN-ERR-*), connections, statistics and exceptions come from _common.
+
+schema = 1
+family = "ACRM"
+description = "CRM adapter: trouble tickets (GetTroubleTickets, CreatedTroubleTickets)"
+extends = ["_common"]
+
+[[template]]
+code = "CRM-001"
+class = "start"
+title = "GetTroubleTickets started"
+sev = 4
+stream = "normal"
+regex = '''^\[(?P<op>GetTroubleTickets) started\] - Processing message: Message Id: "(?P<msg_id>[^"]*)" Context: "(?P<ctx>[^"]*)" Search filter: "(?P<filter>[^"]*)"$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = '[GetTroubleTickets started] - Processing message: Message Id: "00000000-0000-4000-8000-000000000001" Context: "All" Search filter: "INC 1001"', fields = { op = "GetTroubleTickets", msg_id = "00000000-0000-4000-8000-000000000001", ctx = "All", filter = "INC 1001" } },
+    { msg = '[GetTroubleTickets started] - Processing message: Message Id: "" Context: "All" Search filter: "CALL 2002"', fields = { msg_id = "", filter = "CALL 2002" } },
+]
+counter_examples = ['[GetTroubleTickets finished] - Message with message ID 00000000-0000-4000-8000-000000000001 processed.']
+
+[[template]]
+code = "CRM-002"
+class = "req_resp"
+title = "GetTroubleTickets returning tickets"
+sev = 4
+stream = "normal"
+regex = '''^\[(?P<op>GetTroubleTickets)\] - Returning (?P<n>\d+) trouble ticket\(s\) for context "(?P<ctx>[^"]*)" and search filter: (?P<filter>.*)$'''
+fields = { n = "int" }
+examples = [
+    { msg = '[GetTroubleTickets] - Returning 3 trouble ticket(s) for context "All" and search filter: INC 1001', fields = { n = 3, ctx = "All", filter = "INC 1001" } },
+    '[GetTroubleTickets] - Returning 0 trouble ticket(s) for context "All" and search filter: 2002',
+]
+counter_examples = ['[GetTroubleTickets] - Returning x trouble ticket(s) for context "All" and search filter: INC 1']
+
+[[template]]
+code = "CRM-003"
+class = "end"
+title = "GetTroubleTickets finished"
+sev = 4
+stream = "normal"
+regex = '''^\[(?P<op>GetTroubleTickets) finished\] - Message with message ID "?(?P<msg_id>[^"\s]*)"? ?processed\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = "[GetTroubleTickets finished] - Message with message ID 00000000-0000-4000-8000-000000000001 processed.", fields = { msg_id = "00000000-0000-4000-8000-000000000001" } },
+    { msg = "[GetTroubleTickets finished] - Message with message ID  processed.", fields = { msg_id = "" } },
+    "[GetTroubleTickets finished] - Message with message ID EXAMPLE_GET_1 processed.",
+]
+counter_examples = ['[GetTroubleTickets failed] - Processing message with messageId: "x" failed.']
+
+[[template]]
+code = "CRM-004"
+class = "error"
+title = "GetTroubleTickets failed"
+sev = 2
+stream = "normal"
+regex = '''^\[(?P<op>GetTroubleTickets) failed\] - Processing message with messageId: "(?P<msg_id>[^"]*)" failed\.$'''
+cont = "dotnet_stack"
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = '[GetTroubleTickets failed] - Processing message with messageId: "00000000-0000-4000-8000-000000000001" failed. ', cont = "Reason: Example failure\nStack trace:    at Example.Service.Call()", fields = { op = "GetTroubleTickets", msg_id = "00000000-0000-4000-8000-000000000001" } },
+]
+counter_examples = ["[GetTroubleTickets finished] - Message with message ID x processed."]
+
+[[template]]
+code = "CRM-010"
+class = "start"
+title = "CreatedTroubleTickets started"
+sev = 4
+stream = "normal"
+refs_sensitive = true
+regex = '''^\[(?P<op>CreatedTroubleTickets) started\] - Processing message with Message ID "(?P<msg_id>[^"]*)"\. Writing message data to sensitive log\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = '[CreatedTroubleTickets started] - Processing message with Message ID "EXAMPLE_1". Writing message data to sensitive log.', fields = { msg_id = "EXAMPLE_1" } }]
+counter_examples = ["[CreatedTroubleTickets started] - Processing message: Message ID: EXAMPLE_1"]
+
+[[template]]
+code = "CRM-011"
+class = "req_resp"
+title = "IMS created OMS_REQUEST entities"
+sev = 4
+regex = '''^\[OMSBusinessManagerCallbackHandler\] IMS created OMS_REQUEST entities: (?P<gid>\d+)\. Now adapter will wait \((?P<timeout>[\d:.]+)\) for IMS callback\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "[OMSBusinessManagerCallbackHandler] IMS created OMS_REQUEST entities: 288230376151711744. Now adapter will wait (00:00:15) for IMS callback.", fields = { gid = 288230376151711744, timeout = "00:00:15" } }]
+counter_examples = ["[OMSBusinessManagerCallbackHandler] IMS created OMS_REQUEST entities: x."]
+
+[[template]]
+code = "CRM-012"
+class = "req_resp"
+title = "IMS callback received"
+sev = 4
+regex = '''^IMS callback received for OMS_REQUEST GID: (?P<gid>\d+) - (?P<result>.*)$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "IMS callback received for OMS_REQUEST GID: 288230376151711744 - Approved.", fields = { gid = 288230376151711744, result = "Approved." } }]
+counter_examples = ["IMS callback received for OMS_REQUEST GID: x - Approved."]
+
+[[template]]
+code = "CRM-013"
+class = "req_resp"
+title = "OMS_REQUEST processed by IMS"
+sev = 4
+regex = '''^SUCCESS: OMS_REQUEST entities \((?P<gid>\d+)\) are successfully processed by IMS\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "SUCCESS: OMS_REQUEST entities (288230376151711744) are successfully processed by IMS.", fields = { gid = 288230376151711744 } }]
+counter_examples = ["SUCCESS: OMS_REQUEST entities (x) are successfully processed by IMS."]
+
+[[template]]
+code = "CRM-014"
+class = "error"
+title = "IMS callback not received in time"
+sev = 3
+regex = '''^\[OMSBusinessManagerCallbackHandler\] WARNING - Call creation has been forwarded to IMS, but callback is not received within (?P<timeout>[\d:.]+) interval$'''
+examples = [{ msg = "[OMSBusinessManagerCallbackHandler] WARNING - Call creation has been forwarded to IMS, but callback is not received within 00:00:15 interval", fields = { timeout = "00:00:15" } }]
+counter_examples = ["[OMSBusinessManagerCallbackHandler] Call creation has been forwarded to IMS"]
+
+[[template]]
+code = "CRM-015"
+class = "end"
+title = "CreatedTroubleTickets finished"
+sev = 4
+stream = "normal"
+regex = '''^\[(?P<op>CreatedTroubleTickets) finished\] - Message with message ID "(?P<msg_id>[^"]*)" processed\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = '[CreatedTroubleTickets finished] - Message with message ID "EXAMPLE_1" processed.', fields = { msg_id = "EXAMPLE_1" } }]
+counter_examples = ["[CreatedTroubleTickets finished] - Message with message ID EXAMPLE_1 processed."]
+
+# Sensitive stream: the ticket number or the landbase search arrives on the continuation.
+[[template]]
+code = "CRM-S01"
+class = "start"
+title = "CreatedTroubleTickets message data"
+sev = 4
+stream = "sensitive"
+regex = '''^\[(?P<op>CreatedTroubleTickets) started\] - Processing message: Message ID: (?P<msg_id>\S+)$'''
+cont = { parser = "line_regex", regex = '''^(?P<ticket_kind>Customer|Landbase) trouble ticket: (?P<ticket>.*)$''' }
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = "[CreatedTroubleTickets started] - Processing message: Message ID: EXAMPLE_1", cont = "Customer trouble ticket: T-0001", fields = { msg_id = "EXAMPLE_1", ticket_kind = "Customer", ticket = "T-0001" } },
+    { msg = "[CreatedTroubleTickets started] - Processing message: Message ID: EXAMPLE_2", cont = "Landbase trouble ticket: [Search type: EXAMPLE, Parameter: X = \"Y\"]", fields = { ticket_kind = "Landbase" } },
+]
+counter_examples = ['[CreatedTroubleTickets started] - Processing message with Message ID "EXAMPLE_1". Writing message data to sensitive log.']
+
+[[operation]]
+name_field = "op"
+start = ["CRM-001", "CRM-010"]
+end = ["CRM-003", "CRM-015"]
+fail = ["CRM-004", "CRM-014"]
+pair_by = ["tid"]
+
+[[sensitive_pair]]
+normal = "CRM-010"
+sensitive = "CRM-S01"
+match = ["pid", "tid"]
+max_dt_ms = 100

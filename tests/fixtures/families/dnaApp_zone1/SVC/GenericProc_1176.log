@@ -1,0 +1,212 @@
+﻿2030-01-15 10:00:00.000 [PID=1176][TID=0x1a2b] INFO - Endpoint ReceiveExampleService on https://localhost:9999/ReceiveExampleService was not invoked more than 12:00:00
+2030-01-15 10:00:00.050 [PID=1176][TID=0x1a2b] INFO - Client for endpoint ExampleService didn't send request to https://example.invalid/x for more than 12:00:00.
+2030-01-15 10:00:00.100 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Opening new service connection binding = Example.TcpClientBinding, address = host:1234, serviceName = ExampleService, callbackService = Example.Callback
+2030-01-15 10:00:00.150 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Opening TCP client connection with parameters fullAddress = net.tcp://example.invalid:1234, timeout = 5
+2030-01-15 10:00:00.200 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - ShMem client connection guid = 00000000-0000-4000-8000-0000a0000001 sending request msgSize = 50.
+2030-01-15 10:00:00.250 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Calling service operation GetExample over service connection id = 4.
+2030-01-15 10:00:00.300 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Compressing request message for method GetExample, original size = 100, compressed size = 40.
+2030-01-15 10:00:00.350 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Service operation ExampleResults implementation called.
+2030-01-15 10:00:00.400 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp socket id = 5 receive called with 4 bytes count.
+2030-01-15 10:00:00.450 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - TCP client connection id = 3 sending message msgId = 7, msgType = Request, msgSize = 120.
+2030-01-15 10:00:00.500 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Encrypting message with byte count 100.
+2030-01-15 10:00:00.550 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Resources succesfully cleaned up for tcp socket id = 5.
+2030-01-15 10:00:00.600 [PID=1176][TID=0x1a2b] DEBUGLOG - Cache[ExampleSmartCache] Apply delta in ElementCache. Inserted 1 | Updated 2 | Deleted 3
+2030-01-15 10:00:00.650 [PID=1176][TID=0x1a2b] DEBUGLOG - Replicator: SendReplica client[clientID:1, clientName:ExampleSmartCache, dataset:2, dataflow:3] with MessageChunks Count: 4
+2030-01-15 10:00:00.700 [PID=1176][TID=0x1a2b] DEBUGLOG - Model ID = '12345678
+2030-01-15 10:00:00.750 [PID=1176][TID=0x1a2b] ALWAYS - Cache[ExampleSmartCache] Local persistent store loaded.
+2030-01-15 10:00:00.800 [PID=1176][TID=0x1a2b] ALWAYS - [Configuration] [LogLevel]: [DebugLog]. Type: [ConfigurationRegistry]
+2030-01-15 10:00:00.850 [PID=1176][TID=0x1a2b] ALWAYS - [Configuration][LoadingError] [ExampleParam] Parameter does not exist in the Registry.
+2030-01-15 10:00:00.900 [PID=1176][TID=0x1a2b] ALWAYS - [Configuration] [Default] [ExampleParam]: [5].
+2030-01-15 10:00:00.950 [PID=1176][TID=0x1a2b] ALWAYS - [ServiceUrl] : For ReceiveExample service url is https://localhost:9999/ReceiveExampleService.
+2030-01-15 10:00:01.000 [PID=1176][TID=0x1a2b] ALWAYS - [AuditingPeriod] : 12:00:00
+2030-01-15 10:00:01.050 [PID=1176][TID=0x1a2b] ALWAYS - [Configuration] [ExampleTimeout] : [00:00:30]. Default value loaded.
+2030-01-15 10:00:01.100 [PID=1176][TID=0x1a2b] ALWAYS - [Configuration] Environment variable No_SqliteLog is set on 1.
+2030-01-15 10:00:01.150 [PID=1176][TID=0x1a2b] INFO - Connecting to ExampleBusinessService.
+2030-01-15 10:00:01.200 [PID=1176][TID=0x1a2b] INFO - Successfully connected to ExampleBusinessService.
+2030-01-15 10:00:01.250 [PID=1176][TID=0x1a2b] INFO - [ClientConnectionRouter] Add connection for ClientId = 7
+2030-01-15 10:00:01.300 [PID=1176][TID=0x1a2b] INFO - Debug level changed from DebugLog (3) to Info (5).
+2030-01-15 10:00:01.350 [PID=1176][TID=0x1a2b] INFO - Endpoint ReceiveExampleService on https://localhost:9999/x was invoked
+2030-01-15 10:00:01.400 [PID=1176][TID=0x1a2b] WARNING - Detected errors:
+ExampleCodeOne
+ExampleCodeTwo
+2030-01-15 10:00:01.450 [PID=1176][TID=0x1a2b] INFO - A detailed description of these errors can be found in the adapters sensitive log.
+2030-01-15 10:00:01.500 [PID=1176][TID=0x1a2b] INFO - [SystemEventSender] System event message: [AdapterExample] [CreateExample] Errors occurred while processing received message
+2030-01-15 10:00:01.550 [PID=1176][TID=0x1a2b] INFO - Publishing EventData:
+Timestamp: 2026-01-01 00:00:00
+Details: example
+2030-01-15 10:00:01.600 [PID=1176][TID=0x1a2b] INFO - [SystemEventSender] Trying to send an system event. System event message: [AdapterExample] Example
+2030-01-15 10:00:01.650 [PID=1176][TID=0x1a2b] ERROR - Non Fatal Exception System.ObjectDisposedException: Cannot access a disposed object.
+	Managed Code Stack Trace:
+   at Example.Service.Call() in F:\PD\1234567\1\Example\Service.cs:line 83
+2030-01-15 10:00:01.700 [PID=1176][TID=0x1a2b] DEBUGLOG - Removing zero IDs from the source collection: "1", "2".
+2030-01-15 10:00:01.750 [PID=1176][TID=0x1a2b] DEBUGLOG - Filtering data succeeded. 5 entities returned.
+2030-01-15 10:00:01.800 [PID=1176][TID=0x1a2b] DEBUGLOG - New "EXAMPLE_MAP" map content:
+	1 - A
+	2 - B
+2030-01-15 10:00:01.850 [PID=1176][TID=0x1a2b] DEBUGLOG - "Key: X-1" entry added to the "EXAMPLE_MAP" map.
+2030-01-15 10:00:01.900 [PID=1176][TID=0x1a2b] DEBUGLOG - 12 entries will be added to the "EXAMPLE_MAP" map...
+2030-01-15 10:00:01.950 [PID=1176][TID=0x1a2b] DEBUGLOG - Adding the key 12345
+2030-01-15 10:00:02.000 [PID=1176][TID=0x1a2b] ALWAYS - String-to-long map "EXAMPLE_MAP" created. This map will store [EXAMPLE_NAME - GID] pairs.
+2030-01-15 10:00:02.050 [PID=1176][TID=0x1a2b] WARNING - WARNING: Key Name: "X" Semantic: "Y" already exists! Old value will be overwritten!
+2030-01-15 10:00:02.100 [PID=1176][TID=0x1a2b] DEBUGLOG - ModeTracker: Sleeping...
+2030-01-15 10:00:02.150 [PID=1176][TID=0x1a2b] DEBUGLOG - Mode Tracker: [example_table] table is not changed. Elements: RTDB(3), array(3).
+2030-01-15 10:00:02.200 [PID=1176][TID=0x1a2b] DEBUGLOG - Message with MessageID: '00000000-0000-4000-8000-0000a0000001' will be logged in sensitive log.
+2030-01-15 10:00:02.250 [PID=1176][TID=0x1a2b] INFO - [Communication2] - Finished terminating 00000000-0000-4000-8000-0000a0000001 connection.
+2030-01-15 10:00:02.300 [PID=1176][TID=0x1a2b] DEBUGLOG - [AdaptivePool Example_Base] [UsageMonitor] In the previous 60000ms period adaptive pool peak pressure parameters were max=3, min=1. Size: 4.
+2030-01-15 10:00:02.350 [PID=1176][TID=0x1a2b] DEBUGLOG - Getting service proxy of type "Example.IContract".
+2030-01-15 10:00:02.400 [PID=1176][TID=0x1a2b] INFO - Request client proxy object for service with contract type 12. Service details written in sensitive log.
+2030-01-15 10:00:02.450 [PID=1176][TID=0x1a2b] DEBUGLOG - Detected existing client proxy object for service with contract type 12.
+2030-01-15 10:00:02.500 [PID=1176][TID=0x1a2b] DEBUGLOG - PSAttach::PubSubReceiveCallBack: Received callback for config value 'ExampleKey' (no change from 'a' to 'a')
+2030-01-15 10:00:02.550 [PID=1176][TID=0x1a2b] DEBUGLOG - arb_pubSubLookup: Received update on topic: example.sys.svc.arb.host.states.syncstate with status 0
+2030-01-15 10:00:02.600 [PID=1176][TID=0x1a2b] ALWAYS - Legacy serialization protocol is enabled. Serialized event data will be deserialized using BinaryFormatter. This is a security risk. Set CoreSDK registry parameter 'X' to true to disable legacy serialization protocol.
+2030-01-15 10:00:02.650 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Client-side statistics:
+2030-01-15 10:00:02.700 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - [TOTAL][Client] Call count: 3, Request bytes: 294 (avg. 98), Response bytes: 28553 (avg. 9517.667). Total operations: 3
+2030-01-15 10:00:02.750 [PID=1176][TID=0x1a2b] INFO - Client for endpoint ExampleService sent a request
+2030-01-15 10:00:02.800 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - By call count: 
+[methodname, call count, request total size, response total size]
+Example.Contract.IQuery.Get,1,74,72
+2030-01-15 10:00:02.850 [PID=1176][TID=0x1a2b] INFO - [SystemStatusPublisher] - Server state changed. New state: HOT
+2030-01-15 10:00:02.900 [PID=1176][TID=0x1a2b] ALWAYS - [SystemStatusPublisher] - Initial server state: STANDBY.
+2030-01-15 10:00:02.950 [PID=1176][TID=0x1a2b] ALWAYS - [StateChangeArbitrator] - Checking if service is hot.
+2030-01-15 10:00:03.000 [PID=1176][TID=0x1a2b] ALWAYS - <AdapterExample> Initialize startup manager on port 9000. Start type: NonInteractiveOnlyShutdown
+2030-01-15 10:00:03.050 [PID=1176][TID=0x1a2b] ALWAYS - <AdapterExample> Starting arbitration...
+2030-01-15 10:00:03.100 [PID=1176][TID=0x1a2b] ALWAYS - Checking licenses for 1 service(s)...
+2030-01-15 10:00:03.150 [PID=1176][TID=0x1a2b] ALWAYS - Reading configuration 'example.xml' succeeded.
+2030-01-15 10:00:03.200 [PID=1176][TID=0x1a2b] ALWAYS - Adapter (Example.AdapterSDK.BusinessAdapter) state changed to hot.
+2030-01-15 10:00:03.250 [PID=1176][TID=0x1a2b] ALWAYS - Starting web service with url/s: https://localhost:9999/ExampleService
+2030-01-15 10:00:03.300 [PID=1176][TID=0x1a2b] ALWAYS - [AppInsigthsConfig] Selected dataset: ExampleDS
+2030-01-15 10:00:03.350 [PID=1176][TID=0x1a2b] ALWAYS - The adapter component (Name: ExampleComponent; InputType: ExampleInput) is successfully registered in Example adapter.
+2030-01-15 10:00:03.400 [PID=1176][TID=0x1a2b] INFO - Subscriber integrity update started.
+2030-01-15 10:00:03.450 [PID=1176][TID=0x1a2b] DEBUGLOG - Subscriber ExamplePubSub:1. Dequeued LocalSubscriberCommand count: 2.
+2030-01-15 10:00:03.500 [PID=1176][TID=0x1a2b] INFO - [Subscriber] - Publication info:
+Sub-process - Example
+CacheOperation - Update
+2030-01-15 10:00:03.550 [PID=1176][TID=0x1a2b] DEBUGLOG - IU received for topic: example.topic.name.
+2030-01-15 10:00:03.600 [PID=1176][TID=0x1a2b] INFO - [ExampleSubscriber] Adapter is now subscribed to the 'ExampleService' service on the following topic: EXAMPLE_TOPIC.
+2030-01-15 10:00:03.650 [PID=1176][TID=0x1a2b] INFO - Received valid request message according to XML schema definition.
+2030-01-15 10:00:03.700 [PID=1176][TID=0x1a2b] ERROR - [MessageValidator] Message: Could not find schema information for the element 'ns:Example'.
+2030-01-15 10:00:03.750 [PID=1176][TID=0x1a2b] INFO - Client for endpoint  didn't send request to https://example.invalid/x for more than 12:00:00.
+2030-01-15 10:00:03.800 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Client transport channel without an opened connection created.
+2030-01-15 10:00:03.850 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Compression client channel created.
+2030-01-15 10:00:03.900 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Service connection opened id = 8.
+2030-01-15 10:00:03.950 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Connection wrapper created of type = __abc, id = 9.
+2030-01-15 10:00:04.000 [PID=1176][TID=0x1a2b] DEBUGLOG - Tracing service channel created.
+2030-01-15 10:00:04.050 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - TCP client connection id = 3 successfully opened.
+2030-01-15 10:00:04.100 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - TCP client connection id = 3 queued for closure. Stack trace:
+2030-01-15 10:00:04.150 [PID=1176][TID=0x1a2b] INFO - [Communication2] - Compression client channel destroyed.
+2030-01-15 10:00:04.200 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp socket connected id = 5, ipAddress = 192.0.2.10, port = 1234.
+2030-01-15 10:00:04.250 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Translated address for example.invalid = 192.0.2.10.
+2030-01-15 10:00:04.300 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Response received on ShMem channel guid = 00000000-0000-4000-8000-0000a0000001, msgSize = 60.
+2030-01-15 10:00:04.350 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Service operation ExampleResults called.
+2030-01-15 10:00:04.400 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp socket id = 5 send succesfully finished.
+2030-01-15 10:00:04.450 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp socket id = 5 overlapped receive started succesfully.
+2030-01-15 10:00:04.500 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp socket id = 5 closed from the server side.
+2030-01-15 10:00:04.550 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp socket id = 5 succesfully closed.
+2030-01-15 10:00:04.600 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp framing socket id = 5 closed.
+2030-01-15 10:00:04.650 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Socket with id = 5 succesfully unregistered from the completion port handle = 9.
+2030-01-15 10:00:04.700 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp framing socket id = 5 data received, lpOverlapped = 123.
+2030-01-15 10:00:04.750 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp framing socket id = 5 complete message received, msgSize = 80.
+2030-01-15 10:00:04.800 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp framing socket id = 5 data received and succesfully completed.
+2030-01-15 10:00:04.850 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Framing socket id = 5 is sending message. Client id = 1 message msgId = 2 msgSize = 90.
+2030-01-15 10:00:04.900 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Framing socket id = 5 send message succesfull.
+2030-01-15 10:00:04.950 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp receive completion port handle = 9 handle completion with params numberOfBytes = 4, lpCompletionKey (socketId) = 5, lpOvelapped = 6.
+2030-01-15 10:00:05.000 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp receive completion port handle = 9 queued for completion.
+2030-01-15 10:00:05.050 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp receive completion port handle = 9 received completion event with params numberOfBytes = 4, lpCompletionKey = 5, lpOvelapped = 6.
+2030-01-15 10:00:05.100 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Message decrypted with final byte count 90.
+2030-01-15 10:00:05.150 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp framing socket id = 5 cleanup finished.
+2030-01-15 10:00:05.200 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Tcp framing socket initialized for a socket id = 5.
+2030-01-15 10:00:05.250 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Socket with id = 5 succesfully registered with the completion port handle = 9.
+2030-01-15 10:00:05.300 [PID=1176][TID=0x1a2b] DEBUGLOG - Cache[ExampleSmartCache] Replicate change. Insert count 1 | Update count 0 | Remove count 0 | Flags Normal
+2030-01-15 10:00:05.350 [PID=1176][TID=0x1a2b] DEBUGLOG - Cache[ExampleSmartCache] Applying delta finished
+2030-01-15 10:00:05.400 [PID=1176][TID=0x1a2b] DEBUGLOG - (REPLICATION_INFO) Cache[ExampleSmartCache] Replicate elements finished
+2030-01-15 10:00:05.450 [PID=1176][TID=0x1a2b] DEBUGLOG - Sending bulk of 5 replication messages of total size 600.
+2030-01-15 10:00:05.500 [PID=1176][TID=0x1a2b] DEBUGLOG - Removing IntegrationMessage ID = '12345678
+2030-01-15 10:00:05.550 [PID=1176][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:05.600 [PID=1176][TID=0x1a2b] ALWAYS - Cache[ExampleSmartCache] Types = 1. Elements = 2. Bytes = 3.
+2030-01-15 10:00:05.650 [PID=1176][TID=0x1a2b] ALWAYS - Replicator: Registered client[clientID:1, clientName:ExampleSmartCache].
+2030-01-15 10:00:05.700 [PID=1176][TID=0x1a2b] ALWAYS - Replicator starting under DNA service Example with DMS Service name AdapterExample which corresponds to service ID 1.
+2030-01-15 10:00:05.750 [PID=1176][TID=0x1a2b] ALWAYS - CallbackManager: registering client with id 1 and name ExampleSmartCache.
+2030-01-15 10:00:05.800 [PID=1176][TID=0x1a2b] ALWAYS - [Configuration][LoadingError] [ExampleParam]. Type: [ConfigurationRegistry]. Exception: Value for product 'X', subkey 'Y', value 'Z' does not exist.
+2030-01-15 10:00:05.850 [PID=1176][TID=0x1a2b] ALWAYS - [ServiceCertificateName] : example.invalid
+2030-01-15 10:00:05.900 [PID=1176][TID=0x1a2b] ALWAYS - [SupportedClientCertificateThumbprints] :
+2030-01-15 10:00:05.950 [PID=1176][TID=0x1a2b] ALWAYS - [Configuration] ReplicationEnabled is: True. Parsed from registry for: AdapterExample
+2030-01-15 10:00:06.000 [PID=1176][TID=0x1a2b] INFO - [SystemEventSenderWithQueuing] System event message: [AdapterExample] ERROR: Processing message from external system failed.
+2030-01-15 10:00:06.050 [PID=1176][TID=0x1a2b] INFO - [SystemEventSenderWithQueuing] System event message: [AdapterExample] Uploading file to remote location succeeded.
+2030-01-15 10:00:06.100 [PID=1176][TID=0x1a2b] DEBUGLOG - Zero IDs successfully removed from the source collection. New source collection: "1".
+2030-01-15 10:00:06.150 [PID=1176][TID=0x1a2b] DEBUGLOG - [ExampleQuery - GetExample] Filtering data based on IDs: "1", "2".
+2030-01-15 10:00:06.200 [PID=1176][TID=0x1a2b] DEBUGLOG - Collection is not empty.
+2030-01-15 10:00:06.250 [PID=1176][TID=0x1a2b] DEBUGLOG - Collection is empty.
+2030-01-15 10:00:06.300 [PID=1176][TID=0x1a2b] DEBUGLOG - Getting all data from "Example"...
+2030-01-15 10:00:06.350 [PID=1176][TID=0x1a2b] DEBUGLOG - Getting GIDs for provided UIDs: "U1".
+2030-01-15 10:00:06.400 [PID=1176][TID=0x1a2b] DEBUGLOG - Getting GIDs for provided UIDs succeeded.
+2030-01-15 10:00:06.450 [PID=1176][TID=0x1a2b] DEBUGLOG - "EXAMPLE_MAP" map is now open.
+2030-01-15 10:00:06.500 [PID=1176][TID=0x1a2b] DEBUGLOG - "EXAMPLE_MAP" map closed.
+2030-01-15 10:00:06.550 [PID=1176][TID=0x1a2b] DEBUGLOG - "EXAMPLE_MAP" map cleared.
+2030-01-15 10:00:06.600 [PID=1176][TID=0x1a2b] DEBUGLOG - "EXAMPLE_MAP" map integrity update started. Map will be cleared and populated with fresh data.
+2030-01-15 10:00:06.650 [PID=1176][TID=0x1a2b] DEBUGLOG - "X-1" added to the "EXAMPLE_MAP" map.
+2030-01-15 10:00:06.700 [PID=1176][TID=0x1a2b] DEBUGLOG - "Example"-"Value" entry updated to the "EXAMPLE_MAP" map.
+2030-01-15 10:00:06.750 [PID=1176][TID=0x1a2b] DEBUGLOG - Adding the key Name: "X" Semantic: "Y"
+2030-01-15 10:00:06.800 [PID=1176][TID=0x1a2b] ALWAYS - Long-to-enum map "EXAMPLE_MAP" created. This map will store [GID - EXAMPLE_STATUS] pairs.
+2030-01-15 10:00:06.850 [PID=1176][TID=0x1a2b] DEBUGLOG - Message with MessageID: '' will be logged in sensitive log.
+2030-01-15 10:00:06.900 [PID=1176][TID=0x1a2b] INFO - [Communication2] - Started socket cleanup worker.
+2030-01-15 10:00:06.950 [PID=1176][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:07.000 [PID=1176][TID=0x1a2b] DEBUGLOG - [AdaptivePool Example_Base] [UsageMonitor] Monitoring started. Default size: 4, check period: 60000 ms, upsizing alocation: 2 elements.
+2030-01-15 10:00:07.050 [PID=1176][TID=0x1a2b] DEBUGLOG - Getting service proxy of type 'Example.IContract' succeeded.
+2030-01-15 10:00:07.100 [PID=1176][TID=0x1a2b] DEBUGLOG - arb_pubSubLookup: Cache updated with system: sys, service: svc, host: host1, topic: sys.svc.arb.host1.states.syncstate, sync state: SYNC_SYNCED, ps status: OK
+2030-01-15 10:00:07.150 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication2] - Service-side statistics:
+2030-01-15 10:00:07.200 [PID=1176][TID=0x1a2b] DEBUGLOG - [Communication3] - By Request Message Size Total:
+2030-01-15 10:00:07.250 [PID=1176][TID=0x1a2b] ALWAYS - [SystemStatusPublisher] - Publishing notification to all registered subscribers about ServerChange event finished successfully.
+2030-01-15 10:00:07.300 [PID=1176][TID=0x1a2b] ALWAYS - [ModeSwitchArbitrator] - DataSet used: ExampleDS
+2030-01-15 10:00:07.350 [PID=1176][TID=0x1a2b] ALWAYS - SystemStatusSubscriber (AdapterCore) - Value received from publisher: True
+2030-01-15 10:00:07.400 [PID=1176][TID=0x1a2b] ALWAYS - ModeTracker: started...
+2030-01-15 10:00:07.450 [PID=1176][TID=0x1a2b] ALWAYS - <ExampleAdapter> Run service on port 9000. Start type: NonInteractiveOnlyShutdown
+2030-01-15 10:00:07.500 [PID=1176][TID=0x1a2b] ALWAYS - <AdapterExample> Starting AdapterExample on port 9000.
+2030-01-15 10:00:07.550 [PID=1176][TID=0x1a2b] ALWAYS - <AdapterExample> Arbitration started.
+2030-01-15 10:00:07.600 [PID=1176][TID=0x1a2b] ALWAYS - <AdapterExample> Services started.
+2030-01-15 10:00:07.650 [PID=1176][TID=0x1a2b] ALWAYS - <AdapterExample> Waiting for terminate event.
+2030-01-15 10:00:07.700 [PID=1176][TID=0x1a2b] ALWAYS - Checking for 1 service(s) whether they should be run on this system...
+2030-01-15 10:00:07.750 [PID=1176][TID=0x1a2b] ALWAYS - Checking ExampleAdapter license...
+2030-01-15 10:00:07.800 [PID=1176][TID=0x1a2b] ALWAYS - ExampleAdapter is licensed.
+2030-01-15 10:00:07.850 [PID=1176][TID=0x1a2b] ALWAYS - Loading DAL configuration skipped.
+2030-01-15 10:00:07.900 [PID=1176][TID=0x1a2b] ALWAYS - Initializing DMSServiceProxyPool with parameters: alias = EXAMPLE, useLcm = True
+2030-01-15 10:00:07.950 [PID=1176][TID=0x1a2b] ALWAYS - Context ID 1 found for Example context.
+2030-01-15 10:00:08.000 [PID=1176][TID=0x1a2b] ALWAYS - [AdapterExample] OMS service is installed and licensed...
+2030-01-15 10:00:08.050 [PID=1176][TID=0x1a2b] ALWAYS - Configuration 'example.xml' is valid against XSD schema.
+2030-01-15 10:00:08.100 [PID=1176][TID=0x1a2b] ALWAYS - Configuration file content from location 'example.xml' successfully deserialized.
+2030-01-15 10:00:08.150 [PID=1176][TID=0x1a2b] ALWAYS - Error configuration 'example.xml' is successfully read and is now available.
+2030-01-15 10:00:08.200 [PID=1176][TID=0x1a2b] ALWAYS - Web service configuration 'example.xml' is successfully read and is now available.
+2030-01-15 10:00:08.250 [PID=1176][TID=0x1a2b] ALWAYS - List of properties in web service configuration file:
+2030-01-15 10:00:08.300 [PID=1176][TID=0x1a2b] ALWAYS - ReceiveExample properties
+2030-01-15 10:00:08.350 [PID=1176][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:08.400 [PID=1176][TID=0x1a2b] ALWAYS - Registry configuration loaded from file: Example-WCF, using values: BufferPoolSize: 1
+2030-01-15 10:00:08.450 [PID=1176][TID=0x1a2b] ALWAYS - [AdaptivePool] Registry configuration initialized with values: UpsizingStep: 1
+2030-01-15 10:00:08.500 [PID=1176][TID=0x1a2b] ALWAYS - 2 file types found in FileTypeConfiguration XML file.
+2030-01-15 10:00:08.550 [PID=1176][TID=0x1a2b] ALWAYS - SmartCache context configuration: AutoSavecase: True
+2030-01-15 10:00:08.600 [PID=1176][TID=0x1a2b] ALWAYS - Adapter components will now be started.
+2030-01-15 10:00:08.650 [PID=1176][TID=0x1a2b] ALWAYS - Business adapter doesn't have registered components.
+2030-01-15 10:00:08.700 [PID=1176][TID=0x1a2b] ALWAYS - Communication adapter doesn't have registered controlled components.
+2030-01-15 10:00:08.750 [PID=1176][TID=0x1a2b] ALWAYS - Registered business controlled components: Example.One, Example.Two.
+2030-01-15 10:00:08.800 [PID=1176][TID=0x1a2b] ALWAYS - Starting AdapterExample...
+2030-01-15 10:00:08.850 [PID=1176][TID=0x1a2b] ALWAYS - Starting ExampleAdapter...
+2030-01-15 10:00:08.900 [PID=1176][TID=0x1a2b] ALWAYS - Starting replicator...
+2030-01-15 10:00:08.950 [PID=1176][TID=0x1a2b] ALWAYS - Starting SS host
+2030-01-15 10:00:09.000 [PID=1176][TID=0x1a2b] ALWAYS - Starting of service AdapterExample.
+2030-01-15 10:00:09.050 [PID=1176][TID=0x1a2b] ALWAYS - Initializing service based on SOAP...
+2030-01-15 10:00:09.100 [PID=1176][TID=0x1a2b] ALWAYS - Initializing custom certificate validator.
+2030-01-15 10:00:09.150 [PID=1176][TID=0x1a2b] ALWAYS - "ExampleLibrary" assemblies information:
+2030-01-15 10:00:09.200 [PID=1176][TID=0x1a2b] ALWAYS - Starting web service with url/s: https://localhost:9999/ExampleService succeeded.
+2030-01-15 10:00:09.250 [PID=1176][TID=0x1a2b] ALWAYS - Starting web service ReceiveExample was successful.
+2030-01-15 10:00:09.300 [PID=1176][TID=0x1a2b] ALWAYS - Starting web service ReceiveExample. Service url written in sensitive log.
+2030-01-15 10:00:09.350 [PID=1176][TID=0x1a2b] ALWAYS - WebServiceControllerPool created.
+2030-01-15 10:00:09.400 [PID=1176][TID=0x1a2b] ALWAYS - UpdateExampleService url is written in sensitive log.
+2030-01-15 10:00:09.450 [PID=1176][TID=0x1a2b] ALWAYS - UpdateExampleService is hosted on https://localhost:9999/UpdateExampleService
+2030-01-15 10:00:09.500 [PID=1176][TID=0x1a2b] ALWAYS - [ExampleOperation] Starting web service on : https://localhost:9999/Example
+2030-01-15 10:00:09.550 [PID=1176][TID=0x1a2b] ALWAYS - [SecureHostHelper] Starting service on address https://localhost:9999/Example
+2030-01-15 10:00:09.600 [PID=1176][TID=0x1a2b] ALWAYS - [SecureHostHelper] Service on address https://localhost:9999/Example is started.
+2030-01-15 10:00:09.650 [PID=1176][TID=0x1a2b] ALWAYS - [SecureHostHelper] Added service of type Example.Contract with address https://localhost:9999/Example
+2030-01-15 10:00:09.700 [PID=1176][TID=0x1a2b] ALWAYS - [AppInsights] No AppInsights plugin was loaded
+2030-01-15 10:00:09.750 [PID=1176][TID=0x1a2b] ALWAYS - [HealthMonitor] HealthMonitor initialized.
+2030-01-15 10:00:09.800 [PID=1176][TID=0x1a2b] ALWAYS - [VirtualMemoryBufferFactory] System Info:
+2030-01-15 10:00:09.850 [PID=1176][TID=0x1a2b] ALWAYS - [IdentityCache] Refresh worker started. Identity expiration time: 5
+2030-01-15 10:00:09.900 [PID=1176][TID=0x1a2b] ALWAYS - [BufferPool] Created with name = Example_1_CF1_Base and bufferCount = 8.
+2030-01-15 10:00:09.950 [PID=1176][TID=0x1a2b] ALWAYS - [Communication2] - [ThreadWorkers] Number of threads changed from 2 to 4.

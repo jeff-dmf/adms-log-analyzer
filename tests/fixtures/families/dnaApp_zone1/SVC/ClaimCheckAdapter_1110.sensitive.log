@@ -1,0 +1,10 @@
+﻿2030-01-15 10:00:00.000 [PID=1110][TID=0x1a2b] DEBUGLOG - File: /PROD/example/file_1.jpg - is copied to location: \\share.invalid\example\file_1.jpg.
+2030-01-15 10:00:00.050 [PID=1110][TID=0x1a2b] INFO - [ClaimCheckAdapter] - RequestProcessor - Executing process line: Other...
+2030-01-15 10:00:00.100 [PID=1110][TID=0x1a2b] INFO - 		[Validation Info]: Message revision is not provided.
+2030-01-15 10:00:00.150 [PID=1110][TID=0x1a2b] INFO - File is successfully copied from remote file share to local file share.
+2030-01-15 10:00:00.200 [PID=1110][TID=0x1a2b] DEBUGLOG - File: /PROD/example/file_1.jpg - is copied to location: \\share.invalid\example\file_1.jpg.
+2030-01-15 10:00:00.250 [PID=1110][TID=0x1a2b] INFO - Obtaining Config from Multimedia Service.
+2030-01-15 10:00:00.300 [PID=1110][TID=0x1a2b] INFO - 		[Validation Info]: Message revision is not provided.
+2030-01-15 10:00:00.350 [PID=1110][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1110][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1110][TID=0x1a2b] INFO - Qqq synthetic noise without template

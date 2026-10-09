@@ -1,0 +1,14 @@
+﻿2030-01-15 10:00:00.000 [PID=1132][TID=0x1a2b] ERROR - Non Fatal Exception Example.CredentialNotFoundException: Credential with with source application 'AdapterExample' and destination application 'SFTP' not found. Reason: The ADAMEntry 'CN=AdapterExample|SFTP' doesn't exist.
+	Managed Code Stack Trace:
+   at Example.CredentialProvider.GetCredential() in F:\PD\1234567\1\Example\CredentialProvider.cs:line 10
+2030-01-15 10:00:00.050 [PID=1132][TID=0x1a2b] INFO - LocalPath: "x" for FileType: "GIS" is valid.
+2030-01-15 10:00:00.100 [PID=1132][TID=0x1a2b] ALWAYS - LocalPath: "\\\\share.invalid\\example" for FileType: "GIS" is invalid.
+2030-01-15 10:00:00.150 [PID=1132][TID=0x1a2b] INFO - File types found in FileConfiguration XML file.
+2030-01-15 10:00:00.200 [PID=1132][TID=0x1a2b] ALWAYS - 2 file types found in FileConfiguration XML file.
+2030-01-15 10:00:00.250 [PID=1132][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.300 [PID=1132][TID=0x1a2b] ERROR - Non Fatal Exception Example.CredentialNotFoundException: Credential with with source application 'AdapterExample' and destination application 'SFTP' not found. Reason: The ADAMEntry 'CN=AdapterExample|SFTP' doesn't exist.
+	Managed Code Stack Trace:
+   at Example.CredentialProvider.GetCredential() in F:\PD\1234567\1\Example\CredentialProvider.cs:line 10
+2030-01-15 10:00:00.350 [PID=1132][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.400 [PID=1132][TID=0x1a2b] ALWAYS - LocalPath: "\\\\share.invalid\\example" for FileType: "GIS" is invalid.
+2030-01-15 10:00:00.450 [PID=1132][TID=0x1a2b] INFO - Qqq synthetic noise without template

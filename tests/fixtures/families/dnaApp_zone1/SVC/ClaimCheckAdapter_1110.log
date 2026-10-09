@@ -1,0 +1,20 @@
+﻿2030-01-15 10:00:00.000 [PID=1110][TID=0x1a2b] INFO - "CreatedFileNotificationEvent" message processing started...
+2030-01-15 10:00:00.050 [PID=1110][TID=0x1a2b] INFO - [ClaimCheckAdapter] - RequestProcessor - Executing process line: Multimedia...
+2030-01-15 10:00:00.100 [PID=1110][TID=0x1a2b] INFO - [ClaimCheckAdapter] - RequestProcessor - Executing process line: Other...
+2030-01-15 10:00:00.150 [PID=1110][TID=0x1a2b] DEBUGLOG - File is successfully copied from remote file share to local file share. For more details check sensitive log.
+2030-01-15 10:00:00.200 [PID=1110][TID=0x1a2b] DEBUGLOG - Obtaining Config from Multimedia Service for attachment validation.
+2030-01-15 10:00:00.250 [PID=1110][TID=0x1a2b] INFO - File is successfully copied from remote file share to local file share.
+2030-01-15 10:00:00.300 [PID=1110][TID=0x1a2b] INFO - Number of retries left: 3
+2030-01-15 10:00:00.350 [PID=1110][TID=0x1a2b] DEBUGLOG - Processing attachment on ADMS gid '28823037' started.
+2030-01-15 10:00:00.400 [PID=1110][TID=0x1a2b] INFO - Obtaining Config from Multimedia Service.
+2030-01-15 10:00:00.450 [PID=1110][TID=0x1a2b] INFO - 		[Validation Info]: MessageRevisionMissing
+2030-01-15 10:00:00.500 [PID=1110][TID=0x1a2b] INFO - 		 Details regarding validation errors can be found adapters sensistive log.
+2030-01-15 10:00:00.550 [PID=1110][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.600 [PID=1110][TID=0x1a2b] INFO - "CreatedFileNotificationEvent" message processing finished successfully.
+2030-01-15 10:00:00.650 [PID=1110][TID=0x1a2b] ERROR - "CreatedFileNotificationEvent" message processing failed. Reason:
+2030-01-15 10:00:00.700 [PID=1110][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.750 [PID=1110][TID=0x1a2b] ERROR - Uploading attachment failed due to InternalError error.
+2030-01-15 10:00:00.800 [PID=1110][TID=0x1a2b] INFO - [ClaimCheckAdapter] - RequestProcessor - Executing process line: Default...
+2030-01-15 10:00:00.850 [PID=1110][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.900 [PID=1110][TID=0x1a2b] DEBUGLOG - Processing attachment on ADMS gid '28823037' finished.
+2030-01-15 10:00:00.950 [PID=1110][TID=0x1a2b] INFO - 		[Validation Critical]: InvalidUrl

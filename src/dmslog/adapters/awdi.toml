@@ -1,0 +1,22 @@
+# WDI adapter (WDIAdapter_<pid>[.sensitive].log; family code AWDI in families.toml). Source:
+# docs/formato/crm-e-demais.md, section 2.6. Idle in the documented sample: the normal log is the
+# startup plus the hourly statistics (Client side only); the sensitive log is the startup plus
+# GEN-AUD-01 (ReceiveActualWeatherData and ReceiveRegularForecastWeatherData never invoked).
+
+schema = 1
+family = "AWDI"
+description = "WDI adapter: weather data intake (ReceiveActualWeatherData, ReceiveRegularForecastWeatherData)"
+extends = ["_common"]
+
+[[template]]
+code = "WDI-001"
+class = "startup"
+title = "Web service hosted (sensitive stream)"
+sev = 4
+stream = "sensitive"
+regex = '''^(?:(?P<service>\w+) is hosted on (?P<url>\S+)|\[(?P<operation>\w+)\] Starting web service on : (?P<url2>\S+))$'''
+examples = [
+    { msg = "UpdateExampleService is hosted on https://localhost:9999/UpdateExampleService", fields = { service = "UpdateExampleService" } },
+    { msg = "[ReceiveExampleData] Starting web service on : https://localhost:9999/ReceiveExampleService", fields = { operation = "ReceiveExampleData" } },
+]
+counter_examples = ["UpdateExampleService is stopped"]

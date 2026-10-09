@@ -1,0 +1,16 @@
+﻿2030-01-15 10:00:00.000 [PID=1044][TID=0x1a2b] ERROR - [SendWorks] Sending Work Request finished unsuccessfully. Reason: Example failure reason.. StackTrace: 
+Server stack trace: 
+   at Example.Client.Send() in F:\PD\1234567\1\Example\Client.cs:line 83
+2030-01-15 10:00:00.050 [PID=1044][TID=0x1a2b] INFO - [BusinessLogicResolver] - Invoking Moved business logic for 3 entities.
+2030-01-15 10:00:00.100 [PID=1044][TID=0x1a2b] ERROR - Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. DmsReason: There was no endpoint listening at https://example.invalid/pi that could accept the message.
+2030-01-15 10:00:00.150 [PID=1044][TID=0x1a2b] INFO - [SendWorks] New serialization in progress...
+2030-01-15 10:00:00.200 [PID=1044][TID=0x1a2b] INFO - [ServiceUrl] : For SendWorks service url is https://example.invalid/pi
+2030-01-15 10:00:00.250 [PID=1044][TID=0x1a2b] INFO - START OtherQuery
+2030-01-15 10:00:00.300 [PID=1044][TID=0x1a2b] WARNING - Client for endpoint XISOAPAdapter didn't send request to https://example.invalid/pi for more than 12:00:00.
+2030-01-15 10:00:00.350 [PID=1044][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1044][TID=0x1a2b] DEBUGLOG - [WmsSubscriber] - Data received from publication:
+DmsType: ExampleType
+Operation: Add
+<ResourceDescription xmlns="urn:example"/>
+2030-01-15 10:00:00.450 [PID=1044][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.500 [PID=1044][TID=0x1a2b] INFO - Qqq synthetic noise without template

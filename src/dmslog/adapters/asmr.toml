@@ -1,0 +1,95 @@
+# SMR adapter (SmrAdapter_<pid>[.sensitive].log). Source: docs/formato/crm-e-demais.md, section 2.5.
+# Success is the presence of SMR-004 (the "successfully finished" end is written even after an
+# error). SMR-001 = SMR-005; SMR-004 + SMR-006 + SMR-007 = SMR-001 in the documented sample.
+
+schema = 1
+family = "ASMR"
+description = "SMR adapter: work requests (CreatedWorks)"
+extends = ["_common"]
+
+[[template]]
+code = "SMR-001"
+class = "start"
+title = "CreatedWorks started"
+sev = 4
+regex = '''^\[CreatedWorks\] - Processing message with messageId: "(?P<msg_id>[^"]*)" started\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = '[CreatedWorks] - Processing message with messageId: "EXAMPLE_1" started.', fields = { msg_id = "EXAMPLE_1" } }]
+counter_examples = ['[CreatedWorks] - Processing message with messageId: "EXAMPLE_1" successfully finished.']
+
+[[template]]
+code = "SMR-002"
+class = "req_resp"
+title = "Getting Nms data for devices"
+sev = 4
+regex = '''^\[CreatedWorks\] - Getting Nms data for the following devices:(?: (?P<devices>[^ ]*?))?(?P<done> succeeded)?\.$'''
+fields = { devices = "list" }
+examples = [
+    { msg = "[CreatedWorks] - Getting Nms data for the following devices: CS_0001.", fields = { devices = ["CS_0001"] } },
+    { msg = "[CreatedWorks] - Getting Nms data for the following devices: TD_0002 succeeded.", fields = { devices = ["TD_0002"], done = " succeeded" } },
+    "[CreatedWorks] - Getting Nms data for the following devices:.",
+]
+counter_examples = ["[CreatedWorks] - Getting Wms data for the following works: 1."]
+
+[[template]]
+code = "SMR-003"
+class = "req_resp"
+title = "Getting Wms data for works"
+sev = 4
+regex = '''^\[CreatedWorks\] - Getting Wms data for the following works:(?: (?P<works>[^ ]*?))?(?P<done> succeeded)?\.$'''
+fields = { works = "list" }
+examples = [
+    { msg = "[CreatedWorks] - Getting Wms data for the following works: 1001.", fields = { works = ["1001"] } },
+    { msg = "[CreatedWorks] - Getting Wms data for the following works: 1001 succeeded.", fields = { works = ["1001"], done = " succeeded" } },
+]
+counter_examples = ["[CreatedWorks] - Getting Nms data for the following devices: CS_0001."]
+
+[[template]]
+code = "SMR-004"
+window = 1008  # worst case quadratic: see _schema.md, Regex safety
+class = "req_resp"
+title = "Work added to ADMS"
+sev = 4
+regex = '''^\[CreatedWorks\] - Work \(name, customId\): \((?P<name>[^)]*), (?P<custom_id>[^,)]*)\) successfully added to Adms\.$'''
+keys = ["custom_id"]
+examples = [{ msg = "[CreatedWorks] - Work (name, customId): (Example work, WR 1001) successfully added to Adms.", fields = { name = "Example work", custom_id = "WR 1001" } }]
+counter_examples = ["[CreatedWorks] - Work (name, customId): (Example work, WR 1001) failed."]
+
+[[template]]
+code = "SMR-005"
+class = "end"
+title = "CreatedWorks finished"
+sev = 4
+regex = '''^\[CreatedWorks\] - Processing message with messageId: "(?P<msg_id>[^"]*)" successfully finished\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = '[CreatedWorks] - Processing message with messageId: "EXAMPLE_1" successfully finished.', fields = { msg_id = "EXAMPLE_1" } }]
+counter_examples = ['[CreatedWorks] - Processing message with messageId: "EXAMPLE_1" started.']
+
+[[template]]
+code = "SMR-006"
+class = "error"
+title = "WOM service returned errors"
+sev = 2
+regex = '''^\[CreatedWorks\] - +Unable to create work request\. WOM service returned some errors\. For more details analyze work management service log\.$'''
+examples = ["[CreatedWorks] -  Unable to create work request. WOM service returned some errors. For more details analyze work management service log."]
+counter_examples = ["[CreatedWorks] - Unable to create something else."]
+
+[[template]]
+code = "SMR-007"
+class = "validation"
+title = "CreatedWorks request discarded"
+sev = 2
+regex = '''^\[ERROR\] - CreatedWorks request message with message ID "(?P<msg_id>[^"]*)" (?P<why>contains invalid data|is not valid)\. It will be discarded\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    { msg = '[ERROR] - CreatedWorks request message with message ID "EXAMPLE_1" contains invalid data. It will be discarded.', fields = { msg_id = "EXAMPLE_1", why = "contains invalid data" } },
+    '[ERROR] - CreatedWorks request message with message ID "EXAMPLE_1" is not valid. It will be discarded.',
+]
+counter_examples = ['[ERROR] - CreatedWorks request message with message ID "EXAMPLE_1" was kept.']
+
+[[operation]]
+name = "CreatedWorks"
+start = ["SMR-001"]
+end = ["SMR-005"]
+fail = ["SMR-006", "SMR-007"]
+pair_by = ["tid"]

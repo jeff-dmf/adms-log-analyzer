@@ -1,0 +1,25 @@
+﻿2030-01-15 10:00:00.000 [PID=1000][TID=0x1a2b] DEBUGLOG - Changed crews request received. Request with ID "00000000-0000-4000-8000-0000a0000001" content:
+Identifier: CREW0001
+Availability: Available
+FcConnectionStatus: Online
+2030-01-15 10:00:00.050 [PID=1000][TID=0x1a2b] INFO - Changed vehicles request received. Request with ID "00000000-0000-4000-8000-0000a0000005". Message content written in sensitive log.
+2030-01-15 10:00:00.100 [PID=1000][TID=0x1a2b] DEBUGLOG - Callback received:
+OMS_CREW_CHANGE_REQ GID: 28823037, Errors count: 0 Status value: Accepted
+2030-01-15 10:00:00.150 [PID=1000][TID=0x1a2b] INFO - Synchronous processing of ReceiveCrewModel request - paused.
+2030-01-15 10:00:00.200 [PID=1000][TID=0x1a2b] DEBUGLOG - <delta id="42">
+  <operation type="insert">
+    <ResourceDescription>
+      <id gid="28823037" type="1"/>
+    </ResourceDescription>
+  </operation>
+</delta>
+2030-01-15 10:00:00.250 [PID=1000][TID=0x1a2b] INFO - Crew model update failed in ADMS.
+2030-01-15 10:00:00.300 [PID=1000][TID=0x1a2b] DEBUGLOG - Content being sent to IMS:
+<ArrayOfIncidentCrewAssigment xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <IncidentCrewAssigment>
+    <IncidentId>1</IncidentId>
+  </IncidentCrewAssigment>
+</ArrayOfIncidentCrewAssigment>
+2030-01-15 10:00:00.350 [PID=1000][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1000][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1000][TID=0x1a2b] INFO - Qqq synthetic noise without template

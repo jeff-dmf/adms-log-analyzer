@@ -1,0 +1,209 @@
+# Service logs of the service that hosts the adapters (family SERVICE): dnaService, ProcessMonitor,
+# dnaHealthMonitor, arbRx, arbTx and arbMonitor.exe, plus the optional service framework logs.
+# Source: docs/formato/crm-e-demais.md, sections 3 and 7. Native messages may end with the
+# source suffix ` {<path>:<line>}`; it is optional in every regex below. Everything else falls
+# back to the generic templates of _common.
+
+schema = 1
+family = "SERVICE"
+description = "dnaService, ProcessMonitor, dnaHealthMonitor, arbRx, arbTx, arbMonitor: service state, process deaths and restarts"
+extends = ["_common"]
+
+[[template]]
+code = "SVC-001"
+class = "lifecycle"
+title = "Service state changed"
+sev = 4
+regex = '''^The (?P<service>\w+) service on (?P<host>\w+) changed from (?P<from_state>\w+) to (?P<to_state>\w+)\.'''
+sev_field = "to_state"
+sev_map = { FAIL = 3 }
+keys = [{ field = "to_state", type = "svc_state" }]
+examples = [
+    { msg = "The EXAMPLE_SVC service on HOST01 changed from STANDBY to HOT. {E:\\Builds\\1\\Example\\Arb.cpp:100}", fields = { service = "EXAMPLE_SVC", host = "HOST01", from_state = "STANDBY", to_state = "HOT" } },
+    { msg = "The EXAMPLE_SVC service on HOST01 changed from HOT to FAIL.", fields = { to_state = "FAIL" } },
+]
+counter_examples = ["The EXAMPLE_SVC service on HOST01 is now communicating with the partner on HOST02."]
+
+[[template]]
+code = "SVC-002"
+class = "error"
+title = "Partner service not communicating"
+sev = 3
+regex = '''^The (?P<service>\w+) service on (?P<host>\w+) is not communicating with the partner service on (?P<partner>\w+)\. +Setting the state of the \w+ service on \w+ to FAIL\.'''
+examples = [{ msg = "The EXAMPLE_SVC service on HOST01 is not communicating with the partner service on HOST02. Setting the state of the EXAMPLE_SVC service on HOST01 to FAIL. {E:\\Builds\\1\\Example\\Arb.cpp:100}", fields = { host = "HOST01", partner = "HOST02" } }]
+counter_examples = ["The EXAMPLE_SVC service on HOST01 is now communicating with the partner on HOST02."]
+
+[[template]]
+code = "SVC-003"
+class = "lifecycle"
+title = "Partner service communicating again"
+sev = 4
+regex = '''^The (?P<service>\w+) service on (?P<host>\w+) is now communicating with the partner on (?P<partner>\w+)\.'''
+examples = [{ msg = "The EXAMPLE_SVC service on HOST01 is now communicating with the partner on HOST02.", fields = { partner = "HOST02" } }]
+counter_examples = ["The EXAMPLE_SVC service on HOST01 is not communicating with the partner service on HOST02."]
+
+[[template]]
+code = "SVC-004"
+class = "lifecycle"
+title = "Arbitration decisions (assert, stand down, replication wait)"
+sev = 3
+regex = '''^(?:Neither \w+ service is hot, (?P<assert_host>\w+) will assert|Both \w+ services are hot! (?P<standdown_host>\w+) will stand down|Waiting for replication before asserting|Replication timeout\. +Asserting HOT while updates are still occurring \(backflow\))\.?'''
+examples = [{ msg = "Neither EXAMPLE_SVC service is hot, HOST01 will assert. {E:\\Builds\\1\\Example\\Arb.cpp:100}", fields = { assert_host = "HOST01" } }, { msg = "Both EXAMPLE_SVC services are hot! HOST01 will stand down.", fields = { standdown_host = "HOST01" } }, "Waiting for replication before asserting", "Replication timeout. Asserting HOT while updates are still occurring (backflow)."]
+counter_examples = ["Neither service is hot"]
+
+[[template]]
+code = "SVC-005"
+class = "error"
+title = "Process dead"
+sev = 3
+regex = '''^(?:(?P<crit>Non-Critical|Critical) (?P<service>\w+) process ['"](?P<process>[^'"]*)['"] dead on (?P<host>\w+)\.(?: Restarting process\.)?|(?P<crit2>Non-Critical|Critical) process (?P<process2>\w+) \((?P<proc_pid>\d+)\) belonging to (?P<service2>\w+) service is dead\.)'''
+fields = { proc_pid = "int" }
+keys = [{ field = "process", type = "process" }, { field = "process2", type = "process" }, { field = "proc_pid", type = "pid" }]
+examples = [
+    { msg = "Non-Critical EXAMPLE_SVC process 'ExampleAdapter' dead on HOST01. Restarting process. {E:\\Builds\\1\\Example\\Pm.cpp:100}", fields = { crit = "Non-Critical", process = "ExampleAdapter", host = "HOST01" } },
+    { msg = "Critical process ExampleAdapter (1234) belonging to EXAMPLE_SVC service is dead.", fields = { crit2 = "Critical", process2 = "ExampleAdapter", proc_pid = 1234 } },
+]
+counter_examples = ["Non-Critical process ExampleAdapter (1234) belonging to EXAMPLE_SVC service is alive."]
+
+[[template]]
+code = "SVC-006"
+class = "lifecycle"
+title = "Process restart"
+sev = 3
+regex = '''^RestartProcess: Process (?P<process>\w+) \(pid (?P<proc_pid>\d+)\) belonging to the (?P<service>\w+) service is being restarted using command: .*$'''
+fields = { proc_pid = "int" }
+keys = [{ field = "process", type = "process" }, { field = "proc_pid", type = "pid" }]
+examples = [{ msg = "RestartProcess: Process ExampleAdapter (pid 1234) belonging to the EXAMPLE_SVC service is being restarted using command: 'ExampleAdapter.exe -serviceName EXAMPLE_SVC' {E:\\Builds\\1\\Example\\Pm.cpp:100}", fields = { process = "ExampleAdapter", proc_pid = 1234 } }]
+counter_examples = ["RestartProcess: Process ExampleAdapter (pid 1234) failed"]
+
+[[template]]
+code = "SVC-007"
+class = "error"
+title = "Health monitor warning notification"
+sev = 3
+regex = '''^Health Monitor has received warning notification from (?P<topic>\S+) for the (?P<service>\w+) service on computer (?P<host>\w+)\..*$'''
+examples = [{ msg = "Health Monitor has received warning notification from sys.svc.processmonitor.host01.ExampleAdapter_1234_1.healthstate for the EXAMPLE_SVC service on computer HOST01. [Non-Critical EXAMPLE_SVC process 'ExampleAdapter' dead on HOST01]", fields = { host = "HOST01" } }]
+counter_examples = ["Health Monitor has received request from x"]
+
+[[template]]
+code = "SVC-008"
+class = "lifecycle"
+title = "Health warning cleared"
+sev = 4
+regex = '''^(?P<topic>\S+) warning condition has been cleared for the (?P<service>\w+) service on computer (?P<host>\w+)\.'''
+examples = [{ msg = "sys.svc.processmonitor.host01.ExampleAdapter_1234_1.healthstate warning condition has been cleared for the EXAMPLE_SVC service on computer HOST01. {E:\\Builds\\1\\Example\\Hm.cpp:100}", fields = { host = "HOST01" } }]
+counter_examples = ["Some warning has been cleared"]
+
+[[template]]
+code = "SVC-009"
+class = "error"
+title = "Health monitor requests a service shutdown"
+sev = 2
+regex = '''^Health Monitor has received request from (?P<topic>\S+) to shutdown service (?P<service>\w+) on computer (?P<host>\w+)\..*$'''
+examples = [{ msg = "Health Monitor has received request from sys.svc.processmonitor.host01.ExampleAdapter_1234_1.healthstate to shutdown service EXAMPLE_SVC on computer HOST01. [Critical EXAMPLE_SVC process 'ExampleAdapter' dead on HOST01]", fields = { service = "EXAMPLE_SVC", host = "HOST01" } }]
+counter_examples = ["Health Monitor has received warning notification from x"]
+
+[[template]]
+code = "SVC-019"
+class = "error"
+title = "Automatic shutdown of the service"
+sev = 2
+regex = '''^(?:Initiating automatic shutdown for service (?P<service>\w+)(?:\. +Reasons written after this message:| on computer (?P<host>\w+)\. +\(Reason: .*)|Received automated request to shutdown the \w+ service on computer \w+\. +.*|The service \w+ on computer \w+ is now in a shutdown condition\. +.*|Automated shutdown in progress)'''
+examples = [
+    "Initiating automatic shutdown for service EXAMPLE_SVC. Reasons written after this message: {E:\\Builds\\1\\Example\\Dna.cpp:100}",
+    { msg = "Initiating automatic shutdown for service EXAMPLE_SVC on computer HOST01. (Reason: 'x').", fields = { host = "HOST01" } },
+    "Received automated request to shutdown the EXAMPLE_SVC service on computer HOST01. Explanation given 'x' (related topic 'y').",
+    "The service EXAMPLE_SVC on computer HOST01 is now in a shutdown condition. The service will be shutdown at the first available chance.",
+    "Automated shutdown in progress {E:\\Builds\\1\\Example\\Dna.cpp:100}",
+]
+counter_examples = ["User commanded shutdown in progress"]
+
+[[template]]
+code = "SVC-010"
+class = "lifecycle"
+title = "Service start"
+sev = 4
+regex = '''^(?:Server Starting|Starting service (?P<service>\w+)|Starting the (?P<service2>\w+) service on computer \w+ as requested by the control panel\.)'''
+examples = ["Server Starting {E:\\Builds\\1\\Example\\Dna.cpp:100}", { msg = "Starting service EXAMPLE_SVC", fields = { service = "EXAMPLE_SVC" } }, "Starting the EXAMPLE_SVC service on computer HOST01 as requested by the control panel."]
+counter_examples = ["Starting nothing"]
+
+[[template]]
+code = "SVC-011"
+class = "lifecycle"
+title = "Service started"
+sev = 4
+regex = '''^(?:Service (?P<service>\w+) startup complete\.|The (?P<service2>\w+) service on computer \w+ has been started \(as requested by the control panel\)\.)'''
+examples = [{ msg = "Service EXAMPLE_SVC startup complete. {E:\\Builds\\1\\Example\\Dna.cpp:100}", fields = { service = "EXAMPLE_SVC" } }, "The EXAMPLE_SVC service on computer HOST01 has been started (as requested by the control panel)."]
+counter_examples = ["Service EXAMPLE_SVC startup failed."]
+
+[[template]]
+code = "SVC-012"
+class = "lifecycle"
+title = "Service shutdown"
+sev = 4
+regex = '''^(?:Shutting down service (?P<service>\w+)\.|User commanded shutdown in progress|Running (?P<service2>\w+)\\shutdown script|Stopping the (?P<service3>\w+) service on computer \w+ as requested by the control panel\.)'''
+examples = [{ msg = "Shutting down service EXAMPLE_SVC. {E:\\Builds\\1\\Example\\Dna.cpp:100}", fields = { service = "EXAMPLE_SVC" } }, "User commanded shutdown in progress", "Running EXAMPLE_SVC\\shutdown script", "Stopping the EXAMPLE_SVC service on computer HOST01 as requested by the control panel."]
+counter_examples = ["Shutting up"]
+
+[[template]]
+code = "SVC-013"
+class = "error"
+title = "Socket or arbitration message error"
+sev = 3
+regex = '''^(?:Socket error in send -?\d+ \(.*\)|RobustRecv - recv\(\) failed\. +.*|Server did not give a context reply during .* negotiation\.)'''
+examples = ["Socket error in send 10054 (An established connection was aborted by the software in your host machine. [10053]) {E:\\Builds\\1\\Example\\Sock.cpp:100}", "RobustRecv - recv() failed. Could not rx data [WSAECONNRESET (10054): An existing connection was forcibly closed by the remote host.]", "Server did not give a context reply during 'x' negotiation."]
+counter_examples = ["Socket opened"]
+
+[[template]]
+code = "SVC-014"
+class = "error"
+title = "Time synchronization problem between servers"
+sev = 3
+regex = '''^decodeMessage: Received message from (?P<host>\w+) which is more than (?P<seconds>\d+) seconds different than this machine\..*$'''
+fields = { seconds = "int" }
+examples = [{ msg = "decodeMessage: Received message from HOST02 which is more than 5 seconds different than this machine. This implies that time synchronization is not working correctly.", fields = { host = "HOST02", seconds = 5 } }]
+counter_examples = ["decodeMessage: Time synchronization appears to be working again."]
+
+[[template]]
+code = "SVC-015"
+class = "lifecycle"
+title = "Time synchronization restored"
+sev = 4
+regex = '''^decodeMessage: Time synchronization appears to be working again\..*$'''
+examples = ["decodeMessage: Time synchronization appears to be working again. Time stamps in received messages from HOST02 are now less than 5 seconds different. {E:\\Builds\\1\\Example\\Arb.cpp:100}"]
+counter_examples = ["decodeMessage: Time synchronization is not working."]
+
+[[template]]
+code = "SVC-016"
+class = "startup"
+title = "ProcessMonitor configuration override loaded"
+sev = 4
+regex = '''^ProcessMonitor configuration override for service (?P<service>\S+) loaded successfully from file: .*$'''
+examples = [{ msg = "ProcessMonitor configuration override for service 'EXAMPLE_SVC' loaded successfully from file: C:\\Example\\pm.xml", fields = { service = "'EXAMPLE_SVC'" } }]
+counter_examples = ["ProcessMonitor configuration override failed"]
+
+[[template]]
+code = "SVC-017"
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+class = "error"
+title = "Problem stopping or inspecting a process"
+sev = 3
+regex = '''^(?:Error getting process handle for pid (?P<proc_pid>\d+)\..*|Process \S+ \(pid \d+\) belonging to service \S+ has not shutdown within \d+ seconds\. +Issuing \S+ call\.|ShutdownProcessThread: .* timed out \(retVal = -?\d+\) on (?P<process>\w+) \(\d+\) for \w+\.|.* failed with retVal = -?\d+ on process (?P<process2>\w+) \(\d+\) belonging to service \w+ \(.*\)|WARNING: Unable to TERMINATE process .*)'''
+fields = { proc_pid = "int" }
+examples = [
+    { msg = "Error getting process handle for pid 1234. This is not an error if this is the PID of WMI Monitor. Windows error is: (The parameter is incorrect. [87]) {E:\\Builds\\1\\Example\\Pm.cpp:100}", fields = { proc_pid = 1234 } },
+    "Process 'ExampleAdapter' (pid 1234) belonging to service 'EXAMPLE_SVC' has not shutdown within 30 seconds. Issuing 'Terminate' call.",
+    { msg = "ShutdownProcessThread: 'Terminate' timed out (retVal = 258) on ExampleAdapter (1234) for EXAMPLE_SVC.", fields = { process = "ExampleAdapter" } },
+    { msg = "'Terminate' failed with retVal = 5 on process ExampleAdapter (1234) belonging to service EXAMPLE_SVC (Access is denied. [5])", fields = { process2 = "ExampleAdapter" } },
+    "WARNING: Unable to TERMINATE process 'ExampleAdapter'",
+]
+counter_examples = ["Process ExampleAdapter started"]
+
+[[template]]
+code = "SVC-018"
+class = "error"
+title = "Warm start failed"
+sev = 2
+regex = '''^(?:warm_start +failed to execute for the \w+ service on computer \w+\..*|Failed to perform warm start\.)'''
+examples = ["warm_start failed to execute for the EXAMPLE_SVC service on computer HOST01. Process took more than the timeout of 600 seconds to complete.", "Failed to perform warm start. {E:\\Builds\\1\\Example\\Dna.cpp:100}"]
+counter_examples = ["warm_start executed"]

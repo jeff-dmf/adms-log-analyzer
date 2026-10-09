@@ -30,8 +30,27 @@ def _migrate_to_1(conn: sqlite3.Connection) -> None:
     conn.executescript(read_schema())
 
 
+_BUCKET_SEV_DDL = """
+CREATE TABLE IF NOT EXISTS bucket_sev(
+  source_id INTEGER NOT NULL, minute INTEGER NOT NULL, sev INTEGER NOT NULL,
+  n INTEGER NOT NULL,
+  PRIMARY KEY(source_id, minute, sev)) WITHOUT ROWID
+"""
+_BUCKET_SEV_INDEX_DDL = "CREATE INDEX IF NOT EXISTS bucket_sev_minute ON bucket_sev(minute, sev, n)"
+
+
+def _migrate_to_2(conn: sqlite3.Connection) -> None:
+    """Add the template-free ``bucket_sev`` rollup and backfill it from ``bucket``."""
+    conn.execute(_BUCKET_SEV_DDL)
+    conn.execute(_BUCKET_SEV_INDEX_DDL)
+    conn.execute(
+        "INSERT OR REPLACE INTO bucket_sev(source_id, minute, sev, n)"
+        " SELECT source_id, minute, sev, sum(n) FROM bucket GROUP BY source_id, minute, sev"
+    )
+
+
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _migrate_to_1}
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _migrate_to_1, 2: _migrate_to_2}
 SCHEMA_VERSION = max(MIGRATIONS)
 
 

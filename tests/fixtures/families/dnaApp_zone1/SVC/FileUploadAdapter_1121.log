@@ -1,0 +1,19 @@
+﻿2030-01-15 10:00:00.000 [PID=1121][TID=0x1a2b] INFO - FileUploadService FileUpload message processing started.
+2030-01-15 10:00:00.050 [PID=1121][TID=0x1a2b] INFO - FileUploadService Received file - Name: "x"
+2030-01-15 10:00:00.100 [PID=1121][TID=0x1a2b] DEBUGLOG - FileUploadService Received file - Name: "SP 1_Example_20260101.csv" Type: "OutageReport".
+2030-01-15 10:00:00.150 [PID=1121][TID=0x1a2b] INFO - FileUploadService File content can be observed.
+2030-01-15 10:00:00.200 [PID=1121][TID=0x1a2b] INFO - FileUploadService File content can be observed in sensitive log on verbose log level.
+2030-01-15 10:00:00.250 [PID=1121][TID=0x1a2b] INFO - Writing file to computer on a local path failed...
+2030-01-15 10:00:00.300 [PID=1121][TID=0x1a2b] DEBUGLOG - Writing file to computer on a local path started... For computer name and local path details check sensitive log.
+2030-01-15 10:00:00.350 [PID=1121][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1121][TID=0x1a2b] DEBUGLOG - Uploading file to remote location. File details and remote location details written in sensitive log.
+2030-01-15 10:00:00.450 [PID=1121][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.500 [PID=1121][TID=0x1a2b] DEBUGLOG - FileUploadService FileUpload message processing: File is uploaded to SFTP.
+2030-01-15 10:00:00.550 [PID=1121][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.600 [PID=1121][TID=0x1a2b] INFO - File type: OutageReport: Sending Claim Check Message is DISABLED
+2030-01-15 10:00:00.650 [PID=1121][TID=0x1a2b] INFO - FileUploadService FileUpload message processing finished.
+2030-01-15 10:00:00.700 [PID=1121][TID=0x1a2b] DEBUGLOG - [RouteID:1, Dataset:2, Dataflow:3] RequestIU: 100 bytes
+2030-01-15 10:00:00.750 [PID=1121][TID=0x1a2b] DEBUGLOG - Writing file to computer on a local path succeeded... For computer name and local path details check sensitive log.
+2030-01-15 10:00:00.800 [PID=1121][TID=0x1a2b] DEBUGLOG - Uploading file to remote location succeeded. Details written in sensitive log.
+2030-01-15 10:00:00.850 [PID=1121][TID=0x1a2b] DEBUGLOG - (REPLICATION_INFO) Cache[AdapterFUStorageSmartCache] Replicate elements finished
+2030-01-15 10:00:00.900 [PID=1121][TID=0x1a2b] DEBUGLOG - ReplicationProxyCallback: example

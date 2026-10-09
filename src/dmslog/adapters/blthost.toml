@@ -1,0 +1,148 @@
+# BLTHost (BLTHost.<service>[.sensitive].log). Source: docs/formato/crm-e-demais.md, section 5.
+# BLTHost does not load adapters: it hosts the BLTs (business logic tasks) of the service, called
+# by the arbitration and site switch infrastructure. Only the startup lines carry the source
+# suffix ` {<path>:<line>}`. In the sensitive log the IsReadyForModeSwitch result (BLT-011)
+# is written for every query: 97 thousand records (2.2 million lines) in the documented sample,
+# so its hint is noise (sev 5) unless the node is not ready.
+
+schema = 1
+family = "BLTHOST"
+description = "BLTHost: startup, topology, IsReadyForModeSwitch, RemoteModeActivation, mode switch timeouts"
+extends = ["_common"]
+
+# Failures that carry the source suffix: before the generic startup template.
+[[template]]
+code = "BLT-005"
+window = 576  # worst case quadratic: see _schema.md, Regex safety
+class = "error"
+title = "Failed to create the Windows service"
+sev = 2
+regex = '''^Failed to create the Service \((?P<reason>.*)\)(?: +\{[A-Za-z]:\\[^{}:]+:\d+\})?$'''
+examples = [{ msg = "Failed to create the Service (The specified service has been marked for deletion. [1072])  {E:\\Builds\\1\\Example\\Main.cs:50}", fields = { reason = "The specified service has been marked for deletion. [1072]" } }]
+counter_examples = ["Created the Service"]
+
+[[template]]
+code = "BLT-001"
+window = 576  # worst case quadratic: see _schema.md, Regex safety
+class = "startup"
+title = "BLTHost startup (source suffix and settings blocks)"
+sev = 4
+stream = "normal"
+regex = '''^(?!Failed to create the Service \()(?:The (?:initial|codified) settings for BLTHost are:|.*? +\{(?P<src>[A-Za-z]:\\[^{}:]+):(?P<line>\d+)\})$'''
+fields = { line = "int" }
+examples = [
+    "The initial settings for BLTHost are:",
+    "The codified settings for BLTHost are:",
+    { msg = "BLTHost started on address 'net.tcp://localhost:9000/BLTService/*' ServiceEndpoint 'TCP'. {E:\\Builds\\1\\Example\\Main.cs:373}", fields = { src = "E:\\Builds\\1\\Example\\Main.cs", line = 373 } },
+    "Managed BLT: bobjExample.dll {E:\\Builds\\1\\Example\\Main.cs:200}",
+    "=============================== {E:\\Builds\\1\\Example\\Main.cs:150}",
+]
+counter_examples = ["Managed BLT: bobjExample.dll"]
+
+[[template]]
+code = "BLT-002"
+class = "startup"
+title = "RTDB topology record read"
+sev = 5
+regex = '''^\[RTDBConfigAccessor\] (?P<table>storeandforward|doas_system) record read: name=(?P<name>[^,\s]+)(?:, .*)?$'''
+examples = [
+    { msg = "[RTDBConfigAccessor] doas_system record read: name=sysa, zone=PROD, site=MainSite", fields = { table = "doas_system", name = "sysa" } },
+    { msg = "[RTDBConfigAccessor] storeandforward record read: name=sysa_RT-sysb_RT, systemName=sysa, serviceName=DMS_RealTime, activeMode=primary.", fields = { table = "storeandforward", name = "sysa_RT-sysb_RT" } },
+]
+counter_examples = ["[RTDBConfigAccessor] unknown record read: name=x"]
+
+[[template]]
+code = "BLT-003"
+class = "startup"
+title = "First BLT initialization (command line, replication proxy, pools)"
+sev = 4
+regex = '''^(?:\[CommandLineConfig\] - Start up script provided following parameters: .*|\(ReplicationServiceProxy\) Connecting to Replication service\.|DistribuSysAPI: .*)$'''
+examples = ["[CommandLineConfig] - Start up script provided following parameters: [C:\\Example\\BLTHost.exe -a SVC -s SVC].", "(ReplicationServiceProxy) Connecting to Replication service.", "DistribuSysAPI: Initialized."]
+counter_examples = ["[CommandLineConfig] - Other"]
+
+[[template]]
+code = "BLT-004"
+class = "other"
+title = "Participant process not running"
+sev = 3
+regex = '''^\[ParticipantsHandler\] - Process with pid : (?P<proc_pid>\d+) and name : (?P<proc_name>\S+) is not up and running and will be removed from participants table\.$'''
+fields = { proc_pid = "int" }
+examples = [{ msg = "[ParticipantsHandler] - Process with pid : 1234 and name : ExampleService is not up and running and will be removed from participants table.", fields = { proc_pid = 1234, proc_name = "ExampleService" } }]
+counter_examples = ["[ParticipantsHandler] - Process with pid : x"]
+
+[[template]]
+code = "BLT-010"
+class = "start"
+title = "IsReadyForModeSwitch started"
+sev = 4
+regex = '''^\[IsReadyForModeSwitchProcessor\] IsReadyForModeSwitch BLT execution started with input parameters: Originator system: ['"]?(?P<orig_system>[^'",]*)['"]?, Originator service: ['"]?(?P<orig_service>[^'",]*)['"]?, Skip unreachable nodes: ['"]?(?P<skip_unreachable>\w*)['"]?\. Local system: .*$'''
+examples = [{ msg = "[IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution started with input parameters: Originator system: 'sysa', Originator service: 'svc', Skip unreachable nodes: 'False'. Local system: 'sysb', service: 'svc'", fields = { orig_system = "sysa", orig_service = "svc", skip_unreachable = "False" } }]
+counter_examples = ["[IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution completed. Result: LocalAndDownstreamNodesReady status: 'True'"]
+
+[[template]]
+code = "BLT-011"
+class = "end"
+title = "IsReadyForModeSwitch completed"
+sev = 5
+regex = '''^\[IsReadyForModeSwitchProcessor\] IsReadyForModeSwitch BLT execution completed\. Result: LocalAndDownstreamNodesReady status: ['"]?(?P<ready>True|False)['"]?$'''
+sev_field = "ready"
+sev_map = { False = 3, True = 5 }
+examples = [{ msg = "[IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution completed. Result: LocalAndDownstreamNodesReady status: 'False' ", fields = { ready = "False" } }, "[IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution completed. Result: LocalAndDownstreamNodesReady status: 'True'"]
+counter_examples = ["[IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution completed. Result: Unknown"]
+
+[[template]]
+code = "BLT-012"
+class = "req_resp"
+title = "Participation call"
+sev = 4
+text = "[ParticipationDelegate] Calling participate:"
+cont = "kv_colon"
+examples = [{ msg = "[ParticipationDelegate] Calling participate: ", cont = "Address: shmem://example/MSParticipation_Example_1\nActionType: Example" }]
+counter_examples = ["[ParticipationDelegate] Calling participate"]
+
+[[template]]
+code = "BLT-020"
+class = "start"
+title = "RemoteModeActivation started"
+sev = 4
+regex = '''^\[RemoteModeActivationProcessor\] RemoteModeActivation BLT execution started with the following parameters: System name:(?P<system>[^,]*), Service name:(?P<service>[^,]*), Originator system name:(?P<orig_system>[^,]*), Originator service name:(?P<orig_service>[^,]*), .*$'''
+examples = [{ msg = "[RemoteModeActivationProcessor] RemoteModeActivation BLT execution started with the following parameters: System name:'sysa', Service name:'svc', Originator system name:'sysb', Originator service name:'svc', User name:'u', Calling system name:'sysb'", fields = { system = "'sysa'", orig_system = "'sysb'" } }]
+counter_examples = ["[RemoteModeActivationProcessor] RemoteModeActivation BLT execution finished for ModeGroup/Mode : 'g'/'m'. Result: ModeActivation status: 'ok'"]
+
+[[template]]
+code = "BLT-021"
+class = "other"
+title = "RemoteModeActivation steps"
+sev = 4
+regex = '''^\[RemoteModeActivation\] (?:ModeGroup/Mode: ['"]?(?P<mode_group>[^'"/]*)['"]?/['"]?(?P<mode>[^'"]*)['"]? activated on .*|Executing dms_savedata\.csc script asynchronously\.|Sync state check was skipped\. .*)$'''
+examples = [{ msg = "[RemoteModeActivation] ModeGroup/Mode: 'DMSGroup'/'MainMode' activated on SystemName: sysa, ServiceName: svc.", fields = { mode_group = "DMSGroup", mode = "MainMode" } }, "[RemoteModeActivation] Executing dms_savedata.csc script asynchronously.", "[RemoteModeActivation] Sync state check was skipped. Operation type: Site Switch, ForceModeSwitch: True, Originator: sysa."]
+counter_examples = ["[RemoteModeActivation] Other step"]
+
+[[template]]
+code = "BLT-022"
+window = 352  # worst case quadratic: see _schema.md, Regex safety
+class = "end"
+title = "RemoteModeActivation finished"
+sev = 4
+regex = '''^\[RemoteModeActivationProcessor\] RemoteModeActivation BLT execution finished for ModeGroup/Mode : ['"]?(?P<mode_group>[^'"/]*)['"]?/['"]?(?P<mode>[^'"]*)['"]?\. Result: ModeActivation status: ['"]?(?P<status>[^'"]*)['"]?$'''
+examples = [{ msg = "[RemoteModeActivationProcessor] RemoteModeActivation BLT execution finished for ModeGroup/Mode : 'DMSGroup'/'MainMode'. Result: ModeActivation status: 'Ok' ", fields = { mode_group = "DMSGroup", mode = "MainMode", status = "Ok" } }]
+counter_examples = ["[RemoteModeActivationProcessor] RemoteModeActivation BLT execution started with the following parameters: System name:'a'"]
+
+[[template]]
+code = "BLT-023"
+class = "startup"
+title = "Mode switch timeouts"
+sev = 4
+regex = '''^\[ModeSwitchTimeouts\] Setting (?P<what>.*)$'''
+examples = [{ msg = "[ModeSwitchTimeouts] Setting ModeSwitch MaxParticipation timeout to 60sec.", fields = { what = "ModeSwitch MaxParticipation timeout to 60sec." } }, "[ModeSwitchTimeouts] Setting LMS Disconnect timeout to 5000ms."]
+counter_examples = ["[ModeSwitchTimeouts] Getting something"]
+
+[[operation]]
+name = "IsReadyForModeSwitch"
+start = ["BLT-010"]
+end = ["BLT-011"]
+
+[[operation]]
+name = "RemoteModeActivation"
+start = ["BLT-020"]
+end = ["BLT-022"]

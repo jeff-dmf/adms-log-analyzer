@@ -1,0 +1,28 @@
+# SiteSwitch adapter (SiteSwitchAdapter_<pid>.log). Source: docs/formato/avl-osr-smn-siteswitch.md.
+# Two fixed lines per health check, with a space at both ends (stripped before matching).
+# The text of the backup site (HTTP 503) never appeared in the samples.
+
+schema = 1
+family = "ASSS"
+description = "SiteSwitch adapter: site activity health check"
+extends = ["_common"]
+
+[[template]]
+code = "SSS-001"
+class = "req_resp"
+sev = 5
+fts = false
+title = "Health check: adapter is on the ACTIVE site"
+text = "Adapter is on ACTIVE site."
+examples = [" Adapter is on ACTIVE site. "]
+counter_examples = ["Adapter is on BACKUP site."]
+
+[[template]]
+code = "SSS-002"
+class = "req_resp"
+sev = 5
+fts = false
+title = "Health check: adapter responded HTTP OK 200"
+text = "Adapter responded with HTTP OK 200 response"
+examples = [" Adapter responded with HTTP OK 200 response "]
+counter_examples = ["Adapter responded with HTTP 503 response"]

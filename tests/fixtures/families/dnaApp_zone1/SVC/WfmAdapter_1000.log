@@ -1,0 +1,100 @@
+﻿2030-01-15 10:00:00.000 [PID=1000][TID=0x1a2b] DEBUGLOG - New "OMS_CREW_VEHICLE" map content:
+	CREW0001 - 28823037
+	CREW0002 - 28823037
+2030-01-15 10:00:00.050 [PID=1000][TID=0x1a2b] DEBUGLOG - Changed crews request received. Request with ID "00000000-0000-4000-8000-0000a000000a". Message content written in sensitive log.
+2030-01-15 10:00:00.100 [PID=1000][TID=0x1a2b] DEBUGLOG - Created crew model request with ID "00000000-0000-4000-8000-0000a0000004" received.
+2030-01-15 10:00:00.150 [PID=1000][TID=0x1a2b] DEBUGLOG - Changed vehicles request with ID "00000000-0000-4000-8000-0000a0000005" successfully processed.
+2030-01-15 10:00:00.200 [PID=1000][TID=0x1a2b] DEBUGLOG - Synchronous processing of ReceiveCrewModel request - started.
+2030-01-15 10:00:00.250 [PID=1000][TID=0x1a2b] DEBUGLOG - Comparing received External System Crews with existing ADMS Crews...
+2030-01-15 10:00:00.300 [PID=1000][TID=0x1a2b] DEBUGLOG - Entity comparing finished. Result: Insert operations: 1, Update operations: 2, Delete operations 3. There're 40 identical entities which have no defined operations.
+2030-01-15 10:00:00.350 [PID=1000][TID=0x1a2b] DEBUGLOG - Crew model successfully updated in ADMS.
+2030-01-15 10:00:00.400 [PID=1000][TID=0x1a2b] DEBUGLOG - Callback received:
+OMS_CREW_CHANGE_REQ GID: 28823037, Errors count: 0. For Status value check sensitive log.
+2030-01-15 10:00:00.450 [PID=1000][TID=0x1a2b] INFO - Changed crews request received. Request with ID "00000000-0000-4000-8000-0000a0000001" content:
+2030-01-15 10:00:00.500 [PID=1000][TID=0x1a2b] INFO - [Info] AlternateRadioID value will be ignored for vehicle with MRID 'TST1A23.
+2030-01-15 10:00:00.550 [PID=1000][TID=0x1a2b] INFO - [Info] Vehicle crew data will be ignored for vehicle with MRID 'TST1A23.
+2030-01-15 10:00:00.600 [PID=1000][TID=0x1a2b] ERROR - Unable to execute ApplyDelta at CRSBusinessService. Reason = Cannot access a disposed object.
+Object name: 'System.Net.Sockets.Socket'.
+2030-01-15 10:00:00.650 [PID=1000][TID=0x1a2b] DEBUGLOG - Creating new dal proxy. ServiceName = CRSBusinessService, Alias = DMSRT
+2030-01-15 10:00:00.700 [PID=1000][TID=0x1a2b] DEBUGLOG - New dal proxy created. ServiceName = CRSBusinessService, Alias = DMSRT
+2030-01-15 10:00:00.750 [PID=1000][TID=0x1a2b] ERROR - (ERROR) [Communication2] - Service operation CRSBusinessContractResults threw unexpected exception.
+2030-01-15 10:00:00.800 [PID=1000][TID=0x1a2b] ERROR - (ERROR) [Communication2] - Example.Platform.ServiceModel.ServiceOperationException:
+Stack trace:
+   at Example.Platform.ServiceWrapper.HandleRequest(BinaryMessage msg) in F:\PD\1234567\1\Example\ServiceWrapper.cs:line 83
+Inner Exception: System.ObjectDisposedException:
+Safe handle has been closed
+2030-01-15 10:00:00.850 [PID=1000][TID=0x1a2b] WARNING - Cannot find "X1" string value in "OMS_CREW" string to long map. Available values are "A", "B".
+2030-01-15 10:00:00.900 [PID=1000][TID=0x1a2b] ERROR - [Communication2] - An error occurred while calling service operation.
+2030-01-15 10:00:00.950 [PID=1000][TID=0x1a2b] INFO - Synchronous processing of ReceiveCrewModel request - paused.
+2030-01-15 10:00:01.000 [PID=1000][TID=0x1a2b] ERROR - [Communication2] - System.ServiceModel.CommunicationObjectAbortedException:
+Communication object has been aborted.
+Stack trace:
+   at Example.Platform.TcpClientConnection.SendRequest(BinaryMessage message) in F:\PD\1234567\1\Example\Tcp.cs:line 10
+2030-01-15 10:00:01.050 [PID=1000][TID=0x1a2b] ERROR - Subscriber(CrewManagementPubSub) failed to check-in to the service. Reason: 
+[System.ObjectDisposedException] Cannot access a disposed object.
+Object name: 'x'.
+2030-01-15 10:00:01.100 [PID=1000][TID=0x1a2b] ERROR - [ERROR] - Unable to initialize subscriber: CrewManagementPubSub. Reason: Subscriber(CrewManagementPubSub) failed to check-in to the service. Reason: 
+[System.ObjectDisposedException] Cannot access a disposed object.
+2030-01-15 10:00:01.150 [PID=1000][TID=0x1a2b] ERROR - Subscriber is disconnected from CrewManagementPubSub. Reason: Subscriber(CrewManagementPubSub) failed to check-in to the service. Reason: 
+[System.ObjectDisposedException] Cannot access a disposed object.
+Object name: 'x'.
+.
+2030-01-15 10:00:01.200 [PID=1000][TID=0x1a2b] DEBUGLOG - Subscriber is reconnected to CrewManagementPubSub.
+2030-01-15 10:00:01.250 [PID=1000][TID=0x1a2b] DEBUGLOG - Subscriber is subscribed to CrewManagementPubSub.
+2030-01-15 10:00:01.300 [PID=1000][TID=0x1a2b] DEBUGLOG - DefaultCrewAssignmentStatus is updated to: "Despachada".
+2030-01-15 10:00:01.350 [PID=1000][TID=0x1a2b] ERROR - [CrsDataManager] ERROR - Delta has been forwarded to CRS, but callback is not received within 00:00:35 interval
+2030-01-15 10:00:01.400 [PID=1000][TID=0x1a2b] ERROR - ERROR - Processing "ChangedCrewsEvent" message failed. ExceptionType: "System.TimeoutException" Reason: Delta has been forwarded to CRS, but callback is not received within 00:00:35 interval. StackTrace: at Example.Wfm.CrewsModelUpdater.ApplyChanges(IExternalSystemCrews crews) in F:\PD\1234567\1\Example\CrewsModelUpdater.cs:line 120
+   at Example.Wfm.RequestProcessor.ProcessRequest(IRequest request) in F:\PD\1234567\1\Example\RequestProcessor.cs:line 40
+2030-01-15 10:00:01.450 [PID=1000][TID=0x1a2b] INFO - Crew model update failed in ADMS.
+2030-01-15 10:00:01.500 [PID=1000][TID=0x1a2b] DEBUGLOG - Generating Delta...
+2030-01-15 10:00:01.550 [PID=1000][TID=0x1a2b] DEBUGLOG - 3 crews added to insert Delta operation.
+2030-01-15 10:00:01.600 [PID=1000][TID=0x1a2b] DEBUGLOG - Writting delta to log sensitive.
+2030-01-15 10:00:01.650 [PID=1000][TID=0x1a2b] DEBUGLOG - [CrsDataManager] Applying delta.
+2030-01-15 10:00:01.700 [PID=1000][TID=0x1a2b] DEBUGLOG - Inserting 7 vehicle radio IDs into ADMS...
+2030-01-15 10:00:01.750 [PID=1000][TID=0x1a2b] DEBUGLOG - Vehicle radio IDssuccessfully inserted into ADMS.
+2030-01-15 10:00:01.800 [PID=1000][TID=0x1a2b] DEBUGLOG - Content being sent to CRS:
+<ArrayOfAssignmentStatusInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <AssignmentStatusInfo>
+    <CrewId>1</CrewId>
+  </AssignmentStatusInfo>
+</ArrayOfAssignmentStatusInfo>
+2030-01-15 10:00:01.850 [PID=1000][TID=0x1a2b] DEBUGLOG - Content being sent to WMS:
+<ArrayOfDocumentCrewAssigment xmlns:xsd="http://www.w3.org/2001/XMLSchema" />
+2030-01-15 10:00:01.900 [PID=1000][TID=0x1a2b] DEBUGLOG - Content being sent to IMS. Content details written in sensitive log.
+2030-01-15 10:00:01.950 [PID=1000][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:02.000 [PID=1000][TID=0x1a2b] DEBUGLOG - Calling ICRSBusinessContract.OrderedChangeAssignmentStatuses.
+2030-01-15 10:00:02.050 [PID=1000][TID=0x1a2b] DEBUGLOG - Request IDs returned by CRS are: "28823037, 28823037".
+2030-01-15 10:00:02.100 [PID=1000][TID=0x1a2b] DEBUGLOG - CRS request (OMS_CREW_CHANGE_REQEST = 28823037) is paired with "2" assignments and sent to Prod zone.
+2030-01-15 10:00:02.150 [PID=1000][TID=0x1a2b] DEBUGLOG - IMS request (OMS_REQUEST = 28823037) is paired with Incident Gid: 28823037 | Assigned crew Gid(s): 28823037 | Deassigned crew Gid(s): assignments and sent to Prod zone.
+2030-01-15 10:00:02.200 [PID=1000][TID=0x1a2b] DEBUGLOG - [CrsRequestManagerForProdRequests] Adapter will wait to receive 1 answers from CRS for 35 seconds.
+2030-01-15 10:00:02.250 [PID=1000][TID=0x1a2b] DEBUGLOG - [CrsRequestManagerForProdRequests] Current number of answers to be waited for: 2.
+2030-01-15 10:00:02.300 [PID=1000][TID=0x1a2b] DEBUGLOG - [CrsRequestManagerForProdRequests] Answer for request with GID 28823037 received.
+2030-01-15 10:00:02.350 [PID=1000][TID=0x1a2b] DEBUGLOG - [CrsRequestManagerForProdRequests] Waiting for 1 more answers(s).
+2030-01-15 10:00:02.400 [PID=1000][TID=0x1a2b] DEBUGLOG - [CrsRequestManagerForProdRequests] All answers received. Continuing with process.
+2030-01-15 10:00:02.450 [PID=1000][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:02.500 [PID=1000][TID=0x1a2b] DEBUGLOG - CRS sent callback to the adapter for request with GID "28823037" with result "Accepted" and errors: "0".
+2030-01-15 10:00:02.550 [PID=1000][TID=0x1a2b] DEBUGLOG - New request with GID 28823037 added. Current state: 2 requests on hold: 28823037, 28823037.
+2030-01-15 10:00:02.600 [PID=1000][TID=0x1a2b] DEBUGLOG - Request with GID 28823037 removed.
+2030-01-15 10:00:02.650 [PID=1000][TID=0x1a2b] WARNING - Cannot find request ID 28823037 in the request synchronizer to notify main thread about callback. Retries count left 2. Retry timeout 00:00:01.
+2030-01-15 10:00:02.700 [PID=1000][TID=0x1a2b] DEBUGLOG - There are no assignments to be sent to WMS.
+2030-01-15 10:00:02.750 [PID=1000][TID=0x1a2b] ERROR - ERROR: CRS request is rejected in DMZ zone for entity: "CREW0001".
+2030-01-15 10:00:02.800 [PID=1000][TID=0x1a2b] ERROR - CRS request with randomly generated GID 28823037 for rejected "2" assignments is created.
+2030-01-15 10:00:02.850 [PID=1000][TID=0x1a2b] ERROR - CRS request is rejected by DMZ validation rules: rule X failed
+2030-01-15 10:00:02.900 [PID=1000][TID=0x1a2b] DEBUGLOG - New "OMS_VEHICLE" map content:
+2030-01-15 10:00:02.950 [PID=1000][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:03.000 [PID=1000][TID=0x1a2b] DEBUGLOG - Created crew assignments request received. Request with ID "00000000-0000-4000-8000-0000a0000002". Message content wirtten in sensitive log.
+2030-01-15 10:00:03.050 [PID=1000][TID=0x1a2b] DEBUGLOG - Deleted crew assignments request received. Request with ID "00000000-0000-4000-8000-0000a0000003". Message content wirtten in sensitive log.
+2030-01-15 10:00:03.100 [PID=1000][TID=0x1a2b] DEBUGLOG - Deleted crew assignments request with ID "00000000-0000-4000-8000-0000a0000006" successfully processed.
+2030-01-15 10:00:03.150 [PID=1000][TID=0x1a2b] DEBUGLOG - Synchronous processing of ReceiveCrewModel request - finished.
+2030-01-15 10:00:03.200 [PID=1000][TID=0x1a2b] DEBUGLOG - Comparing received External System Organizations with existing ADMS Companies...
+2030-01-15 10:00:03.250 [PID=1000][TID=0x1a2b] DEBUGLOG - Callback received:
+OMS_REQUEST GID: 28823037, Status value: Approved
+2030-01-15 10:00:03.300 [PID=1000][TID=0x1a2b] INFO - [Info] AlternateRadioID value will be ignored for vehicle with MRID '123-4.
+2030-01-15 10:00:03.350 [PID=1000][TID=0x1a2b] ERROR - Unable to execute GetDescendentValues at OMSBusinessService. Reason = Cannot access a disposed object.
+2030-01-15 10:00:03.400 [PID=1000][TID=0x1a2b] DEBUGLOG - Creating new dal proxy.
+2030-01-15 10:00:03.450 [PID=1000][TID=0x1a2b] DEBUGLOG - 1 vehicles added to insert Delta operation.
+2030-01-15 10:00:03.500 [PID=1000][TID=0x1a2b] DEBUGLOG - [CrsDataManager] Applying delta completed.
+2030-01-15 10:00:03.550 [PID=1000][TID=0x1a2b] DEBUGLOG - [ImsRequestManagerForProdRequests] Adapter will wait to receive 1 callback results from IMS for 10 seconds.
+2030-01-15 10:00:03.600 [PID=1000][TID=0x1a2b] DEBUGLOG - [ImsRequestManagerForProdRequests] Waiting for 1 more callbacks.
+2030-01-15 10:00:03.650 [PID=1000][TID=0x1a2b] DEBUGLOG - [RequestManagerForProdRequests] All callbacks received. Continuing with process.
+2030-01-15 10:00:03.700 [PID=1000][TID=0x1a2b] DEBUGLOG - IMS sent callback to the adapter for request with GID "28823037" with result "Approved".

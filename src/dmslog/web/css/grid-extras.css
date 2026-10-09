@@ -1,0 +1,74 @@
+/* Template column, quick toggles, parsed fields and the extra host panels. Theme tokens only. */
+.col-template {
+  width: 150px;
+}
+
+.col-field {
+  width: 140px;
+}
+
+.tpl-link {
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.tpl-link-button {
+  display: inline-block;
+  margin: 4px 0;
+  padding: 0 6px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.host-panel {
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+
+.timeline-host:empty {
+  display: none;
+}
+
+.detail-fields {
+  margin-top: 8px;
+  overflow: auto;
+}
+
+.fields-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.fields-table caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 2px 0;
+}
+
+.fields-table th,
+.fields-table td {
+  text-align: left;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.menu-heading {
+  margin: 6px 0 2px;
+  font-weight: 600;
+  color: var(--muted);
+}

@@ -1,0 +1,665 @@
+# Templates of the WfmAdapter (family AWFM): SOAP server that receives crews, vehicles and crew
+# assignments from the WFM/SGE system and writes them to CRS/IMS/WMS (DMS side).
+#
+# Sources: docs/formato/wfm-ont.md (catalog, WFM-xxx) and docs/formato/payloads.md (Info/Verbose
+# window, WFM-11x..13x and the sensitive/normal payloads). Examples are synthetic.
+#
+# Not defined here on purpose (they live in _common.toml, with these old IDs as aliases):
+#   WFM-020/021/022 connections, WFM-050/051 "Detected errors" (normal and sensitive), WFM-052
+#   system event, WFM-061 "Non Fatal Exception", WFM-090 statistics, WFM-099 debug level,
+#   WFM-100 "Message ... logged in sensitive log", map open/close markers (GEN-MAP-01),
+#   subscriber life cycle (GEN-SUB-01), Communication2 tracing, ModeTracker, PSAttach, proxies,
+#   XSD validation, map entries, and the "Message content: <root>" payload (GEN-PLD-01).
+#
+# Letter suffixes (WFM-062A, WFM-125C) split one documented row into several templates because a
+# template has one set of fields and one peer/role.
+#
+# Map dumps (WFM-001, 82% of the physical lines of the normal log): the record is classified by its
+# first line and the `kv_tab` continuation parser only counts the `\t<key> - <gid>` lines
+# (`items`); pairs are never kept. WFM-001 wins over GEN-MAP-01 for this family so that the dumps
+# stay out of the full-text index (fts = false, sev 5).
+
+schema = 1
+family = "AWFM"
+description = "WfmAdapter: crews, vehicles and crew assignments received from WFM (normal and sensitive logs)"
+extends = ["_common"]
+
+[payload_defaults]
+request = { direction = "in", peer = "WFM" }
+response = { direction = "out", peer = "WFM" }
+fault = { direction = "out", peer = "WFM" }
+
+# ---------------------------------------------------------------------------------------------
+# Cache maps (open/close markers are GEN-MAP-01)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "WFM-001"
+class = "other"
+title = "Map content dump"
+sev = 5
+fts = false
+stream = "normal"
+regex = '''^New "(?P<map>[^"]*)" map content:$'''
+cont = "kv_tab"
+keys = []
+examples = [
+    { msg = '''New "OMS_CREW_VEHICLE" map content:''', cont = "\tCREW0001 - 288230376151711744\n\tCREW0002 - 288230376151711745\n", fields = { map = "OMS_CREW_VEHICLE" } },
+    '''New "OMS_VEHICLE" map content:''',
+]
+counter_examples = ['''"OMS_CREW_VEHICLE" map closed.''', '''"OMS_CREW_VEHICLE" map is now open.''']
+
+# ---------------------------------------------------------------------------------------------
+# Request life cycle (inbound SOAP): start, end, crew model
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "WFM-010"
+window = 992  # worst case quadratic: see _schema.md, Regex safety
+class = "start"
+title = "Request received"
+stream = "normal"
+regex = '''^(?P<op>[A-Z][\w ]+?) request received\. Request with ID "(?P<request_id>[0-9a-fA-F-]{36})"\. Message content w\w+ in sensitive log\.$'''
+fields = { request_id = "guid" }
+keys = [{ field = "request_id", type = "msgid" }]
+refs_sensitive = true
+examples = [
+    { msg = '''Changed crews request received. Request with ID "00000000-0000-4000-8000-00000000000A". Message content written in sensitive log.''', fields = { op = "Changed crews", request_id = "00000000-0000-4000-8000-00000000000a" } },
+    { msg = '''Created crew assignments request received. Request with ID "00000000-0000-4000-8000-000000000002". Message content wirtten in sensitive log.''', fields = { op = "Created crew assignments" } },
+    '''Deleted crew assignments request received. Request with ID "00000000-0000-4000-8000-000000000003". Message content wirtten in sensitive log.''',
+]
+counter_examples = [
+    '''Changed crews request with ID "00000000-0000-4000-8000-000000000001" successfully processed.''',
+    '''Changed crews request received. Request with ID "00000000-0000-4000-8000-000000000001" content:''',
+]
+
+[[template]]
+code = "WFM-S010"
+class = "start"
+title = "Request received (sensitive summary)"
+stream = "sensitive"
+regex = '''^(?P<op>[A-Z][\w ]+?) request received\. Request with ID "(?P<request_id>[0-9a-fA-F-]{36})" content:$'''
+fields = { request_id = "guid" }
+keys = [{ field = "request_id", type = "msgid" }]
+cont = { parser = "kv_colon", max_items = 32 }
+examples = [
+    { msg = '''Changed crews request received. Request with ID "00000000-0000-4000-8000-000000000001" content:''', cont = "Identifier: CREW0001\nAvailability: Available\nFcConnectionStatus: Online\n", fields = { op = "Changed crews", request_id = "00000000-0000-4000-8000-000000000001" } },
+]
+counter_examples = [
+    '''Changed crews request received. Request with ID "00000000-0000-4000-8000-000000000001". Message content written in sensitive log.''',
+]
+
+[[template]]
+code = "WFM-011"
+class = "start"
+title = "Crew model request received"
+regex = '''^Created crew model request with ID "(?P<request_id>[0-9a-fA-F-]{36})" received\.$'''
+fields = { request_id = "guid" }
+keys = [{ field = "request_id", type = "msgid" }]
+examples = [
+    { msg = '''Created crew model request with ID "00000000-0000-4000-8000-000000000004" received.''', fields = { request_id = "00000000-0000-4000-8000-000000000004" } },
+]
+counter_examples = ['''Created crew assignments request with ID "00000000-0000-4000-8000-000000000004" successfully processed.''']
+
+[[template]]
+code = "WFM-012"
+class = "end"
+title = "Request successfully processed"
+regex = '''^(?P<op>[A-Z][\w ]+?) request with ID "(?P<request_id>[0-9a-fA-F-]{36})" successfully processed\.$'''
+fields = { request_id = "guid" }
+keys = [{ field = "request_id", type = "msgid" }]
+examples = [
+    { msg = '''Changed vehicles request with ID "00000000-0000-4000-8000-000000000005" successfully processed.''', fields = { op = "Changed vehicles", request_id = "00000000-0000-4000-8000-000000000005" } },
+    '''Deleted crew assignments request with ID "00000000-0000-4000-8000-000000000006" successfully processed.''',
+]
+counter_examples = [
+    '''Changed vehicles request received. Request with ID "00000000-0000-4000-8000-000000000005". Message content written in sensitive log.''',
+]
+
+[[template]]
+code = "WFM-013"
+class = "lifecycle"
+title = "Synchronous crew model processing"
+regex = '''^Synchronous processing of ReceiveCrewModel request - (?P<phase>started|finished)\.$'''
+examples = [
+    { msg = "Synchronous processing of ReceiveCrewModel request - started.", fields = { phase = "started" } },
+    { msg = "Synchronous processing of ReceiveCrewModel request - finished.", fields = { phase = "finished" } },
+]
+counter_examples = ["Synchronous processing of ReceiveCrewModel request - paused."]
+
+[[template]]
+code = "WFM-014"
+class = "other"
+title = "Crew model comparison started"
+regex = '''^Comparing received External System (?P<entity>\w+) with existing ADMS (?P<adms_entity>\w+)\.\.\.$'''
+examples = [
+    { msg = "Comparing received External System Crews with existing ADMS Crews...", fields = { entity = "Crews", adms_entity = "Crews" } },
+    { msg = "Comparing received External System Organizations with existing ADMS Companies...", fields = { entity = "Organizations", adms_entity = "Companies" } },
+]
+counter_examples = ["Entity comparing finished. Result: Insert operations: 1, Update operations: 0, Delete operations 0. There're 5 identical entities which have no defined operations."]
+
+[[template]]
+code = "WFM-015"
+class = "other"
+title = "Crew model comparison result"
+regex = '''^Entity comparing finished\. Result: Insert operations: (?P<inserts>\d+), Update operations: (?P<updates>\d+), Delete operations:? (?P<deletes>\d+)\. There're (?P<identical>\d+) identical entities.*$'''
+fields = { inserts = "int", updates = "int", deletes = "int", identical = "int" }
+examples = [
+    { msg = "Entity comparing finished. Result: Insert operations: 1, Update operations: 2, Delete operations 3. There're 40 identical entities which have no defined operations.", fields = { inserts = 1, updates = 2, deletes = 3, identical = 40 } },
+]
+counter_examples = ["Comparing received External System Crews with existing ADMS Crews..."]
+
+[[template]]
+code = "WFM-016"
+class = "lifecycle"
+title = "Crew model updated"
+text = "Crew model successfully updated in ADMS."
+examples = ["Crew model successfully updated in ADMS."]
+counter_examples = ["Crew model update failed in ADMS."]
+
+# ---------------------------------------------------------------------------------------------
+# Callbacks (CRS/IMS answer to a delta or request sent by the adapter)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "WFM-030"
+class = "req_resp"
+title = "Callback received"
+stream = "normal"
+text = "Callback received:"
+cont = { parser = "line_regex", regex = '''^(?P<cb_type>\w+) GID: (?P<gid>\d+),(?: Errors count: (?P<errors>\d+)\.?)?(?: For Status value check sensitive log\.| Status value: (?P<status>.*))?$''' }
+fields = { gid = "int", errors = "int" }
+keys = ["gid"]
+refs_sensitive = true
+examples = [
+    { msg = "Callback received:", cont = "OMS_CREW_CHANGE_REQ GID: 288230376151711744, Errors count: 0. For Status value check sensitive log.", fields = { cb_type = "OMS_CREW_CHANGE_REQ", gid = 288230376151711744, errors = 0 } },
+    { msg = "Callback received:", cont = "OMS_REQUEST GID: 288230376151711745, Status value: Approved", fields = { cb_type = "OMS_REQUEST", gid = 288230376151711745, status = "Approved" } },
+]
+counter_examples = ["Callback received", "Callback received: OMS_CREW_CHANGE_REQ"]
+
+[[template]]
+code = "WFM-S030"
+class = "req_resp"
+title = "Callback received (sensitive, with status)"
+stream = "sensitive"
+regex = '''^Callback received:$'''
+cont = { parser = "line_regex", regex = '''^(?P<cb_type>\w+) GID: (?P<gid>\d+),(?: Errors count: (?P<errors>\d+)\.?)?(?: For Status value check sensitive log\.| Status value: (?P<status>.*))?$''' }
+fields = { gid = "int", errors = "int" }
+keys = ["gid"]
+examples = [
+    { msg = "Callback received:", cont = "OMS_CREW_CHANGE_REQ GID: 288230376151711744, Errors count: 0 Status value: Accepted", fields = { cb_type = "OMS_CREW_CHANGE_REQ", gid = 288230376151711744, errors = 0, status = "Accepted" } },
+]
+counter_examples = ["Callback received", "Callback received: OMS_CREW_CHANGE_REQ"]
+
+# ---------------------------------------------------------------------------------------------
+# Validation notices and errors
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "WFM-040"
+class = "validation"
+title = "AlternateRadioID ignored"
+sev = 4
+regex = '''^\[Info\] AlternateRadioID value will be ignored for vehicle with MRID '(?P<mrid>.*)\.$'''
+keys = ["mrid"]
+examples = [
+    { msg = "[Info] AlternateRadioID value will be ignored for vehicle with MRID 'TST1A23.", fields = { mrid = "TST1A23" } },
+    { msg = "[Info] AlternateRadioID value will be ignored for vehicle with MRID '123-4.", fields = { mrid = "123-4" } },
+]
+counter_examples = ["[Info] Vehicle crew data will be ignored for vehicle with MRID 'TST1A23."]
+
+[[template]]
+code = "WFM-041"
+class = "validation"
+title = "Vehicle crew data ignored"
+sev = 4
+regex = '''^\[Info\] Vehicle crew data will be ignored for vehicle with MRID '(?P<mrid>.*)\.$'''
+keys = ["mrid"]
+examples = [
+    { msg = "[Info] Vehicle crew data will be ignored for vehicle with MRID 'TST1A23.", fields = { mrid = "TST1A23" } },
+]
+counter_examples = ["[Info] AlternateRadioID value will be ignored for vehicle with MRID 'TST1A23."]
+
+[[template]]
+code = "WFM-060"
+class = "error"
+title = "Unable to execute remote method"
+sev = 2
+regex = '''^Unable to execute (?P<method>\w+) at (?P<service>\w+)\. Reason = (?P<reason>.*)$'''
+examples = [
+    { msg = "Unable to execute ApplyDelta at CRSBusinessService. Reason = Cannot access a disposed object.", cont = "Object name: 'System.Net.Sockets.Socket'.\n", fields = { method = "ApplyDelta", service = "CRSBusinessService", reason = "Cannot access a disposed object." } },
+    { msg = "Unable to execute GetDescendentValues at OMSBusinessService. Reason = Cannot access a disposed object.", fields = { service = "OMSBusinessService" } },
+]
+counter_examples = ["Unable to execute", "Non Fatal Exception System.ObjectDisposedException: Cannot access a disposed object."]
+
+[[template]]
+code = "WFM-062A"
+class = "lifecycle"
+title = "Creating new dal proxy"
+regex = '''^Creating new dal proxy\.(?: ServiceName = (?P<service>\w+), Alias = (?P<alias>\w+))?$'''
+examples = [{ msg = "Creating new dal proxy. ServiceName = CRSBusinessService, Alias = DMSRT", fields = { service = "CRSBusinessService", alias = "DMSRT" } }, "Creating new dal proxy."]
+counter_examples = ["New dal proxy created. ServiceName = CRSBusinessService, Alias = DMSRT"]
+
+[[template]]
+code = "WFM-062B"
+class = "lifecycle"
+title = "Dal proxy created"
+regex = '''^New dal proxy created\. ServiceName = (?P<service>\w+), Alias = (?P<alias>\w+)$'''
+examples = [{ msg = "New dal proxy created. ServiceName = CRSBusinessService, Alias = DMSRT", fields = { service = "CRSBusinessService", alias = "DMSRT" } }]
+counter_examples = ["Creating new dal proxy."]
+
+[[template]]
+code = "WFM-063"
+class = "error"
+title = "Communication2 service operation threw"
+sev = 2
+regex = '''^\(ERROR\) \[Communication(?P<chan>\d+)\] - Service operation (?P<op>\w+) threw unexpected exception\.$'''
+fields = { chan = "int" }
+examples = [{ msg = "(ERROR) [Communication2] - Service operation CRSBusinessContractResults threw unexpected exception.", fields = { chan = 2, op = "CRSBusinessContractResults" } }]
+counter_examples = ["[Communication2] - Service operation CRSBusinessContractResults called."]
+
+[[template]]
+code = "WFM-064"
+class = "error"
+title = "Communication2 exception with stack"
+sev = 2
+regex = '''^\(ERROR\) \[Communication(?P<chan>\d+)\] - (?P<exc_type>[\w.`]+):$'''
+fields = { chan = "int" }
+cont = "dotnet_stack"
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = "(ERROR) [Communication2] - Example.Platform.ServiceModel.ServiceOperationException:", cont = "Stack trace:\n   at Example.Platform.ServiceWrapper.HandleRequest(BinaryMessage msg) in F:\\PD\\1234567\\1\\Example\\ServiceWrapper.cs:line 83\nInner Exception: System.ObjectDisposedException:\nSafe handle has been closed\n", fields = { chan = 2, exc_type = "Example.Platform.ServiceModel.ServiceOperationException" } },
+]
+counter_examples = ["(ERROR) [Communication2] - Service operation CRSBusinessContractResults threw unexpected exception."]
+
+[[template]]
+code = "WFM-065"
+class = "validation"
+title = "Value not found in string-to-long map"
+sev = 3
+regex = '''^Cannot find "(?P<value>[^"]*)" string value in "(?P<map>[^"]*)" string to long map\..*$'''
+examples = [{ msg = '''Cannot find "X1" string value in "OMS_CREW" string to long map. Available values are "A", "B".''', fields = { value = "X1", map = "OMS_CREW" } }]
+counter_examples = ['''Cannot find request ID 288230376151711744 in the request synchronizer to notify main thread about callback. Retries count left 2. Retry timeout 00:00:01.''']
+
+[[template]]
+code = "WFM-066A"
+class = "error"
+title = "Communication2 error while calling service operation"
+sev = 2
+regex = '''^\[Communication(?P<chan>\d+)\] - An error occurred while calling service operation\.$'''
+fields = { chan = "int" }
+examples = [{ msg = "[Communication2] - An error occurred while calling service operation.", fields = { chan = 2 } }]
+counter_examples = ["[Communication2] - Calling service operation ApplyDelta over service connection id = 7."]
+
+[[template]]
+code = "WFM-066B"
+class = "error"
+title = "Communication2 exception with stack (no ERROR prefix)"
+sev = 2
+regex = '''^\[Communication(?P<chan>\d+)\] - (?P<exc_type>[\w.`]+Exception):$'''
+fields = { chan = "int" }
+cont = "dotnet_stack"
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = "[Communication2] - System.ServiceModel.CommunicationObjectAbortedException:", cont = "Communication object has been aborted.\nStack trace:\n   at Example.Platform.TcpClientConnection.SendRequest(BinaryMessage message) in F:\\PD\\1234567\\1\\Example\\Tcp.cs:line 10\n", fields = { chan = 2, exc_type = "System.ServiceModel.CommunicationObjectAbortedException" } },
+]
+counter_examples = ["(ERROR) [Communication2] - Example.Platform.ServiceOperationException:"]
+
+[[template]]
+code = "WFM-070A"
+class = "error"
+title = "Subscriber failed to check in"
+sev = 2
+regex = '''^Subscriber\((?P<pubsub>\w+)\) failed to check-in to the service\. Reason:$'''
+cont = { parser = "line_regex", regex = '''^\[(?P<exc_type>[\w.]+)\] (?P<exc_msg>.*)$''' }
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = "Subscriber(CrewManagementPubSub) failed to check-in to the service. Reason: ", cont = "[System.ObjectDisposedException] Cannot access a disposed object.\nObject name: 'x'.\n", fields = { pubsub = "CrewManagementPubSub", exc_type = "System.ObjectDisposedException" } },
+]
+counter_examples = ["Subscriber is disconnected from CrewManagementPubSub. Reason: Subscriber(CrewManagementPubSub) failed to check-in to the service. Reason: "]
+
+[[template]]
+code = "WFM-070B"
+class = "error"
+title = "Unable to initialize subscriber"
+sev = 2
+regex = '''^\[ERROR\] - Unable to initialize subscriber: (?P<pubsub>\w+)\. Reason:(?: (?P<reason>.*))?$'''
+cont = { parser = "line_regex", regex = '''^\[(?P<exc_type>[\w.]+)\] (?P<exc_msg>.*)$''' }
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = "[ERROR] - Unable to initialize subscriber: CrewManagementPubSub. Reason: Subscriber(CrewManagementPubSub) failed to check-in to the service. Reason: ", cont = "[System.ObjectDisposedException] Cannot access a disposed object.\n", fields = { pubsub = "CrewManagementPubSub", exc_type = "System.ObjectDisposedException" } },
+]
+counter_examples = ["Subscriber(CrewManagementPubSub) failed to check-in to the service. Reason: "]
+
+[[template]]
+code = "WFM-070C"
+class = "error"
+title = "Subscriber disconnected"
+sev = 2
+regex = '''^Subscriber is disconnected from (?P<pubsub>\w+)\. Reason:(?: (?P<reason>.*))?$'''
+cont = { parser = "line_regex", regex = '''^\[(?P<exc_type>[\w.]+)\] (?P<exc_msg>.*)$''' }
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = "Subscriber is disconnected from CrewManagementPubSub. Reason: Subscriber(CrewManagementPubSub) failed to check-in to the service. Reason: ", cont = "[System.ObjectDisposedException] Cannot access a disposed object.\nObject name: 'x'.\n.\n", fields = { pubsub = "CrewManagementPubSub", exc_type = "System.ObjectDisposedException" } },
+]
+counter_examples = ["Subscriber is reconnected to CrewManagementPubSub."]
+
+[[template]]
+code = "WFM-071C"
+class = "lifecycle"
+title = "Subscriber is reconnected"
+regex = '''^Subscriber is reconnected to (?P<pubsub>\w+)\.$'''
+examples = [{ msg = "Subscriber is reconnected to CrewManagementPubSub.", fields = { pubsub = "CrewManagementPubSub" } }]
+counter_examples = ["Subscriber: CrewManagementPubSub successfully reconnected."]
+
+[[template]]
+code = "WFM-071D"
+class = "lifecycle"
+title = "Subscriber is subscribed"
+regex = '''^Subscriber is subscribed to (?P<pubsub>\w+)\.$'''
+examples = [{ msg = "Subscriber is subscribed to CrewManagementPubSub.", fields = { pubsub = "CrewManagementPubSub" } }]
+counter_examples = ["Subscriber is reconnected to CrewManagementPubSub."]
+
+[[template]]
+code = "WFM-073"
+class = "lifecycle"
+title = "Default crew assignment status"
+regex = '''^DefaultCrewAssignmentStatus is updated to: "(?P<status>[^"]*)"\.$'''
+examples = [{ msg = '''DefaultCrewAssignmentStatus is updated to: "Despachada".''', fields = { status = "Despachada" } }]
+counter_examples = ["DefaultCrewAssignmentStatus is updated to: Despachada"]
+
+[[template]]
+code = "WFM-080"
+class = "error"
+title = "CRS callback timeout"
+sev = 2
+regex = '''^\[CrsDataManager\] ERROR - Delta has been forwarded to CRS, but callback is not received within (?P<timeout>[\d:.]+) interval$'''
+examples = [{ msg = "[CrsDataManager] ERROR - Delta has been forwarded to CRS, but callback is not received within 00:00:35 interval", fields = { timeout = "00:00:35" } }]
+counter_examples = ["[CrsDataManager] Applying delta."]
+
+[[template]]
+code = "WFM-081"
+class = "error"
+title = "Event processing failed"
+sev = 2
+regex = '''^ERROR - Processing "(?P<event_type>\w+)" message failed\. ExceptionType: "(?P<exc_type>[^"]*)" Reason: (?P<reason>.*?)\. StackTrace:.*$'''
+cont = "dotnet_stack"
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = '''ERROR - Processing "ChangedCrewsEvent" message failed. ExceptionType: "System.TimeoutException" Reason: Delta has been forwarded to CRS, but callback is not received within 00:00:35 interval. StackTrace: at Example.Wfm.CrewsModelUpdater.ApplyChanges(IExternalSystemCrews crews) in F:\PD\1234567\1\Example\CrewsModelUpdater.cs:line 120''', cont = "   at Example.Wfm.RequestProcessor.ProcessRequest(IRequest request) in F:\\PD\\1234567\\1\\Example\\RequestProcessor.cs:line 40\n", fields = { event_type = "ChangedCrewsEvent", exc_type = "System.TimeoutException" } },
+]
+counter_examples = ['''Processing "ChangedCrewsEvent" message failed.''']
+
+# ---------------------------------------------------------------------------------------------
+# Info window (nivel >= MessageLogLevel): delta, content sent to CRS/WMS/IMS, callbacks
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "WFM-110"
+class = "other"
+title = "Generating delta"
+text = "Generating Delta..."
+examples = ["Generating Delta..."]
+counter_examples = ["Generating Delta"]
+
+[[template]]
+code = "WFM-111"
+class = "other"
+title = "Entities added to delta"
+regex = '''^(?P<n>\d+) (?P<entity>crews|vehicles) added to insert Delta operation\.$'''
+fields = { n = "int" }
+examples = [{ msg = "3 crews added to insert Delta operation.", fields = { n = 3, entity = "crews" } }, "1 vehicles added to insert Delta operation."]
+counter_examples = ["Generating Delta..."]
+
+[[template]]
+code = "WFM-112"
+class = "other"
+title = "Delta written to sensitive log"
+text = "Writting delta to log sensitive."
+refs_sensitive = true
+examples = ["Writting delta to log sensitive."]
+counter_examples = ["Writing delta to log sensitive."]
+
+[[template]]
+code = "WFM-113"
+class = "other"
+title = "Applying delta"
+regex = '''^\[CrsDataManager\] Applying delta(?P<done> completed)?\.$'''
+examples = ["[CrsDataManager] Applying delta.", { msg = "[CrsDataManager] Applying delta completed.", fields = { done = " completed" } }]
+counter_examples = ["[CrsDataManager] ERROR - Delta has been forwarded to CRS, but callback is not received within 00:00:35 interval"]
+
+[[template]]
+code = "WFM-114A"
+class = "other"
+title = "Inserting vehicle radio IDs"
+regex = '''^Inserting (?P<n>\d+) vehicle radio IDs into ADMS\.\.\.$'''
+fields = { n = "int" }
+examples = [{ msg = "Inserting 7 vehicle radio IDs into ADMS...", fields = { n = 7 } }]
+counter_examples = ["Vehicle radio IDssuccessfully inserted into ADMS."]
+
+[[template]]
+code = "WFM-114B"
+class = "other"
+title = "Vehicle radio IDs inserted"
+text = "Vehicle radio IDssuccessfully inserted into ADMS."
+examples = ["Vehicle radio IDssuccessfully inserted into ADMS."]
+counter_examples = ["Inserting 7 vehicle radio IDs into ADMS..."]
+
+[[template]]
+code = "WFM-S112"
+class = "req_resp"
+title = "Delta sent to CRS (sensitive payload)"
+stream = "sensitive"
+regex = '''^<delta id="(?P<delta_id>\d+)">$'''
+fields = { delta_id = "int" }
+keys = ["delta_id"]
+payload = { fmt = "xml", start = "msg", role = "delta", direction = "out", peer = "CRS" }
+examples = [{ msg = '''<delta id="42">''', cont = "  <operation type=\"insert\">\n    <ResourceDescription>\n      <id gid=\"288230376151711744\" type=\"1\"/>\n    </ResourceDescription>\n  </operation>\n</delta>", fields = { delta_id = 42 } }]
+counter_examples = ['''<delta>''', '''Writting delta to log sensitive.''']
+
+[[template]]
+code = "WFM-120"
+class = "req_resp"
+title = "Content sent to CRS (payload in the normal log)"
+stream = "normal"
+text = "Content being sent to CRS:"
+payload = { fmt = "xml", start = "first_cont_lt", role = "content", direction = "out", peer = "CRS" }
+examples = [{ msg = "Content being sent to CRS:", cont = "<ArrayOfAssignmentStatusInfo xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n  <AssignmentStatusInfo>\n    <CrewId>1</CrewId>\n  </AssignmentStatusInfo>\n</ArrayOfAssignmentStatusInfo>" }]
+counter_examples = ["Content being sent to IMS:", "Content being sent to CRS"]
+
+[[template]]
+code = "WFM-120W"
+class = "req_resp"
+title = "Content sent to WMS (payload in the normal log)"
+stream = "normal"
+text = "Content being sent to WMS:"
+payload = { fmt = "xml", start = "first_cont_lt", role = "content", direction = "out", peer = "WMS" }
+examples = [{ msg = "Content being sent to WMS:", cont = "<ArrayOfDocumentCrewAssigment xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" />" }]
+counter_examples = ["Content being sent to CRS:"]
+
+[[template]]
+code = "WFM-121"
+class = "req_resp"
+title = "Content sent to IMS (announce)"
+stream = "normal"
+text = "Content being sent to IMS. Content details written in sensitive log."
+refs_sensitive = true
+examples = ["Content being sent to IMS. Content details written in sensitive log."]
+counter_examples = ["Content being sent to IMS:"]
+
+[[template]]
+code = "WFM-S121"
+class = "req_resp"
+title = "Content sent to IMS (sensitive payload)"
+stream = "sensitive"
+text = "Content being sent to IMS:"
+payload = { fmt = "xml", start = "first_cont_lt", role = "content", direction = "out", peer = "IMS" }
+examples = [{ msg = "Content being sent to IMS:", cont = "<ArrayOfIncidentCrewAssigment xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n  <IncidentCrewAssigment>\n    <IncidentId>1</IncidentId>\n  </IncidentCrewAssigment>\n</ArrayOfIncidentCrewAssigment>" }]
+counter_examples = ["Content being sent to IMS. Content details written in sensitive log.", "Content being sent to CRS:"]
+
+[[template]]
+code = "WFM-122"
+class = "other"
+title = "Calling business contract method"
+regex = '''^Calling (?P<contract>I\w+)\.(?P<method>\w+)\.$'''
+examples = [{ msg = "Calling ICRSBusinessContract.OrderedChangeAssignmentStatuses.", fields = { contract = "ICRSBusinessContract", method = "OrderedChangeAssignmentStatuses" } }]
+counter_examples = ["[Communication2] - Calling service operation ApplyDelta over service connection id = 7."]
+
+[[template]]
+code = "WFM-123"
+class = "other"
+title = "Request IDs returned by CRS/IMS"
+regex = '''^Request IDs returned by (?P<target>CRS|IMS) are: "(?P<gids>[^"]*)"\.$'''
+fields = { gids = "list" }
+keys = [{ field = "gids", type = "gid" }]
+examples = [{ msg = '''Request IDs returned by CRS are: "288230376151711744, 288230376151711745".''', fields = { target = "CRS", gids = ["288230376151711744", "288230376151711745"] } }]
+counter_examples = ['''Request IDs returned by DMS are: "1".''']
+
+[[template]]
+code = "WFM-124A"
+class = "other"
+title = "CRS request paired and sent"
+regex = '''^CRS request \(OMS_CREW_CHANGE_REQEST = (?P<gid>\d+)\) is paired with "(?P<n_assignments>[^"]*)" assignments and sent to Prod zone\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = '''CRS request (OMS_CREW_CHANGE_REQEST = 288230376151711744) is paired with "2" assignments and sent to Prod zone.''', fields = { gid = 288230376151711744, n_assignments = "2" } }]
+counter_examples = ["IMS request (OMS_REQUEST = 288230376151711744) is paired with Incident Gid: 1 | Assigned crew Gid(s): 2 | Deassigned crew Gid(s): assignments and sent to Prod zone."]
+
+[[template]]
+code = "WFM-124B"
+class = "other"
+title = "IMS request paired and sent"
+regex = '''^IMS request \(OMS_REQUEST = (?P<gid>\d+)\) is paired with Incident Gid: (?P<incident_gid>\d+) \| Assigned crew Gid\(s\):(?P<assigned>[^|]*)\| Deassigned crew Gid\(s\):(?P<deassigned>[^|]*?) ?assignments and sent to Prod zone\.$'''
+fields = { gid = "int", incident_gid = "int", assigned = "list", deassigned = "list" }
+keys = ["gid", "incident_gid"]
+examples = [
+    { msg = "IMS request (OMS_REQUEST = 288230376151711744) is paired with Incident Gid: 288230376151711800 | Assigned crew Gid(s): 288230376151711801 | Deassigned crew Gid(s): assignments and sent to Prod zone.", fields = { gid = 288230376151711744, incident_gid = 288230376151711800, assigned = ["288230376151711801"], deassigned = "" } },
+]
+counter_examples = ['''CRS request (OMS_CREW_CHANGE_REQEST = 288230376151711744) is paired with "2" assignments and sent to Prod zone.''']
+
+[[template]]
+code = "WFM-125A"
+class = "other"
+title = "Request manager: waiting for answers"
+regex = '''^\[(?:Crs|Ims)?RequestManagerForProdRequests\] Adapter will wait to receive (?P<n>\d+) (?:answers|callback results) from (?P<target>CRS|IMS) for (?P<secs>\d+) seconds\.$'''
+fields = { n = "int", secs = "int" }
+examples = [{ msg = "[CrsRequestManagerForProdRequests] Adapter will wait to receive 1 answers from CRS for 35 seconds.", fields = { n = 1, target = "CRS", secs = 35 } }, "[ImsRequestManagerForProdRequests] Adapter will wait to receive 1 callback results from IMS for 10 seconds."]
+counter_examples = ["[CrsRequestManagerForProdRequests] All answers received. Continuing with process."]
+
+[[template]]
+code = "WFM-125B"
+class = "other"
+title = "Request manager: current number to wait"
+regex = '''^\[(?:Crs|Ims)?RequestManagerForProdRequests\] Current number of (?:answers|callbacks) to be waited for: (?P<n>\d+)\.$'''
+fields = { n = "int" }
+examples = [{ msg = "[CrsRequestManagerForProdRequests] Current number of answers to be waited for: 2.", fields = { n = 2 } }]
+counter_examples = ["[CrsRequestManagerForProdRequests] Waiting for 1 more answers(s)."]
+
+[[template]]
+code = "WFM-125C"
+class = "other"
+title = "Request manager: answer received"
+regex = '''^\[(?:Crs|Ims)?RequestManagerForProdRequests\] (?:Answer|Callback) for request with GID (?P<gid>\d+) received\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "[CrsRequestManagerForProdRequests] Answer for request with GID 288230376151711744 received.", fields = { gid = 288230376151711744 } }]
+counter_examples = ["[CrsRequestManagerForProdRequests] All answers received. Continuing with process."]
+
+[[template]]
+code = "WFM-125D"
+class = "other"
+title = "Request manager: waiting for more"
+regex = '''^\[(?:Crs|Ims)?RequestManagerForProdRequests\] Waiting for (?P<n>\d+) more (?:answers\(s\)|callbacks)\.$'''
+fields = { n = "int" }
+examples = [{ msg = "[CrsRequestManagerForProdRequests] Waiting for 1 more answers(s).", fields = { n = 1 } }, "[ImsRequestManagerForProdRequests] Waiting for 1 more callbacks."]
+counter_examples = ["[CrsRequestManagerForProdRequests] Current number of answers to be waited for: 2."]
+
+[[template]]
+code = "WFM-125E"
+class = "other"
+title = "Request manager: all received"
+regex = '''^\[(?:Crs|Ims)?RequestManagerForProdRequests\] All (?:answers|callbacks) received\. Continuing with process\.$'''
+examples = ["[CrsRequestManagerForProdRequests] All answers received. Continuing with process.", "[RequestManagerForProdRequests] All callbacks received. Continuing with process."]
+counter_examples = ["[CrsRequestManagerForProdRequests] Waiting for 1 more answers(s)."]
+
+[[template]]
+code = "WFM-126"
+class = "req_resp"
+title = "CRS/IMS callback received"
+regex = '''^(?P<target>CRS|IMS) sent callback to the adapter for request with GID "(?P<gid>\d+)" with result "(?P<result>[^"]*)"(?: and errors: "(?P<errors>[^"]*)")?\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [
+    { msg = '''CRS sent callback to the adapter for request with GID "288230376151711744" with result "Accepted" and errors: "0".''', fields = { target = "CRS", gid = 288230376151711744, result = "Accepted", errors = "0" } },
+    { msg = '''IMS sent callback to the adapter for request with GID "288230376151711745" with result "Approved".''', fields = { target = "IMS", result = "Approved" } },
+]
+counter_examples = ["Callback received:"]
+
+[[template]]
+code = "WFM-127A"
+class = "other"
+title = "Request on hold added"
+regex = '''^New request with GID (?P<gid>\d+) added\. Current state: .*$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "New request with GID 288230376151711744 added. Current state: 2 requests on hold: 288230376151711744, 288230376151711745.", fields = { gid = 288230376151711744 } }]
+counter_examples = ["Request with GID 288230376151711744 removed."]
+
+[[template]]
+code = "WFM-127B"
+class = "other"
+title = "Request on hold removed"
+regex = '''^Request with GID (?P<gid>\d+) removed\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "Request with GID 288230376151711744 removed.", fields = { gid = 288230376151711744 } }]
+counter_examples = ["New request with GID 288230376151711744 added. Current state: 1 request on hold: 288230376151711744."]
+
+[[template]]
+code = "WFM-128"
+class = "validation"
+title = "Request not found in synchronizer"
+sev = 3
+regex = '''^Cannot find request ID (?P<gid>\d+) in the request synchronizer to notify main thread about callback\. Retries count left (?P<left>\d+)\. Retry timeout (?P<timeout>[\d:.]+)\.$'''
+fields = { gid = "int", left = "int" }
+keys = ["gid"]
+examples = [{ msg = "Cannot find request ID 288230376151711744 in the request synchronizer to notify main thread about callback. Retries count left 2. Retry timeout 00:00:01.", fields = { gid = 288230376151711744, left = 2, timeout = "00:00:01" } }]
+counter_examples = ["Request with GID 288230376151711744 removed."]
+
+[[template]]
+code = "WFM-129"
+class = "other"
+title = "No assignments for WMS"
+text = "There are no assignments to be sent to WMS."
+examples = ["There are no assignments to be sent to WMS."]
+counter_examples = ["There are assignments to be sent to WMS."]
+
+# WFM-130 (DMZ rejection): three lines documented in payloads.md, 3 records in the sample.
+[[template]]
+code = "WFM-130A"
+class = "error"
+title = "CRS request rejected in DMZ for entity"
+sev = 2
+regex = '''^ERROR: CRS request is rejected in DMZ zone for entity: "(?P<entity>[^"]*)"\.$'''
+examples = [{ msg = '''ERROR: CRS request is rejected in DMZ zone for entity: "CREW0001".''', fields = { entity = "CREW0001" } }]
+counter_examples = ["CRS request is rejected by DMZ validation rules: reason"]
+
+[[template]]
+code = "WFM-130B"
+class = "error"
+title = "CRS request generated for rejected assignments"
+sev = 2
+regex = '''^CRS request with randomly generated GID (?P<gid>\d+) for rejected "(?P<n_assignments>[^"]*)" assignments is created\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = '''CRS request with randomly generated GID 288230376151711744 for rejected "2" assignments is created.''', fields = { gid = 288230376151711744, n_assignments = "2" } }]
+counter_examples = ['''CRS request (OMS_CREW_CHANGE_REQEST = 288230376151711744) is paired with "2" assignments and sent to Prod zone.''']
+
+[[template]]
+code = "WFM-130C"
+class = "error"
+title = "CRS request rejected by DMZ validation rules"
+sev = 2
+regex = '''^CRS request is rejected by DMZ validation rules: (?P<reason>.*)$'''
+examples = [{ msg = "CRS request is rejected by DMZ validation rules: rule X failed", fields = { reason = "rule X failed" } }]
+counter_examples = ['''ERROR: CRS request is rejected in DMZ zone for entity: "CREW0001".''']

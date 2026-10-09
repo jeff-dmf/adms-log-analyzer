@@ -14,12 +14,24 @@ export const COLUMNS = [
   { key: "pid", label: () => S.columnPid },
   { key: "tid", label: () => S.columnTid },
   { key: "level", label: () => S.columnLevel },
+  { key: "template", label: () => S.columnTemplate },
   { key: "source", label: () => S.columnSource },
   { key: "msg", label: () => S.columnMessage },
 ];
 
+function cellClass(column) {
+  return column.field === undefined ? "col-" + column.key : "col-field";
+}
+
+function fieldText(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
 export class Grid {
-  constructor({ viewport, rowsLayer, spacer, header, onSelect, onStatus, onError }) {
+  constructor({ viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, onTemplate }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
     this.spacer = spacer;
@@ -27,6 +39,9 @@ export class Grid {
     this.onSelect = onSelect;
     this.onStatus = onStatus;
     this.onError = onError;
+    this.onTemplate = onTemplate || (() => {});
+    this.templateCodes = new Map();
+    this.fieldColumns = [];
     this.window = new RowWindow();
     this.visibleColumns = COLUMNS.map((c) => c.key);
     this.sourceNames = new Map();
@@ -65,6 +80,10 @@ export class Grid {
       const rowEl = event.target.closest(".grid-row");
       if (rowEl && rowEl.dataset.index !== undefined) {
         this.window.selected = Number(rowEl.dataset.index);
+        const clicked = this.window.rows[this.window.selected];
+        if (clicked && event.target.closest(".col-template") && clicked.tpl_id > 0) {
+          this.onTemplate(clicked.tpl_id);
+        }
         this.render();
         this.notifySelect(0);
         this.viewport.focus();
@@ -85,6 +104,55 @@ export class Grid {
     this.render();
   }
 
+  // Dynamic columns from parsed fields: names without the "fields." prefix. Needs a reload because
+  // the page request names the columns.
+  setFieldColumns(names) {
+    const next = names.slice();
+    if (next.join("\n") === this.fieldColumns.join("\n")) {
+      return Promise.resolve();
+    }
+    this.fieldColumns = next;
+    this.pool = [];
+    this.rowsLayer.textContent = "";
+    this.renderHeader();
+    return this.caseId === null ? Promise.resolve() : this.reload();
+  }
+
+  setTemplateCodes(map) {
+    this.templateCodes = map;
+    this.render();
+  }
+
+  // The visible columns in order: the fixed ones, then one per chosen parsed field.
+  columnDefs() {
+    const defs = COLUMNS.filter((c) => this.visibleColumns.includes(c.key));
+    for (const name of this.fieldColumns) {
+      defs.push({ key: "fields." + name, label: () => name, field: name });
+    }
+    return defs;
+  }
+
+  columnNames() {
+    return this.fieldColumns.map((n) => "fields." + n);
+  }
+
+  selectedRow() {
+    return this.window.rows[this.window.selected] || null;
+  }
+
+  // Loads the window at `row` and selects it (used by the keyboard navigation).
+  async revealRow(row) {
+    await this.jump(row.ts === null || row.ts === undefined ? "null:" + (row.id - 1) : row.ts + ":" + (row.id - 1), "fwd");
+    const index = this.window.rows.findIndex((r) => r.id === row.id);
+    if (index >= 0) {
+      this.window.selected = index;
+      this.window.top = index;
+      this.render();
+      this.syncScroll();
+      this.notifySelect(0);
+    }
+  }
+
   setSourceNames(map) {
     this.sourceNames = map;
     this.render();
@@ -97,12 +165,9 @@ export class Grid {
 
   renderHeader() {
     this.header.textContent = "";
-    for (const column of COLUMNS) {
-      if (!this.visibleColumns.includes(column.key)) {
-        continue;
-      }
+    for (const column of this.columnDefs()) {
       const cell = document.createElement("div");
-      cell.className = "grid-cell col-" + column.key;
+      cell.className = "grid-cell " + cellClass(column);
       cell.setAttribute("role", "columnheader");
       cell.textContent = column.label();
       this.header.appendChild(cell);
@@ -176,7 +241,7 @@ export class Grid {
     this.loading = true;
     this.onStatus(S.loading);
     try {
-      const page = await api.page(this.caseId, this.filter, cursor, dir, PAGE_LIMIT, this.controller.signal);
+      const page = await api.page(this.caseId, this.filter, cursor, dir, PAGE_LIMIT, this.controller.signal, this.columnNames());
       if (generation !== this.generation) {
         return;
       }
@@ -214,7 +279,7 @@ export class Grid {
       this.controller = new AbortController();
       const cursor = plan === "fwd" ? w.nextCursor : w.prevCursor;
       try {
-        const page = await api.page(this.caseId, this.filter, cursor, plan, PAGE_LIMIT, this.controller.signal);
+        const page = await api.page(this.caseId, this.filter, cursor, plan, PAGE_LIMIT, this.controller.signal, this.columnNames());
         if (generation !== this.generation) {
           return;
         }
@@ -337,12 +402,12 @@ export class Grid {
     rowEl.setAttribute("role", "row");
     rowEl.style.height = ROW_HEIGHT + "px";
     const cells = {};
-    for (const key of this.visibleColumns) {
+    for (const column of this.columnDefs()) {
       const cell = document.createElement("div");
-      cell.className = "grid-cell col-" + key;
+      cell.className = "grid-cell " + cellClass(column);
       cell.setAttribute("role", "gridcell");
       rowEl.appendChild(cell);
-      cells[key] = cell;
+      cells[column.key] = cell;
     }
     this.rowsLayer.appendChild(rowEl);
     return { el: rowEl, cells };
@@ -386,6 +451,17 @@ export class Grid {
     }
     if (cells.level) {
       cells.level.textContent = S.levelNames[row.level] || "";
+    }
+    if (cells.template) {
+      const known = row.tpl_id > 0;
+      cells.template.textContent = known ? this.templateCodes.get(row.tpl_id) || String(row.tpl_id) : "";
+      cells.template.classList.toggle("tpl-link", known);
+    }
+    for (const name of this.fieldColumns) {
+      const cell = cells["fields." + name];
+      if (cell) {
+        cell.textContent = fieldText(row["fields." + name]);
+      }
     }
     if (cells.source) {
       cells.source.textContent = this.sourceNames.get(row.source_id) || String(row.source_id);

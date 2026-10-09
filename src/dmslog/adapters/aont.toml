@@ -1,0 +1,362 @@
+# Templates of the OntAdapter (family AONT): SOAP client that sends incidents and incident trouble
+# tickets to the SAP PI, triggered by DMS publications (PubSub).
+#
+# Sources: docs/formato/wfm-ont.md (ONT-xxx) and docs/formato/payloads.md (ONT-11x, ONT-S020).
+# Examples are synthetic.
+#
+# Not defined here on purpose (they live in _common.toml, with these old IDs as aliases):
+#   ONT-030 statistics (GEN-STA), ONT-099 debug level (GEN-DBG-01), ONT-100 "Message ... logged in sensitive log" (GEN-MSG-01),
+#   Communication2/ShMem tracing, ModeTracker, PSAttach, proxies, XSD validation, smart-cache and
+#   replication lines ("Cache[...]", "Model ID", "Removing IntegrationMessage"), subscriber
+#   "Publication info:", the "Message: <root>" payload of the sensitive log (GEN-PLD-01) and
+#   the 12 h auditing line "Client for endpoint ... didn't send request" (GEN-AUD-02).
+#
+# Letter suffixes (ONT-008A) split one documented row into several templates.
+
+schema = 1
+family = "AONT"
+description = "OntAdapter: incidents and trouble tickets sent to SAP PI (normal and sensitive logs)"
+extends = ["_common"]
+
+[payload_defaults]
+request = { direction = "out", peer = "SAP_PI" }
+response = { direction = "in", peer = "SAP_PI" }
+fault = { direction = "in", peer = "SAP_PI" }
+
+# ---------------------------------------------------------------------------------------------
+# Trigger and processing decision
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "ONT-001"
+class = "start"
+title = "Publications arrived"
+regex = '''^\[OntSubscriber\] - Publications arrived to adapter\. Number of publications is: (?P<n>\d+)\.$'''
+fields = { n = "int" }
+examples = [{ msg = "[OntSubscriber] - Publications arrived to adapter. Number of publications is: 3.", fields = { n = 3 } }]
+counter_examples = ["[Subscriber] - Publication info:"]
+
+[[template]]
+code = "ONT-002"
+class = "start"
+title = "Incident will be processed (add/update)"
+regex = '''^\[SendIncidents\] - Incident resource with Mrid: '(?P<mrid>[^']*)' and Cache operation '(?P<cache_op>[^']*)' will be processed as '(?P<msg_op>[^']*)' messages with MessageIds: '(?P<message_id>[^']*)'$'''
+fields = { message_id = "guid" }
+keys = [{ field = "message_id", type = "msgid" }, { field = "mrid", type = "mrid" }]
+examples = [
+    { msg = "[SendIncidents] - Incident resource with Mrid: 'INC 1001' and Cache operation 'Update' will be processed as 'Changed' messages with MessageIds: '00000000-0000-4000-8000-00000000000A'", fields = { mrid = "INC 1001", cache_op = "Update", msg_op = "Changed", message_id = "00000000-0000-4000-8000-00000000000a" } },
+]
+counter_examples = ["[SendIncidents] - Incident resource with Mrid: 'INC 1001' and Cache operation 'Remove' will be processed as messages with MessageIds: '00000000-0000-4000-8000-000000000001'."]
+
+[[template]]
+code = "ONT-003"
+class = "start"
+title = "Incident will be processed (remove)"
+regex = '''^\[SendIncidents\] - Incident resource with Mrid: '(?P<mrid>[^']*)' and Cache operation '(?P<cache_op>[^']*)' will be processed as messages with MessageIds: '(?P<message_id>[^']*)'\.$'''
+fields = { message_id = "guid" }
+keys = [{ field = "message_id", type = "msgid" }, { field = "mrid", type = "mrid" }]
+examples = [
+    { msg = "[SendIncidents] - Incident resource with Mrid: 'INC 1001' and Cache operation 'Remove' will be processed as messages with MessageIds: '00000000-0000-4000-8000-000000000002'.", fields = { mrid = "INC 1001", cache_op = "Remove", message_id = "00000000-0000-4000-8000-000000000002" } },
+]
+counter_examples = ["[SendIncidents] - Incident resource with Mrid: 'INC 1001' and Cache operation 'Update' will be processed as 'Changed' messages with MessageIds: '00000000-0000-4000-8000-000000000002'"]
+
+[[template]]
+code = "ONT-004"
+class = "validation"
+title = "Incident will not be processed"
+regex = '''^\[SendIncidents\] - Incident resource with Mrid: '(?P<mrid>[^']*)' and Cache operation '(?P<cache_op>[^']*)' will not be processed\. Reason: '(?P<reason>[^']*)' incident was not sent for this entity\.$'''
+keys = [{ field = "mrid", type = "mrid" }]
+examples = [
+    { msg = "[SendIncidents] - Incident resource with Mrid: 'INC 1001' and Cache operation 'Update' will not be processed. Reason: 'Planned' incident was not sent for this entity.", fields = { mrid = "INC 1001", cache_op = "Update", reason = "Planned" } },
+]
+counter_examples = ["[SendIncidents] - Incident resource with Mrid: 'INC 1001' and Cache operation 'Update' will be processed as 'Changed' messages with MessageIds: '00000000-0000-4000-8000-000000000002'"]
+
+[[template]]
+code = "ONT-005"
+class = "other"
+title = "Serialization in progress"
+sev = 5
+regex = '''^\[(?P<service>SendIncidents|SendIncidentTroubleTickets)MessageSerializer\] Serialization in progress\.\.\.$'''
+examples = [
+    { msg = "[SendIncidentsMessageSerializer] Serialization in progress...", fields = { service = "SendIncidents" } },
+    { msg = "[SendIncidentTroubleTicketsMessageSerializer] Serialization in progress...", fields = { service = "SendIncidentTroubleTickets" } },
+]
+counter_examples = ["[SendIncidents] Sending following Incident: INC 1001."]
+
+[[template]]
+code = "ONT-006"
+class = "start"
+title = "Trouble tickets of an incident will be processed"
+regex = '''^\[SendIncidentTroubleTickets\] - Incident resource with Mrid: '(?P<mrid>[^']*)' will be processed\.$'''
+keys = [{ field = "mrid", type = "mrid" }]
+examples = [{ msg = "[SendIncidentTroubleTickets] - Incident resource with Mrid: 'INC 1001' will be processed.", fields = { mrid = "INC 1001" } }]
+counter_examples = ["[SendIncidents] - Incident resource with Mrid: 'INC 1001' and Cache operation 'Update' will not be processed. Reason: 'x' incident was not sent for this entity."]
+
+[[template]]
+code = "ONT-007"
+class = "validation"
+title = "Publication not of interest"
+sev = 5
+regex = '''^\[Subscriber\] - Received publication with cache operation '(?P<cache_op>[^']*)' and (?:trigger property: '(?P<trigger>[^']*)'|multiple trigger properties) is not of interest for process\.$'''
+examples = [
+    { msg = "[Subscriber] - Received publication with cache operation 'Update' and trigger property: 'OMS_INCIDENT.Comment' is not of interest for process.", fields = { cache_op = "Update", trigger = "OMS_INCIDENT.Comment" } },
+    { msg = "[Subscriber] - Received publication with cache operation 'Update' and multiple trigger properties is not of interest for process.", fields = { cache_op = "Update" } },
+]
+counter_examples = ["[Subscriber] - Publication info:"]
+
+[[template]]
+code = "ONT-008"
+class = "validation"
+title = "No resource of interest"
+sev = 5
+regex = '''^\[(?P<service>SendIncidentTroubleTickets|SendIncidents)\] - None of (?:Incident Resources related to received Trouble Ticket|received Incident) Resources are of interest\. Processing will not continue\.$'''
+examples = [
+    { msg = "[SendIncidentTroubleTickets] - None of Incident Resources related to received Trouble Ticket Resources are of interest. Processing will not continue.", fields = { service = "SendIncidentTroubleTickets" } },
+    { msg = "[SendIncidents] - None of received Incident Resources are of interest. Processing will not continue.", fields = { service = "SendIncidents" } },
+]
+counter_examples = ["[SendIncidents] - Processing of 3 Incident Resources started."]
+
+[[template]]
+code = "ONT-009"
+class = "validation"
+title = "Property value not of interest"
+regex = '''^\[Validation\] The value of property "(?P<property>[^"]*)" is not of interest\. Supported values are: "(?P<values>[^"]*)"\. Current OMS_INCIDENT will not be processed\.$'''
+examples = [
+    { msg = '''[Validation] The value of property "OMS_INCIDENT.Type" is not of interest. Supported values are: "A, B". Current OMS_INCIDENT will not be processed.''', fields = { property = "OMS_INCIDENT.Type", values = "A, B" } },
+]
+counter_examples = ["[Validation Critical] - Invalid reply message received. Could not find schema information for the element 'x'."]
+
+# ---------------------------------------------------------------------------------------------
+# Send (request/response towards SAP PI)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "ONT-010"
+class = "req_resp"
+title = "Sending incident"
+regex = '''^\[SendIncidents\] Sending following Incident: (?P<mrid>[^.]+)\.$'''
+keys = [{ field = "mrid", type = "mrid" }]
+examples = [{ msg = "[SendIncidents] Sending following Incident: INC 1001.", fields = { mrid = "INC 1001" } }]
+counter_examples = ["[SendIncidentTroubleTicketsClient] Sending following trouble ticket(s) for incident: INC 1001."]
+
+[[template]]
+code = "ONT-011"
+class = "req_resp"
+title = "Sending message (request)"
+regex = '''^Sending "(?P<msg_type>\w+)" message: (?P<message_id>[0-9a-fA-F-]{36}) with verb: (?P<verb>\w+)\.\.\.$'''
+fields = { message_id = "guid" }
+keys = [{ field = "message_id", type = "msgid" }]
+examples = [
+    { msg = '''Sending "IncidentsEventMessageType" message: 00000000-0000-4000-8000-00000000000A with verb: Changed...''', fields = { msg_type = "IncidentsEventMessageType", message_id = "00000000-0000-4000-8000-00000000000a", verb = "Changed" } },
+]
+counter_examples = [
+    '''Sending "IncidentsEventMessageType" message: 00000000-0000-4000-8000-000000000001 with verb: Changed finished successfully.''',
+    '''Sending "IncidentTroubleTicketsEventMessageType" message: 00000000-0000-4000-8000-000000000001...''',
+]
+
+[[template]]
+code = "ONT-012"
+class = "req_resp"
+title = "Message sent (response)"
+regex = '''^Sending "(?P<msg_type>\w+)" message: (?P<message_id>[0-9a-fA-F-]{36}) with verb: (?P<verb>\w+) finished successfully\.$'''
+fields = { message_id = "guid" }
+keys = [{ field = "message_id", type = "msgid" }]
+examples = [
+    { msg = '''Sending "IncidentsEventMessageType" message: 00000000-0000-4000-8000-000000000001 with verb: Deleted finished successfully.''', fields = { verb = "Deleted", message_id = "00000000-0000-4000-8000-000000000001" } },
+]
+counter_examples = ['''Sending "IncidentsEventMessageType" message: 00000000-0000-4000-8000-000000000001 with verb: Deleted...''']
+
+[[template]]
+code = "ONT-013"
+class = "end"
+title = "Incident sent"
+text = "[SendIncidents] Sending Incident finished successfully"
+examples = ["[SendIncidents] Sending Incident finished successfully"]
+counter_examples = ["[SendIncidents] Sending Incident finished unsuccessfully. For more details check sensitive log."]
+
+[[template]]
+code = "ONT-014"
+class = "end"
+title = "Request message sent, reply result"
+regex = '''^Request message with MessageId '(?P<message_id>[0-9a-fA-F-]{36})' successfully sent\. Reply result '(?P<reply_result>[^']*)' is returned in response message\.$'''
+fields = { message_id = "guid" }
+keys = [{ field = "message_id", type = "msgid" }]
+examples = [
+    { msg = "Request message with MessageId '00000000-0000-4000-8000-000000000001' successfully sent. Reply result 'OK' is returned in response message.", fields = { message_id = "00000000-0000-4000-8000-000000000001", reply_result = "OK" } },
+]
+counter_examples = ["Request message with MessageId '00000000-0000-4000-8000-000000000001' unsuccessfully sent. For more details check sensitive log."]
+
+[[template]]
+code = "ONT-015"
+class = "req_resp"
+title = "Sending trouble tickets of an incident"
+regex = '''^\[SendIncidentTroubleTicketsClient\] Sending following trouble ticket\(s\) for incident: (?P<mrid>[^.]+)\.$'''
+keys = [{ field = "mrid", type = "mrid" }]
+examples = [{ msg = "[SendIncidentTroubleTicketsClient] Sending following trouble ticket(s) for incident: INC 1001.", fields = { mrid = "INC 1001" } }]
+counter_examples = ["[SendIncidents] Sending following Incident: INC 1001."]
+
+[[template]]
+code = "ONT-016A"
+class = "req_resp"
+title = "Sending trouble ticket message (request)"
+regex = '''^Sending "(?P<msg_type>\w+)" message: (?P<message_id>[0-9a-fA-F-]{36})\.\.\.$'''
+fields = { message_id = "guid" }
+keys = [{ field = "message_id", type = "msgid" }]
+examples = [
+    { msg = '''Sending "IncidentTroubleTicketsEventMessageType" message: 00000000-0000-4000-8000-000000000003...''', fields = { msg_type = "IncidentTroubleTicketsEventMessageType", message_id = "00000000-0000-4000-8000-000000000003" } },
+]
+counter_examples = ['''Sending "IncidentTroubleTicketsEventMessageType" message: 00000000-0000-4000-8000-000000000003 finished successfully.''']
+
+[[template]]
+code = "ONT-016B"
+class = "req_resp"
+title = "Trouble ticket message sent (response)"
+regex = '''^Sending "(?P<msg_type>\w+)" message: (?P<message_id>[0-9a-fA-F-]{36}) finished successfully\.$'''
+fields = { message_id = "guid" }
+keys = [{ field = "message_id", type = "msgid" }]
+examples = [
+    { msg = '''Sending "IncidentTroubleTicketsEventMessageType" message: 00000000-0000-4000-8000-000000000003 finished successfully.''', fields = { message_id = "00000000-0000-4000-8000-000000000003" } },
+]
+counter_examples = ['''Sending "IncidentTroubleTicketsEventMessageType" message: 00000000-0000-4000-8000-000000000003...''']
+
+[[template]]
+code = "ONT-017"
+class = "end"
+title = "Trouble tickets sent"
+text = "[SendIncidentTroubleTicketsClient] Sending trouble ticket(s) for incident finished successfully"
+examples = ["[SendIncidentTroubleTicketsClient] Sending trouble ticket(s) for incident finished successfully"]
+counter_examples = ["[SendIncidents] Sending Incident finished successfully"]
+
+[[template]]
+code = "ONT-018"
+class = "other"
+title = "Incident without trouble tickets"
+regex = '''^\[SendIncidentTroubleTickets\] - Incident '(?P<mrid>[^']*)' has no trouble tickets to send\.$'''
+keys = [{ field = "mrid", type = "mrid" }]
+examples = [{ msg = "[SendIncidentTroubleTickets] - Incident 'INC 1001' has no trouble tickets to send.", fields = { mrid = "INC 1001" } }]
+counter_examples = ["[SendIncidentTroubleTickets] - Incident resource with Mrid: 'INC 1001' will be processed."]
+
+# ---------------------------------------------------------------------------------------------
+# Failures
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "ONT-020"
+class = "error"
+title = "Sending failed (attempt)"
+sev = 2
+stream = "normal"
+regex = '''^Error: Sending "(?P<msg_type>\w+)" message failed\. "(?P<exc_type>[\w.`]+)" has occurred\. More details are possible in sensitive log on info level\.$'''
+keys = [{ field = "exc_type", type = "exc_type" }]
+refs_sensitive = true
+examples = [
+    { msg = '''Error: Sending "IncidentsEventMessageType" message failed. "System.ServiceModel.EndpointNotFoundException" has occurred. More details are possible in sensitive log on info level.''', fields = { msg_type = "IncidentsEventMessageType", exc_type = "System.ServiceModel.EndpointNotFoundException" } },
+]
+counter_examples = ['''Error: Sending "IncidentsEventMessageType" message failed. "System.TimeoutException" has occurred.''']
+
+[[template]]
+code = "ONT-S020"
+class = "error"
+title = "Sending failed (sensitive, with exception)"
+sev = 2
+stream = "sensitive"
+regex = '''^Error: Sending "(?P<msg_type>\w+)" message failed\. "(?P<exc_type>[\w.`]+)" has occurred\.$'''
+cont = "dotnet_stack"
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = '''Error: Sending "IncidentsEventMessageType" message failed. "System.TimeoutException" has occurred.''', cont = "Reason: The request channel timed out.\nStack trace:\n   at Example.Client.Send(Message m) in F:\\PD\\1234567\\1\\Example\\Client.cs:line 77\n", fields = { msg_type = "IncidentsEventMessageType", exc_type = "System.TimeoutException" } },
+]
+counter_examples = ['''Error: Sending "IncidentsEventMessageType" message failed. "System.TimeoutException" has occurred. More details are possible in sensitive log on info level.''']
+
+[[template]]
+code = "ONT-021"
+class = "error"
+title = "Incident sending finished unsuccessfully"
+sev = 2
+regex = '''^\[SendIncidents\] Sending Incident finished unsuccessfully\.(?: Reason: (?P<reason>.*)| For more details check sensitive log\.)$'''
+cont = "dotnet_stack"
+examples = [
+    { msg = "[SendIncidents] Sending Incident finished unsuccessfully. For more details check sensitive log." },
+    { msg = "[SendIncidents] Sending Incident finished unsuccessfully. Reason: The request channel timed out. StackTrace:", cont = "   at Example.Client.Send(Message m) in F:\\PD\\1234567\\1\\Example\\Client.cs:line 77\n", fields = { reason = "The request channel timed out. StackTrace:", frame = "Example.Client.Send" } },
+]
+counter_examples = ["[SendIncidents] Sending Incident finished successfully"]
+
+[[template]]
+code = "ONT-022"
+class = "error"
+title = "Request message unsuccessfully sent"
+sev = 2
+regex = '''^Request message with MessageId '(?P<message_id>[0-9a-fA-F-]{36})' unsuccessfully sent\.(?: Reason: '?(?P<reason>.*?)'?\.| For more details check sensitive log\.)$'''
+fields = { message_id = "guid" }
+keys = [{ field = "message_id", type = "msgid" }]
+examples = [
+    { msg = "Request message with MessageId '00000000-0000-4000-8000-000000000001' unsuccessfully sent. For more details check sensitive log.", fields = { message_id = "00000000-0000-4000-8000-000000000001" } },
+    { msg = "Request message with MessageId '00000000-0000-4000-8000-000000000001' unsuccessfully sent. Reason: 'There was no endpoint listening'.", fields = { reason = "There was no endpoint listening" } },
+]
+counter_examples = ["Request message with MessageId '00000000-0000-4000-8000-000000000001' successfully sent. Reply result 'OK' is returned in response message."]
+
+[[template]]
+code = "ONT-023"
+class = "validation"
+title = "Invalid reply message"
+sev = 2
+regex = '''^\[Validation Critical\] - Invalid reply message received\. (?P<reason>.*)$'''
+examples = [{ msg = "[Validation Critical] - Invalid reply message received. Could not find schema information for the element 'x'.", fields = { reason = "Could not find schema information for the element 'x'." } }]
+counter_examples = ["[Validation] The value of property \"p\" is not of interest. Supported values are: \"v\". Current OMS_INCIDENT will not be processed."]
+
+[[template]]
+code = "ONT-025"
+class = "startup"
+title = "Service URL (sensitive)"
+stream = "sensitive"
+regex = '''^\[ServiceUrl\] : For (?P<service>\w+) service url is (?P<url>\S+)$'''
+examples = [{ msg = "[ServiceUrl] : For SendIncidents service url is http://sap-pi.example.invalid:50000/path", fields = { service = "SendIncidents", url = "http://sap-pi.example.invalid:50000/path" } }]
+counter_examples = ["Creating client proxy object for service URL: http://sap-pi.example.invalid:50000/path"]
+
+[[template]]
+code = "ONT-031"
+class = "lifecycle"
+title = "Cache housekeeper"
+regex = '''^\[CacheHousekeeper\] Removing messages older then (?P<cutoff>.+?) (?P<phase>started|finished successfully)\.$'''
+examples = [
+    { msg = "[CacheHousekeeper] Removing messages older then 8/13/2026 10:00:00 AM started.", fields = { phase = "started" } },
+    { msg = "[CacheHousekeeper] Removing messages older then 8/13/2026 10:00:00 AM finished successfully.", fields = { phase = "finished successfully" } },
+]
+counter_examples = ["[CacheHousekeeper] Removing messages older than started."]
+
+# ---------------------------------------------------------------------------------------------
+# Info window
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "ONT-110"
+class = "start"
+title = "Processing resources started"
+regex = '''^\[(?P<service>SendIncidents|SendIncidentTroubleTickets)\] - Processing of (?P<n>\d+) (?:Incident|Trouble Tickets) Resources started\.$'''
+fields = { n = "int" }
+examples = [
+    { msg = "[SendIncidents] - Processing of 3 Incident Resources started.", fields = { service = "SendIncidents", n = 3 } },
+    { msg = "[SendIncidentTroubleTickets] - Processing of 2 Trouble Tickets Resources started.", fields = { service = "SendIncidentTroubleTickets", n = 2 } },
+]
+counter_examples = ["[SendIncidents] - None of received Incident Resources are of interest. Processing will not continue."]
+
+[[template]]
+code = "ONT-111A"
+class = "other"
+title = "Smart cache message queue"
+regex = '''^\[CachedDataSynchronizer\] - (?P<action>Saving|Dequeuing|Deleting|Updating) '(?P<msg_type>[^']*)' message with GID: '(?P<gid>[^']*)', (?:Verb: '(?P<verb>[^']*)' and )?Identifier: '(?P<mrid>[^']*)'(?: and MessageId: '(?P<message_id>[^']*)')?(?P<tail>.*)$'''
+keys = [{ field = "message_id", type = "msgid" }, { field = "mrid", type = "mrid" }, { field = "gid", type = "gid" }]
+examples = [
+    { msg = "[CachedDataSynchronizer] - Saving 'IncidentsEventMessageType' message with GID: '288230376151711744', Identifier: 'INC 1001' and MessageId: '00000000-0000-4000-8000-000000000001' to smart cache.", fields = { action = "Saving", msg_type = "IncidentsEventMessageType", gid = "288230376151711744", mrid = "INC 1001", message_id = "00000000-0000-4000-8000-000000000001" } },
+    { msg = "[CachedDataSynchronizer] - Updating 'IncidentsEventMessageType' message with GID: '288230376151711744', Identifier: 'INC 1001' and MessageId: '00000000-0000-4000-8000-000000000001' in smart cache succeeded. Status changed from NotSent to Sent", fields = { action = "Updating" } },
+    { msg = "[CachedDataSynchronizer] - Deleting 'IncidentsEventMessageType' message with GID: '288230376151711744', Verb: 'Deleted' and Identifier: 'INC 1001' from smart cache.", fields = { action = "Deleting", verb = "Deleted" } },
+]
+counter_examples = ["[CachedDataSynchronizer] - Dequeuing message from internal queue..."]
+
+[[template]]
+code = "ONT-111B"
+class = "other"
+title = "Smart cache dequeue"
+text = "[CachedDataSynchronizer] - Dequeuing message from internal queue..."
+examples = ["[CachedDataSynchronizer] - Dequeuing message from internal queue..."]
+counter_examples = ["[CachedDataSynchronizer] - Dequeuing message"]

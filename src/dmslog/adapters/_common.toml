@@ -1,0 +1,994 @@
+# Generic templates shared by every family (task 2.2). Library: only reachable through
+# `extends = ["_common"]`, and as the whole catalog of families without a file of their own
+# (UNKNOWN, PROCESS, SERVERLOG, adapters outside the 1.0 scope, ...).
+#
+# Sources: docs/formato/{crm-e-demais,avl-osr-smn-siteswitch,wfm-ont,payloads}.md. Old
+# per-document IDs (COM-*, WFM-020..022, WFM-050..052, WFM-090, WFM-099, WFM-100, ONT-030,
+# ONT-100) are kept as `aliases`. Family-specific files come first in the chain, so a family
+# template always wins over a generic one; the generic ones here must therefore be mutually
+# exclusive among themselves (the example check enforces it).
+#
+# Splits against the format documents (the document ID keeps the first part):
+#   GEN-CCH-01 (smart cache) -> GEN-CCH-01 Cache[...], GEN-CCH-02 replicator, GEN-CCH-03 model ids
+#   GEN-C2L-01 / GEN-C2L-02 stay as documented
+#   GEN-MAP-01 covers the dump and its open/closed/cleared/integrity markers; GEN-MAP-02 is one
+#   entry per line; GEN-MAP-03 announces how many entries follow; GEN-MAP-04 "Adding the key"
+#   GEN-ERR-01 (normal stream: error codes) and GEN-ERR-03 (sensitive stream: details)
+#   GEN-PRX-02 (announces the sensitive URL) and GEN-PRX-03 (existing proxy)
+#   GEN-STARTUP of crm-e-demais.md is the set GEN-CFG-* and GEN-STU-* (startup class)
+#
+# ---------------------------------------------------------------------------------------------
+# Table of [Configuration] name aliases for M3 (config_observed x resolved, ARQUITETURA 7.2.1).
+# The schema has no data tables, so the table is kept here as a comment. The comparison is done
+# on the normalized name (no "_", case-insensitive) PLUS the entries below:
+#
+#   name in the Registry / WebServiceConfiguration          name logged by the adapter
+#   WebServiceConfiguration                           ->    PathToWebServiceConfiguration
+#   <Operation>_ErrorConfigurationPath                ->    <Operation>ErrorConfigurationPath
+#                                                           (for example CreatedMeterReadings_)
+#   AddressingMode                                    ->    AddressingModeString
+#   RemoteHouseKeepingType                            ->    RemoteHouseKeepingTypeString
+# The last two come from the comparison of the 120 names logged as "Type: [ConfigurationRegistry]"
+# in the sample ERS with the 968 <Value Name> entries of OASyS/Servers/config/Registry/*.xml (the
+# only two names that do not match after normalization). Every other name matches. Names logged
+# only as defaults ("[LoadingError]" + "Default value loaded") are not in the Registry on purpose.
+# ---------------------------------------------------------------------------------------------
+
+schema = 1
+family = "_common"
+description = "Generic templates: statistics, connections, errors, exceptions, maps, startup, tracing"
+
+# ============================================================================================
+# Statistics: [Communication<n>] blocks every hour
+# ============================================================================================
+
+[[template]]
+code = "GEN-STA-01"
+aliases = ["COM-001", "COM-006"]
+class = "statistics"
+title = "Statistics block header"
+sev = 5
+regex = '''^\[Communication(?P<chan>\d+)\] - (?P<side>Client|Service)-side statistics:$'''
+fields = { chan = "int" }
+examples = [
+    { msg = "[Communication2] - Client-side statistics:", fields = { chan = 2, side = "Client" } },
+    "[Communication2] - Service-side statistics:",
+]
+counter_examples = ["[Communication2] - Client-side statistics: done", "Client-side statistics:"]
+
+[[template]]
+code = "GEN-STA-02"
+aliases = ["WFM-090", "ONT-030", "COM-002", "COM-007"]
+class = "statistics"
+title = "Statistics totals"
+sev = 5
+regex = '''^\[Communication(?P<chan>\d+)\] - \[TOTAL\]\[(?P<side>Client|Service)\] Call count: (?P<calls>\d+), Request bytes: (?P<req_bytes>\d+) \(avg\. (?P<req_avg>[\d.]+)\), Response bytes: (?P<resp_bytes>\d+) \(avg\. (?P<resp_avg>[\d.]+)\)\. Total operations: (?P<ops>\d+)$'''
+fields = { chan = "int", calls = "int", req_bytes = "int", resp_bytes = "int", req_avg = "float", resp_avg = "float", ops = "int" }
+examples = [
+    { msg = "[Communication2] - [TOTAL][Client] Call count: 3, Request bytes: 294 (avg. 98), Response bytes: 28553 (avg. 9517.667). Total operations: 3", fields = { side = "Client", calls = 3, req_bytes = 294, resp_bytes = 28553, req_avg = 98.0, resp_avg = 9517.667, ops = 3 } },
+]
+counter_examples = ["[Communication2] - [TOTAL][Client] Call count: x, Request bytes: 294"]
+
+[[template]]
+code = "GEN-STA-03"
+aliases = ["COM-003", "COM-004", "COM-005"]
+class = "statistics"
+title = "Statistics section (CSV per method)"
+sev = 5
+regex = '''^\[Communication(?P<chan>\d+)\] - By (?P<order>call count|Request Message Size Total|Response Message Size Total):$'''
+fields = { chan = "int" }
+cont = "stats_csv"
+examples = [
+    { msg = "[Communication2] - By call count: ", cont = "[methodname, call count, request total size, response total size]\nExample.Contract.IQuery.Get,1,74,72\n", fields = { order = "call count" } },
+    "[Communication3] - By Request Message Size Total:",
+]
+counter_examples = ["[Communication2] - By nothing:"]
+
+# ============================================================================================
+# Connections between processes
+# ============================================================================================
+
+[[template]]
+code = "GEN-CON-01"
+aliases = ["WFM-020"]
+class = "lifecycle"
+title = "Connecting to a service"
+sev = 4
+regex = '''^Connecting to (?P<service>[\w.]+)\.$'''
+examples = [{ msg = "Connecting to ExampleBusinessService.", fields = { service = "ExampleBusinessService" } }]
+counter_examples = ["Successfully connected to ExampleBusinessService."]
+
+[[template]]
+code = "GEN-CON-02"
+aliases = ["WFM-021"]
+class = "lifecycle"
+title = "Connected to a service"
+sev = 4
+regex = '''^Successfully connected to (?P<service>[\w.]+)\.$'''
+examples = [{ msg = "Successfully connected to ExampleBusinessService.", fields = { service = "ExampleBusinessService" } }]
+counter_examples = ["Connecting to ExampleBusinessService."]
+
+[[template]]
+code = "GEN-CON-03"
+aliases = ["WFM-022"]
+class = "lifecycle"
+title = "Client connection router"
+sev = 4
+regex = '''^\[ClientConnectionRouter\] (?P<action>Add|Remove) connection for ClientId = (?P<client_id>\d+)$'''
+fields = { client_id = "int" }
+keys = ["client_id"]
+examples = [{ msg = "[ClientConnectionRouter] Add connection for ClientId = 7", fields = { action = "Add", client_id = 7 } }]
+counter_examples = ["[ClientConnectionRouter] Add connection for ClientId = x"]
+
+[[template]]
+code = "GEN-NET-01"
+class = "other"
+title = "Socket termination and cleanup"
+sev = 4
+regex = '''^\[Communication(?P<chan>\d+)\] - (?:Finished terminating (?P<conn>[0-9a-fA-F-]{36}) connection\.|Started socket cleanup worker\.)$'''
+fields = { chan = "int", conn = "guid" }
+examples = [
+    "[Communication2] - Finished terminating 00000000-0000-4000-8000-000000000001 connection.",
+    "[Communication2] - Started socket cleanup worker.",
+]
+counter_examples = ["[Communication2] - Finished terminating connection."]
+
+# ============================================================================================
+# Validation errors, system events, exceptions
+# ============================================================================================
+
+[[template]]
+code = "GEN-ERR-01"
+aliases = ["WFM-050"]
+class = "validation"
+title = "Detected errors (error codes)"
+sev = 3
+stream = "normal"
+regex = '''^Detected errors:$'''
+cont = "codes_per_line"
+keys = [{ field = "codes", type = "errcode" }]
+examples = [{ msg = "Detected errors:", cont = "ExampleCodeOne\nExampleCodeTwo", fields = { codes = ["ExampleCodeOne", "ExampleCodeTwo"] } }]
+counter_examples = ["Detected errors: none"]
+
+[[template]]
+code = "GEN-ERR-02"
+aliases = ["WFM-051"]
+class = "validation"
+title = "Details of the errors are in the sensitive log"
+sev = 4
+refs_sensitive = true
+text = "A detailed description of these errors can be found in the adapters sensitive log."
+examples = ["A detailed description of these errors can be found in the adapters sensitive log."]
+counter_examples = ["A detailed description of these errors can be found elsewhere."]
+
+[[template]]
+code = "GEN-ERR-03"
+class = "validation"
+title = "Detected errors (details)"
+sev = 3
+stream = "sensitive"
+regex = '''^Detected errors:$'''
+examples = ["Detected errors:"]
+counter_examples = ["Detected errors"]
+
+[[template]]
+code = "GEN-EVT-01"
+aliases = ["WFM-052"]
+class = "error"
+title = "System event sent by an adapter"
+sev = 4
+regex = '''^\[SystemEventSender(?:WithQueuing)?\] System event message: \[(?P<adapter>[\w.]+)\] (?:\[(?P<op>[^\]]+)\] )?(?P<text>(?P<lvl>ERROR|WARNING|Errors occurred)?.*)$'''
+sev_field = "lvl"
+sev_map = { ERROR = 2, WARNING = 3, "Errors occurred" = 3 }
+examples = [
+    { msg = "[SystemEventSender] System event message: [AdapterExample] [CreateExample] Errors occurred while processing received message", fields = { adapter = "AdapterExample", op = "CreateExample", lvl = "Errors occurred" } },
+    { msg = "[SystemEventSenderWithQueuing] System event message: [AdapterExample] ERROR: Processing message from external system failed.", fields = { adapter = "AdapterExample", lvl = "ERROR" } },
+    "[SystemEventSenderWithQueuing] System event message: [AdapterExample] Uploading file to remote location succeeded.",
+]
+counter_examples = ["[SystemEventSender] Trying to send an system event. System event message: [AdapterExample] x"]
+
+[[template]]
+code = "GEN-EVT-02"
+class = "other"
+title = "Published EventData"
+sev = 4
+text = "Publishing EventData:"
+cont = "kv_colon"
+examples = [{ msg = "Publishing EventData:", cont = "Timestamp: 2026-01-01 00:00:00\nDetails: example" }]
+counter_examples = ["Publishing EventData: x"]
+
+[[template]]
+code = "GEN-EVT-03"
+class = "other"
+title = "System event about to be sent"
+sev = 4
+regex = '''^\[SystemEventSender\] Trying to send an system event\. System event message: (?P<event>.*)$'''
+examples = [{ msg = "[SystemEventSender] Trying to send an system event. System event message: [AdapterExample] Example", fields = { event = "[AdapterExample] Example" } }]
+counter_examples = ["[SystemEventSender] System event message: [AdapterExample] Example"]
+
+[[template]]
+code = "GEN-EXC-01"
+class = "error"
+title = "Non fatal exception"
+sev = 2
+regex = '''^Non Fatal Exception (?P<exc_type>[\w.`+]+): (?P<exc_msg>.*)$'''
+cont = "dotnet_stack"
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [
+    { msg = "Non Fatal Exception System.ObjectDisposedException: Cannot access a disposed object.", cont = "\tManaged Code Stack Trace:\n   at Example.Service.Call() in F:\\PD\\1234567\\1\\Example\\Service.cs:line 83\n", fields = { exc_type = "System.ObjectDisposedException", exc_msg = "Cannot access a disposed object." } },
+]
+counter_examples = ["Fatal Exception System.ObjectDisposedException: x", "Non Fatal Exception without type"]
+
+[[template]]
+code = "GEN-DBG-01"
+aliases = ["WFM-099"]
+class = "lifecycle"
+title = "Debug level changed"
+sev = 4
+regex = '''^Debug level changed from (?P<from_name>\w+) \((?P<from_n>\d+)\) to (?P<to_name>\w+) \((?P<to_n>\d+)\)\.$'''
+fields = { from_n = "int", to_n = "int" }
+examples = [{ msg = "Debug level changed from DebugLog (3) to Info (5).", fields = { from_name = "DebugLog", from_n = 3, to_name = "Info", to_n = 5 } }]
+counter_examples = ["Debug level changed to Info."]
+
+# ============================================================================================
+# Auditing (sensitive stream): idle endpoints, every AuditingPeriod
+# ============================================================================================
+
+[[template]]
+code = "GEN-AUD-01"
+class = "other"
+title = "Endpoint not invoked"
+sev = 4
+regex = '''^Endpoint (?P<endpoint>\S+) on (?P<url>\S+) was not invoked more than (?P<period>[\d:.]+)$'''
+examples = [{ msg = "Endpoint ReceiveExampleService on https://localhost:9999/ReceiveExampleService was not invoked more than 12:00:00", fields = { endpoint = "ReceiveExampleService", period = "12:00:00" } }]
+counter_examples = ["Endpoint ReceiveExampleService on https://localhost:9999/x was invoked"]
+
+[[template]]
+code = "GEN-AUD-02"
+class = "other"
+title = "Client did not send requests"
+sev = 4
+regex = '''^Client for endpoint (?P<endpoint>\S*) +didn't send request to (?P<url>\S+) for more than (?P<period>[\d:.]+)\.$'''
+examples = [{ msg = "Client for endpoint ExampleService didn't send request to https://example.invalid/x for more than 12:00:00.", fields = { endpoint = "ExampleService", period = "12:00:00" } }, "Client for endpoint  didn't send request to https://example.invalid/x for more than 12:00:00."]
+counter_examples = ["Client for endpoint ExampleService sent a request"]
+
+# ============================================================================================
+# Subscribers (publish/subscribe)
+# ============================================================================================
+
+[[template]]
+code = "GEN-SUB-01"
+class = "lifecycle"
+title = "Subscriber life cycle"
+sev = 4
+regex = '''^Subscriber(?: integrity update (?P<phase>started|finished)\.| manager \((?P<pubsub>[^)]+)\) .*|: (?P<subscriber>\w+) .*| is (?:subscribed|connected) to (?P<pubsub2>\w+)\.)$'''
+examples = [
+    { msg = "Subscriber integrity update started.", fields = { phase = "started" } },
+    { msg = "Subscriber manager (ExamplePubSub) is connected to the publisher.", fields = { pubsub = "ExamplePubSub" } },
+    { msg = "Subscriber: ExamplePubSub successfully connected.", fields = { subscriber = "ExamplePubSub" } },
+    { msg = "Subscriber is subscribed to ExamplePubSub.", fields = { pubsub2 = "ExamplePubSub" } },
+]
+counter_examples = ["Subscriber ExamplePubSub:1. Dequeued LocalSubscriberCommand count: 2."]
+
+[[template]]
+code = "GEN-SUB-02"
+class = "other"
+title = "Dequeued subscriber commands"
+sev = 5
+regex = '''^Subscriber (?P<pubsub>\w+):(?P<n>\d+)\. Dequeued LocalSubscriberCommand count: (?P<count>\d+)\.$'''
+fields = { n = "int", count = "int" }
+examples = [{ msg = "Subscriber ExamplePubSub:1. Dequeued LocalSubscriberCommand count: 2.", fields = { pubsub = "ExamplePubSub", n = 1, count = 2 } }]
+counter_examples = ["Subscriber ExamplePubSub:1. Dequeued nothing."]
+
+[[template]]
+code = "GEN-SUB-03"
+class = "other"
+title = "Publication info"
+sev = 4
+text = "[Subscriber] - Publication info:"
+cont = "kv_dash"
+examples = [{ msg = "[Subscriber] - Publication info:", cont = "Sub-process - Example\nCacheOperation - Update" }]
+counter_examples = ["[Subscriber] - Publication info"]
+
+[[template]]
+code = "GEN-SUB-04"
+class = "other"
+title = "IU received for a topic"
+sev = 5
+regex = '''^IU received for topic: (?P<topic>\S+)\.$'''
+examples = [{ msg = "IU received for topic: example.topic.name.", fields = { topic = "example.topic.name" } }]
+counter_examples = ["IU received for topic"]
+
+# ============================================================================================
+# Maps (cache dumps) of the adapters
+# ============================================================================================
+
+[[template]]
+code = "GEN-MAP-01"
+class = "other"
+title = "Map dump and state markers"
+sev = 5
+regex = '''^(?:New )?"(?P<map>[^"]*)" map (?P<state>content:|is now open\.|closed\.|cleared\.|integrity update started\. Map will be cleared and populated with fresh data\.)$'''
+cont = "kv_tab"
+examples = [
+    { msg = "New \"EXAMPLE_MAP\" map content:", cont = "\t1 - A\n\t2 - B", fields = { map = "EXAMPLE_MAP", state = "content:" } },
+    "\"EXAMPLE_MAP\" map is now open.",
+    "\"EXAMPLE_MAP\" map closed.",
+    "\"EXAMPLE_MAP\" map cleared.",
+    "\"EXAMPLE_MAP\" map integrity update started. Map will be cleared and populated with fresh data.",
+]
+counter_examples = ["\"EXAMPLE_MAP\" map exploded."]
+
+[[template]]
+code = "GEN-MAP-02"
+window = 1008  # worst case quadratic: see _schema.md, Regex safety
+class = "other"
+title = "Entry added to a map"
+sev = 5
+fts = false
+regex = '''^"(?P<key>.*)" (?:entry )?(?P<action>added|updated) to the "(?P<map>[^"]*)" map\.$'''
+examples = [
+    { msg = "\"Key: X-1\" entry added to the \"EXAMPLE_MAP\" map.", fields = { map = "EXAMPLE_MAP" } },
+    "\"X-1\" added to the \"EXAMPLE_MAP\" map.",
+    "\"Example\"-\"Value\" entry updated to the \"EXAMPLE_MAP\" map.",
+]
+counter_examples = ["\"X-1\" removed from the \"EXAMPLE_MAP\" map."]
+
+[[template]]
+code = "GEN-MAP-03"
+class = "other"
+title = "Entries about to be added to a map"
+sev = 5
+regex = '''^(?P<n>\d+) entries will be added to the "(?P<map>[^"]*)" map\.\.\.$'''
+fields = { n = "int" }
+examples = [{ msg = "12 entries will be added to the \"EXAMPLE_MAP\" map...", fields = { n = 12, map = "EXAMPLE_MAP" } }]
+counter_examples = ["12 entries were added to the \"EXAMPLE_MAP\" map..."]
+
+[[template]]
+code = "GEN-MAP-04"
+class = "other"
+title = "Adding a key to a map"
+sev = 5
+fts = false
+regex = '''^Adding the key (?P<key>.*)$'''
+examples = ["Adding the key 12345", "Adding the key Name: \"X\" Semantic: \"Y\""]
+counter_examples = ["Adding keys"]
+
+# ============================================================================================
+# Payload announcement and payload (sensitive stream)
+# ============================================================================================
+
+[[template]]
+code = "GEN-MSG-01"
+aliases = ["WFM-100", "ONT-100"]
+class = "req_resp"
+title = "Message announced in the sensitive log"
+sev = 4
+refs_sensitive = true
+regex = '''^Message with MessageID: '(?P<message_id>[^']*)' will be logged in sensitive log\.$'''
+keys = [{ field = "message_id", type = "msgid" }]
+examples = [
+    { msg = "Message with MessageID: '00000000-0000-4000-8000-000000000001' will be logged in sensitive log.", fields = { message_id = "00000000-0000-4000-8000-000000000001" } },
+    "Message with MessageID: '' will be logged in sensitive log.",
+]
+counter_examples = ["Message with MessageID: '00000000-0000-4000-8000-000000000001' was logged."]
+
+[[template]]
+code = "GEN-PLD-01"
+class = "req_resp"
+title = "Message payload (XML)"
+sev = 4
+stream = "sensitive"
+regex = '''^Message(?: content)?: (?=<)'''
+payload = { fmt = "xml", start = "match_end", strip_suffix = ".", role = "by_root" }
+examples = [{ msg = "Message content: <ChangedExamples xmlns=\"urn:example\">", cont = "  <Header/>\n</ChangedExamples>." }, "Message: <ExampleResponseMessage>"]
+counter_examples = ["Message content: not xml"]
+
+# ============================================================================================
+# Proxies, filters, validation of schemas, pools, mode tracker, pub/sub attach
+# ============================================================================================
+
+[[template]]
+code = "GEN-PRX-01"
+class = "other"
+title = "Getting a service proxy"
+sev = 5
+regex = '''^Getting service proxy of type ["'](?P<type>[^"']+)["'](?: succeeded)?\.$'''
+examples = [{ msg = "Getting service proxy of type \"Example.IContract\".", fields = { type = "Example.IContract" } }, "Getting service proxy of type 'Example.IContract' succeeded."]
+counter_examples = ["Getting service proxy failed."]
+
+[[template]]
+code = "GEN-PRX-02"
+class = "other"
+title = "Client proxy requested (URL in the sensitive log)"
+sev = 4
+refs_sensitive = true
+regex = '''^Request client proxy object for service with contract type (?P<contract>\d+)\. Service details written in sensitive log\.$'''
+fields = { contract = "int" }
+examples = [{ msg = "Request client proxy object for service with contract type 12. Service details written in sensitive log.", fields = { contract = 12 } }]
+counter_examples = ["Request client proxy object for service with contract type 12."]
+
+[[template]]
+code = "GEN-PRX-03"
+class = "other"
+title = "Existing client proxy reused"
+sev = 5
+regex = '''^Detected existing client proxy object for service with contract type (?P<contract>\d+)\.$'''
+fields = { contract = "int" }
+examples = [{ msg = "Detected existing client proxy object for service with contract type 12.", fields = { contract = 12 } }]
+counter_examples = ["Detected existing client proxy."]
+
+[[template]]
+code = "GEN-PRX-S01"
+class = "other"
+title = "Client proxy URL"
+sev = 4
+stream = "sensitive"
+regex = '''^Creating client proxy object for service URL: (?P<url>.*)$'''
+examples = [{ msg = "Creating client proxy object for service URL: net.tcp://example.invalid:1234/Service", fields = { url = "net.tcp://example.invalid:1234/Service" } }]
+counter_examples = ["Creating client proxy object"]
+
+[[template]]
+code = "GEN-FLT-01"
+class = "other"
+title = "Removing zero IDs from a collection"
+sev = 5
+fts = false
+regex = '''^(?:Removing zero IDs from the source collection: .*|Zero IDs successfully removed from the source collection\. New source collection: .*)$'''
+examples = ["Removing zero IDs from the source collection: \"1\", \"2\".", "Zero IDs successfully removed from the source collection. New source collection: \"1\"."]
+counter_examples = ["Removing IDs from the source collection: \"1\"."]
+
+[[template]]
+code = "GEN-FLT-02"
+class = "other"
+title = "Filtering and getting data"
+sev = 5
+fts = false
+regex = '''^(?:\[[^\]]+\] )?(?:Filtering data based on IDs: .*|Filtering data succeeded\. (?P<n>\d+) entities returned\.|Collection is (?:not )?empty\.|Getting all data from .*|Getting GIDs for provided UIDs(?::| succeeded).*)$'''
+fields = { n = "int" }
+examples = [
+    { msg = "Filtering data succeeded. 5 entities returned.", fields = { n = 5 } },
+    "[ExampleQuery - GetExample] Filtering data based on IDs: \"1\", \"2\".",
+    "Collection is not empty.",
+    "Collection is empty.",
+    "Getting all data from \"Example\"...",
+    "Getting GIDs for provided UIDs: \"U1\".",
+    "Getting GIDs for provided UIDs succeeded.",
+]
+counter_examples = ["Filtering data failed."]
+
+[[template]]
+code = "GEN-POOL-01"
+class = "other"
+title = "Adaptive pool usage"
+sev = 5
+regex = '''^\[AdaptivePool (?P<pool>[^\]]+)\] \[UsageMonitor\] (?:In the previous (?P<period>\d+)ms period adaptive pool peak pressure parameters were max=(?P<max>\d+), min=(?P<min>\d+)\..*|Monitoring started\..*)$'''
+fields = { period = "int", max = "int", min = "int" }
+examples = [
+    { msg = "[AdaptivePool Example_Base] [UsageMonitor] In the previous 60000ms period adaptive pool peak pressure parameters were max=3, min=1. Size: 4.", fields = { pool = "Example_Base", max = 3, min = 1 } },
+    "[AdaptivePool Example_Base] [UsageMonitor] Monitoring started. Default size: 4, check period: 60000 ms, upsizing alocation: 2 elements.",
+]
+counter_examples = ["[AdaptivePool Example_Base] [UsageMonitor]"]
+
+[[template]]
+code = "GEN-XSD-01"
+class = "validation"
+title = "Message valid against the XSD"
+sev = 4
+regex = '''^(?P<phase>Received valid request message|Sending valid reply message|Sending request message is valid|Received reply message is valid) according to XML schema definition\.$'''
+examples = [{ msg = "Received valid request message according to XML schema definition.", fields = { phase = "Received valid request message" } }, "Sending valid reply message according to XML schema definition."]
+counter_examples = ["Received invalid request message according to XML schema definition."]
+
+[[template]]
+code = "GEN-XSD-02"
+class = "error"
+title = "Message rejected by the XSD validator"
+sev = 2
+regex = '''^\[MessageValidator\] Message: (?P<reason>.*)$'''
+examples = [{ msg = "[MessageValidator] Message: Could not find schema information for the element 'ns:Example'.", fields = { reason = "Could not find schema information for the element 'ns:Example'." } }]
+counter_examples = ["[MessageValidator] Started"]
+
+[[template]]
+code = "GEN-MOD-01"
+class = "other"
+title = "Mode tracker heartbeat"
+sev = 5
+fts = false
+text = "ModeTracker: Sleeping..."
+examples = ["ModeTracker: Sleeping..."]
+counter_examples = ["ModeTracker: Awake"]
+
+[[template]]
+code = "GEN-MOD-02"
+class = "other"
+title = "Mode tracker table unchanged"
+sev = 5
+fts = false
+regex = '''^Mode Tracker: \[(?P<table>[^\]]+)\] table is not changed\. Elements: RTDB\((?P<rtdb>\d+)\), array\((?P<array>\d+)\)\.$'''
+fields = { rtdb = "int", array = "int" }
+examples = [{ msg = "Mode Tracker: [example_table] table is not changed. Elements: RTDB(3), array(3).", fields = { table = "example_table", rtdb = 3, array = 3 } }]
+counter_examples = ["Mode Tracker: [example_table] table is changed."]
+
+[[template]]
+code = "GEN-PSA-01"
+class = "other"
+title = "Config value callback (PSAttach)"
+sev = 5
+fts = false
+regex = '''^PSAttach::PubSubReceiveCallBack: Received callback for config value ["'](?P<key>[^"']*)["'] .*$'''
+examples = [{ msg = "PSAttach::PubSubReceiveCallBack: Received callback for config value 'ExampleKey' (no change from 'a' to 'a')", fields = { key = "ExampleKey" } }]
+counter_examples = ["PSAttach::PubSubReceiveCallBack: Started"]
+
+[[template]]
+code = "GEN-PSA-02"
+class = "other"
+title = "Arbitration pub/sub lookup"
+sev = 5
+fts = false
+regex = '''^arb_pubSubLookup: (?:Received update on topic: (?P<topic>\S+) with status (?P<status>\d+)|Cache updated with system: (?P<system>[^,]+), service: (?P<service>[^,]+), host: (?P<host>[^,]+), topic: (?P<topic2>[^,]+), sync state: (?P<state>\w+)(?:, ps status: (?P<ps_status>\w+))?)$'''
+examples = [
+    { msg = "arb_pubSubLookup: Received update on topic: example.sys.svc.arb.host.states.syncstate with status 0", fields = { topic = "example.sys.svc.arb.host.states.syncstate" } },
+    { msg = "arb_pubSubLookup: Cache updated with system: sys, service: svc, host: host1, topic: sys.svc.arb.host1.states.syncstate, sync state: SYNC_SYNCED, ps status: OK", fields = { state = "SYNC_SYNCED" } },
+]
+counter_examples = ["arb_pubSubLookup: Started"]
+
+# ============================================================================================
+# Smart cache and replication
+# ============================================================================================
+
+[[template]]
+code = "GEN-CCH-01"
+class = "other"
+title = "Smart cache delta and replication"
+sev = 5
+regex = '''^(?:\(REPLICATION_INFO\) )?Cache\[(?P<cache>[^\]]+)\] (?:Apply delta in ElementCache\. Inserted (?P<inserted>\d+) \| Updated (?P<updated>\d+) \| Deleted (?P<deleted>\d+)|Replicate change\. .*|Applying delta finished|Replicate elements finished)$'''
+fields = { inserted = "int", updated = "int", deleted = "int" }
+examples = [
+    { msg = "Cache[ExampleSmartCache] Apply delta in ElementCache. Inserted 1 | Updated 2 | Deleted 3", fields = { cache = "ExampleSmartCache", inserted = 1, updated = 2, deleted = 3 } },
+    "Cache[ExampleSmartCache] Replicate change. Insert count 1 | Update count 0 | Remove count 0 | Flags Normal",
+    "Cache[ExampleSmartCache] Applying delta finished",
+    "(REPLICATION_INFO) Cache[ExampleSmartCache] Replicate elements finished",
+]
+counter_examples = ["Cache[ExampleSmartCache] exploded"]
+
+[[template]]
+code = "GEN-CCH-02"
+window = 1008  # worst case quadratic: see _schema.md, Regex safety
+class = "other"
+title = "Replicator messages"
+sev = 5
+regex = '''^(?:Replicator: SendReplica client\[.*\] with MessageChunks Count: (?P<chunks>\d+)|Sending bulk of (?P<messages>\d+) replication messages of total size (?P<size>\d+)\.)$'''
+fields = { chunks = "int", messages = "int", size = "int" }
+examples = [
+    { msg = "Replicator: SendReplica client[clientID:1, clientName:ExampleSmartCache, dataset:2, dataflow:3] with MessageChunks Count: 4", fields = { chunks = 4 } },
+    { msg = "Sending bulk of 5 replication messages of total size 600.", fields = { messages = 5, size = 600 } },
+]
+counter_examples = ["Replicator: SendReplica failed"]
+
+[[template]]
+code = "GEN-CCH-03"
+class = "other"
+title = "Integration message ids in the local store"
+sev = 5
+regex = '''^(?:Model ID|Removing IntegrationMessage ID) = '(?P<im_id>\d+)$'''
+fields = { im_id = "int" }
+keys = ["im_id"]
+examples = [{ msg = "Model ID = '1234567890123", fields = { im_id = 1234567890123 } }, "Removing IntegrationMessage ID = '1234567890123"]
+counter_examples = ["Model ID = 1234567890123"]
+
+# ============================================================================================
+# Communication2 tracing (Verbose): out of the full-text index, noise
+# ============================================================================================
+
+[[template]]
+code = "GEN-C2T-01"
+class = "other"
+title = "Socket, framing and completion port tracing"
+sev = 5
+fts = false
+regex = '''^\[Communication(?P<chan>\d+)\] - (?:(?:Tcp socket|Tcp framing socket|Framing socket) id = (?P<socket_id>\d+) (?:(?:receive|send) called with (?P<bytes>\d+) bytes count\.|(?:receive|send) succesfully finished\.|(?:closed from the server side|succesfully closed)\.|closed\.|overlapped receive started succesfully\.|data received, lpOverlapped = \d+\.|complete message received, msgSize = (?P<size>\d+)\.|data received and succesfully completed\.|is sending message\. Client id = \d+ message msgId = \d+ msgSize = (?P<size2>\d+)\.|send message succesfull\.)|Socket with id = (?P<socket_id2>\d+) succesfully unregistered from the completion port handle = \d+\.|Tcp receive completion port handle = (?P<handle>\d+) (?:handle completion with params .*|queued for completion\.|received completion event with params .*))$'''
+fields = { chan = "int", socket_id = "int", socket_id2 = "int", bytes = "int", size = "int", size2 = "int", handle = "int" }
+examples = [
+    { msg = "[Communication2] - Tcp socket id = 5 receive called with 4 bytes count.", fields = { socket_id = 5, bytes = 4 } },
+    "[Communication2] - Tcp socket id = 5 send succesfully finished.",
+    "[Communication2] - Tcp socket id = 5 overlapped receive started succesfully.",
+    "[Communication2] - Tcp socket id = 5 closed from the server side.",
+    "[Communication2] - Tcp socket id = 5 succesfully closed.",
+    "[Communication2] - Tcp framing socket id = 5 closed.",
+    "[Communication2] - Socket with id = 5 succesfully unregistered from the completion port handle = 9.",
+    "[Communication2] - Tcp framing socket id = 5 data received, lpOverlapped = 123.",
+    { msg = "[Communication2] - Tcp framing socket id = 5 complete message received, msgSize = 80.", fields = { size = 80 } },
+    "[Communication2] - Tcp framing socket id = 5 data received and succesfully completed.",
+    "[Communication2] - Framing socket id = 5 is sending message. Client id = 1 message msgId = 2 msgSize = 90.",
+    "[Communication2] - Framing socket id = 5 send message succesfull.",
+    "[Communication2] - Tcp receive completion port handle = 9 handle completion with params numberOfBytes = 4, lpCompletionKey (socketId) = 5, lpOvelapped = 6.",
+    "[Communication2] - Tcp receive completion port handle = 9 queued for completion.",
+    "[Communication2] - Tcp receive completion port handle = 9 received completion event with params numberOfBytes = 4, lpCompletionKey = 5, lpOvelapped = 6.",
+]
+counter_examples = ["[Communication2] - Tcp socket id = 5 exploded."]
+
+[[template]]
+code = "GEN-C2T-02"
+class = "other"
+title = "TCP client connection message tracing"
+sev = 5
+fts = false
+regex = '''^\[Communication(?P<chan>\d+)\] - TCP client connection id = (?P<conn_id>\d+) (?P<dir>sending|receiving) message msgId = (?P<c2_msgid>\d+), msgType = (?P<msg_type>\w+), msgSize = (?P<size>\d+)\.$'''
+fields = { chan = "int", conn_id = "int", c2_msgid = "int", size = "int" }
+examples = [{ msg = "[Communication2] - TCP client connection id = 3 sending message msgId = 7, msgType = Request, msgSize = 120.", fields = { conn_id = 3, dir = "sending", c2_msgid = 7, msg_type = "Request", size = 120 } }]
+counter_examples = ["[Communication2] - TCP client connection id = 3 successfully opened."]
+
+[[template]]
+code = "GEN-C2T-03"
+class = "other"
+title = "Message encryption tracing"
+sev = 5
+fts = false
+regex = '''^\[Communication(?P<chan>\d+)\] - (?:(?:En|De)crypting message with byte count|Message (?:en|de)crypted with final byte count) (?P<bytes>\d+)\.$'''
+fields = { chan = "int", bytes = "int" }
+examples = [{ msg = "[Communication2] - Encrypting message with byte count 100.", fields = { bytes = 100 } }, "[Communication2] - Message decrypted with final byte count 90."]
+counter_examples = ["[Communication2] - Encrypting message."]
+
+[[template]]
+code = "GEN-C2M-01"
+class = "other"
+title = "Shared memory channel tracing"
+sev = 5
+fts = false
+regex = '''^\[Communication(?P<chan>\d+)\] - (?:ShMem client connection guid = (?P<guid>[0-9a-fA-F-]{36}) (?:sending request|response received)|(?:Sending request on|Response received on) ShMem channel guid = (?P<guid2>[0-9a-fA-F-]{36}),) msgSize = (?P<size>\d+)\.$'''
+fields = { chan = "int", size = "int", guid = "guid", guid2 = "guid" }
+examples = [
+    "[Communication2] - ShMem client connection guid = 00000000-0000-4000-8000-000000000001 sending request msgSize = 50.",
+    { msg = "[Communication2] - Response received on ShMem channel guid = 00000000-0000-4000-8000-000000000001, msgSize = 60.", fields = { size = 60 } },
+]
+counter_examples = ["[Communication2] - ShMem client connection guid = 00000000-0000-4000-8000-000000000001 closed."]
+
+[[template]]
+code = "GEN-C2O-01"
+class = "other"
+title = "Calling a service operation"
+sev = 5
+fts = false
+regex = '''^\[Communication(?P<chan>\d+)\] - Calling service operation (?P<method>\S+) over service connection id = (?P<conn_id>\d+)\.$'''
+fields = { chan = "int", conn_id = "int" }
+examples = [{ msg = "[Communication2] - Calling service operation GetExample over service connection id = 4.", fields = { method = "GetExample", conn_id = 4 } }]
+counter_examples = ["[Communication2] - Calling service operation GetExample."]
+
+[[template]]
+code = "GEN-C2O-02"
+window = 704  # worst case quadratic: see _schema.md, Regex safety
+class = "other"
+title = "Message compression"
+sev = 5
+fts = false
+regex = '''^\[Communication(?P<chan>\d+)\] - (?P<action>Compressing|Decompressing) (?P<part>request|response) message for method (?P<method>\S+), (?P<kind_in>original|compressed) size = (?P<size_in>\d+), (?P<kind_out>compressed|decompressed) size = (?P<size_out>\d+)\.$'''
+fields = { chan = "int", size_in = "int", size_out = "int" }
+examples = [{ msg = "[Communication2] - Compressing request message for method GetExample, original size = 100, compressed size = 40.", fields = { method = "GetExample", part = "request", size_in = 100, size_out = 40 } }]
+counter_examples = ["[Communication2] - Compressing request message for method GetExample."]
+
+[[template]]
+code = "GEN-C2O-03"
+class = "other"
+title = "Service operation phases"
+sev = 5
+fts = false
+regex = '''^\[Communication(?P<chan>\d+)\] - Service operation (?P<method>\S+) (?P<phase>called|implementation called|implementation call succeeded)\.$'''
+fields = { chan = "int" }
+examples = [{ msg = "[Communication2] - Service operation ExampleResults implementation called.", fields = { method = "ExampleResults", phase = "implementation called" } }, "[Communication2] - Service operation ExampleResults called."]
+counter_examples = ["[Communication2] - Service operation ExampleResults threw unexpected exception."]
+
+[[template]]
+code = "GEN-C2L-01"
+window = 1008  # worst case quadratic: see _schema.md, Regex safety
+class = "lifecycle"
+title = "Service connection channels"
+sev = 5
+fts = false
+regex = '''^(?:\[Communication(?P<chan>\d+)\] - (?:Opening new service connection binding = .*|Client transport channel without an opened connection created\.|Compression (?:client|service) channel created\.|Service connection opened id = (?P<conn_id>\d+)\.|Connection wrapper created of type = .*, id = (?P<wrapper_id>\d+)\.)|Tracing (?:client|service) channel created\.)$'''
+fields = { chan = "int", conn_id = "int", wrapper_id = "int" }
+examples = [
+    "[Communication2] - Opening new service connection binding = Example.TcpClientBinding, address = host:1234, serviceName = ExampleService, callbackService = Example.Callback",
+    "[Communication2] - Client transport channel without an opened connection created.",
+    "[Communication2] - Compression client channel created.",
+    { msg = "[Communication2] - Service connection opened id = 8.", fields = { conn_id = 8 } },
+    { msg = "[Communication2] - Connection wrapper created of type = __abc, id = 9.", fields = { wrapper_id = 9 } },
+    "Tracing service channel created.",
+]
+counter_examples = ["[Communication2] - Compression client channel destroyed."]
+
+[[template]]
+code = "GEN-C2L-02"
+class = "lifecycle"
+title = "TCP connection open and close"
+sev = 5
+fts = false
+regex = '''^(?:\[Communication(?P<chan>\d+)\] - )?(?:Opening TCP client connection with parameters .*|TCP client connection id = (?P<conn_id>\d+) (?:successfully (?:opened|closed)\.|queued for closure\. Stack trace:)|Tcp socket connected id = (?P<socket_id>\d+), ipAddress = (?P<ip>[\d.]+), port = (?P<port>\d+)\.|Translated address for (?P<host>\S+) = (?P<ip2>[\d.]+)\.)$'''
+fields = { chan = "int", conn_id = "int", socket_id = "int", port = "int" }
+examples = [
+    "[Communication2] - Opening TCP client connection with parameters fullAddress = net.tcp://example.invalid:1234, timeout = 5",
+    { msg = "[Communication2] - TCP client connection id = 3 successfully opened.", fields = { conn_id = 3 } },
+    "[Communication2] - TCP client connection id = 3 queued for closure. Stack trace:",
+    { msg = "[Communication2] - Tcp socket connected id = 5, ipAddress = 192.0.2.10, port = 1234.", fields = { socket_id = 5, ip = "192.0.2.10", port = 1234 } },
+    { msg = "[Communication2] - Translated address for example.invalid = 192.0.2.10.", fields = { host = "example.invalid" } },
+]
+counter_examples = ["[Communication2] - TCP client connection id = 3 exploded."]
+
+# ============================================================================================
+# Startup block: [Configuration] lines, web service settings, assemblies, state transitions
+# ============================================================================================
+
+[[template]]
+code = "GEN-CFG-01"
+class = "startup"
+title = "Configuration value read from the Registry"
+sev = 4
+regex = '''^\[Configuration\] \[(?P<param>[^\]]+)\]: \[(?P<value>.*)\]\. Type: \[ConfigurationRegistry\]$'''
+examples = [{ msg = "[Configuration] [LogLevel]: [DebugLog]. Type: [ConfigurationRegistry]", fields = { param = "LogLevel", value = "DebugLog" } }]
+counter_examples = ["[Configuration] [LogLevel]: [DebugLog]."]
+
+[[template]]
+code = "GEN-CFG-02"
+class = "startup"
+title = "Configuration parameter missing (default will be used)"
+sev = 4
+regex = '''^\[Configuration\]\[LoadingError\] \[(?P<param>[^\]]+)\](?P<detail>.*)$'''
+examples = [
+    { msg = "[Configuration][LoadingError] [ExampleParam] Parameter does not exist in the Registry.", fields = { param = "ExampleParam" } },
+    "[Configuration][LoadingError] [ExampleParam]. Type: [ConfigurationRegistry]. Exception: Value for product 'X', subkey 'Y', value 'Z' does not exist.",
+]
+counter_examples = ["[Configuration] [ExampleParam]: [1]. Type: [ConfigurationRegistry]"]
+
+[[template]]
+code = "GEN-CFG-03"
+class = "startup"
+title = "Default configuration value loaded"
+sev = 4
+regex = '''^\[Configuration\] \[Default\] \[(?P<param>[^\]]+)\]: \[(?P<value>.*)\](?:\.(?: .*)?)?$'''
+examples = [{ msg = "[Configuration] [Default] [ExampleParam]: [5].", fields = { param = "ExampleParam", value = "5" } }]
+counter_examples = ["[Configuration] [ExampleParam]: [5]."]
+
+[[template]]
+code = "GEN-CFG-04"
+class = "startup"
+title = "Service URL (sensitive stream)"
+sev = 4
+regex = '''^\[ServiceUrl\] : For (?P<service>\w+) service url is (?P<url>\S+)$'''
+examples = [{ msg = "[ServiceUrl] : For ReceiveExample service url is https://localhost:9999/ReceiveExampleService.", fields = { service = "ReceiveExample" } }]
+counter_examples = ["[ServiceUrl] : ExampleSetting"]
+
+[[template]]
+code = "GEN-CFG-05"
+class = "startup"
+title = "Web service setting"
+sev = 4
+regex = '''^\[(?P<param>\w+)\] :(?! For \w+ service url is )(?: (?P<value>.*))?$'''
+examples = [{ msg = "[AuditingPeriod] : 12:00:00", fields = { param = "AuditingPeriod", value = "12:00:00" } }, "[ServiceCertificateName] : example.invalid", "[SupportedClientCertificateThumbprints] :"]
+counter_examples = ["[AuditingPeriod] 12:00:00"]
+
+[[template]]
+code = "GEN-CFG-06"
+class = "startup"
+title = "Configuration value loaded from the default"
+sev = 4
+regex = '''^\[Configuration\] \[(?P<param>[^\]]+)\] : \[(?P<value>.*)\]\. Default value loaded\.$'''
+examples = [{ msg = "[Configuration] [ExampleTimeout] : [00:00:30]. Default value loaded.", fields = { param = "ExampleTimeout", value = "00:00:30" } }]
+counter_examples = ["[Configuration] [ExampleTimeout] : [00:00:30]."]
+
+[[template]]
+code = "GEN-CFG-07"
+class = "startup"
+title = "Configuration note"
+sev = 4
+regex = '''^\[Configuration\] (?!\[)(?P<text>.*)$'''
+examples = ["[Configuration] Environment variable No_SqliteLog is set on 1.", "[Configuration] ReplicationEnabled is: True. Parsed from registry for: AdapterExample"]
+counter_examples = ["[Configuration][LoadingError] [ExampleParam]"]
+
+[[template]]
+code = "GEN-STU-01"
+class = "lifecycle"
+title = "Server state changed (HOT marker)"
+sev = 4
+regex = '''^\[SystemStatusPublisher\] - Server state changed\. New state: (?P<state>\w+)\.?$'''
+examples = [{ msg = "[SystemStatusPublisher] - Server state changed. New state: HOT", fields = { state = "HOT" } }]
+counter_examples = ["[SystemStatusPublisher] - Initial server state: STANDBY."]
+
+[[template]]
+code = "GEN-STU-02"
+class = "startup"
+title = "System status publisher"
+sev = 4
+regex = '''^\[SystemStatusPublisher\] - (?!Server state changed\. New state: )(?P<text>.*)$'''
+examples = ["[SystemStatusPublisher] - Initial server state: STANDBY.", "[SystemStatusPublisher] - Publishing notification to all registered subscribers about ServerChange event finished successfully."]
+counter_examples = ["[SystemStatusPublisher] - Server state changed. New state: HOT"]
+
+[[template]]
+code = "GEN-STU-03"
+class = "startup"
+title = "State and mode arbitration, mode tracker start"
+sev = 4
+regex = '''^(?:\[(?:StateChangeArbitrator|ModeSwitchArbitrator)\] - .*|SystemStatusSubscriber \((?P<subscriber>\w+)\) - .*|ModeTracker: started\.\.\.)$'''
+examples = ["[StateChangeArbitrator] - Checking if service is hot.", "[ModeSwitchArbitrator] - DataSet used: ExampleDS", { msg = "SystemStatusSubscriber (AdapterCore) - Value received from publisher: True", fields = { subscriber = "AdapterCore" } }, "ModeTracker: started..."]
+counter_examples = ["[StateChangeArbitrator] Checking", "ModeTracker: Sleeping..."]
+
+[[template]]
+code = "GEN-STU-04"
+class = "startup"
+title = "Adapter start sequence on a port"
+sev = 4
+regex = '''^<(?P<adapter>[\w.]+)> (?:Initialize startup manager|Run service|Starting \w+) on port (?P<port>\d+)\..*$'''
+fields = { port = "int" }
+examples = [
+    { msg = "<AdapterExample> Initialize startup manager on port 9000. Start type: NonInteractiveOnlyShutdown", fields = { adapter = "AdapterExample", port = 9000 } },
+    "<ExampleAdapter> Run service on port 9000. Start type: NonInteractiveOnlyShutdown",
+    "<AdapterExample> Starting AdapterExample on port 9000.",
+]
+counter_examples = ["<AdapterExample> Starting arbitration..."]
+
+[[template]]
+code = "GEN-STU-05"
+class = "startup"
+title = "Adapter start sequence (other steps)"
+sev = 4
+regex = '''^<(?P<adapter>[\w.]+)> (?!(?:Initialize startup manager|Run service|Starting \w+) on port \d+\.)(?P<text>.*)$'''
+examples = [
+    { msg = "<AdapterExample> Starting arbitration...", fields = { adapter = "AdapterExample" } },
+    "<AdapterExample> Arbitration started.",
+    "<AdapterExample> Services started.",
+    "<AdapterExample> Waiting for terminate event.",
+]
+counter_examples = ["AdapterExample Starting arbitration..."]
+
+[[template]]
+code = "GEN-STU-06"
+window = 400  # worst case quadratic: see _schema.md, Regex safety
+class = "startup"
+title = "Licenses, DAL and context"
+sev = 4
+regex = '''^(?:Checking licenses for \d+ service\(s\)\.\.\.|Checking for \d+ service\(s\) whether they should be run on this system\.\.\.|Checking (?P<lic_adapter>\w+) license\.\.\.|\w+ is licensed\.|Loading DAL configuration skipped\.|Initializing DMSServiceProxyPool with parameters: .*|Context ID .* found for .* context\.|\[Adapter\w+\] (?:Checking if OMS service is installed and licensed process started\.\.\.|OMS service is installed and licensed\.\.\.))$'''
+examples = ["Checking licenses for 1 service(s)...", "Checking for 1 service(s) whether they should be run on this system...", { msg = "Checking ExampleAdapter license...", fields = { lic_adapter = "ExampleAdapter" } }, "ExampleAdapter is licensed.", "Loading DAL configuration skipped.", "Initializing DMSServiceProxyPool with parameters: alias = EXAMPLE, useLcm = True", "Context ID 1 found for Example context.", "[AdapterExample] OMS service is installed and licensed..."]
+counter_examples = ["Checking licenses"]
+
+[[template]]
+code = "GEN-STU-07"
+class = "startup"
+title = "Configuration files and registry values read"
+sev = 4
+regex = '''^(?:Reading configuration .* succeeded\.|Configuration .* is valid against XSD schema\.|Configuration file content from location .* successfully deserialized\.|(?:Error|Web service) configuration .* is successfully read and is now available\.|List of properties in web service configuration file:|\w+ properties|Registry configuration loaded from file: .*|\[AdaptivePool\] Registry configuration initialized with values: .*|\d+ file types found in \w+ XML file\.|SmartCache context configuration: .*)$'''
+examples = ["Reading configuration 'example.xml' succeeded.", "Configuration 'example.xml' is valid against XSD schema.", "Configuration file content from location 'example.xml' successfully deserialized.", "Error configuration 'example.xml' is successfully read and is now available.", "Web service configuration 'example.xml' is successfully read and is now available.", "List of properties in web service configuration file:", "ReceiveExample properties", "Registry configuration loaded from file: Example-WCF, using values: BufferPoolSize: 1", "[AdaptivePool] Registry configuration initialized with values: UpsizingStep: 1", "2 file types found in FileTypeConfiguration XML file.", "SmartCache context configuration: AutoSavecase: True"]
+counter_examples = ["Reading configuration failed."]
+
+[[template]]
+code = "GEN-STU-08"
+class = "startup"
+title = "SDK adapter components and start steps"
+sev = 4
+regex = '''^(?:Adapter \((?P<component>[\w.]+)\) state changed to (?P<state>standby|hot)\.|Adapter components will now be started\.|(?:Business|Communication) adapter doesn't have registered (?:controlled )?components\.|Registered (?:communication|business) controlled components: .*|Starting (?:\w+\.\.\.|SS host|of service \w+\.)|Initializing service based on SOAP\.\.\.|Initializing custom certificate validator\.|"[^"]*" assemblies information:)$'''
+examples = [
+    { msg = "Adapter (Example.AdapterSDK.BusinessAdapter) state changed to hot.", fields = { component = "Example.AdapterSDK.BusinessAdapter", state = "hot" } },
+    "Adapter components will now be started.",
+    "Business adapter doesn't have registered components.",
+    "Communication adapter doesn't have registered controlled components.",
+    "Registered business controlled components: Example.One, Example.Two.",
+    "Starting AdapterExample...",
+    "Starting ExampleAdapter...",
+    "Starting replicator...",
+    "Starting SS host",
+    "Starting of service AdapterExample.",
+    "Initializing service based on SOAP...",
+    "Initializing custom certificate validator.",
+    "\"ExampleLibrary\" assemblies information:",
+]
+counter_examples = ["Adapter (Example) state changed to broken."]
+
+[[template]]
+code = "GEN-STU-09"
+class = "startup"
+title = "Web services started"
+sev = 4
+regex = '''^(?:Starting web service(?: with url/s: \S+(?: succeeded\.)?| \w+(?: was successful|\. Service url written in sensitive log)\.)|WebServiceControllerPool created\.|\w+ url is written in sensitive log\.|\w+ is hosted on \S+|\[(?:SecureHostHelper|\w+)\] (?:Starting web service on : \S+|Starting service on address \S+|Service on address \S+ is started\.|Added service of type \S+ with address \S+))$'''
+examples = [
+    "Starting web service with url/s: https://localhost:9999/ExampleService",
+    "Starting web service with url/s: https://localhost:9999/ExampleService succeeded.",
+    "Starting web service ReceiveExample was successful.",
+    "Starting web service ReceiveExample. Service url written in sensitive log.",
+    "WebServiceControllerPool created.",
+    "UpdateExampleService url is written in sensitive log.",
+    "UpdateExampleService is hosted on https://localhost:9999/UpdateExampleService",
+    "[ExampleOperation] Starting web service on : https://localhost:9999/Example",
+    "[SecureHostHelper] Starting service on address https://localhost:9999/Example",
+    "[SecureHostHelper] Service on address https://localhost:9999/Example is started.",
+    "[SecureHostHelper] Added service of type Example.Contract with address https://localhost:9999/Example",
+]
+counter_examples = ["Starting web service"]
+
+[[template]]
+code = "GEN-STU-10"
+class = "startup"
+title = "Process infrastructure initialization"
+sev = 4
+regex = '''^(?:\[(?:AppInsigthsConfig|AppInsights|HealthMonitor|VirtualMemoryBufferFactory|IdentityCache|BufferPool)\] .*|\[Communication\d+\] - (?:\[ThreadWorkers\] Number of threads changed from \d+ to \d+\.|Tcp service message transport started with param .*)|DistribuSysAPI: .*)$'''
+examples = ["[AppInsigthsConfig] Selected dataset: ExampleDS", "[AppInsights] No AppInsights plugin was loaded", "[HealthMonitor] HealthMonitor initialized.", "[VirtualMemoryBufferFactory] System Info:", "[IdentityCache] Refresh worker started. Identity expiration time: 5", "[BufferPool] Created with name = Example_1_CF1_Base and bufferCount = 8.", "[Communication2] - [ThreadWorkers] Number of threads changed from 2 to 4.", "[Communication2] - Tcp service message transport started with param maxOpenConnections = 100.", "DistribuSysAPI: Initialized."]
+counter_examples = ["[HealthMonitor]"]
+
+[[template]]
+code = "GEN-MAP-05"
+class = "startup"
+title = "Typed map created"
+sev = 5
+regex = '''^(?:String|Long)-to-(?:string|long|enum) map "[^"]*" created\. This map will store .* pairs\.$'''
+examples = ["String-to-long map \"EXAMPLE_MAP\" created. This map will store [EXAMPLE_NAME - GID] pairs.", "Long-to-enum map \"EXAMPLE_MAP\" created. This map will store [GID - EXAMPLE_STATUS] pairs."]
+counter_examples = ["String-to-long map created."]
+
+[[template]]
+code = "GEN-MAP-06"
+class = "error"
+title = "Map key already exists (value overwritten)"
+sev = 3
+regex = '''^WARNING: Key .* already exists! Old value will be overwritten!$'''
+examples = ["WARNING: Key Name: \"X\" Semantic: \"Y\" already exists! Old value will be overwritten!"]
+counter_examples = ["WARNING: Key Name: \"X\" does not exist."]
+
+[[template]]
+code = "GEN-CCH-04"
+class = "startup"
+title = "Smart cache initialization and persistence"
+sev = 5
+regex = '''^(?:Cache\[(?P<cache>[^\]]+)\] (?!Apply delta in ElementCache\.|Replicate change\.|Applying delta finished|Replicate elements finished)(?P<text>.*)|Replicator: (?!SendReplica client\[).*|Replicator starting .*|CallbackManager: .*)$'''
+examples = [
+    { msg = "Cache[ExampleSmartCache] Local persistent store loaded.", fields = { cache = "ExampleSmartCache" } },
+    "Cache[ExampleSmartCache] Types = 1. Elements = 2. Bytes = 3.",
+    "Replicator: Registered client[clientID:1, clientName:ExampleSmartCache].",
+    "Replicator starting under DNA service Example with DMS Service name AdapterExample which corresponds to service ID 1.",
+    "CallbackManager: registering client with id 1 and name ExampleSmartCache.",
+]
+counter_examples = ["Cache[ExampleSmartCache] Applying delta finished"]
+
+[[template]]
+code = "GEN-STU-11"
+class = "startup"
+title = "Adapter components, replicator and id generator"
+sev = 4
+regex = '''^(?:The adapter component \(Name: (?P<component>[^;]*); InputType: (?P<input_type>[^)]*)\) is successfully registered in (?P<adapter>\S+) adapter\.|Replicator is started\. .*|Sending start notification for service \w+\. Result -?\d+\.|Reinitializing Id generator\.|IDGenerator's seed has been reinitialized after fail-over occurred\.)$'''
+examples = [
+    { msg = "The adapter component (Name: ExampleComponent; InputType: ExampleInput) is successfully registered in Example adapter.", fields = { component = "ExampleComponent", input_type = "ExampleInput", adapter = "Example" } },
+    "Replicator is started. Replication enabled : True",
+    "Sending start notification for service AdapterExample. Result 0.",
+    "Reinitializing Id generator.",
+    "IDGenerator's seed has been reinitialized after fail-over occurred.",
+]
+counter_examples = ["The adapter component (Name: ExampleComponent) failed."]
+
+[[template]]
+code = "GEN-SUB-05"
+window = 704  # worst case quadratic: see _schema.md, Regex safety
+class = "lifecycle"
+title = "Adapter subscribed to a topic"
+sev = 4
+regex = '''^\[(?P<component>\w+)\] Adapter is now subscribed to the .* service on the following topic: (?P<topic>\S+)\.$'''
+examples = [{ msg = "[ExampleSubscriber] Adapter is now subscribed to the 'ExampleService' service on the following topic: EXAMPLE_TOPIC.", fields = { component = "ExampleSubscriber", topic = "EXAMPLE_TOPIC" } }]
+counter_examples = ["[ExampleSubscriber] Adapter is not subscribed."]
+
+[[template]]
+code = "GEN-SEC-01"
+class = "startup"
+title = "Legacy serialization protocol enabled (security risk)"
+sev = 3
+regex = '''^Legacy serialization protocol is enabled\. .*$'''
+examples = ["Legacy serialization protocol is enabled. Serialized event data will be deserialized using BinaryFormatter. This is a security risk. Set CoreSDK registry parameter 'X' to true to disable legacy serialization protocol."]
+counter_examples = ["Legacy serialization protocol is disabled."]
+
+[[template]]
+code = "GEN-C2T-04"
+class = "other"
+title = "Socket registration and cleanup tracing"
+sev = 5
+fts = false
+regex = '''^\[Communication(?P<chan>\d+)\] - (?:Resources succesfully cleaned up for tcp socket id = (?P<socket_id>\d+)|Tcp framing socket id = (?P<socket_id2>\d+) cleanup finished|Tcp framing socket initialized for a socket id = (?P<socket_id4>\d+)|Socket with id = (?P<socket_id3>\d+) succesfully registered with the completion port handle = (?P<handle>\d+))\.$'''
+fields = { chan = "int", socket_id = "int", socket_id2 = "int", socket_id3 = "int", socket_id4 = "int", handle = "int" }
+examples = [
+    { msg = "[Communication2] - Resources succesfully cleaned up for tcp socket id = 5.", fields = { socket_id = 5 } },
+    "[Communication2] - Tcp framing socket id = 5 cleanup finished.",
+    "[Communication2] - Tcp framing socket initialized for a socket id = 5.",
+    { msg = "[Communication2] - Socket with id = 5 succesfully registered with the completion port handle = 9.", fields = { socket_id3 = 5, handle = 9 } },
+]
+counter_examples = ["[Communication2] - Socket with id = 5 exploded."]

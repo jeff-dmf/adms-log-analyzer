@@ -1,0 +1,10 @@
+﻿2030-01-15 10:00:00.000 [PID=1077][TID=0x1a2b] DEBUGLOG - External system returned "OK" response for request "12345678-0".
+2030-01-15 10:00:00.050 [PID=1077][TID=0x1a2b] INFO - [GetMeterReadingsRequest] Receiving request message
+2030-01-15 10:00:00.100 [PID=1077][TID=0x1a2b] INFO - [CreatedMeterReadings] Processing a message with a message ID: Message ID: 12345678-0.
+2030-01-15 10:00:00.150 [PID=1077][TID=0x1a2b] INFO - [CreatedMeterReadings] Message with message ID: 12345678-0 is processed.
+2030-01-15 10:00:00.200 [PID=1077][TID=0x1a2b] DEBUGLOG - External system returned "OK" response for request "12345678-0".
+2030-01-15 10:00:00.250 [PID=1077][TID=0x1a2b] INFO - [CreatedMeterReadings] Processing a message with a message ID: 12345678-0. Writing message data to sensitive log.
+2030-01-15 10:00:00.300 [PID=1077][TID=0x1a2b] INFO - [CreatedMeterReadings] Processing a message with a message ID: Message ID: 12345678-0.
+2030-01-15 10:00:00.350 [PID=1077][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1077][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1077][TID=0x1a2b] INFO - Qqq synthetic noise without template

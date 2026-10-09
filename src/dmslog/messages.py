@@ -96,11 +96,13 @@ API_PATH_NOT_ABSOLUTE = "The collection path must be absolute"
 API_BAD_LIMIT = "limit must be an integer from 1 to {limit}"
 API_BAD_INT = "{field} must be a non-negative integer"
 API_BAD_ENTRY_ID = "Invalid entry id"
+API_BAD_FAMILY = "family must be 1 to 32 letters, digits or underscores"
 API_ENTRY_NOT_FOUND = "Entry {entry_id} does not exist in case {case!r}"
 API_SUBSTR_NEEDS_SCOPE = (
     "Substring and regex search need a source or time-range condition at the top level of the filter"
 )
 API_QUERY_TIMEOUT = "The query took too long and was cancelled"
+API_VIEW_BAD_ID = "Invalid saved filter id"
 API_DATABASE_ERROR = "The case database could not be read"
 API_INTERNAL_ERROR = "Internal error"
 

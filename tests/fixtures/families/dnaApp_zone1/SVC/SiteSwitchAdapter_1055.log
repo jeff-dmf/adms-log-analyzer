@@ -1,0 +1,10 @@
+﻿2030-01-15 10:00:00.000 [PID=1055][TID=0x1a2b] DEBUGLOG -  Adapter is on ACTIVE site. 
+2030-01-15 10:00:00.050 [PID=1055][TID=0x1a2b] INFO - Adapter is on BACKUP site.
+2030-01-15 10:00:00.100 [PID=1055][TID=0x1a2b] DEBUGLOG -  Adapter responded with HTTP OK 200 response 
+2030-01-15 10:00:00.150 [PID=1055][TID=0x1a2b] INFO - Adapter responded with HTTP 503 response
+2030-01-15 10:00:00.200 [PID=1055][TID=0x1a2b] DEBUGLOG -  Adapter is on ACTIVE site. 
+2030-01-15 10:00:00.250 [PID=1055][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.300 [PID=1055][TID=0x1a2b] DEBUGLOG -  Adapter responded with HTTP OK 200 response 
+2030-01-15 10:00:00.350 [PID=1055][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.400 [PID=1055][TID=0x1a2b] DEBUGLOG -  Adapter is on ACTIVE site. 
+2030-01-15 10:00:00.450 [PID=1055][TID=0x1a2b] INFO - Qqq synthetic noise without template

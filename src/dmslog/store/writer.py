@@ -16,28 +16,41 @@ triggers, so this module keeps it in sync by hand:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dmslog.parse.records import Record
+from dmslog.parse.signature import signature
+
+if TYPE_CHECKING:
+    from dmslog.parse.templates import Catalog, TemplateSet
 
 MINUTE_MS = 60_000
 MAX_BATCH_RECORDS = 50_000
 
 FLAG_PARTIAL = 1
 FLAG_HAS_CONT = 2
+FLAG_REF_SENSITIVE = 4
 FLAG_TS_OUT_OF_ORDER = 32
+FLAG_HAS_PAYLOAD = 64
 
 SeverityFn = Callable[[int | None, str], int]
 
 _ENTRY_SQL = (
-    "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, pid, tid, level, sev, tpl_id,"
-    " flags, msg)"
-    " VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)"
+    "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, pid, tid, level, sev,"
+    " flags, fields, msg, tpl_id)"
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+)
+_KEY_SQL = "INSERT OR IGNORE INTO entry_key(key_type, value, entry_id) VALUES (?,?,?)"
+_UNKNOWN_SQL = (
+    "INSERT INTO unknown_sig(family, signature, n, first_entry_id) VALUES (?,?,?,?)"
+    " ON CONFLICT(family, signature) DO UPDATE SET n = n + excluded.n,"
+    " first_entry_id = min(first_entry_id, excluded.first_entry_id)"
 )
 _BODY_SQL = "INSERT INTO entry_body(entry_id, cont) VALUES (?,?)"
 _FTS_INSERT_SQL = (
@@ -45,8 +58,13 @@ _FTS_INSERT_SQL = (
     " WHERE rowid >= ? AND rowid < ?"
 )
 _BUCKET_SQL = (
-    "INSERT INTO bucket(source_id, minute, sev, tpl_id, n) VALUES (?,?,?,0,?)"
+    "INSERT INTO bucket(source_id, minute, sev, tpl_id, n) VALUES (?,?,?,?,?)"
     " ON CONFLICT(source_id, minute, sev, tpl_id) DO UPDATE SET n = n + excluded.n"
+)
+
+_BUCKET_SEV_SQL = (
+    "INSERT INTO bucket_sev(source_id, minute, sev, n) VALUES (?,?,?,?)"
+    " ON CONFLICT(source_id, minute, sev) DO UPDATE SET n = n + excluded.n"
 )
 
 _SOURCE_FIELDS = frozenset(
@@ -55,6 +73,30 @@ _SOURCE_FIELDS = frozenset(
         "first_ts", "last_ts", "n_entries", "status", "error", "rotation", "member", "file_name",
     }
 )  # fmt: skip
+
+
+_DIGIT_CLASSES = str.maketrans("0123456789", "0111111111")  # keeps "0" apart: "0x1f" is hex, "5x1f" is not
+_SIG_CACHE_MAX = 200_000
+_SIG_CACHE_MAX_MSG = 2048  # signature() reads whitespace-collapsed text, so longer lines skip the cache
+_sig_cache: dict[str, str] = {}
+
+
+def cached_signature(msg: str) -> str:
+    """``signature(msg)`` memoized on the message with the digits 1-9 replaced by ``1``.
+
+    The signature depends on digits only as a class (zero or not, because of ``0x``), and the
+    replacement keeps the length, so two messages with the same key have the same signature. Most
+    unknown records repeat a few shapes that differ in numbers, so this removes most of the regex work.
+    """
+    if len(msg) > _SIG_CACHE_MAX_MSG:
+        return signature(msg)
+    key = msg.translate(_DIGIT_CLASSES)
+    sig = _sig_cache.get(key)
+    if sig is None:
+        if len(_sig_cache) >= _SIG_CACHE_MAX:
+            _sig_cache.clear()
+        sig = _sig_cache[key] = signature(msg)
+    return sig
 
 
 def _now() -> str:
@@ -110,15 +152,25 @@ class BatchStats:
 class IndexWriter:
     """Inserts and removes the rows of one case. Not thread-safe."""
 
-    def __init__(self, conn: sqlite3.Connection, severity: SeverityFn | None = None) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        severity: SeverityFn | None = None,
+        infer_severity: Callable[[Any, Any], int] | None = None,
+    ) -> None:
         self.conn = conn
         conn.isolation_level = None  # explicit transactions (begin/commit)
         self._severity: SeverityFn = severity or (lambda _level, _msg: 4)
+        self._infer = infer_severity  # (TemplateMatch | None, Record) -> sev; wins over ``severity``
         self._next_id = (conn.execute("SELECT coalesce(max(id), 0) FROM entry").fetchone()[0]) + 1
         self._in_tx = False
         self._rows: list[tuple[Any, ...]] = []
         self._bodies: list[tuple[int, str]] = []
-        self._buckets: dict[tuple[int, int, int], int] = {}
+        self._buckets: dict[tuple[int, int, int, int], int] = {}
+        self._keys: list[tuple[str, str, int]] = []
+        self._unknown: dict[tuple[str, str], list[int]] = {}  # (family, signature) -> [n, first_entry_id]
+        self._tset: TemplateSet | None = None
+        self._family: str | None = None
         self._batch_first_id = self._next_id
         self.prev_ts: int | None = None  # ts of the last record appended (for flag 32)
 
@@ -144,6 +196,8 @@ class IndexWriter:
         self._rows.clear()
         self._bodies.clear()
         self._buckets.clear()
+        self._keys.clear()
+        self._unknown.clear()
         if self._in_tx:
             self.conn.execute("ROLLBACK")
             self._in_tx = False
@@ -165,6 +219,46 @@ class IndexWriter:
         ]
         self.conn.executemany("INSERT INTO meta(key, value) VALUES (?,?)", rows)
         self.commit()
+
+    def sync_templates(self, catalog: Catalog) -> dict[str, int]:
+        """Make the ``template`` table hold every catalog template; bind their ids to the catalog.
+
+        Ids are stable per code across runs. A changed definition updates the row in place; when
+        ``fts`` changes for a template that already has records, the FTS index is rebuilt so it
+        stays consistent with the ``entry_text`` view. Returns ``{code: template.id}``.
+        """
+        self.begin()
+        conn = self.conn
+        existing = {
+            r[0]: (r[1], r[2], r[3]) for r in conn.execute("SELECT code, id, def_version, fts FROM template")
+        }
+        rebuild = False
+        for t in catalog.templates():
+            row = (t.family, t.cls, t.sev, t.title, t.pattern, int(t.fts), t.def_version)
+            old = existing.get(t.code)
+            if old is None:
+                conn.execute(
+                    "INSERT INTO template(code, family, class, sev, title, pattern, fts, def_version)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (t.code, *row),
+                )
+            elif old[1] != t.def_version or old[2] != int(t.fts):
+                if (
+                    old[2] != int(t.fts)
+                    and conn.execute("SELECT 1 FROM entry WHERE tpl_id = ? LIMIT 1", (old[0],)).fetchone()
+                ):
+                    rebuild = True
+                    conn.execute("UPDATE template SET fts=? WHERE id=?", (int(t.fts), old[0]))
+                conn.execute(
+                    "UPDATE template SET family=?, class=?, sev=?, title=?, pattern=?, fts=?, def_version=?"
+                    " WHERE id=?",
+                    (*row, old[0]),
+                )
+        if rebuild:
+            conn.execute("INSERT INTO entry_fts(entry_fts) VALUES('rebuild')")
+        mapping = {code: int(tid) for code, tid in conn.execute("SELECT code, id FROM template")}
+        catalog.bind_ids(mapping)
+        return mapping
 
     def collections(self) -> list[CollectionRow]:
         rows = self.conn.execute(
@@ -340,8 +434,8 @@ class IndexWriter:
         """Delete every record of the source at or after ``byte_off`` (resume / tail removal).
 
         Removes the rows from ``entry``, ``entry_body``, ``entry_key``, the FTS index and the
-        ``bucket`` counts. ``min_id`` (an id known to be at or before the cut) only speeds the
-        scan. Returns the number of records removed.
+        ``bucket`` and ``bucket_sev`` counts. ``min_id`` (an id known to be at or before the cut) only
+        speeds the scan. Returns the number of records removed.
         """
         self.begin()
         where = "source_id = ? AND byte_off >= ?"
@@ -372,6 +466,15 @@ class IndexWriter:
             [(n, source_id, minute, sev, tpl) for minute, sev, tpl, n in counts],
         )
         conn.execute("DELETE FROM bucket WHERE source_id = ? AND n <= 0", (source_id,))
+        by_sev: dict[tuple[int, int], int] = {}
+        for minute, sev, _tpl, n in counts:
+            by_sev[(minute, sev)] = by_sev.get((minute, sev), 0) + n
+        conn.executemany(
+            "UPDATE bucket_sev SET n = n - ? WHERE source_id = ? AND minute = ? AND sev = ?",
+            [(n, source_id, minute, sev) for (minute, sev), n in by_sev.items()],
+        )
+        conn.execute("DELETE FROM bucket_sev WHERE source_id = ? AND n <= 0", (source_id,))
+        stale = self._remove_unknown(where, params, source_id)
         ids = f"SELECT id FROM entry WHERE {where}"
         conn.execute(
             "INSERT INTO entry_fts(entry_fts, rowid, msg, cont)"
@@ -386,14 +489,89 @@ class IndexWriter:
             (first[0], first[0], source_id),
         )
         conn.execute(f"DELETE FROM entry WHERE {where}", params)
+        if stale:
+            self._repair_unknown_first(stale)
         return int(first[1])
+
+    def _remove_unknown(self, where: str, params: list[Any], source_id: int) -> list[tuple[str, set[str]]]:
+        """Subtract the removed records from ``unknown_sig``.
+
+        Returns the (family, signatures) whose ``first_entry_id`` pointed at a removed record and
+        still have records; ``_repair_unknown_first`` fixes them once the rows are gone.
+        """
+        conn = self.conn
+        row = conn.execute(
+            "SELECT t.family FROM source s JOIN stream t ON t.id = s.stream_id WHERE s.id = ?", (source_id,)
+        ).fetchone()
+        if row is None:
+            return []
+        family = row[0]
+        counts: dict[str, int] = {}
+        for (msg,) in conn.execute(f"SELECT msg FROM entry WHERE {where} AND tpl_id = 0", params):
+            sig = cached_signature(msg)
+            if sig:
+                counts[sig] = counts.get(sig, 0) + 1
+        if not counts:
+            return []
+        stale: set[str] = set()
+        ids = f"SELECT id FROM entry WHERE {where}"
+        for sig, n in counts.items():
+            r = conn.execute(
+                "SELECT n, first_entry_id FROM unknown_sig WHERE family=? AND signature=?", (family, sig)
+            ).fetchone()
+            if r is None:
+                continue
+            if r[0] - n <= 0:
+                conn.execute("DELETE FROM unknown_sig WHERE family=? AND signature=?", (family, sig))
+                continue
+            conn.execute("UPDATE unknown_sig SET n = n - ? WHERE family=? AND signature=?", (n, family, sig))
+            if conn.execute(
+                f"SELECT 1 FROM entry WHERE id = ? AND id IN ({ids})", [r[1], *params]
+            ).fetchone():
+                stale.add(sig)
+        return [(family, stale)] if stale else []
+
+    def _repair_unknown_first(self, stale: list[tuple[str, set[str]]]) -> None:
+        """Recompute ``first_entry_id`` for signatures whose first record was removed."""
+        conn = self.conn
+        for family, sigs in stale:
+            todo = set(sigs)
+            for entry_id, msg in conn.execute(
+                "SELECT e.id, e.msg FROM entry e JOIN source s ON s.id = e.source_id"
+                " JOIN stream t ON t.id = s.stream_id WHERE t.family = ? AND e.tpl_id = 0 ORDER BY e.id",
+                (family,),
+            ):
+                sig = cached_signature(msg)
+                if sig in todo:
+                    todo.discard(sig)
+                    conn.execute(
+                        "UPDATE unknown_sig SET first_entry_id=? WHERE family=? AND signature=?",
+                        (entry_id, family, sig),
+                    )
+                    if not todo:
+                        break
+            for sig in todo:  # defensive: counts said records remain, none were found
+                conn.execute("DELETE FROM unknown_sig WHERE family=? AND signature=?", (family, sig))
 
     # ------------------------------------------------------------------ insertion
 
-    def start_source(self, source_id: int, prev_ts: int | None) -> None:
-        """Begin appending records of a source; ``prev_ts`` is the ts of the record before the first."""
+    def start_source(
+        self,
+        source_id: int,
+        prev_ts: int | None,
+        templates: TemplateSet | None = None,
+        family: str | None = None,
+    ) -> None:
+        """Begin appending records of a source; ``prev_ts`` is the ts of the record before the first.
+
+        ``templates`` (a catalog set for the source's family and sensitivity) classifies the records;
+        without it every record is stored as unknown (tpl_id 0). ``family`` names the unknown
+        signatures (none are stored when it is None).
+        """
         self.flush()
         self.prev_ts = prev_ts
+        self._tset = templates
+        self._family = family
 
     def append(self, source_id: int, records: Iterable[Record], stats: BatchStats | None = None) -> None:
         """Buffer records for insertion (call ``flush`` or ``commit`` to write them)."""
@@ -401,6 +579,13 @@ class IndexWriter:
         bodies = self._bodies
         buckets = self._buckets
         severity = self._severity
+        infer = self._infer
+        tset = self._tset
+        classify = tset.classify if tset is not None and len(tset) else None
+        family = self._family
+        keys_out = self._keys
+        unknown = self._unknown
+        dumps = json.dumps
         prev_ts = self.prev_ts
         next_id = self._next_id
         n = lines = 0
@@ -411,15 +596,39 @@ class IndexWriter:
             if cont is not None:
                 flags |= FLAG_HAS_CONT
                 bodies.append((next_id, cont))
-            sev = severity(r.level, r.msg)
+            m = classify(r) if classify is not None else None
+            fields_json = None
+            tpl = 0
+            if m is not None:
+                tpl = m.tpl_id
+                sev = infer(m, r) if infer is not None else (m.sev_hint or severity(r.level, r.msg))
+                if m.fields:
+                    fields_json = dumps(m.fields, ensure_ascii=False, separators=(",", ":"), default=str)
+                if m.keys:
+                    for key_type, value in m.keys:
+                        keys_out.append((key_type, value, next_id))
+                if m.refs_sensitive:
+                    flags |= FLAG_REF_SENSITIVE
+                if m.payload is not None:
+                    flags |= FLAG_HAS_PAYLOAD
+            else:
+                sev = infer(None, r) if infer is not None else severity(r.level, r.msg)
+                if family is not None:
+                    sig = cached_signature(r.msg)
+                    if sig:
+                        slot = unknown.get((family, sig))
+                        if slot is None:
+                            unknown[(family, sig)] = [1, next_id]
+                        else:
+                            slot[0] += 1
             if ts is not None:
                 if prev_ts is not None and ts < prev_ts:
                     flags |= FLAG_TS_OUT_OF_ORDER
                 prev_ts = ts
-                key = (source_id, ts // MINUTE_MS, sev)
+                key = (source_id, ts // MINUTE_MS, sev, tpl)
                 buckets[key] = buckets.get(key, 0) + 1
             rows.append((next_id, source_id, r.line_no, r.byte_off, r.nlines, ts, r.pid, r.tid, r.level, sev,
-                         flags, r.msg))  # fmt: skip
+                         flags, fields_json, r.msg, tpl))  # fmt: skip
             next_id += 1
             n += 1
             lines += r.nlines
@@ -439,9 +648,21 @@ class IndexWriter:
         if self._bodies:
             conn.executemany(_BODY_SQL, self._bodies)
         conn.execute(_FTS_INSERT_SQL, (self._batch_first_id, self._next_id))
+        if self._keys:
+            conn.executemany(_KEY_SQL, self._keys)
+        if self._unknown:
+            conn.executemany(_UNKNOWN_SQL, [(f, sg, v[0], v[1]) for (f, sg), v in self._unknown.items()])
         if self._buckets:
-            conn.executemany(_BUCKET_SQL, [(s, m, sev, n) for (s, m, sev), n in self._buckets.items()])
+            conn.executemany(
+                _BUCKET_SQL, [(s, m, sev, tpl, n) for (s, m, sev, tpl), n in self._buckets.items()]
+            )
+            by_sev: dict[tuple[int, int, int], int] = {}
+            for (s, m, sev, _tpl), n in self._buckets.items():
+                by_sev[(s, m, sev)] = by_sev.get((s, m, sev), 0) + n
+            conn.executemany(_BUCKET_SEV_SQL, [(s, m, sev, n) for (s, m, sev), n in by_sev.items()])
         self._rows.clear()
         self._bodies.clear()
         self._buckets.clear()
+        self._keys.clear()
+        self._unknown.clear()
         self._batch_first_id = self._next_id

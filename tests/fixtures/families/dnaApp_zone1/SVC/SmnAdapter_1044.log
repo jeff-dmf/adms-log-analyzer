@@ -1,0 +1,41 @@
+﻿2030-01-15 10:00:00.000 [PID=1044][TID=0x1a2b] INFO - [BusinessLogicResolver] - Invoking Created business logic for 3 entities.
+2030-01-15 10:00:00.050 [PID=1044][TID=0x1a2b] DEBUGLOG - [Subscriber] - Received publication with cache operation 'Add' and multiple trigger properties is not of interest for process.
+2030-01-15 10:00:00.100 [PID=1044][TID=0x1a2b] DEBUGLOG - [SendWorksMessageSerializer] New serialization in progress...
+2030-01-15 10:00:00.150 [PID=1044][TID=0x1a2b] INFO - [SendSwitchingSteps] Sending following Switching Step: SP 1000001 - ISS 2000001.
+2030-01-15 10:00:00.200 [PID=1044][TID=0x1a2b] INFO - [BusinessLogicResolver] - Invoking Moved business logic for 3 entities.
+2030-01-15 10:00:00.250 [PID=1044][TID=0x1a2b] INFO - [SendWorks] Sending following Work Request: WR 3000001.
+2030-01-15 10:00:00.300 [PID=1044][TID=0x1a2b] INFO - [SendSwitchingPlans] Sending following Switching Plan: SP 1000001.
+2030-01-15 10:00:00.350 [PID=1044][TID=0x1a2b] DEBUGLOG - Sending "WorksEventMessageType" message: 00000000-0000-4000-8000-0000a0000005 with verb: Changed...
+2030-01-15 10:00:00.400 [PID=1044][TID=0x1a2b] DEBUGLOG - Sending "WorksEventMessageType" message: 00000000-0000-4000-8000-0000a0000005 with verb: Created finished successfully.
+2030-01-15 10:00:00.450 [PID=1044][TID=0x1a2b] INFO - [SendWorks] New serialization in progress...
+2030-01-15 10:00:00.500 [PID=1044][TID=0x1a2b] INFO - [SendSwitchingSteps] Sending Switching Step finished successfully
+2030-01-15 10:00:00.550 [PID=1044][TID=0x1a2b] INFO - Request message with MessageId '00000000-0000-4000-8000-0000a0000005' successfully sent. Reply result 'OK' is returned in response message.
+2030-01-15 10:00:00.600 [PID=1044][TID=0x1a2b] DEBUGLOG - START NmsSignalsBySignalGidsQuery
+2030-01-15 10:00:00.650 [PID=1044][TID=0x1a2b] INFO - Switching step with custom id: '1000001 - ISS 2000001' is not on work plan and will be ignored.
+2030-01-15 10:00:00.700 [PID=1044][TID=0x1a2b] INFO - START OtherQuery
+2030-01-15 10:00:00.750 [PID=1044][TID=0x1a2b] INFO - [Validation] The value of property "EXAMPLE_PROP" is not of interest. Supported values are: "A, B". Current SM_INSTANT_SWITCHING_SEQUENCE will not be processed.
+2030-01-15 10:00:00.800 [PID=1044][TID=0x1a2b] INFO - [BusinessLogicResolver] - There are no switching steps satisfying filter configuration in received publication.
+2030-01-15 10:00:00.850 [PID=1044][TID=0x1a2b] ERROR - [Validation Critical] - Invalid reply message received. Could not find schema information for the element 'urn:example:SystemError'.
+2030-01-15 10:00:00.900 [PID=1044][TID=0x1a2b] ERROR - [SendWorks] Sending Work Request finished unsuccessfully. Reason: Written in sensitive log. StackTrace: 
+Server stack trace: 
+   at Example.Client.Send() in F:\PD\1234567\1\Example\Client.cs:line 83
+
+Exception rethrown at [0]: 
+   at Example.Client.Send() in F:\PD\1234567\1\Example\Client.cs:line 83
+2030-01-15 10:00:00.950 [PID=1044][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:01.000 [PID=1044][TID=0x1a2b] ERROR - Request message with MessageId '00000000-0000-4000-8000-0000a0000005' unsuccessfully sent. Reason: 'Example failure reason'.
+2030-01-15 10:00:01.050 [PID=1044][TID=0x1a2b] ERROR - Request message with MessageId '00000000-0000-4000-8000-0000a0000005' unsuccessfully sent. For more details check sensitive log.
+2030-01-15 10:00:01.100 [PID=1044][TID=0x1a2b] ERROR - Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. Writing details in sensitive log.
+2030-01-15 10:00:01.150 [PID=1044][TID=0x1a2b] INFO - Debug level changed from Info (3) to Verbose (4).
+2030-01-15 10:00:01.200 [PID=1044][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:01.250 [PID=1044][TID=0x1a2b] INFO - [WmsSubscriber] - Data received from publication. Details are written in sensitive log.
+2030-01-15 10:00:01.300 [PID=1044][TID=0x1a2b] INFO - [BusinessLogicResolver] - Processing received publication data.
+2030-01-15 10:00:01.350 [PID=1044][TID=0x1a2b] INFO - [UnsentMessagesPersister] - Saving message with GID: '12345678', Identifier: 'SP 1000001 - ISS 2000001' to smart cache.
+2030-01-15 10:00:01.400 [PID=1044][TID=0x1a2b] DEBUGLOG - [UnsentMessagesPersister] - Peek message from internal queue...
+2030-01-15 10:00:01.450 [PID=1044][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:01.500 [PID=1044][TID=0x1a2b] INFO - [UnsentMessagesPersister] - Peek 'WorksEventMessageType' message with GID: '12345678', Identifier: 'WR 3000001' and MessageId: '00000000-0000-4000-8000-0000a0000005' succeeded.
+2030-01-15 10:00:01.550 [PID=1044][TID=0x1a2b] INFO - [CreatedEntityIdsPersister] - Saving message with GID: '12345678', EntityMrid: 'ZZ-1' to smart cache succeeded.
+2030-01-15 10:00:01.600 [PID=1044][TID=0x1a2b] INFO - [SendSwitchingPlans] Sending Switching Plan finished successfully.
+2030-01-15 10:00:01.650 [PID=1044][TID=0x1a2b] DEBUGLOG - END NmsSignalsBySignalGidsQuery
+2030-01-15 10:00:01.700 [PID=1044][TID=0x1a2b] INFO - [UnsentMessagesPersister] - Deleting message with GID: '12345678', Identifier: 'WR 3000001' from smart cache succeeded.
+2030-01-15 10:00:01.750 [PID=1044][TID=0x1a2b] INFO - [CreatedEntityIdsPersister] - Deleting message with GID: '12345678', Mrid: 'ZZ-1' from smart cache.

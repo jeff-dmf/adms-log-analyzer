@@ -1,0 +1,16 @@
+﻿2030-01-15 10:00:00.000 [PID=1011][TID=0x1a2b] ALWAYS - [ServiceUrl] : For SendIncidents service url is http://sap-pi.example.invalid:50000/path
+2030-01-15 10:00:00.050 [PID=1011][TID=0x1a2b] INFO - [CacheHousekeeper] Removing messages older than started.
+2030-01-15 10:00:00.100 [PID=1011][TID=0x1a2b] ERROR - Error: Sending "IncidentsEventMessageType" message failed. "System.TimeoutException" has occurred.
+Reason: The request channel timed out.
+Stack trace:
+   at Example.Client.Send(Message m) in F:\PD\1234567\1\Example\Client.cs:line 77
+2030-01-15 10:00:00.150 [PID=1011][TID=0x1a2b] INFO - [CachedDataSynchronizer] - Dequeuing message
+2030-01-15 10:00:00.200 [PID=1011][TID=0x1a2b] ALWAYS - [ServiceUrl] : For SendIncidents service url is http://sap-pi.example.invalid:50000/path
+2030-01-15 10:00:00.250 [PID=1011][TID=0x1a2b] INFO - Error: Sending "IncidentsEventMessageType" message failed. "System.TimeoutException" has occurred. More details are possible in sensitive log on info level.
+2030-01-15 10:00:00.300 [PID=1011][TID=0x1a2b] ERROR - Error: Sending "IncidentsEventMessageType" message failed. "System.TimeoutException" has occurred.
+Reason: The request channel timed out.
+Stack trace:
+   at Example.Client.Send(Message m) in F:\PD\1234567\1\Example\Client.cs:line 77
+2030-01-15 10:00:00.350 [PID=1011][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1011][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1011][TID=0x1a2b] INFO - Qqq synthetic noise without template

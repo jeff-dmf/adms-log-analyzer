@@ -85,3 +85,146 @@ export function timeSpan(sources, selectedIds, from, to) {
   }
   return max >= min ? { min, max } : null;
 }
+
+// ---- composition of the single current filter -------------------------------------------------
+
+const TS_KEYS = new Set(["ge", "le"]);
+
+function topNodes(filter) {
+  if (!filter) {
+    return [];
+  }
+  const keys = Object.keys(filter);
+  return keys.length === 1 && keys[0] === "and" && Array.isArray(filter.and) ? filter.and.slice() : [filter];
+}
+
+function wrapNodes(nodes) {
+  return nodes.length === 0 ? null : { and: nodes };
+}
+
+function isTsRangeNode(node) {
+  const keys = node && typeof node === "object" ? Object.keys(node) : [];
+  if (keys.length !== 1 || keys[0] !== "ts") {
+    return false;
+  }
+  const inner = node.ts;
+  return inner !== null && typeof inner === "object" && Object.keys(inner).every((k) => TS_KEYS.has(k));
+}
+
+// Adds, replaces or removes (range = null) the top-level ts condition of `filter`.
+// range: {from: ms|null, to: ms|null}. Never mutates its input.
+export function withTsRange(filter, range) {
+  const nodes = topNodes(filter).filter((n) => !isTsRangeNode(n));
+  if (range) {
+    const ts = {};
+    if (range.from !== null && range.from !== undefined) {
+      ts.ge = Math.round(range.from);
+    }
+    if (range.to !== null && range.to !== undefined) {
+      ts.le = Math.round(range.to);
+    }
+    if (Object.keys(ts).length > 0) {
+      nodes.push({ ts });
+    }
+  }
+  return wrapNodes(nodes);
+}
+
+// Adds a template to the top-level {tpl:[...]} condition (merged into it when present, so the
+// view shows entries of any chosen template; ids are not duplicated).
+export function withTemplate(filter, tplId) {
+  const nodes = topNodes(filter);
+  const index = nodes.findIndex((n) => n && typeof n === "object" && Object.keys(n).length === 1 && Array.isArray(n.tpl));
+  if (index >= 0) {
+    if (!nodes[index].tpl.includes(tplId)) {
+      nodes[index] = { tpl: [...nodes[index].tpl, tplId] };
+    }
+  } else {
+    nodes.push({ tpl: [tplId] });
+  }
+  return wrapNodes(nodes);
+}
+
+// AND of any number of filters (nulls skipped); null when nothing narrows the view.
+export function andFilters(...filters) {
+  const nodes = [];
+  for (const f of filters) {
+    if (f) {
+      nodes.push(...topNodes(f));
+    }
+  }
+  return wrapNodes(nodes);
+}
+
+// The one filter sent to the server: sources + search text + simple bar + the filter tree
+// (userFilter) + the quick toggles. state is the buildFilter() state.
+export function composeFilter(state, userFilter, toggles) {
+  const quick = [];
+  if (toggles && toggles.hideNoise) {
+    quick.push({ sev: { le: 4 } });
+  }
+  if (toggles && toggles.unclassified) {
+    quick.push({ tpl: [0] });
+  }
+  return andFilters(buildFilter(state), userFilter, wrapNodes(quick));
+}
+
+export const NAV_ERROR_FILTER = Object.freeze({ sev: { le: 2 } });
+
+// Request for the keyboard navigation: the next/previous entry that matches `extra` inside the
+// current filter, starting after/before the selected row. dir: "fwd" | "back".
+export function navRequest(filter, extra, row, dir) {
+  const cursor = row ? (row.ts === null || row.ts === undefined ? "null" : String(row.ts)) + ":" + row.id : null;
+  return { filter: andFilters(filter, extra), cursor, dir, limit: 1 };
+}
+
+// "n"/"N"/"t"/"T" -> {kind: "error"|"template", dir} | null. Ignores modified keys.
+export function navKey(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return null;
+  }
+  const map = { n: ["error", "fwd"], N: ["error", "back"], t: ["template", "fwd"], T: ["template", "back"] };
+  const hit = map[event.key];
+  return hit ? { kind: hit[0], dir: hit[1] } : null;
+}
+
+// True when the key event comes from a control where typing must not trigger shortcuts.
+export function isTypingTarget(target) {
+  if (!target) {
+    return false;
+  }
+  const tag = String(target.tagName || "").toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(target.isContentEditable);
+}
+
+// ---- template leaf for the filter tree ({tpl: [id | code, ...]}) -----------------------------
+
+export const TPL_LEAF = {
+  defaults: () => ({ ids: [] }),
+  validate: (d) => {
+    if (!Array.isArray(d.ids) || d.ids.length === 0) {
+      return "emptyList";
+    }
+    if (d.ids.length > 1000) {
+      return "listTooLong";
+    }
+    const ok = (v) => (Number.isSafeInteger(v) && v >= 0) || (typeof v === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(v));
+    return d.ids.every(ok) ? null : "badValue";
+  },
+  toJson: (d) => ({ tpl: d.ids.slice() }),
+  fromJson: (j) => {
+    const arg = j.tpl;
+    const ids = Array.isArray(arg) ? arg : [arg];
+    const ok = (v) => (Number.isSafeInteger(v) && v >= 0) || (typeof v === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(v));
+    return ids.length > 0 && ids.every(ok) ? { ids: ids.slice() } : null;
+  },
+};
+
+// "12, ABC_1" -> [12, "ABC_1"]; invalid parts become -1 (fails validation).
+export function parseTplList(text) {
+  return String(text)
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p !== "")
+    .map((p) => (/^\d{1,15}$/.test(p) ? Number(p) : /^[A-Za-z0-9_.-]{1,64}$/.test(p) ? p : -1));
+}

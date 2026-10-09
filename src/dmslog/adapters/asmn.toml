@@ -1,0 +1,362 @@
+# Smn adapter (SmnAdapter_<pid>[.sensitive].log). Source: docs/formato/avl-osr-smn-siteswitch.md
+# and docs/formato/payloads.md. SOAP client toward the SAP PI: publication filter, serialization,
+# Send/Sending/Request-result flow with retries. Statistics, map trio, proxy, cache, XSD and
+# Communication2 tracing lines come from the shared library.
+
+schema = 1
+family = "ASMN"
+description = "Smn adapter: switching steps, plans and works sent to the SAP PI"
+extends = ["_common"]
+
+[payload_defaults]
+request = { direction = "out", peer = "SAPPI" }
+response = { direction = "in", peer = "SAPPI" }
+
+# --- publication filters and serialization ---------------------------------------------
+
+[[template]]
+code = "SMN-001"
+class = "other"
+sev = 4
+title = "Business logic invoked for entities"
+regex = '''^\[BusinessLogicResolver\] - Invoking (?P<verb>Created|Changed|Deleted) business logic for (?P<n>\d+) entities\.$'''
+fields = { n = "int" }
+examples = [{ msg = "[BusinessLogicResolver] - Invoking Created business logic for 3 entities.", fields = { verb = "Created", n = 3 } }]
+counter_examples = ["[BusinessLogicResolver] - Invoking Moved business logic for 3 entities."]
+
+[[template]]
+code = "SMN-002"
+class = "other"
+sev = 5
+title = "Publication not of interest (multiple trigger properties)"
+regex = '''^\[Subscriber\] - Received publication with cache operation '(?P<cache_op>\w+)' and multiple trigger properties is not of interest for process\.$'''
+examples = [{ msg = "[Subscriber] - Received publication with cache operation 'Add' and multiple trigger properties is not of interest for process.", fields = { cache_op = "Add" } }]
+counter_examples = ["[Subscriber] - Publication info:"]
+
+[[template]]
+code = "SMN-003"
+class = "other"
+sev = 5
+title = "New serialization in progress"
+regex = '''^\[(?P<serializer>Send\w+MessageSerializer)\] New serialization in progress\.\.\.$'''
+examples = [{ msg = "[SendWorksMessageSerializer] New serialization in progress...", fields = { serializer = "SendWorksMessageSerializer" } }]
+counter_examples = ["[SendWorks] New serialization in progress..."]
+
+# --- operation start (SendSwitchingSteps / SendWorks / SendSwitchingPlans) -------------
+
+[[template]]
+code = "SMN-004"
+class = "start"
+sev = 4
+title = "Sending switching step"
+regex = '''^\[SendSwitchingSteps\] Sending following Switching Step: SP (?P<plan>\d+) - ISS (?P<step>\d+)\.$'''
+fields = { plan = "int", step = "int" }
+keys = ["plan", "step"]
+examples = [{ msg = "[SendSwitchingSteps] Sending following Switching Step: SP 1000001 - ISS 2000001.", fields = { plan = 1000001, step = 2000001 } }]
+counter_examples = ["[SendSwitchingPlans] Sending following Switching Plan: SP 1000001."]
+
+[[template]]
+code = "SMN-005"
+class = "start"
+sev = 4
+title = "Sending work request"
+regex = '''^\[SendWorks\] Sending following Work Request: WR (?P<wr>\d+)\.$'''
+fields = { wr = "int" }
+keys = ["wr"]
+examples = [{ msg = "[SendWorks] Sending following Work Request: WR 3000001.", fields = { wr = 3000001 } }]
+counter_examples = ["[SendWorks] Sending Work Request finished successfully"]
+
+[[template]]
+code = "SMN-006"
+class = "start"
+sev = 4
+title = "Sending switching plan"
+regex = '''^\[SendSwitchingPlans\] Sending following Switching Plan: SP (?P<plan>\d+)\.$'''
+fields = { plan = "int" }
+keys = ["plan"]
+examples = [{ msg = "[SendSwitchingPlans] Sending following Switching Plan: SP 1000001.", fields = { plan = 1000001 } }]
+counter_examples = ["[SendSwitchingSteps] Sending following Switching Step: SP 1000001 - ISS 2000001."]
+
+# --- request / response of one attempt -------------------------------------------------
+
+[[template]]
+code = "SMN-007"
+window = 992  # worst case quadratic: see _schema.md, Regex safety
+class = "req_resp"
+sev = 4
+title = "Sending message (one line per attempt)"
+regex = '''^Sending "(?P<msg_type>\w+EventMessageType)" message: (?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}) with verb: (?P<verb>\w+)\.\.\.$'''
+fields = { msg_id = "guid" }
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = 'Sending "WorksEventMessageType" message: 00000000-0000-4000-8000-000000000005 with verb: Changed...', fields = { msg_type = "WorksEventMessageType", msg_id = "00000000-0000-4000-8000-000000000005", verb = "Changed" } }]
+counter_examples = ['Sending "WorksEventMessageType" message: 00000000-0000-4000-8000-000000000005 with verb: Changed finished successfully.']
+
+[[template]]
+code = "SMN-008"
+window = 992  # worst case quadratic: see _schema.md, Regex safety
+class = "req_resp"
+sev = 4
+title = "Sending message finished successfully"
+regex = '''^Sending "(?P<msg_type>\w+EventMessageType)" message: (?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}) with verb: (?P<verb>\w+) finished successfully\.$'''
+fields = { msg_id = "guid" }
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = 'Sending "WorksEventMessageType" message: 00000000-0000-4000-8000-000000000005 with verb: Created finished successfully.', fields = { msg_type = "WorksEventMessageType", verb = "Created" } }]
+counter_examples = ['Sending "WorksEventMessageType" message: 00000000-0000-4000-8000-000000000005 with verb: Created...']
+
+# The switching plan variant ends with a full stop; the other two do not.
+[[template]]
+code = "SMN-009"
+class = "end"
+sev = 4
+title = "Operation finished successfully"
+regex = '''^\[(?P<op>SendSwitchingSteps|SendWorks|SendSwitchingPlans)\] Sending (?:Switching Step|Work Request|Switching Plan) finished successfully\.?$'''
+examples = [
+    { msg = "[SendSwitchingSteps] Sending Switching Step finished successfully", fields = { op = "SendSwitchingSteps" } },
+    { msg = "[SendSwitchingPlans] Sending Switching Plan finished successfully.", fields = { op = "SendSwitchingPlans" } },
+]
+counter_examples = ["[SendWorks] Sending Work Request finished unsuccessfully. Reason: Written in sensitive log. StackTrace:"]
+
+[[template]]
+code = "SMN-010"
+class = "other"
+sev = 4
+title = "Request message sent, reply received"
+regex = '''^Request message with MessageId '(?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})' successfully sent\. Reply result '(?P<result>[^']*)' is returned in response message\.$'''
+fields = { msg_id = "guid" }
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = "Request message with MessageId '00000000-0000-4000-8000-000000000005' successfully sent. Reply result 'OK' is returned in response message.", fields = { msg_id = "00000000-0000-4000-8000-000000000005", result = "OK" } }]
+counter_examples = ["Request message with MessageId '00000000-0000-4000-8000-000000000005' unsuccessfully sent. For more details check sensitive log."]
+
+[[template]]
+code = "SMN-011"
+class = "other"
+sev = 5
+title = "NmsSignalsBySignalGidsQuery start/end"
+regex = '''^(?P<phase>START|END) NmsSignalsBySignalGidsQuery$'''
+examples = [{ msg = "START NmsSignalsBySignalGidsQuery", fields = { phase = "START" } }, { msg = "END NmsSignalsBySignalGidsQuery", fields = { phase = "END" } }]
+counter_examples = ["START OtherQuery"]
+
+[[template]]
+code = "SMN-012"
+class = "other"
+sev = 4
+title = "Switching step not on work plan (ignored)"
+regex = '''^Switching step with custom id: '(?P<ident>[^']*)' is not on work plan and will be ignored\.$'''
+examples = [{ msg = "Switching step with custom id: '1000001 - ISS 2000001' is not on work plan and will be ignored.", fields = { ident = "1000001 - ISS 2000001" } }]
+counter_examples = ["Switching step with custom id: '1000001 - ISS 2000001' is on work plan."]
+
+[[template]]
+code = "SMN-013"
+class = "validation"
+sev = 4
+title = "Property value not of interest (publication ignored)"
+regex = '''^\[Validation\] The value of property "(?P<prop>[^"]*)" is not of interest\. Supported values are: (?P<supported>.*)\. Current SM_INSTANT_SWITCHING_SEQUENCE will not be processed\.$'''
+examples = [{ msg = '[Validation] The value of property "EXAMPLE_PROP" is not of interest. Supported values are: "A, B". Current SM_INSTANT_SWITCHING_SEQUENCE will not be processed.', fields = { prop = "EXAMPLE_PROP" } }]
+counter_examples = ["[Validation Critical] - Invalid reply message received. Could not find schema information for the element 'urn:example:SystemError'."]
+
+[[template]]
+code = "SMN-014"
+class = "other"
+sev = 4
+title = "No switching steps satisfy the filter configuration"
+text = "[BusinessLogicResolver] - There are no switching steps satisfying filter configuration in received publication."
+examples = ["[BusinessLogicResolver] - There are no switching steps satisfying filter configuration in received publication."]
+counter_examples = ["[BusinessLogicResolver] - Processing received publication data."]
+
+# --- errors ----------------------------------------------------------------------------
+
+[[template]]
+code = "SMN-015"
+class = "error"
+sev = 2
+title = "Invalid reply message (schema)"
+regex = '''^\[Validation Critical\] - Invalid reply message received\. Could not find schema information for the element '(?P<element>[^']*)'\.$'''
+examples = [{ msg = "[Validation Critical] - Invalid reply message received. Could not find schema information for the element 'urn:example:SystemError'.", fields = { element = "urn:example:SystemError" } }]
+counter_examples = ["[Validation Critical] - Something else."]
+
+[[template]]
+code = "SMN-016"
+class = "end"
+sev = 2
+title = "Operation finished unsuccessfully (reason in the sensitive log)"
+regex = '''^\[(?P<op>Send\w+)\] Sending (?P<entity>[A-Za-z ]+?) finished unsuccessfully\. Reason: Written in sensitive log\. StackTrace:$'''
+cont = { parser = "dotnet_stack" }
+keys = [{ field = "exc_type", type = "exc_type" }]
+refs_sensitive = true
+stream = "normal"
+examples = [{ msg = "[SendWorks] Sending Work Request finished unsuccessfully. Reason: Written in sensitive log. StackTrace: ", cont = "Server stack trace: \n   at Example.Client.Send() in F:\\PD\\1234567\\1\\Example\\Client.cs:line 83\n\nException rethrown at [0]: \n   at Example.Client.Send() in F:\\PD\\1234567\\1\\Example\\Client.cs:line 83\n", fields = { op = "SendWorks", entity = "Work Request" } }]
+counter_examples = ["[SendWorks] Sending Work Request finished successfully"]
+
+[[template]]
+code = "SMN-017"
+class = "error"
+sev = 2
+title = "Request message unsuccessfully sent (reason)"
+regex = '''^Request message with MessageId '(?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})' unsuccessfully sent\. Reason: '(?P<reason>.*)'\.$'''
+fields = { msg_id = "guid" }
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = "Request message with MessageId '00000000-0000-4000-8000-000000000005' unsuccessfully sent. Reason: 'Example failure reason'.", fields = { reason = "Example failure reason" } }]
+counter_examples = ["Request message with MessageId '00000000-0000-4000-8000-000000000005' unsuccessfully sent. For more details check sensitive log."]
+
+[[template]]
+code = "SMN-018"
+class = "error"
+sev = 2
+title = "Request message unsuccessfully sent (details in the sensitive log)"
+regex = '''^Request message with MessageId '(?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})' unsuccessfully sent\. For more details check sensitive log\.$'''
+fields = { msg_id = "guid" }
+keys = [{ field = "msg_id", type = "msgid" }]
+refs_sensitive = true
+examples = [{ msg = "Request message with MessageId '00000000-0000-4000-8000-000000000005' unsuccessfully sent. For more details check sensitive log.", fields = { msg_id = "00000000-0000-4000-8000-000000000005" } }]
+counter_examples = ["Request message with MessageId '00000000-0000-4000-8000-000000000005' unsuccessfully sent. Reason: 'x'."]
+
+[[template]]
+code = "SMN-019"
+class = "error"
+sev = 2
+title = "Attempt failed (retry; details in the sensitive log)"
+regex = '''^Error: Sending "(?P<msg_type>[^"]*)" message failed\. "(?P<exc_type>[^"]*)" has occurred\. Writing details in sensitive log\.$'''
+keys = [{ field = "exc_type", type = "exc_type" }]
+refs_sensitive = true
+stream = "normal"
+examples = [{ msg = 'Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. Writing details in sensitive log.', fields = { msg_type = "WorksEventMessageType", exc_type = "EndpointNotFoundException" } }]
+counter_examples = ['Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. DmsReason: x']
+
+[[template]]
+code = "SMN-099"
+class = "lifecycle"
+sev = 4
+title = "Debug level changed"
+regex = '''^Debug level changed from (?P<from_level>\w+) \((?P<from_n>\d+)\) to (?P<to_level>\w+) \((?P<to_n>\d+)\)\.$'''
+fields = { from_n = "int", to_n = "int" }
+examples = [{ msg = "Debug level changed from Info (3) to Verbose (4).", fields = { from_level = "Info", to_level = "Verbose", from_n = 3, to_n = 4 } }]
+counter_examples = ["Debug level changed"]
+
+# --- Info level (payload announcement and smart cache) ----------------------------------
+
+[[template]]
+code = "SMN-110"
+class = "other"
+sev = 4
+title = "Publication received (details in the sensitive log)"
+text = "[WmsSubscriber] - Data received from publication. Details are written in sensitive log."
+refs_sensitive = true
+stream = "normal"
+examples = ["[WmsSubscriber] - Data received from publication. Details are written in sensitive log."]
+counter_examples = ["[WmsSubscriber] - Data received from publication:"]
+
+[[template]]
+code = "SMN-111"
+class = "other"
+sev = 4
+title = "Processing received publication data"
+text = "[BusinessLogicResolver] - Processing received publication data."
+examples = ["[BusinessLogicResolver] - Processing received publication data."]
+counter_examples = ["[BusinessLogicResolver] - Processing received data."]
+
+[[template]]
+code = "SMN-112"
+class = "other"
+sev = 4
+title = "Unsent message saved or deleted (smart cache)"
+regex = '''^\[UnsentMessagesPersister\] - (?P<action>Saving|Deleting) message with GID: '(?P<gid>\d+)', Identifier: '(?P<ident>[^']*)' (?:to|from) smart cache(?P<done> succeeded)?\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [
+    { msg = "[UnsentMessagesPersister] - Saving message with GID: '1234567890', Identifier: 'SP 1000001 - ISS 2000001' to smart cache.", fields = { action = "Saving", gid = 1234567890, ident = "SP 1000001 - ISS 2000001" } },
+    { msg = "[UnsentMessagesPersister] - Deleting message with GID: '1234567890', Identifier: 'WR 3000001' from smart cache succeeded.", fields = { action = "Deleting" } },
+]
+counter_examples = ["[CreatedEntityIdsPersister] - Saving message with GID: '1234567890', EntityMrid: 'X' to smart cache."]
+
+[[template]]
+code = "SMN-112A"
+class = "other"
+sev = 5
+title = "Peek message from internal queue"
+text = "[UnsentMessagesPersister] - Peek message from internal queue..."
+examples = ["[UnsentMessagesPersister] - Peek message from internal queue..."]
+counter_examples = ["[UnsentMessagesPersister] - Peek message from the queue..."]
+
+[[template]]
+code = "SMN-112B"
+class = "other"
+sev = 4
+title = "Peek message succeeded (links MessageId, identifier and GID)"
+regex = '''^\[UnsentMessagesPersister\] - Peek '(?P<msg_type>[^']*)' message with GID: '(?P<gid>\d+)', Identifier: '(?P<ident>[^']*)' and MessageId: '(?P<msg_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})' succeeded\.$'''
+fields = { gid = "int", msg_id = "guid" }
+keys = ["gid", { field = "msg_id", type = "msgid" }]
+examples = [{ msg = "[UnsentMessagesPersister] - Peek 'WorksEventMessageType' message with GID: '1234567890', Identifier: 'WR 3000001' and MessageId: '00000000-0000-4000-8000-000000000005' succeeded.", fields = { msg_type = "WorksEventMessageType", gid = 1234567890, ident = "WR 3000001", msg_id = "00000000-0000-4000-8000-000000000005" } }]
+counter_examples = ["[UnsentMessagesPersister] - Peek message from internal queue..."]
+
+[[template]]
+code = "SMN-113"
+class = "other"
+sev = 4
+title = "Created entity ids saved or deleted (smart cache)"
+regex = '''^\[CreatedEntityIdsPersister\] - (?P<action>Saving|Deleting) message with GID: '(?P<gid>\d+)', (?:EntityMrid|Mrid): '(?P<mrid>[^']*)' (?:to|from) smart cache(?P<done> succeeded)?\.$'''
+fields = { gid = "int" }
+keys = ["gid", "mrid"]
+examples = [
+    { msg = "[CreatedEntityIdsPersister] - Saving message with GID: '1234567890', EntityMrid: 'ZZ-1' to smart cache succeeded.", fields = { action = "Saving", gid = 1234567890, mrid = "ZZ-1" } },
+    { msg = "[CreatedEntityIdsPersister] - Deleting message with GID: '1234567890', Mrid: 'ZZ-1' from smart cache.", fields = { action = "Deleting" } },
+]
+counter_examples = ["[UnsentMessagesPersister] - Saving message with GID: '1234567890', Identifier: 'X' to smart cache."]
+
+# --- sensitive log ----------------------------------------------------------------------
+
+[[template]]
+code = "SMN-S016"
+class = "end"
+sev = 2
+title = "Operation finished unsuccessfully (real reason)"
+regex = '''^\[(?P<op>Send\w+)\] Sending (?P<entity>[A-Za-z ]{1,64}?) finished unsuccessfully\. Reason: (?P<reason>.*)StackTrace:$'''
+window = 2320  # worst case quadratic: see _schema.md, Regex safety
+cont = { parser = "dotnet_stack" }
+keys = [{ field = "exc_type", type = "exc_type" }]
+stream = "sensitive"
+examples = [{ msg = "[SendWorks] Sending Work Request finished unsuccessfully. Reason: Example failure reason.. StackTrace: ", cont = "Server stack trace: \n   at Example.Client.Send() in F:\\PD\\1234567\\1\\Example\\Client.cs:line 83\n", fields = { op = "SendWorks", entity = "Work Request" } }]
+counter_examples = ["[SendWorks] Sending Work Request finished successfully"]
+
+[[template]]
+code = "SMN-S019"
+class = "error"
+sev = 2
+title = "Attempt failed (real reason)"
+regex = '''^Error: Sending "(?P<msg_type>[^"]*)" message failed\. "(?P<exc_type>[^"]*)" has occurred\. DmsReason: (?P<reason>.*)$'''
+cont = { parser = "dotnet_stack" }
+keys = [{ field = "exc_type", type = "exc_type" }]
+stream = "sensitive"
+examples = [{ msg = 'Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. DmsReason: There was no endpoint listening at https://example.invalid/pi that could accept the message.', fields = { msg_type = "WorksEventMessageType", exc_type = "EndpointNotFoundException" } }]
+counter_examples = ['Error: Sending "WorksEventMessageType" message failed. "EndpointNotFoundException" has occurred. Writing details in sensitive log.']
+
+[[template]]
+code = "SMN-S110"
+class = "req_resp"
+sev = 4
+title = "Publication received (payload)"
+text = "[WmsSubscriber] - Data received from publication:"
+cont = "kv_colon"
+payload = { fmt = "xml_seq", start = "first_cont_lt", role = "publication", direction = "in", peer = "DMS" }
+stream = "sensitive"
+examples = [{ msg = "[WmsSubscriber] - Data received from publication:", cont = "DmsType: ExampleType\nOperation: Add\n<ResourceDescription xmlns=\"urn:example\"/>" }]
+counter_examples = ["[WmsSubscriber] - Data received from publication. Details are written in sensitive log."]
+
+[[template]]
+code = "SMN-S020"
+class = "other"
+sev = 4
+title = "Service URL of an operation"
+regex = '''^\[ServiceUrl\] : For (?P<op>\w+) service url is (?P<url>\S+)$'''
+stream = "sensitive"
+examples = [{ msg = "[ServiceUrl] : For SendWorks service url is https://example.invalid/pi", fields = { op = "SendWorks" } }]
+counter_examples = ["[ServiceUrl] : For SendWorks"]
+
+[[template]]
+code = "SMN-S021"
+class = "other"
+sev = 3
+title = "Client did not send requests for a long time"
+regex = '''^Client for endpoint (?P<endpoint>\w+) didn't send request to (?P<url>\S+) for more than (?P<idle>[\d:.]+)\.$'''
+stream = "sensitive"
+examples = [{ msg = "Client for endpoint XISOAPAdapter didn't send request to https://example.invalid/pi for more than 12:00:00.", fields = { endpoint = "XISOAPAdapter", idle = "12:00:00" } }]
+counter_examples = ["Client for endpoint XISOAPAdapter sent request to https://example.invalid/pi"]

@@ -6,6 +6,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'">
   <title>dmslog</title>
   <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/grid-extras.css">
+  <link rel="stylesheet" href="/css/filter-tree.css">
   <script type="module" src="/js/main.js"></script>
 </head>
 <body>
@@ -27,6 +29,8 @@
         <button type="button" id="columns-button" aria-haspopup="true" aria-expanded="false" data-i18n="columnsButton"></button>
         <div id="columns-menu" class="menu" role="group" hidden></div>
       </div>
+      <button type="button" id="filter-tree-button" aria-expanded="false" data-i18n="toolbarFilterTree"></button>
+      <button type="button" id="unknown-button" aria-expanded="false" data-i18n="toolbarUnknown" hidden></button>
       <button type="button" id="theme-button" data-i18n-title="themeToggle" data-i18n-aria-label="themeToggle"></button>
     </header>
 
@@ -62,6 +66,9 @@
 
       <section id="grid-panel" class="panel" aria-labelledby="grid-title">
         <h2 id="grid-title" class="visually-hidden" data-i18n="panelGrid"></h2>
+        <div id="timeline" class="timeline-host"></div>
+        <section id="filter-tree-host" class="panel host-panel" hidden></section>
+        <section id="unknown-panel-host" class="panel host-panel" hidden></section>
         <form id="filter-form" class="filter-bar">
           <div class="field">
             <label for="sev-select" data-i18n="filterSeverity"></label>
@@ -81,6 +88,8 @@
           </div>
           <button type="submit" data-i18n="filterApply"></button>
           <button type="button" id="filter-reset" data-i18n="filterReset"></button>
+          <label class="toggle"><input type="checkbox" id="hide-noise"> <span data-i18n="filterHideNoise"></span></label>
+          <label class="toggle"><input type="checkbox" id="unclassified-only"> <span data-i18n="filterUnclassified"></span></label>
         </form>
         <div id="grid-header" class="grid-header" role="row"></div>
         <div id="grid-viewport" class="grid-viewport" role="grid" tabindex="0" data-i18n-aria-label="panelGrid">
@@ -100,7 +109,9 @@
           <button type="button" id="copy-button" data-i18n="copyButton"></button>
           <span id="copy-status" class="source-meta" role="status"></span>
         </div>
+        <button type="button" id="detail-template" class="tpl-link-button" hidden></button>
         <pre id="detail-text" class="detail-text"></pre>
+        <div id="detail-fields" class="detail-fields"></div>
         <div id="context-box" class="context-box" hidden>
           <div class="context-head">
             <h3 data-i18n="contextTitle"></h3>

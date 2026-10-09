@@ -1,0 +1,130 @@
+# AMI adapter (AmiAdapter_<pid>[.sensitive].log). Source: docs/formato/crm-e-demais.md, section 2.4.
+# The normal log is dominated by the hourly statistics (GEN-STA-*), not by the maps.
+# Flow: AMI-001 -> AMI-003 (request to the ESB) -> AMI-004 -> AMI-002; the asynchronous answer
+# arrives as CreatedMeterReadings (AMI-005 -> AMI-006) with the same message id (<gid>-0).
+
+schema = 1
+family = "AAMI"
+description = "AMI adapter: meter readings (GetMeterReadings, CreatedMeterReadings)"
+extends = ["_common"]
+
+[[template]]
+code = "AMI-001"
+class = "start"
+title = "Meter reading request processing started"
+sev = 4
+regex = '''^\[GetMeterReadingsBusinessLogicExt\] - Processing MeterReadingRequest from received publication\.$'''
+examples = ["[GetMeterReadingsBusinessLogicExt] - Processing MeterReadingRequest from received publication."]
+counter_examples = ["[GetMeterReadingsBusinessLogicExt] - Processing MeterReadingRequest finished."]
+
+[[template]]
+code = "AMI-002"
+class = "end"
+title = "Meter reading request processing finished"
+sev = 4
+regex = '''^\[GetMeterReadingsBusinessLogicExt\] - Processing MeterReadingRequest finished\.$'''
+examples = ["[GetMeterReadingsBusinessLogicExt] - Processing MeterReadingRequest finished."]
+counter_examples = ["[GetMeterReadingsBusinessLogicExt] - Processing MeterReadingRequest from received publication."]
+
+[[template]]
+code = "AMI-003"
+class = "req_resp"
+title = "Sending the meter reading request"
+sev = 4
+regex = '''^(?:\[ ?GetMeterReadingsRequest\] Sending request(?: message| finished successfully\.)|Sending ["'](?P<msg_type>\w+)["'] message: (?P<msg_id>\S+?)(?: finished successfully)?\.)$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [
+    "[ GetMeterReadingsRequest] Sending request message",
+    "[GetMeterReadingsRequest] Sending request finished successfully.",
+    { msg = 'Sending "GetMeterReadingsRequest" message: 1234567890-0.', fields = { msg_type = "GetMeterReadingsRequest", msg_id = "1234567890-0" } },
+    { msg = 'Sending "GetMeterReadingsRequest" message: 1234567890-0 finished successfully.', fields = { msg_id = "1234567890-0" } },
+]
+counter_examples = ["[GetMeterReadingsRequest] Receiving request message"]
+
+[[template]]
+code = "AMI-004"
+class = "req_resp"
+title = "External system answered the request"
+sev = 4
+refs_sensitive = true
+regex = '''^External system returned ["'](?P<result>[^"']*)["'] response for sent request\. For more details please consult sensitive log\.$'''
+examples = [{ msg = 'External system returned "OK" response for sent request. For more details please consult sensitive log.', fields = { result = "OK" } }]
+counter_examples = ['External system returned "OK" response for request "1234567890-0".']
+
+[[template]]
+code = "AMI-005"
+class = "start"
+title = "CreatedMeterReadings started"
+sev = 4
+refs_sensitive = true
+regex = '''^\[CreatedMeterReadings\] Processing a message with a message ID: (?P<msg_id>\S+)\. Writing message data to sensitive log\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+stream = "normal"
+examples = [{ msg = "[CreatedMeterReadings] Processing a message with a message ID: 1234567890-0. Writing message data to sensitive log.", fields = { msg_id = "1234567890-0" } }]
+counter_examples = ["[CreatedMeterReadings] Processing a message with a message ID: Message ID: 1234567890-0."]
+
+[[template]]
+code = "AMI-006"
+class = "end"
+title = "CreatedMeterReadings finished"
+sev = 4
+regex = '''^\[CreatedMeterReadings\] Message with message ID; (?P<msg_id>\S+) is processed\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = "[CreatedMeterReadings] Message with message ID; 1234567890-0 is processed.", fields = { msg_id = "1234567890-0" } }]
+counter_examples = ["[CreatedMeterReadings] Message with message ID: 1234567890-0 is processed."]
+
+[[template]]
+code = "AMI-007"
+class = "validation"
+title = "Meter reading failed data validation"
+sev = 2
+regex = '''^\[ERROR\] (?P<business_line>\w+) Meter reading failed data validation\. Process will be aborted\.$'''
+examples = [{ msg = "[ERROR] RequestTimeoutBusinessLine Meter reading failed data validation. Process will be aborted.", fields = { business_line = "RequestTimeoutBusinessLine" } }]
+counter_examples = ["[ERROR] - Validation error is detected during validation process of error configuration"]
+
+# Startup false positive: reads as an error but is a configuration warning (the unused error
+# configurations that follow on the continuation lines).
+[[template]]
+code = "AMI-008"
+class = "startup"
+title = "Error configuration validation warning (startup)"
+sev = 4
+regex = '''^\[ERROR\] - Validation error is detected during validation process of error configuration.*$'''
+examples = ["[ERROR] - Validation error is detected during validation process of error configuration"]
+counter_examples = ["[ERROR] RequestTimeoutBusinessLine Meter reading failed data validation. Process will be aborted."]
+
+# Sensitive stream
+[[template]]
+code = "AMI-S01"
+class = "req_resp"
+title = "External system answer with the request id"
+sev = 4
+stream = "sensitive"
+regex = '''^External system returned ["'](?P<result>[^"']*)["'] response for request ["'](?P<msg_id>[^"']*)["']\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = 'External system returned "OK" response for request "1234567890-0".', fields = { result = "OK", msg_id = "1234567890-0" } }]
+counter_examples = ['External system returned "OK" response for sent request. For more details please consult sensitive log.']
+
+[[template]]
+code = "AMI-S02"
+class = "start"
+title = "CreatedMeterReadings message data"
+sev = 4
+stream = "sensitive"
+regex = '''^\[CreatedMeterReadings\] Processing a message with a message ID: Message ID: (?P<msg_id>\S+)\.$'''
+keys = [{ field = "msg_id", type = "msgid" }]
+examples = [{ msg = "[CreatedMeterReadings] Processing a message with a message ID: Message ID: 1234567890-0.", fields = { msg_id = "1234567890-0" } }]
+counter_examples = ["[CreatedMeterReadings] Processing a message with a message ID: 1234567890-0. Writing message data to sensitive log."]
+
+[[operation]]
+name_field = "op"
+start = ["AMI-001", "AMI-005"]
+end = ["AMI-002", "AMI-006"]
+fail = ["AMI-007"]
+pair_by = ["tid"]
+
+[[sensitive_pair]]
+normal = "AMI-005"
+sensitive = "AMI-S02"
+match = ["pid", "tid"]
+max_dt_ms = 100

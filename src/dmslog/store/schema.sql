@@ -160,6 +160,12 @@ CREATE TABLE bucket(           -- per-minute counts for the timeline and panels
   n INTEGER NOT NULL,
   PRIMARY KEY(source_id, minute, sev, tpl_id)) WITHOUT ROWID;
 
+CREATE TABLE bucket_sev(       -- template-free rollup of bucket: exact fast path for the sev/source histograms
+  source_id INTEGER NOT NULL, minute INTEGER NOT NULL, sev INTEGER NOT NULL,
+  n INTEGER NOT NULL,
+  PRIMARY KEY(source_id, minute, sev)) WITHOUT ROWID;
+CREATE INDEX bucket_sev_minute ON bucket_sev(minute, sev, n);  -- covering: all-source histograms scan in order
+
 -- Effective installation configuration (read from the ERS) ---------------------
 CREATE TABLE config_param(                                     -- one row per (layer, key): every layer stays visible
   collection_group INTEGER NOT NULL, product TEXT NOT NULL,     -- AdapterWfm, ... (Name attribute of <Product>)

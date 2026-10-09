@@ -71,12 +71,27 @@ export const api = {
     request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections", { path, scope }),
   progressUrl: (caseId) => "/api/cases/" + encodeURIComponent(caseId) + "/progress",
   sources: (caseId) => request("GET", "/api/sources" + query({ case: caseId })),
-  page: (caseId, filter, cursor, dir, limit, signal) =>
-    request("POST", "/api/entries/page", { case: caseId, filter, cursor, dir, limit, columns: [] }, signal),
+  page: (caseId, filter, cursor, dir, limit, signal, columns) =>
+    request("POST", "/api/entries/page", { case: caseId, filter, cursor, dir, limit, columns: columns || [] }, signal),
+  templates: (caseId, family, signal) =>
+    request("GET", "/api/templates" + query({ case: caseId, family }), undefined, signal),
+  histogram: (caseId, filter, bucketMs, split, signal) =>
+    request("POST", "/api/histogram", { case: caseId, filter, bucket_ms: bucketMs, split }, signal),
   count: (caseId, filter, signal) => request("POST", "/api/entries/count", { case: caseId, filter }, signal),
   entry: (caseId, id, signal) =>
     request("GET", "/api/entries/" + encodeURIComponent(id) + query({ case: caseId }), undefined, signal),
   context: (caseId, id, same, before, after, signal) =>
     request("GET", "/api/entries/" + encodeURIComponent(id) + "/context" +
       query({ case: caseId, same, before, after }), undefined, signal),
+  views: {
+    list: (caseId, signal) => request("GET", "/api/views" + query({ case: caseId }), undefined, signal),
+    save: (caseId, name, filter, columns) =>
+      request("POST", "/api/views", { case: caseId, name, filter, columns: columns || null }),
+    remove: (caseId, id) =>
+      request("DELETE", "/api/views/" + encodeURIComponent(id) + query({ case: caseId })),
+  },
+  templates: (caseId, family, signal) =>
+    request("GET", "/api/templates" + query({ case: caseId, family }), undefined, signal),
+  unknown: (caseId, family, limit, signal) =>
+    request("GET", "/api/unknown" + query({ case: caseId, family, limit }), undefined, signal),
 };

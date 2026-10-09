@@ -1,0 +1,160 @@
+# ClaimCheck adapter (ClaimCheckAdapter_<pid>[.sensitive].log). Source: docs/formato/crm-e-demais.md,
+# section 2.7. Messages are processed in parallel (correlate CLC-001 with CLC-009/CLC-010 by
+# thread). The validation lines (CLC-007) are headers whose message starts with two TABs.
+# The [Validation <sev>] prefix does not follow the <Severity> of the error configuration XML
+# (open question 3 of the format document); the hint only maps the prefix.
+
+schema = 1
+family = "ACLC"
+description = "ClaimCheck adapter: file notification events, attachment validation, SFTP copy"
+extends = ["_common"]
+
+[[template]]
+code = "CLC-001"
+class = "start"
+title = "File notification message processing started"
+sev = 4
+stream = "normal"
+regex = '''^"(?P<event>\w+)" message processing started\.\.\.$'''
+examples = [{ msg = '"CreatedFileNotificationEvent" message processing started...', fields = { event = "CreatedFileNotificationEvent" } }]
+counter_examples = ['"CreatedFileNotificationEvent" message processing finished successfully.']
+
+[[template]]
+code = "CLC-002"
+class = "other"
+title = "Request processor process line"
+sev = 4
+regex = '''^\[ClaimCheckAdapter\] - RequestProcessor - Executing process line: (?P<line>Multimedia|Default)\.\.\.$'''
+examples = [{ msg = "[ClaimCheckAdapter] - RequestProcessor - Executing process line: Multimedia...", fields = { line = "Multimedia" } }, "[ClaimCheckAdapter] - RequestProcessor - Executing process line: Default..."]
+counter_examples = ["[ClaimCheckAdapter] - RequestProcessor - Executing process line: Other..."]
+
+[[template]]
+code = "CLC-003"
+class = "req_resp"
+title = "File copied from the remote share"
+sev = 4
+refs_sensitive = true
+text = "File is successfully copied from remote file share to local file share. For more details check sensitive log."
+examples = ["File is successfully copied from remote file share to local file share. For more details check sensitive log."]
+counter_examples = ["File is successfully copied from remote file share to local file share."]
+
+[[template]]
+code = "CLC-004"
+class = "req_resp"
+title = "Obtaining the Multimedia configuration"
+sev = 4
+text = "Obtaining Config from Multimedia Service for attachment validation."
+examples = ["Obtaining Config from Multimedia Service for attachment validation."]
+counter_examples = ["Obtaining Config from Multimedia Service."]
+
+[[template]]
+code = "CLC-005"
+class = "other"
+title = "Retries left"
+sev = 4
+regex = '''^Number of retries left: (?P<n>\d+)$'''
+fields = { n = "int" }
+examples = [{ msg = "Number of retries left: 3", fields = { n = 3 } }]
+counter_examples = ["Number of retries left: many"]
+
+[[template]]
+code = "CLC-006"
+class = "req_resp"
+title = "Processing attachment on an ADMS entity"
+sev = 4
+regex = '''^Processing attachment on ADMS gid '(?P<gid>\d+)' (?P<phase>started|finished)\.$'''
+fields = { gid = "int" }
+keys = ["gid"]
+examples = [{ msg = "Processing attachment on ADMS gid '288230376151711744' started.", fields = { gid = 288230376151711744, phase = "started" } }, "Processing attachment on ADMS gid '288230376151711744' finished."]
+counter_examples = ["Processing attachment on ADMS gid 'x' started."]
+
+[[template]]
+code = "CLC-007"
+class = "validation"
+title = "Validation result (code)"
+sev = 4
+stream = "normal"
+regex = '''^\[Validation (?P<vsev>Info|Warning|Error|Critical)\]: (?P<code>\w+)$'''
+sev_field = "vsev"
+sev_map = { Critical = 2, Error = 2, Warning = 3, Info = 4 }
+keys = [{ field = "code", type = "errcode" }]
+examples = [
+    { msg = "\t\t[Validation Info]: MessageRevisionMissing", fields = { vsev = "Info", code = "MessageRevisionMissing" } },
+    { msg = "\t\t[Validation Critical]: InvalidUrl", fields = { vsev = "Critical", code = "InvalidUrl" } },
+]
+counter_examples = ["[Validation Fatal]: InvalidUrl", "[Validation Info]: Message revision is not provided."]
+
+[[template]]
+code = "CLC-008"
+class = "validation"
+title = "Validation details are in the sensitive log"
+sev = 4
+refs_sensitive = true
+regex = '''^Details regarding validation errors can be found adapters sensistive log\.$'''
+examples = ["\t\t Details regarding validation errors can be found adapters sensistive log."]
+counter_examples = ["Details regarding validation errors can be found in the sensitive log."]
+
+[[template]]
+code = "CLC-009"
+class = "end"
+title = "File notification message processing finished"
+sev = 4
+regex = '''^"(?P<event>\w+)" message processing finished successfully\.$'''
+examples = [{ msg = '"CreatedFileNotificationEvent" message processing finished successfully.', fields = { event = "CreatedFileNotificationEvent" } }]
+counter_examples = ['"CreatedFileNotificationEvent" message processing failed. Reason:']
+
+[[template]]
+code = "CLC-010"
+class = "error"
+title = "File notification message processing failed"
+sev = 2
+regex = '''^"(?P<event>\w+)" message processing failed\. Reason:$'''
+examples = [{ msg = '"CreatedFileNotificationEvent" message processing failed. Reason:', fields = { event = "CreatedFileNotificationEvent" } }]
+counter_examples = ['"CreatedFileNotificationEvent" message processing started...']
+
+[[template]]
+code = "CLC-011"
+class = "error"
+title = "Uploading the attachment failed"
+sev = 2
+regex = '''^Uploading attachment failed due to (?P<err>\w+) error\.$'''
+keys = [{ field = "err", type = "errcode" }]
+examples = [{ msg = "Uploading attachment failed due to InternalError error.", fields = { err = "InternalError" } }]
+counter_examples = ["Uploading attachment succeeded."]
+
+# Sensitive stream
+[[template]]
+code = "CLC-S07"
+class = "validation"
+title = "Validation result (detail)"
+sev = 4
+stream = "sensitive"
+regex = '''^\[Validation (?P<vsev>Info|Warning|Error|Critical)\]: (?P<detail>.+)$'''
+sev_field = "vsev"
+sev_map = { Critical = 2, Error = 2, Warning = 3, Info = 4 }
+examples = [{ msg = "\t\t[Validation Info]: Message revision is not provided.", fields = { vsev = "Info", detail = "Message revision is not provided." } }]
+counter_examples = ["[Validation Info]:"]
+
+[[template]]
+code = "CLC-S01"
+window = 704  # worst case quadratic: see _schema.md, Regex safety
+class = "req_resp"
+title = "File copied to the local share"
+sev = 4
+stream = "sensitive"
+regex = '''^File: (?P<src>.+?) - is copied to location: (?P<dst>.+)\.$'''
+examples = [{ msg = "File: /PROD/example/file_1.jpg - is copied to location: \\\\share.invalid\\example\\file_1.jpg.", fields = { src = "/PROD/example/file_1.jpg" } }]
+counter_examples = ["File: /PROD/example/file_1.jpg - was not copied."]
+
+[[operation]]
+name = "FileNotification"
+start = ["CLC-001"]
+end = ["CLC-009"]
+fail = ["CLC-010"]
+pair_by = ["tid"]
+
+[[sensitive_pair]]
+normal = "CLC-003"
+sensitive = "CLC-S01"
+match = ["pid", "tid"]
+max_dt_ms = 100

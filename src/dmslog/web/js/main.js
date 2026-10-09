@@ -2,7 +2,13 @@
 // and reaches the page through textContent / DOM nodes only.
 import { api, onForbidden } from "./api.js";
 import { Detail } from "./detail.js";
-import { buildFilter, stateFromForm, timeSpan } from "./filters.js";
+import {
+  NAV_ERROR_FILTER, TPL_LEAF, composeFilter, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
+  timeSpan, withTemplate, withTsRange,
+} from "./filters.js";
+import { registerLeafType } from "./filter-tree-model.js";
+import { initFilterTree, registerLeafEditor } from "./filter-tree.js";
+import { initTimeline } from "./timeline.js";
 import { COLUMNS, Grid } from "./grid.js";
 import { searchTerms } from "./search.js";
 import { SourcesPanel } from "./sources.js";
@@ -11,6 +17,57 @@ import { applyTheme, currentTheme, toggleTheme } from "./theme.js";
 import { parseTs } from "./time.js";
 
 const COLUMNS_KEY = "dmslog.columns";
+const FIELD_COLUMNS_KEY = "dmslog.fieldColumns";
+const FIELD_NAMES_KEY = "dmslog.fieldNames";
+const MAX_FIELD_NAMES = 200;
+
+// Template leaf of the filter tree: {tpl: [id | code, ...]}.
+try {
+  registerLeafType("tpl", TPL_LEAF);
+} catch (err) {
+  // Already registered (module evaluated twice): keep the existing definition.
+}
+let tplEditorUid = 0;
+registerLeafEditor("tpl", {
+  label: () => S.ftTypeTpl,
+  render(leaf, ctx) {
+    tplEditorUid += 1;
+    const wrap = document.createElement("span");
+    wrap.className = "ft-fields ft-grow";
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.id = "ft-tpl-" + tplEditorUid;
+    label.htmlFor = input.id;
+    label.textContent = S.ftTplLabel;
+    input.type = "text";
+    input.autocomplete = "off";
+    input.placeholder = S.ftTplPlaceholder;
+    input.value = leaf.data.ids.join(", ");
+    input.addEventListener("input", () => {
+      const ids = parseTplList(input.value);
+      ctx.update({ ids: ids.includes(-1) ? [-1] : ids }, "ids"); // [-1] fails validation
+    });
+    wrap.append(label, input);
+    return wrap;
+  },
+});
+
+function readList(key) {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(key));
+    return Array.isArray(stored) ? stored.filter((v) => typeof v === "string") : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function writeList(key, list) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(list));
+  } catch (err) {
+    // Not persisted; the view still works.
+  }
+}
 
 function byId(id) {
   return document.getElementById(id);
@@ -99,6 +156,47 @@ function start() {
   let caseId = null;
   let formState = { sevMax: null, levelMax: null, from: null, to: null };
   let searchText = "";
+  let userFilter = null; // the filter tree's filter (plus timeline range and template clicks)
+  let toggles = { hideNoise: false, unclassified: false };
+  let currentFilter = null; // what the grid and the timeline use: the ONE composed filter
+  let templateCodes = new Map();
+  let filterTree = null;
+  let timeline = null;
+  let unknownPanel = null;
+  const seenFields = new Set(readList(FIELD_NAMES_KEY));
+  let fieldColumns = readList(FIELD_COLUMNS_KEY);
+  let navSeq = 0;
+
+  const setUserFilter = (filter) => {
+    userFilter = filter;
+    if (filterTree) {
+      filterTree.setFilter(userFilter);
+    }
+    return applyView();
+  };
+  const addTemplateFilter = (tplId) => setUserFilter(withTemplate(userFilter, tplId));
+
+  const loadTemplates = async (forCase) => {
+    if (forCase === null) {
+      templateCodes = new Map();
+      grid.setTemplateCodes(templateCodes);
+      return;
+    }
+    try {
+      const data = await api.templates(forCase, null);
+      if (forCase === caseId) {
+        templateCodes = new Map((data.templates || []).map((t) => [t.id, t.code]));
+        grid.setTemplateCodes(templateCodes);
+        if (detail.entry) {
+          detail.renderTemplate(detail.entry);
+        }
+      }
+    } catch (err) {
+      if (forCase === caseId) {
+        showError(err);
+      }
+    }
+  };
 
   const grid = new Grid({
     viewport: byId("grid-viewport"),
@@ -110,6 +208,7 @@ function start() {
       byId("grid-status").textContent = text;
     },
     onError: showError,
+    onTemplate: (tplId) => addTemplateFilter(tplId),
   });
   const detail = new Detail({
     meta: byId("detail-meta"),
@@ -122,7 +221,24 @@ function start() {
     contextList: byId("context-list"),
     copyButton: byId("copy-button"),
     copyStatus: byId("copy-status"),
+    template: byId("detail-template"),
+    fields: byId("detail-fields"),
   }, {
+    getTemplateCode: (id) => templateCodes.get(id) || "",
+    onTemplate: (tplId) => addTemplateFilter(tplId),
+    onFields: (names) => {
+      let added = false;
+      for (const name of names) {
+        if (!seenFields.has(name) && seenFields.size < MAX_FIELD_NAMES && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) {
+          seenFields.add(name);
+          added = true;
+        }
+      }
+      if (added) {
+        writeList(FIELD_NAMES_KEY, Array.from(seenFields));
+        buildColumnMenu();
+      }
+    },
     getCase: () => caseId,
     getSourceName: (id) => sourceNames.get(id) || String(id),
     onError: showError,
@@ -130,13 +246,18 @@ function start() {
 
   const applyView = () => {
     const ids = panel.selectedIds();
-    const filter = buildFilter({ sourceIds: ids, text: searchText, ...formState });
+    const filter = composeFilter({ sourceIds: ids, text: searchText, ...formState }, userFilter, toggles);
+    currentFilter = filter;
     const range = timeSpan(sources, ids, formState.from, formState.to);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
     detail.setTerms(terms);
     detail.clear();
-    return grid.setView({ caseId, filter, range });
+    const loaded = grid.setView({ caseId, filter, range });
+    if (timeline) {
+      timeline.refresh();
+    }
+    return loaded;
   };
 
   const panel = new SourcesPanel({
@@ -153,6 +274,15 @@ function start() {
     onCase: (id) => {
       caseId = id;
       detail.clear(); // drop the old case's entry right away, before /sources answers
+      userFilter = null; // conditions of the old case do not carry over
+      if (filterTree) {
+        filterTree.setCase(id);
+        filterTree.setFilter(null);
+      }
+      loadTemplates(id);
+      if (unknownPanel) {
+        unknownPanel.refresh();
+      }
     },
     onSources: (list, quiet) => {
       sources = list;
@@ -163,7 +293,13 @@ function start() {
       }
     },
     onSelection: () => applyView(),
-    onDone: () => applyView(),
+    onDone: () => {
+      loadTemplates(caseId);
+      if (unknownPanel) {
+        unknownPanel.refresh();
+      }
+      return applyView();
+    },
     onMessage: showMessage,
   });
 
@@ -197,8 +333,15 @@ function start() {
   byId("filter-reset").addEventListener("click", () => {
     byId("filter-form").reset();
     formState = { sevMax: null, levelMax: null, from: null, to: null };
+    toggles = { hideNoise: false, unclassified: false };
     applyView();
   });
+  for (const [id, key] of [["hide-noise", "hideNoise"], ["unclassified-only", "unclassified"]]) {
+    byId(id).addEventListener("change", (event) => {
+      toggles = { ...toggles, [key]: event.target.checked };
+      applyView();
+    });
+  }
   byId("goto-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const ms = parseTs(byId("goto-input").value);
@@ -210,30 +353,55 @@ function start() {
     grid.jumpToTime(ms);
   });
 
-  // Column chooser.
+  // Column chooser: the fixed columns, then the parsed-field names seen so far.
   const menu = byId("columns-menu");
   const columnsButton = byId("columns-button");
   let visibleColumns = loadColumns();
-  for (const column of COLUMNS) {
+  const checkbox = (labelText, checked, onChange) => {
     const label = document.createElement("label");
     const box = document.createElement("input");
     box.type = "checkbox";
-    box.checked = visibleColumns.includes(column.key);
-    box.addEventListener("change", () => {
-      const keys = COLUMNS.map((c) => c.key).filter((key) =>
-        key === column.key ? box.checked : visibleColumns.includes(key));
-      if (keys.length === 0) {
-        box.checked = true;
-        return;
-      }
-      visibleColumns = keys;
-      saveColumns(keys);
-      grid.setColumns(keys);
-    });
+    box.checked = checked;
+    box.addEventListener("change", () => onChange(box));
     label.appendChild(box);
-    label.appendChild(document.createTextNode(" " + column.label()));
-    menu.appendChild(label);
+    label.appendChild(document.createTextNode(" " + labelText));
+    return label;
+  };
+  function buildColumnMenu() {
+    menu.textContent = "";
+    for (const column of COLUMNS) {
+      menu.appendChild(checkbox(column.label(), visibleColumns.includes(column.key), (box) => {
+        const keys = COLUMNS.map((c) => c.key).filter((key) =>
+          key === column.key ? box.checked : visibleColumns.includes(key));
+        if (keys.length === 0) {
+          box.checked = true;
+          return;
+        }
+        visibleColumns = keys;
+        saveColumns(keys);
+        grid.setColumns(keys);
+      }));
+    }
+    const names = Array.from(new Set([...seenFields, ...fieldColumns])).sort();
+    const heading = document.createElement("div");
+    heading.className = "menu-heading";
+    heading.textContent = S.columnsFieldsHeading;
+    menu.appendChild(heading);
+    if (names.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "source-meta";
+      empty.textContent = S.columnsFieldsEmpty;
+      menu.appendChild(empty);
+    }
+    for (const name of names) {
+      menu.appendChild(checkbox(name, fieldColumns.includes(name), (box) => {
+        fieldColumns = names.filter((n) => (n === name ? box.checked : fieldColumns.includes(n)));
+        writeList(FIELD_COLUMNS_KEY, fieldColumns);
+        grid.setFieldColumns(fieldColumns).catch(showError);
+      }));
+    }
   }
+  buildColumnMenu();
   columnsButton.addEventListener("click", () => {
     menu.hidden = !menu.hidden;
     columnsButton.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
@@ -246,6 +414,103 @@ function start() {
     }
   });
   grid.setColumns(visibleColumns);
+  grid.setFieldColumns(fieldColumns);
+
+  // Timeline above the grid: a dragged range becomes the top-level ts condition.
+  timeline = initTimeline(byId("timeline"), {
+    api,
+    getSourceName: (id) => sourceNames.get(id) || String(id),
+    getFilter: () => (caseId === null ? null : { caseId, filter: currentFilter }),
+    onRangeSelected: (range) => setUserFilter(withTsRange(userFilter, range)),
+  });
+
+  // Filter tree: created on first use (it needs a case); shares setUserFilter with the other paths.
+  const treeHost = byId("filter-tree-host");
+  const treeButton = byId("filter-tree-button");
+  treeButton.addEventListener("click", () => {
+    if (treeHost.hidden && caseId === null) {
+      showMessage(S.needCase, true);
+      return;
+    }
+    treeHost.hidden = !treeHost.hidden;
+    treeButton.setAttribute("aria-expanded", treeHost.hidden ? "false" : "true");
+    if (!treeHost.hidden && !filterTree) {
+      filterTree = initFilterTree(treeHost, {
+        api,
+        caseId,
+        initial: userFilter,
+        onChange: (filter) => {
+          userFilter = filter;
+          applyView();
+        },
+      });
+    }
+  });
+
+  // Unknown-templates panel: optional module, the app works without it.
+  const unknownHost = byId("unknown-panel-host");
+  const unknownButton = byId("unknown-button");
+  import("./unknown-panel.js").then((module) => {
+    if (typeof module.initUnknownPanel !== "function") {
+      return;
+    }
+    unknownButton.hidden = false;
+    unknownButton.addEventListener("click", () => {
+      unknownHost.hidden = !unknownHost.hidden;
+      unknownButton.setAttribute("aria-expanded", unknownHost.hidden ? "false" : "true");
+      if (!unknownHost.hidden) {
+        if (!unknownPanel) {
+          unknownPanel = module.initUnknownPanel(unknownHost, {
+            api,
+            getCase: () => caseId,
+            getFamily: () => null,
+            onOpenEntry: (entryId) => detail.show(entryId),
+          });
+        }
+        unknownPanel.refresh();
+      }
+    });
+  }).catch(() => {
+    // Module missing or failing: the button stays hidden.
+  });
+
+  // Shortcuts: n/N next/previous error, t/T next/previous entry of the selected row's template.
+  document.addEventListener("keydown", async (event) => {
+    const nav = navKey(event);
+    if (!nav || isTypingTarget(event.target) || caseId === null) {
+      return;
+    }
+    const row = grid.selectedRow();
+    if (!row) {
+      showMessage(S.navNoSelection, false);
+      return;
+    }
+    if (nav.kind === "template" && !(row.tpl_id > 0)) {
+      showMessage(S.navNoTemplate, false);
+      return;
+    }
+    event.preventDefault();
+    const extra = nav.kind === "error" ? NAV_ERROR_FILTER : { tpl: [row.tpl_id] };
+    const request = navRequest(currentFilter, extra, row, nav.dir);
+    navSeq += 1;
+    const seq = navSeq;
+    const forCase = caseId;
+    try {
+      const page = await api.page(forCase, request.filter, request.cursor, request.dir, request.limit);
+      if (seq !== navSeq || forCase !== caseId) {
+        return;
+      }
+      const found = page.rows && page.rows[0];
+      if (!found) {
+        showMessage(S.navNone, false);
+        return;
+      }
+      showMessage("", false);
+      await grid.revealRow(found);
+    } catch (err) {
+      showError(err);
+    }
+  });
 
   panel.loadCases(null).catch(showError);
 }

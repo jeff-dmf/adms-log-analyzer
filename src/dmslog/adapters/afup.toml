@@ -1,0 +1,133 @@
+# FileUpload adapter (FileUploadAdapter_<pid>[.sensitive].log). Source: docs/formato/crm-e-demais.md,
+# section 2.8. FUP-001 .. FUP-008 run in this order for every file; the sensitive log has the
+# same writing/uploading pair 1:1 (host, local and remote paths).
+
+schema = 1
+family = "AFUP"
+description = "FileUpload adapter: outage report files copied to a share and uploaded by SFTP"
+extends = ["_common"]
+
+[[template]]
+code = "FUP-001"
+class = "start"
+title = "FileUpload message processing started"
+sev = 4
+text = "FileUploadService FileUpload message processing started."
+examples = ["FileUploadService FileUpload message processing started."]
+counter_examples = ["FileUploadService FileUpload message processing finished."]
+
+[[template]]
+code = "FUP-002"
+class = "req_resp"
+title = "File received"
+sev = 4
+regex = '''^FileUploadService Received file - Name: "(?P<file_name>[^"]*)" Type: "(?P<file_type>[^"]*)"\.$'''
+examples = [{ msg = 'FileUploadService Received file - Name: "SP 1_Example_20260101.csv" Type: "OutageReport".', fields = { file_name = "SP 1_Example_20260101.csv", file_type = "OutageReport" } }]
+counter_examples = ['FileUploadService Received file - Name: "x"']
+
+[[template]]
+code = "FUP-003"
+class = "other"
+title = "File content only in the sensitive log at Verbose"
+sev = 4
+text = "FileUploadService File content can be observed in sensitive log on verbose log level."
+examples = ["FileUploadService File content can be observed in sensitive log on verbose log level."]
+counter_examples = ["FileUploadService File content can be observed."]
+
+[[template]]
+code = "FUP-004"
+class = "req_resp"
+title = "Writing the file to the local path"
+sev = 4
+refs_sensitive = true
+regex = '''^Writing file to computer on a local path (?P<phase>started|succeeded)\.\.\. For computer name and local path details check sensitive log\.$'''
+examples = [{ msg = "Writing file to computer on a local path started... For computer name and local path details check sensitive log.", fields = { phase = "started" } }, "Writing file to computer on a local path succeeded... For computer name and local path details check sensitive log."]
+counter_examples = ["Writing file to computer on a local path failed..."]
+
+[[template]]
+code = "FUP-005"
+class = "req_resp"
+title = "Uploading the file to the remote location"
+sev = 4
+refs_sensitive = true
+regex = '''^Uploading file to remote location(?P<done> succeeded)?\. (?:File details and remote location details|Details) written in sensitive log\.$'''
+examples = [
+    "Uploading file to remote location. File details and remote location details written in sensitive log.",
+    { msg = "Uploading file to remote location succeeded. Details written in sensitive log.", fields = { done = " succeeded" } },
+]
+counter_examples = ["Uploading file to remote location failed."]
+
+[[template]]
+code = "FUP-006"
+class = "req_resp"
+title = "File uploaded"
+sev = 4
+regex = '''^FileUploadService FileUpload message processing: File is uploaded to (?P<dest>\w+)\.$'''
+examples = [{ msg = "FileUploadService FileUpload message processing: File is uploaded to SFTP.", fields = { dest = "SFTP" } }]
+counter_examples = ["FileUploadService FileUpload message processing: File is not uploaded."]
+
+[[template]]
+code = "FUP-007"
+class = "other"
+title = "Claim Check message disabled for the file type"
+sev = 4
+regex = '''^File type: (?P<file_type>\w+): Sending Claim Check Message is DISABLED$'''
+examples = [{ msg = "File type: OutageReport: Sending Claim Check Message is DISABLED", fields = { file_type = "OutageReport" } }]
+counter_examples = ["File type: OutageReport: Sending Claim Check Message is ENABLED"]
+
+[[template]]
+code = "FUP-008"
+class = "end"
+title = "FileUpload message processing finished"
+sev = 4
+text = "FileUploadService FileUpload message processing finished."
+examples = ["FileUploadService FileUpload message processing finished."]
+counter_examples = ["FileUploadService FileUpload message processing started."]
+
+[[template]]
+code = "FUP-009"
+class = "other"
+title = "SmartCache replication and IU"
+sev = 5
+regex = '''^(?:\[RouteID:(?P<route>\d+), Dataset:(?P<dataset>\d+), Dataflow:(?P<dataflow>\d+)\] .*|\(REPLICATION_INFO\) Cache\[AdapterFUStorageSmartCache\] .*|ReplicationProxyCallback: .*)$'''
+fields = { route = "int", dataset = "int", dataflow = "int" }
+examples = [
+    { msg = "[RouteID:1, Dataset:2, Dataflow:3] RequestIU: 100 bytes", fields = { route = 1, dataset = 2, dataflow = 3 } },
+    "(REPLICATION_INFO) Cache[AdapterFUStorageSmartCache] Replicate elements finished",
+    "ReplicationProxyCallback: example",
+]
+counter_examples = ["(REPLICATION_INFO) Cache[OtherCache] Replicate elements finished"]
+
+# Sensitive stream
+[[template]]
+code = "FUP-S01"
+class = "req_resp"
+title = "Writing the file (host and local path)"
+sev = 4
+stream = "sensitive"
+regex = '''^Writing file to computer (?P<host>\S+) on local path: (?P<path>.+?) (?P<phase>started\.\.\.|succeeded\.)$'''
+examples = [{ msg = "Writing file to computer HOST01 on local path: \\\\share.invalid\\OutageReports\\SP 1_Example.csv started...", fields = { host = "HOST01", phase = "started..." } }, "Writing file to computer HOST01 on local path: \\\\share.invalid\\OutageReports\\SP 1_Example.csv succeeded."]
+counter_examples = ["Writing file to computer HOST01 on local path: x failed."]
+
+[[template]]
+code = "FUP-S02"
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+class = "req_resp"
+title = "Uploading the file (remote location)"
+sev = 4
+stream = "sensitive"
+regex = '''^Uploading file: (?P<file>.+?) to remote location:? (?P<remote>\S+?)(?P<done> succeeded)?\.?$'''
+examples = [{ msg = "Uploading file: SP 1_Example.csv to remote location: /PROD/OutageReports/", fields = { file = "SP 1_Example.csv", remote = "/PROD/OutageReports/" } }, "Uploading file: SP 1_Example.csv to remote location /PROD/OutageReports/ succeeded."]
+counter_examples = ["Downloading file: x to remote location: y"]
+
+[[operation]]
+name = "FileUpload"
+start = ["FUP-001"]
+end = ["FUP-008"]
+pair_by = ["tid"]
+
+[[sensitive_pair]]
+normal = "FUP-005"
+sensitive = "FUP-S02"
+match = ["pid", "tid"]
+max_dt_ms = 100

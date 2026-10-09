@@ -1,0 +1,19 @@
+﻿2030-01-15 10:00:00.000 [PID=1022][TID=0x1a2b] DEBUGLOG - "ChangedVehiclesCoordinatesEvent": 00000000-0000-4000-8000-0000a0000001 message processing started...
+2030-01-15 10:00:00.050 [PID=1022][TID=0x1a2b] INFO - "ChangedVehiclesCoordinatesEvent": not-a-guid message processing started...
+2030-01-15 10:00:00.100 [PID=1022][TID=0x1a2b] DEBUGLOG - Position is updated for vehicle(s). For more details check sensitive log.
+2030-01-15 10:00:00.150 [PID=1022][TID=0x1a2b] INFO - Position is updated for the following vehicle(s): ABC1D23.
+2030-01-15 10:00:00.200 [PID=1022][TID=0x1a2b] DEBUGLOG - 		[Validation Info]: MessageRevisionMissing
+2030-01-15 10:00:00.250 [PID=1022][TID=0x1a2b] INFO - Details regarding validation errors can be found adapters sensitive log.
+2030-01-15 10:00:00.300 [PID=1022][TID=0x1a2b] DEBUGLOG - 		[Validation Info]: HeaderTimestampMissing
+2030-01-15 10:00:00.350 [PID=1022][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1022][TID=0x1a2b] DEBUGLOG - 		 Details regarding validation errors can be found adapters sensistive log.
+2030-01-15 10:00:00.450 [PID=1022][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.500 [PID=1022][TID=0x1a2b] DEBUGLOG - "ChangedVehiclesCoordinatesEvent": 00000000-0000-4000-8000-0000a0000001 message processing finished successfully.
+2030-01-15 10:00:00.550 [PID=1022][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.600 [PID=1022][TID=0x1a2b] ERROR - 		[Validation Critical]: VehicleNotFound
+2030-01-15 10:00:00.650 [PID=1022][TID=0x1a2b] ERROR - [SystemEventSender] System event message: [AdapterAVL] Received message is invalid
+2030-01-15 10:00:00.700 [PID=1022][TID=0x1a2b] INFO - Checking quality of coordinates...
+2030-01-15 10:00:00.750 [PID=1022][TID=0x1a2b] INFO - Updating quality for 5 staled coordinate(s)...
+2030-01-15 10:00:00.800 [PID=1022][TID=0x1a2b] INFO - Updating quality for staled coordinate(s) successfully finished.
+2030-01-15 10:00:00.850 [PID=1022][TID=0x1a2b] INFO - There is no coordinates to be set on stale.
+2030-01-15 10:00:00.900 [PID=1022][TID=0x1a2b] INFO - 		[Validation Critical]: InvalidSomething

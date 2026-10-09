@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCANNED_SUFFIXES = {".py", ".js", ".html", ".css", ".toml"}
-SKIPPED_DIRS = {"__pycache__", "fixtures", "samples"}  # fixtures hold literal log text
+SKIPPED_DIRS = {"__pycache__", "fixtures", "samples", "vendor"}  # literal log text; third-party code
 
 # Latin-1 accented letters, built from escapes so this file itself stays accent-free.
 ACCENTED = re.compile("[\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]")
