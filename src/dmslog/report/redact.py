@@ -73,9 +73,10 @@ written for, so the net keeps only what is PROVEN harmless and replaces everythi
   strict rules, checked by a linear exception-free scanner and confirmed by the ``json`` module on
   the span). Cutting consumes COMPLETE strings ("..." and '...' with backslash escapes; an apostrophe
   inside a word is not a quote): nothing inside a string starts a region, and an unterminated string
-  makes the rest of the text one value, and so does a string closed right against a word (ambiguous
-  quoting). Arrays starting with numbers or literals are JSON too, and ANY failed JSON candidate,
-  even one that only might be JSON (``[0x]``, ``[1/3]``), leaves a structure open: the rest of the
+  makes the rest of the text one value, and so does a string closed right against a word or opened
+  right after one (ambiguous quoting; from the start of that word). Arrays starting with numbers or
+  literals are JSON too, and ANY failed JSON candidate, even one that only might be JSON (``[0x]``,
+  ``[1/3]``), leaves a structure open: the rest of the
   text is one value (the state carries across lines, so nothing after it is trusted). The content
   of every quoted string between regions is one value too: in a structured text, string content
   never reaches the free-text allowlist. Every recovery (a failed JSON candidate, an ambiguous or
@@ -126,7 +127,8 @@ catalog words stay (a map keyed by such a word shows it), and so do short namesp
 syntax characters (``{ } [ ] , :``) inside XML text stay; the field rules (payload categories) follow
 formats nested down to 3 levels (the default-deny net has no depth). Standard mode: the pattern
 layer alone; free text with no label, field or term is not recognized, a lowercase name after a
-label keeps its second word, a label word without ``:``/``=`` is not a label.
+label keeps its second word, a label word without ``:``/``=`` is not a label, a shape or a label
+glued to a letter or digit (``<guid>X``, ``XmRID:``) is another token and is not recognized.
 
 Engineering rules:
 
@@ -1301,6 +1303,13 @@ def _xml_region_end(text: str, i: int) -> int | None:
 MAX_XML_REGION_CHARS = 4_000_000  # a larger XML region is not validated: it is one value
 
 
+def _syntax_count(text: str) -> int:
+    """How many markup and JSON bracket characters ``text`` holds (linear). Quotes do not count: an
+    escaped quote (``&quot;``) only ever sits in a region's text or value, which the raw default-deny
+    skeleton replaces anyway."""
+    return sum(text.count(char) for char in "<>{}[]")
+
+
 def _expat_accepts(text: str, start: int, end: int) -> bool:
     """The AUTHORITY on XML well-formedness: the stdlib expat parser must accept the region as a
     fragment (inside a synthetic root, so comments, PIs and mixed content are fine; the XML declaration
@@ -1949,6 +1958,20 @@ class Redactor:
         # a lone surrogate (\\ud800) cannot be encoded: it never reaches the output (no crash downstream)
         return _RX["surrogate"].sub("?", out) if _RX["surrogate"].search(out) else out
 
+    def replaced_spans(self, text: str, spans: RecordSpans | None = None) -> RecordSpans:
+        """Strict mode: every span that :meth:`redact` (with these record ``spans``) replaces in ``text``,
+        all rules together (patterns, labels, strict nets), with no marker issued. The export hands them
+        to each piece of a record cut around its payloads, so that no piece is less redacted than the
+        whole record (a label in the first line whose value a payload cut off, for example)."""
+        if not self.strict or not text or not self.active:
+            return []
+        if len(text) > MAX_TEXT_CHARS:
+            return [(0, len(text), VALUE)]
+        return [
+            (start, end, category)
+            for start, end, category, *_rest in self._merged_spans(text, False, spans, False)
+        ]
+
     def record_spans(self, text: str, msg_len: int, template: str | None = None) -> RecordSpans:
         """Strict mode: the spans to replace in a record (``text`` = first line, then the continuation
         lines after ``msg_len``), from its template. Empty in standard mode.
@@ -2124,7 +2147,16 @@ class Redactor:
             if k == end or k >= limit or text[k] in ",;|":
                 break
             nxt = chunk_end(k)
-            if nxt <= k or _RX["strict_label"].match(text, k, limit) is not None:
+            if nxt <= k:
+                break
+            nested = _RX["strict_label"].match(text, k, limit)
+            # another key ("x status: ok") or a real label ends the value; a word that only looks like
+            # a label (a blank and a quote after it, naming no identifier) does not
+            if nested is not None and (
+                ":" in nested.group()
+                or "=" in nested.group()
+                or self._label_category(nested.group(1)) is not None
+            ):
                 break
             core = text[k:nxt].strip(_EDGE_PUNCT).casefold()
             if core in _LABEL_WORDS or core in _STOP_WORDS:  # "user: x account y", "user: x from h"
@@ -2142,12 +2174,18 @@ class Redactor:
             out.extend((start + starts[a], start + ends[b - 1], c) for a, b, c in self._decoded_spans(source))
         return out
 
-    def _decoded_spans(self, source: str, payload: bool = False) -> RecordSpans:
+    def _decoded_spans(self, source: str, payload: bool = False, raw: str = "") -> RecordSpans:
         """The net on a DECODED view: labels, and, in free text whose markup was written escaped
-        (``&lt;Name&gt;``, ``%3C``, ``\\u003c``), the gated structure net on the decoded markup."""
+        (``&lt;Name&gt;``, ``%3C``, ``\\u003c``), the gated structure net on the decoded markup. A payload
+        gets it too when decoding reveals markup or JSON syntax its ``raw`` text does not show (escaped
+        markup in a payload is never less redacted than in free text: JSON in an escaped XML text node
+        stays data unless that exact text is valid JSON); a payload whose decoding only reveals text
+        (``&amp;``) keeps the skeleton of its raw structure."""
         out = self._label_values(source)
-        if not payload and _RX["structured_hint"].search(source):
-            out.extend((a, b, VALUE) for a, b in self._structure_spans(source, payload=False))
+        if payload and _syntax_count(source) <= _syntax_count(raw):
+            return out
+        if _RX["structured_hint"].search(source):
+            out.extend((a, b, VALUE) for a, b in self._structure_spans(source, payload=payload))
         return out
 
     def _free_spans(self, text: str, payload: bool = False) -> RecordSpans:
@@ -2200,7 +2238,12 @@ class Redactor:
                 continue
             i = match.end()
             first = _RX["chunk"].match(text, i)
-            if first is None or _RX["strict_label"].match(text, i) is not None:  # "crew GID: ...": that label
+            if first is None:
+                continue
+            nested = _RX["strict_label"].match(text, i)
+            # "crew GID: ...": that label takes the value; a word that only LOOKS like a label (followed
+            # by a blank and a quote or bracket, but naming no identifier) is this label's value
+            if nested is not None and self._label_category(nested.group(1)) is not None:
                 continue
             core = first.group().strip(_EDGE_PUNCT).casefold()
             if not core or core in _STOP_WORDS or core in _LABEL_WORDS:
@@ -2373,6 +2416,15 @@ class Redactor:
                 if char == "'" and 0 < k < size - 1 and text[k - 1].isalnum() and text[k + 1].isalnum():
                     scan = k + 1  # an apostrophe inside a word ("don't"), not a quote
                     continue
+                if k > pos and (text[k - 1].isalnum() or text[k - 1] == "_"):
+                    # a quote opened right against a word ('version=" Name"?>'): it may as well CLOSE a
+                    # string that holds that word, so the quoting is ambiguous: the rest of the text,
+                    # from the start of the glued word, is data
+                    start = k
+                    while start > pos and not text[start - 1].isspace() and text[start - 1] not in "\"'":
+                        start -= 1
+                    to_end(start)
+                    break
                 # a COMPLETE string of the text between regions (backslash escapes honoured): nothing in
                 # it starts a region, and its CONTENT is one value (never the free-text allowlist); an
                 # unterminated one makes the rest of the text data
@@ -2618,6 +2670,22 @@ class Redactor:
     # -- internals
 
     def _redact_text(self, text: str, payload: bool, extra: RecordSpans | None, identifier: bool) -> str:
+        merged = self._merged_spans(text, payload, extra, identifier)
+        out: list[str] = []
+        pos = 0
+        for start, end, category, _attach, core_start, core_end in merged:
+            out.append(text[pos:start])
+            # the marker is keyed on the value without the punctuation it absorbed (same value, same marker)
+            out.append(self._marker(category, decoded(text[core_start:core_end])))
+            pos = end
+        out.append(text[pos:])
+        return "".join(out)
+
+    def _merged_spans(
+        self, text: str, payload: bool, extra: RecordSpans | None, identifier: bool
+    ) -> list[list[Any]]:
+        """Every span the redaction replaces in ``text``, united: [start, end, category, made only of
+        leftover punctuation, start and end of the value itself]."""
         # Every rule runs on the raw text AND on its decoded views (escapes undone, and also JSON string
         # escapes such as \\/); each match is mapped back to the original characters. Then:
         #   1. protection: a generic span inside an exception is dropped (user or automatic exception);
@@ -2683,9 +2751,10 @@ class Redactor:
             # undoes JSON string escapes adds nothing to the free-text net
             # (a payload keeps its own net even with the record's spans: the two are united)
             if strict and (extra is None or payload) and not (number and source is jsonish_source):
-                found = (
-                    self._free_spans(source, payload) if number == 0 else self._decoded_spans(source, payload)
-                )
+                if number == 0:
+                    found = self._free_spans(source, payload)
+                else:
+                    found = self._decoded_spans(source, payload, text)
                 for a, b, category in found:
                     ra, rb = back(a, b)
                     nets.append((ra, rb, category))
@@ -2714,7 +2783,7 @@ class Redactor:
                 for a, b, category, leftover in _fill_gaps(text, nets, user_protected, taken)
             )
         if not spans:
-            return text
+            return []
         spans.sort(key=lambda s: (s[0], s[1], -s[2]))
         # [start, end, category, made only of leftover punctuation, start and end of the value itself]
         merged: list[list[Any]] = []
@@ -2729,15 +2798,7 @@ class Redactor:
                 last[1] = max(last[1], end)
             else:
                 merged.append([start, end, category, attach, start, end])
-        out: list[str] = []
-        pos = 0
-        for start, end, category, _attach, core_start, core_end in merged:
-            out.append(text[pos:start])
-            # the marker is keyed on the value without the punctuation it absorbed (same value, same marker)
-            out.append(self._marker(category, decoded(text[core_start:core_end])))
-            pos = end
-        out.append(text[pos:])
-        return "".join(out)
+        return merged
 
     @staticmethod
     def _extend_tokens(text: str, spans: list[tuple[int, int, int, str]]) -> list[tuple[int, int, int, str]]:
