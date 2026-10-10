@@ -29,6 +29,11 @@ def _has_real_samples() -> bool:
     return len(files) == 2
 
 
+def _check(ok: object, label: str) -> None:
+    """Assert with a FIXED message computed from booleans: no object holding sample output is asserted on."""
+    assert ok, f"real-sample check failed: {label}"
+
+
 @pytest.mark.skipif(
     not _has_real_samples(),
     reason="No real Enterprise+Sensitive ERS zip pair in local-samples/",
@@ -46,20 +51,17 @@ def test_smoke_local() -> None:
     # The script prints the table and either "Overall: PASS" or "Overall: FAIL"
     output = result.stdout + result.stderr
 
-    # Verify the script ran successfully
-    ok = result.returncode == 0
-    assert ok, "smoke_local.py failed (output withheld: it may hold sample data)"
-
-    # Verify all acceptance criteria passed
+    exit_ok = result.returncode == 0
     passed = "Overall: PASS" in output
-    assert passed, "Acceptance criteria not met (output withheld)"
+    _check(exit_ok, "smoke_local.py exit code 0")
+    _check(passed, "all acceptance criteria passed")
 
 
 def _load_smoke_module():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("smoke_local_under_test", SMOKE_SCRIPT)
-    assert spec is not None and spec.loader is not None
+    _check(spec is not None and spec.loader is not None, "module spec")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -70,5 +72,35 @@ def test_ingest_failure_message_never_echoes_names() -> None:
     mod = _load_smoke_module()
     fake_name = "ERS_CL_AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE_20200101000000_Enterprise_secretdesc.zip"
     message = mod._ingest_failure("zip 1 of 2 (enterprise)", 3)
-    assert fake_name not in message and "secretdesc" not in message
-    assert "exit code 3" in message and "zip 1 of 2 (enterprise)" in message
+    _check(fake_name not in message and "secretdesc" not in message, "name not echoed")
+    _check("exit code 3" in message and "zip 1 of 2 (enterprise)" in message, "neutral label and code")
+
+
+def test_corrupt_zip_member_name_never_appears_in_diagnostics(tmp_path, capsys, monkeypatch) -> None:
+    """A CRC error inside a zip must not leak the member name, through the helper or the top-level wrapper."""
+    import zipfile
+    from types import SimpleNamespace
+
+    mod = _load_smoke_module()
+    member = "dnaApp_distinctivezone/DISTINCTIVE_member_name.log"
+    path = tmp_path / "synthetic.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr(member, b"line one\nline two\n")
+    raw = bytearray(path.read_bytes())
+    at = raw.index(b"line one")
+    raw[at] ^= 0xFF  # corrupt the stored data: reading raises BadZipFile with the member name
+    path.write_bytes(bytes(raw))
+
+    lines, error = mod._zip_physical_lines(path, [SimpleNamespace(member=member)], "zip 1 of 2")
+    _check(error is not None and lines == 0, "read error reported")
+    _check("DISTINCTIVE" not in error and "distinctivezone" not in error, "member name not echoed")
+    _check("BadZipFile" in error and "zip 1 of 2" in error, "class name and neutral label")
+
+    def boom():
+        raise ValueError(member)
+
+    monkeypatch.setattr(mod, "_main", boom)
+    code = mod.main()
+    out = capsys.readouterr()
+    _check(code == 1, "unexpected exception exits non-zero")
+    _check("DISTINCTIVE" not in out.out + out.err and "ValueError" in out.out, "wrapper prints class only")
