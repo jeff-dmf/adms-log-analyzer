@@ -163,6 +163,13 @@ def test_delete_with_foreign_origin_is_forbidden(server, cookie):
     assert status == 403
 
 
+@pytest.mark.parametrize("method", ["PUT", "PATCH"])
+def test_put_and_patch_with_foreign_or_missing_origin_are_forbidden(server, cookie, method):
+    foreign = call(server, method, "/api/health", {"Cookie": cookie, "Origin": "http://evil.com"})
+    missing = call(server, method, "/api/health", {"Cookie": cookie})
+    assert foreign[0] == 403 and missing[0] == 403
+
+
 def test_post_with_same_origin_reaches_the_router(server, cookie):
     headers = {"Cookie": cookie, "Origin": f"http://127.0.0.1:{server.port}"}
     status, _, _ = call(server, "POST", "/api/health", headers, body=b"{}")

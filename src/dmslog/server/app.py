@@ -44,7 +44,7 @@ CONTENT_TYPES = {
     ".woff2": "font/woff2",
 }
 
-UNSAFE_METHODS = ("POST", "DELETE")
+UNSAFE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 DISCARD_LIMIT = 8 * 1024 * 1024
 
 
