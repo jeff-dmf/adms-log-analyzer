@@ -27,6 +27,15 @@ STATUS_AMBIGUOUS = "ambiguous"
 RegistryValue = str | tuple[str, ...]
 
 
+def shown(aliases: Aliases | None, component: str) -> str:
+    """Public spelling of ONE raw component (file, path, tag, name, error text) of a diagnostic.
+
+    Diagnostics are built from components, each normalized exactly once here; a composed message is
+    never normalized again.
+    """
+    return aliases.apply_name(component) if aliases else component
+
+
 class RegistryError(Exception):
     """A Registry/configuration XML file could not be read or is not valid."""
 
@@ -69,23 +78,28 @@ def parse_registry_filename(filename: str) -> tuple[str, int, str]:
 
 
 def load_xml_root(
-    data: bytes, *, source: str = "<bytes>", max_bytes: int = DEFAULT_MAX_XML_BYTES
+    data: bytes,
+    *,
+    source: str = "<bytes>",
+    max_bytes: int = DEFAULT_MAX_XML_BYTES,
+    aliases: Aliases | None = None,
 ) -> ET.Element:
     """Parse XML bytes safely.
 
     Rejects oversized input and any DTD/entity declaration (no entity expansion, no
     external entities); wraps every parser failure in :class:`RegistryError`.
     """
+    where = shown(aliases, source)  # `source` is the raw name of the file
     if len(data) > max_bytes:
-        raise RegistryError(f"{source}: file exceeds the {max_bytes}-byte limit")
+        raise RegistryError(f"{where}: file exceeds the {max_bytes}-byte limit")
     if _has_dtd(data):
-        raise RegistryError(f"{source}: DTD/entity declarations are not allowed")
+        raise RegistryError(f"{where}: DTD/entity declarations are not allowed")
     try:
         root = ET.fromstring(data)
     except (ET.ParseError, ValueError, RecursionError, MemoryError) as exc:
-        raise RegistryError(f"{source}: malformed XML ({exc})") from exc
+        raise RegistryError(f"{where}: malformed XML ({shown(aliases, str(exc))})") from exc
     if _too_deep(root):
-        raise RegistryError(f"{source}: XML nesting exceeds {MAX_XML_DEPTH} levels")
+        raise RegistryError(f"{where}: XML nesting exceeds {MAX_XML_DEPTH} levels")
     return root
 
 
@@ -121,15 +135,17 @@ def _too_deep(root: ET.Element) -> bool:
     return False
 
 
-def read_limited(path: Path, max_bytes: int) -> bytes:
+def read_limited(path: Path, max_bytes: int, aliases: Aliases | None = None) -> bytes:
     """Read a file refusing anything larger than ``max_bytes``."""
     try:
         with path.open("rb") as handle:
             data = handle.read(max_bytes + 1)
     except OSError as exc:
-        raise RegistryError(f"{path}: cannot read file ({exc})") from exc
+        raise RegistryError(
+            f"{shown(aliases, str(path))}: cannot read file ({shown(aliases, str(exc))})"
+        ) from exc
     if len(data) > max_bytes:
-        raise RegistryError(f"{path}: file exceeds the {max_bytes}-byte limit")
+        raise RegistryError(f"{shown(aliases, str(path))}: file exceeds the {max_bytes}-byte limit")
     return data
 
 
@@ -152,20 +168,16 @@ def parse_registry_xml(
     """
     if isinstance(source, bytes):
         data = source
-        file_name = filename or "<bytes>"
+        raw_name = filename or "<bytes>"
     else:
-        file_name = filename or source.name
-        try:
-            data = read_limited(Path(source), max_bytes)
-        except RegistryError as exc:
-            if aliases:
-                raise RegistryError(aliases.sanitize(str(exc))) from None
-            raise
-    if aliases:
-        file_name = aliases.apply_name(file_name)  # diagnostics and stored names use the public spelling
-    root = load_xml_root(data, source=file_name, max_bytes=max_bytes)
+        raw_name = filename or source.name
+        data = read_limited(Path(source), max_bytes, aliases)
+    file_name = shown(aliases, raw_name)  # diagnostics and stored names use the public spelling
+    root = load_xml_root(data, source=raw_name, max_bytes=max_bytes, aliases=aliases)
     if root.tag != "OASYSDNARegistry":
-        raise RegistryError(f"{file_name}: root element is {root.tag!r}, expected 'OASYSDNARegistry'")
+        raise RegistryError(
+            f"{file_name}: root element is {shown(aliases, root.tag)!r}, expected 'OASYSDNARegistry'"
+        )
     products = root.findall("Product")
     if len(products) != 1 or not products[0].get("Name"):
         raise RegistryError(f"{file_name}: expected exactly one named <Product> element")

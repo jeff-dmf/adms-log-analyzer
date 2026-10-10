@@ -25,6 +25,7 @@ from .registry import (
     parse_registry_xml,
     read_limited,
     resolve_registry,
+    shown,
 )
 
 _REGISTRY_DIR = ("oasys", "servers", "config", "registry")
@@ -60,7 +61,8 @@ def normalize_install_path(raw: str) -> str | None:
 class _Collection:
     """Read-only view over a folder or a zip: case-insensitive lookup of XML members."""
 
-    def __init__(self, path: Path, max_bytes: int) -> None:
+    def __init__(self, path: Path, max_bytes: int, aliases: Aliases | None = None) -> None:
+        self.aliases = aliases
         self.path = path
         self.max_bytes = max_bytes
         self._zip: zipfile.ZipFile | None = None
@@ -77,7 +79,7 @@ class _Collection:
                     norm = name.replace("\\", "/")
                     self._index.setdefault(norm.lower(), name)
         else:
-            raise RegistryError(f"{path}: not a folder or a zip file")
+            raise RegistryError(f"{shown(aliases, str(path))}: not a folder or a zip file")
 
     def close(self) -> None:
         if self._zip is not None:
@@ -94,17 +96,23 @@ class _Collection:
 
     def read(self, member: str) -> bytes:
         if self._zip is None:
-            return read_limited(self.path / member, self.max_bytes)
+            return read_limited(self.path / member, self.max_bytes, self.aliases)
         try:
             info = self._zip.getinfo(member)
             if info.file_size > self.max_bytes:
-                raise RegistryError(f"{member}: file exceeds the {self.max_bytes}-byte limit")
+                raise RegistryError(
+                    f"{shown(self.aliases, member)}: file exceeds the {self.max_bytes}-byte limit"
+                )
             with self._zip.open(info) as handle:
                 data = handle.read(self.max_bytes + 1)
         except (KeyError, OSError, zipfile.BadZipFile, RuntimeError) as exc:
-            raise RegistryError(f"{member}: cannot read zip member ({exc})") from exc
+            raise RegistryError(
+                f"{shown(self.aliases, member)}: cannot read zip member ({shown(self.aliases, str(exc))})"
+            ) from exc
         if len(data) > self.max_bytes:
-            raise RegistryError(f"{member}: file exceeds the {self.max_bytes}-byte limit")
+            raise RegistryError(
+                f"{shown(self.aliases, member)}: file exceeds the {self.max_bytes}-byte limit"
+            )
         return data
 
 
@@ -219,7 +227,7 @@ def read_installation(
     ``problems`` instead of aborting. Raises :class:`RegistryError` only when the
     path itself is unusable.
     """
-    collection = _Collection(Path(path), max_xml_bytes)
+    collection = _Collection(Path(path), max_xml_bytes, aliases)
     try:
         return _read(collection, aliases)
     finally:
@@ -228,9 +236,6 @@ def read_installation(
 
 def _read(collection: _Collection, aliases: Aliases | None = None) -> InstallationConfig:
     problems: list[str] = []
-
-    def shown(text: str) -> str:
-        return aliases.sanitize(text) if aliases else text
 
     layers: list[RegistryLayer] = []
     data_root = ""  # prefix (with trailing "/") of the data root inside the collection
@@ -251,14 +256,14 @@ def _read(collection: _Collection, aliases: Aliases | None = None) -> Installati
         try:
             data = collection.read(real)
         except RegistryError as exc:
-            problems.append(shown(str(exc)))  # real member name: normalized here, once
+            problems.append(str(exc))  # built from normalized components
             continue
         try:
             layers.append(
                 parse_registry_xml(data, filename=file_name, max_bytes=collection.max_bytes, aliases=aliases)
             )
         except RegistryError as exc:
-            problems.append(str(exc))  # parse_registry_xml already normalized its own diagnostics
+            problems.append(str(exc))  # built from normalized components
 
     by_product: dict[str, list[ConfigParam]] = defaultdict(list)
     for param in resolve_registry(layers):
@@ -278,12 +283,15 @@ def _read(collection: _Collection, aliases: Aliases | None = None) -> Installati
             rel = normalize_install_path(param.value)
             member = collection.find(data_root + rel) if rel else None
             if member is None:
-                problems.append(f"{product}.{name}: target file not found in the collection")
+                # `product` is already public (parsed layer); only the raw parameter name is normalized
+                problems.append(f"{product}.{shown(aliases, name)}: target file not found in the collection")
                 continue
             try:
-                root = load_xml_root(collection.read(member), source=member, max_bytes=collection.max_bytes)
+                root = load_xml_root(
+                    collection.read(member), source=member, max_bytes=collection.max_bytes, aliases=aliases
+                )
             except RegistryError as exc:
-                problems.append(shown(str(exc)))  # real member name: normalized here, once
+                problems.append(str(exc))  # built from normalized components
                 continue
             if is_ws:
                 ws_path = aliases.apply_path(member) if aliases else member

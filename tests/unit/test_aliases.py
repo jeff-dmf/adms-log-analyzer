@@ -414,3 +414,110 @@ def test_api_error_message_is_normalized_once_with_chained_aliases(tmp_path):
         srv.shutdown()
         srv.server_close()
         thread.join(timeout=5)
+
+
+# ----------------------------------------------------------------------------- review round 3
+
+_REG = "SchneiderElectricData/OASyS/Servers/config/Registry"
+_ADMS = "SchneiderElectricData/ADMS"
+
+
+def _product_xml(*values: tuple[str, str], name: str = "AdapterAcmeWidget") -> str:
+    body = "".join(f'<Value Name="{k}">{v}</Value>' for k, v in values)
+    return f'<OASYSDNARegistry><Product Name="{name}">{body}</Product></OASYSDNARegistry>'
+
+
+# (case id, files {member: text}, read_installation kwargs, expected public fragment)
+_DIAGNOSTIC_CASES = [
+    ("malformed", {f"{_REG}/AdapterAcmeWidget.xml": "<OASYSDNARegistry><Product"}, {}, "AdapterCustom.xml"),
+    ("wrong-root", {f"{_REG}/AdapterAcmeWidget.xml": "<AcmeWidget/>"}, {}, "root element is 'Custom'"),
+    ("no-product", {f"{_REG}/AdapterAcmeWidget.xml": "<OASYSDNARegistry/>"}, {}, "AdapterCustom.xml"),
+    (
+        "dtd",
+        {f"{_REG}/AdapterAcmeWidget.xml": '<!DOCTYPE AcmeWidget [<!ENTITY a "b">]><OASYSDNARegistry/>'},
+        {},
+        "AdapterCustom.xml",
+    ),
+    (
+        "oversize",
+        {f"{_REG}/AdapterAcmeWidget.xml": _product_xml(("LogLevel", "Info"))},
+        {"max_xml_bytes": 20},
+        "AdapterCustom.xml",
+    ),
+    (
+        "missing-target",
+        {
+            f"{_REG}/AdapterAcmeWidget.xml": _product_xml(
+                ("AcmeWidget_ErrorConfigurationPath", "%OASINSTALLDATADIR%\\ADMS\\gone_AcmeWidget.xml")
+            )
+        },
+        {},
+        "AdapterCustom.Custom_ErrorConfigurationPath",
+    ),
+    (
+        "unknown-param-target",
+        {
+            f"{_REG}/AdapterAcmeWidget.xml": _product_xml(
+                ("WebServiceConfiguration", "%OASINSTALLDATADIR%\\ADMS\\nowhere_AcmeWidget.xml")
+            )
+        },
+        {},
+        "AdapterCustom.WebServiceConfiguration",
+    ),
+    (
+        "web-service-malformed",
+        {
+            f"{_REG}/AdapterAcmeWidget.xml": _product_xml(
+                ("WebServiceConfiguration", "%OASINSTALLDATADIR%\\ADMS\\ws_AcmeWidget.xml")
+            ),
+            f"{_ADMS}/ws_AcmeWidget.xml": "<Config",
+        },
+        {},
+        "ws_Custom.xml",
+    ),
+    (
+        "error-config-malformed",
+        {
+            f"{_REG}/AdapterAcmeWidget.xml": _product_xml(
+                ("Op_ErrorConfigurationPath", "%OASINSTALLDATADIR%\\ADMS\\err_AcmeWidget.xml")
+            ),
+            f"{_ADMS}/err_AcmeWidget.xml": "<AcmeWidget><Error>",
+        },
+        {},
+        "err_Custom.xml",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "files,kwargs,expected", [c[1:] for c in _DIAGNOSTIC_CASES], ids=[c[0] for c in _DIAGNOSTIC_CASES]
+)
+def test_every_diagnostic_is_built_from_components_normalized_once(tmp_path, files, kwargs, expected):
+    for member, text in files.items():
+        target = tmp_path / member
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    a = al.Aliases.from_pairs(CHAIN)
+    problems = "\n".join(read_installation(tmp_path, aliases=a, **kwargs).problems)
+    assert expected in problems, problems
+    assert "Acme" not in problems and "Other" not in problems, problems
+
+
+def test_zip_read_error_and_unusable_path_diagnostics(tmp_path):
+    from dmslog.knowledge.registry import RegistryError
+
+    a = al.Aliases.from_pairs(CHAIN)
+    zpath = tmp_path / "ERS_AcmeWidget.zip"
+    member = f"{_REG}/AdapterAcmeWidget.xml"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_STORED) as z:
+        z.writestr(member, _product_xml(("LogLevel", "Info")))
+    raw = bytearray(zpath.read_bytes())
+    raw[raw.index(b"LogLevel")] ^= 0xFF  # corrupt the stored data: CRC error while reading
+    zpath.write_bytes(bytes(raw))
+    problems = "\n".join(read_installation(zpath, aliases=a).problems)
+    assert "Custom" in problems and "Acme" not in problems and "Other" not in problems, problems
+
+    with pytest.raises(RegistryError) as info:
+        read_installation(tmp_path / "AcmeWidget_missing.bin", aliases=a)
+    assert "Custom_missing" in str(info.value) and "Acme" not in str(info.value)
+    assert "Other" not in str(info.value)
