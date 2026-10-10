@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import html
 import importlib.util
+import json
 import os
 import re
 import sys
@@ -376,6 +377,28 @@ PADDING = st.text(alphabet="abc XYZ,.;:-_/\n\t\"'()[]{}<>=&%", max_size=24)
     glue="",
     mode="standard",
 )
+@example(
+    case=next(c for c in CASES if c[0] == "ticket/INC0045123/plain/equals"),
+    before="",
+    after="X",
+    glue="",
+    mode="standard",
+)
+# NOT the limit: a suffix glued to a labelled value leaves the label intact (must be redacted)
+@example(
+    case=next(c for c in CASES if c[0] == "mrid/CREWQ7788Z/plain/mRID: {s}"),
+    before="",
+    after="a",
+    glue="",
+    mode="standard",
+)
+@example(
+    case=next(c for c in CASES if c[0] == "user/Ana  SecretS/plain/user: {s}"),
+    before="",
+    after="9",
+    glue="",
+    mode="standard",
+)
 @given(
     case=st.sampled_from(CASES),
     before=PADDING,
@@ -388,11 +411,19 @@ def test_no_plant_survives_in_any_position(case, before, after, glue, mode):
     # the padding may open a quote or a tag: the plant must be hidden anyway, unless the padding
     # itself changes what the wrapper means (then only the plant's own recognizable shapes count)
     out = redact(before + glue + text + glue + after, PROFILES[mode])
-    glued = (re.match(r"\w", after) and re.search(r"\w\Z", text)) or (
-        re.search(r"\w\Z", before) and re.match(r"\w", text)
+    # declared limit (standard mode), only where the gluing really changes the token the patterns read:
+    # a SHAPE recognized by no label (the plant at the glued end of a wrapper without a label) glued to a
+    # letter or digit, or a LABEL glued to one before it. A suffix glued to a LABELLED value leaves the
+    # label intact: it must be redacted.
+    after_glued = bool(re.match(r"\w", after))
+    before_glued = bool(re.search(r"\w\Z", before))
+    label_starts = [m.start() for m in re.finditer(r"[^\W\d_]+", text) if _label_at(text, m.start())]
+    shape_glued = not label_starts and (
+        (after_glued and text.endswith(plant.value)) or (before_glued and text.startswith(plant.value))
     )
-    if mode == "standard" and not glue and glued:
-        return  # declared limit (standard): a shape or label glued to a letter or digit is another token
+    label_glued = before_glued and 0 in label_starts
+    if mode == "standard" and not glue and (shape_glued or label_glued):
+        return
     flat = squeeze(out)
     surviving = [f for f in fragments(plant.value) if f in flat]
     if surviving and plant.standalone and text.strip() == text and not _breaks_context(before, glue):
@@ -840,12 +871,21 @@ def _documents(draw, depth: int = 0) -> str:
     return "{" + draw(gap) + _json_string(key) + draw(gap) + ":" + draw(gap) + rendered + draw(gap) + "}"
 
 
+# labels the redactor knows (user, person, mRID; with ':' or '=', or a label noun and a blank)
+LABELS_AROUND = ["user: ", "customerName=", "mRID: ", "customer ", "user = "]
+
+
 @st.composite
 def _planted(draw) -> str:
     doc = draw(_documents())
     if not any(form in doc for form in (SECRET_WORD, SECRET_NUM)):
         doc = draw(st.sampled_from(["<x>{}</x>", '{{"note": "{}"}}', "<x a='{}'/>", "<!--{}-->"])).format(
             draw(st.sampled_from(SECRET_FORMS))
+        )
+    if draw(st.integers(0, 3)) == 0:  # a labelled value (a catalog word) around the document: replaced
+        labelled = draw(st.sampled_from(LABELS_AROUND)) + PUBLIC_LOOKING
+        doc = draw(st.sampled_from(["{l} {d}", "{d} {l}", "{d}, {l} end", "{l} {d} end"])).format(
+            l=labelled, d=doc
         )
     if draw(st.booleans()):  # malformed: cut anywhere, or junk inserted anywhere
         cut = draw(st.integers(0, len(doc)))
@@ -940,16 +980,66 @@ def _only_validated_names(doc: str, out: str) -> bool:
     return False
 
 
+_LABELS = Redactor(Profile(payload_names=()))  # the redactor's own label set (``_label_category``)
+_WORD = re.compile(r"[^\W\d_][\w.-]*")
+
+
+def _closed_region_end(doc: str, start: int) -> int | None:
+    """End of the shortest JSON value (``json``, strict) or XML element (ElementTree) starting at
+    ``start``, or None."""
+    if doc[start] in "{[":
+        try:
+            _value, end = json.JSONDecoder(strict=True).raw_decode(doc, start)
+        except ValueError:
+            return None
+        return end
+    for match in re.finditer(">", doc[start:]):
+        try:  # under a synthetic root: an element, a comment or a processing instruction
+            ElementTree.fromstring("<r>" + doc[start : start + match.end()] + "</r>")
+        except (ElementTree.ParseError, UnicodeEncodeError):
+            continue
+        return start + match.end()
+    return None
+
+
+def _json_candidate(doc: str, start: int) -> bool:
+    """A '{' or '[' the redactor documents as a JSON candidate (it may be JSON: a quote, a bracket, a
+    digit, a sign or a literal's first letter after it); any other one is plain text."""
+    rx = redact_module._RX
+    return rx["json_strong"].match(doc, start) is not None or rx["json_weak"].match(doc, start) is not None
+
+
+def _label_at(doc: str, start: int) -> bool:
+    """A label of the redactor's own rules starts at ``start`` (``user:``, ``customerName=``,
+    ``customer Monitor``), with a category its label set names."""
+    rx = redact_module._RX
+    for name in ("strict_label", "strict_word_label"):
+        match = rx[name].match(doc, start)
+        if match is not None and _LABELS._label_category(match.group(1)) is not None:
+            return True
+    return False
+
+
 def _free_words(doc: str) -> int:
     """How many times PUBLIC_LOOKING stands in ``doc`` as a FREE-TEXT word, which the free-text allowlist
     keeps by design (declared limit: free text keeps catalog words). Read independently and
-    conservatively: blank-bounded (ASCII space or the ends), outside double-quoted strings paired left to
+    conservatively: a whole piece (after an ASCII space, ``= : , ; |`` or the start; before a space,
+    ``, ; |`` or the end), outside double-quoted strings paired left to
     right, and with nothing before it, outside the strings, that could open a region or make the quoting
     ambiguous: no ``< > { } [ ] ' & \\`` outside strings (a backslash inside one escapes the next
-    character, as the redactor reads it), no quote glued to a word."""
+    character, as the redactor reads it; an apostrophe inside a word is no quote; a whole JSON value
+    or XML element that ``json``/ElementTree accept is skipped as structure), no quote glued to a
+    word. And NOT a labelled value: after a
+    word the redactor's label set names (``user:``, ``customerName=``, ``customer Monitor``), every word
+    up to ``, ; |``, the end of the line, another key (``status:``) or label, or a stop word, is the
+    label's value (a quoted value ends at its closing quote), whatever it looks like."""
     count = 0
     clean = True
     in_string = False
+    labelled = False  # inside the value of a label
+    pending = False  # right after a label word: a quote here opens the (whole) value
+    first = False  # the value's first word is part of it whatever it is
+    value_string = False  # the current string is a label's whole value
     index = 0
     size = len(PUBLIC_LOOKING)
     while index < len(doc):
@@ -960,24 +1050,65 @@ def _free_words(doc: str) -> int:
                 continue
             if char == '"':
                 in_string = False
+                if value_string:
+                    labelled = value_string = False
                 if index + 1 < len(doc) and (doc[index + 1].isalnum() or doc[index + 1] == "_"):
                     clean = False  # closed right against a word
+            elif (
+                labelled
+                and not value_string
+                and doc[index - 1] in " \t\"'"
+                and (word := _WORD.match(doc, index)) is not None
+                and (
+                    re.match(r"\\?[\"']?[ \t]{0,8}[:=]", doc[word.end() :]) is not None
+                    or word.group().casefold() in redact_module._STOP_WORDS
+                )
+            ):
+                labelled = False  # a bare value is read in blank-separated chunks, quotes or not
             index += 1
             continue
+        if pending and char not in " \t:=":
+            pending = False
+            if char == '"':
+                value_string = True
         if char == '"':
             in_string = True
             if index and (doc[index - 1].isalnum() or doc[index - 1] == "_"):
                 clean = False  # opened right after a word
+        elif char in ",;|\n":
+            labelled = False
+        elif char in "{[" and not _json_candidate(doc, index):
+            pass  # plain text (the redactor's allowlist guard replaces the piece that holds it)
+        elif char in "{[<" and clean and (end := _closed_region_end(doc, index)) is not None:
+            index = end  # a whole region an independent parser accepts: structure, not free text
+            continue
+        elif (
+            char == "'" and 0 < index < len(doc) - 1 and doc[index - 1].isalnum() and doc[index + 1].isalnum()
+        ):
+            pass  # an apostrophe inside a word ("don't") is no quote
         elif char in "<>{}[]'&\\":
             clean = False
         elif (
             clean
+            and not labelled
             and doc.startswith(PUBLIC_LOOKING, index)
-            and (index == 0 or doc[index - 1] == " ")
-            and (index + size == len(doc) or doc[index + size] == " ")
+            and (index == 0 or doc[index - 1] in " =:,;|")  # the redactor's piece separators
+            and (index + size == len(doc) or doc[index + size] in " ,;|")
         ):
             count += 1
             index += size
+            continue
+        elif (index == 0 or not (doc[index - 1].isalnum() or doc[index - 1] == "_")) and (
+            word := _WORD.match(doc, index)
+        ):
+            keyed = re.match(r"\\?[\"']?[ \t]{0,8}[:=]", doc[word.end() :]) is not None
+            low = word.group().casefold()
+            if labelled and not first and (keyed or low in redact_module._STOP_WORDS):
+                labelled = False  # the value ends at another key or a stop word
+            first = False
+            if _label_at(doc, index):
+                labelled = pending = first = True
+            index = word.end()
             continue
         index += 1
     return count
@@ -1013,6 +1144,20 @@ def _secret_fragments(text: str) -> list[str]:
 # an attribute name may be followed by any XML blank before its '='
 @example(doc='&lt;Header MonitorReady\n=\n"Zq7Kx9Wv"&gt;Zq7Kx9Wv{"status":"Zq7Kx9Wv"}&lt;/Header&gt;')
 @example(doc='value "<?xml <?Zq7Kx9Wv version=" MonitorReady"?>" end')
+# a labelled value runs over the words that only look like labels (fixed in redact.py)
+@example(
+    doc='user: MonitorReady value "<![CDATA[<Header Header=x" MonitorReady " Header=x" MonitorReady'
+    ' ">Zq7Kx9WvZq7Kx9Wv]]>" end'
+)
+# an apostrophe inside a word is no quote, and free text after a closed JSON value, a comment or a
+# brace that is no JSON candidate is free text; a label broken by a character is no label
+@example(doc="<!--Zq7Kx9Wv--> u'ser: MonitorReady")
+@example(doc="customerN'ame=MonitorReady <Header>Zq7Kx9WvZq7Kx9Wv")
+@example(doc="customerN'ame=MonitorReady value <MonitorReady> Zq7Kx9Wv <!-- </MonitorReady> -->")
+@example(
+    doc='{value "<![CDATA[<Header Header=x" MonitorReady " Header=x" MonitorReady ">Zq7Kx9WvZq7Kx9Wv]]>" end'
+)
+@example(doc='[0, "Zq7Kx9Wv"] u\'ser: MonitorReady')
 # a REAL leak (fixed in redact.py): escaped markup in a PAYLOAD skipped the decoded gate, so JSON in
 # an escaped text node that is not exactly valid JSON kept its keys
 @example(doc='&lt;Zq7Kx9Wv&gt;sent {"MonitorReady": 1} ok&lt;/Zq7Kx9Wv&gt;')
@@ -1147,3 +1292,30 @@ def test_no_piece_of_an_exported_record_is_less_redacted_than_the_whole_record(
     redacted_whole = reference.redact(whole, spans=reference.record_spans(whole, len(msg), template))
     hidden = {t for t in re.findall(r"[A-Za-z0-9]{4,}", whole) if _secret_like(t) and t not in redacted_whole}
     assert [t for t in hidden if t in exported] == [], (msg, cont, payload_kind, table, redacted_whole)
+
+
+# -- review of the deterministic profile: labelled values in and around structured documents ----------
+
+LABELLED_AROUND_DOCUMENTS = [
+    "user: MonitorReady <Header>Zq7Kx9Wv</Header>",
+    "<Header>Zq7Kx9Wv</Header> customerName=MonitorReady",
+    'mRID: MonitorReady {"k": "Zq7Kx9Wv"}',
+    '<Note>Zq7Kx9Wv</Note> customer MonitorReady "x"',
+    'value "Zq7Kx9Wv" user: MonitorReady end',
+    "<Note>user: MonitorReady Zq7Kx9Wv</Note>",
+    '[0, "Zq7Kx9Wv"], user = MonitorReady end',
+    # REAL leaks found with the labelled plants (fixed in redact.py): a word followed by a blank and a
+    # quote or bracket only LOOKS like a label; it neither takes nor ends the value
+    'customer MonitorReady [0, "Zq7Kx9Wv"]',
+    'user: Ana MonitorReady "Zq7Kx9Wv" <a/>',
+    'account: a MonitorReady "Zq7Kx9Wv" <a/>',
+    'GID: 12 MonitorReady "Zq7Kx9Wv" <a/>',
+]
+
+
+@pytest.mark.parametrize("payload", [True, False])
+@pytest.mark.parametrize("doc", LABELLED_AROUND_DOCUMENTS)
+def test_a_labelled_value_next_to_a_structured_document_is_replaced(doc, payload):
+    out = Redactor(Profile(payload_names=())).redact(doc, payload=payload)
+    assert PUBLIC_LOOKING not in out and SECRET_WORD not in out, out
+    assert _free_words(doc) == 0  # the oracle never counts a labelled value as free text

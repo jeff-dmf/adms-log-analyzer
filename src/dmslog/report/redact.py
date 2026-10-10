@@ -1958,6 +1958,20 @@ class Redactor:
         # a lone surrogate (\\ud800) cannot be encoded: it never reaches the output (no crash downstream)
         return _RX["surrogate"].sub("?", out) if _RX["surrogate"].search(out) else out
 
+    def replaced_spans(self, text: str, spans: RecordSpans | None = None) -> RecordSpans:
+        """Strict mode: every span that :meth:`redact` (with these record ``spans``) replaces in ``text``,
+        all rules together (patterns, labels, strict nets), with no marker issued. The export hands them
+        to each piece of a record cut around its payloads, so that no piece is less redacted than the
+        whole record (a label in the first line whose value a payload cut off, for example)."""
+        if not self.strict or not text or not self.active:
+            return []
+        if len(text) > MAX_TEXT_CHARS:
+            return [(0, len(text), VALUE)]
+        return [
+            (start, end, category)
+            for start, end, category, *_rest in self._merged_spans(text, False, spans, False)
+        ]
+
     def record_spans(self, text: str, msg_len: int, template: str | None = None) -> RecordSpans:
         """Strict mode: the spans to replace in a record (``text`` = first line, then the continuation
         lines after ``msg_len``), from its template. Empty in standard mode.
@@ -2133,7 +2147,16 @@ class Redactor:
             if k == end or k >= limit or text[k] in ",;|":
                 break
             nxt = chunk_end(k)
-            if nxt <= k or _RX["strict_label"].match(text, k, limit) is not None:
+            if nxt <= k:
+                break
+            nested = _RX["strict_label"].match(text, k, limit)
+            # another key ("x status: ok") or a real label ends the value; a word that only looks like
+            # a label (a blank and a quote after it, naming no identifier) does not
+            if nested is not None and (
+                ":" in nested.group()
+                or "=" in nested.group()
+                or self._label_category(nested.group(1)) is not None
+            ):
                 break
             core = text[k:nxt].strip(_EDGE_PUNCT).casefold()
             if core in _LABEL_WORDS or core in _STOP_WORDS:  # "user: x account y", "user: x from h"
@@ -2215,7 +2238,12 @@ class Redactor:
                 continue
             i = match.end()
             first = _RX["chunk"].match(text, i)
-            if first is None or _RX["strict_label"].match(text, i) is not None:  # "crew GID: ...": that label
+            if first is None:
+                continue
+            nested = _RX["strict_label"].match(text, i)
+            # "crew GID: ...": that label takes the value; a word that only LOOKS like a label (followed
+            # by a blank and a quote or bracket, but naming no identifier) is this label's value
+            if nested is not None and self._label_category(nested.group(1)) is not None:
                 continue
             core = first.group().strip(_EDGE_PUNCT).casefold()
             if not core or core in _STOP_WORDS or core in _LABEL_WORDS:
@@ -2642,6 +2670,22 @@ class Redactor:
     # -- internals
 
     def _redact_text(self, text: str, payload: bool, extra: RecordSpans | None, identifier: bool) -> str:
+        merged = self._merged_spans(text, payload, extra, identifier)
+        out: list[str] = []
+        pos = 0
+        for start, end, category, _attach, core_start, core_end in merged:
+            out.append(text[pos:start])
+            # the marker is keyed on the value without the punctuation it absorbed (same value, same marker)
+            out.append(self._marker(category, decoded(text[core_start:core_end])))
+            pos = end
+        out.append(text[pos:])
+        return "".join(out)
+
+    def _merged_spans(
+        self, text: str, payload: bool, extra: RecordSpans | None, identifier: bool
+    ) -> list[list[Any]]:
+        """Every span the redaction replaces in ``text``, united: [start, end, category, made only of
+        leftover punctuation, start and end of the value itself]."""
         # Every rule runs on the raw text AND on its decoded views (escapes undone, and also JSON string
         # escapes such as \\/); each match is mapped back to the original characters. Then:
         #   1. protection: a generic span inside an exception is dropped (user or automatic exception);
@@ -2739,7 +2783,7 @@ class Redactor:
                 for a, b, category, leftover in _fill_gaps(text, nets, user_protected, taken)
             )
         if not spans:
-            return text
+            return []
         spans.sort(key=lambda s: (s[0], s[1], -s[2]))
         # [start, end, category, made only of leftover punctuation, start and end of the value itself]
         merged: list[list[Any]] = []
@@ -2754,15 +2798,7 @@ class Redactor:
                 last[1] = max(last[1], end)
             else:
                 merged.append([start, end, category, attach, start, end])
-        out: list[str] = []
-        pos = 0
-        for start, end, category, _attach, core_start, core_end in merged:
-            out.append(text[pos:start])
-            # the marker is keyed on the value without the punctuation it absorbed (same value, same marker)
-            out.append(self._marker(category, decoded(text[core_start:core_end])))
-            pos = end
-        out.append(text[pos:])
-        return "".join(out)
+        return merged
 
     @staticmethod
     def _extend_tokens(text: str, spans: list[tuple[int, int, int, str]]) -> list[tuple[int, int, int, str]]:

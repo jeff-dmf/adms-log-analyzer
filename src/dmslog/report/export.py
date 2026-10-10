@@ -905,6 +905,10 @@ class _Builder:
         known = len(self.payload_items)
         pieces = self._split_payloads(row, text)
         strict = self.redactor is not None and self.redactor.strict
+        if strict and self.redactor is not None and not (len(pieces) == 1 and pieces[0][1] == text):
+            # the record is cut around its payloads: each piece also gets EVERYTHING the whole record
+            # replaces (patterns and labels included: a label whose value a payload cut off)
+            record_spans = record_spans + self.redactor.replaced_spans(text, record_spans)
         clipped: list[list[tuple[int, int, str]]] = []
         if strict:
             # the whole record's spans cut to each text piece and to each payload body shown, in one
