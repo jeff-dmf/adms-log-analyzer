@@ -69,7 +69,7 @@ jobs:
           "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog" --version
           python packaging/smoke_health.py "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog"
           python packaging/smoke_ingest.py "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dmslog-linux
           path: |
@@ -107,7 +107,7 @@ jobs:
         run: |
           python packaging/smoke_ingest.py (Join-Path $PWD "dist\dmslog-portable-win64\dmslog.bat")
           if ($LASTEXITCODE -ne 0) { throw "ingest smoke test failed" }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dmslog-portable-win64
           path: dist/dmslog-portable-win64.zip
