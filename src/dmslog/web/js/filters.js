@@ -188,6 +188,16 @@ export function navKey(event) {
   return hit ? { kind: hit[0], dir: hit[1] } : null;
 }
 
+// "b" toggles the bookmark of the selected record, "B" opens the bookmarks panel, "c" starts or
+// finishes comparing two records. Returns "toggle" | "panel" | "compare" | null. Ignores modified keys.
+export function bookmarkKey(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return null;
+  }
+  const map = { b: "toggle", B: "panel", c: "compare" };
+  return Object.prototype.hasOwnProperty.call(map, event.key) ? map[event.key] : null;
+}
+
 // True when the key event comes from a control where typing must not trigger shortcuts.
 export function isTypingTarget(target) {
   if (!target) {

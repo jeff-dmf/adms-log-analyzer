@@ -5,6 +5,7 @@ import {
   END_CURSOR, PAGE_LIMIT, ROW_HEIGHT, SCROLL_SPAN, RowWindow, fetchPlan, jumpCursor, scrollToTs,
   tsToScroll,
 } from "./grid-model.js";
+import { markerLabel } from "./bookmarks-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format } from "./strings.js";
 import { formatTs } from "./time.js";
@@ -31,7 +32,9 @@ function fieldText(value) {
 }
 
 export class Grid {
-  constructor({ viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, onTemplate }) {
+  constructor({
+    viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, onTemplate, getMark, onVisible,
+  }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
     this.spacer = spacer;
@@ -40,6 +43,8 @@ export class Grid {
     this.onStatus = onStatus;
     this.onError = onError;
     this.onTemplate = onTemplate || (() => {});
+    this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
+    this.onVisible = onVisible || (() => {}); // ids of the rendered rows (bookmark lookup)
     this.templateCodes = new Map();
     this.fieldColumns = [];
     this.window = new RowWindow();
@@ -417,6 +422,7 @@ export class Grid {
     this.ensurePool();
     const w = this.window;
     this.rowsLayer.setAttribute("aria-rowcount", String(w.rows.length));
+    const shown = [];
     for (let i = 0; i < this.pool.length; i += 1) {
       const slot = this.pool[i];
       const index = w.top + i;
@@ -431,10 +437,18 @@ export class Grid {
       const selected = index === w.selected;
       slot.el.classList.toggle("selected", selected);
       slot.el.setAttribute("aria-selected", selected ? "true" : "false");
-      slot.el.setAttribute("aria-label", format(S.rowLabel, { id: row.id }));
+      const mark = this.getMark(row.id);
+      slot.el.setAttribute("aria-label", format(S.rowLabel, { id: row.id }) + (mark ? ", " + markerLabel(mark) : ""));
+      if (mark) {
+        slot.el.dataset.bm = mark.color;
+      } else {
+        delete slot.el.dataset.bm;
+      }
+      shown.push(row.id);
       slot.el.dataset.sev = String(row.sev);
       this.fillCells(slot, row);
     }
+    this.onVisible(shown);
     this.updateStatus();
   }
 

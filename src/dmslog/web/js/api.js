@@ -95,7 +95,28 @@ export const api = {
       request("POST", "/api/views", { case: caseId, name, filter, columns: columns || null }),
     remove: (caseId, id) =>
       request("DELETE", "/api/views/" + encodeURIComponent(id) + query({ case: caseId })),
+    update: (caseId, id, name, filter, columns) =>
+      request("PUT", "/api/views/" + encodeURIComponent(id), { case: caseId, name, filter, columns: columns || null }),
   },
+  // Bookmarks (params of list: color, q, limit, after) and compare of two records.
+  bookmarks: {
+    list: (caseId, params, signal) =>
+      request("GET", "/api/bookmarks" + query({ ...params, case: caseId }), undefined, signal),
+    get: (caseId, id, signal) =>
+      request("GET", "/api/bookmarks/" + encodeURIComponent(id) + query({ case: caseId }), undefined, signal),
+    create: (caseId, entryId, color, note) =>
+      request("POST", "/api/bookmarks", { case: caseId, entry_id: entryId, color, note }),
+    update: (caseId, id, changes) =>
+      request("PATCH", "/api/bookmarks/" + encodeURIComponent(id), { ...changes, case: caseId }),
+    remove: (caseId, id) =>
+      request("DELETE", "/api/bookmarks/" + encodeURIComponent(id) + query({ case: caseId })),
+    lookup: (caseId, entryIds, signal) =>
+      request("POST", "/api/bookmarks/lookup", { case: caseId, entry_ids: entryIds }, signal),
+    exportAll: (caseId) => request("GET", "/api/bookmarks/export" + query({ case: caseId })),
+    importAll: (caseId, data) => request("POST", "/api/bookmarks/import", { case: caseId, data }),
+  },
+  compare: (caseId, a, b, signal) =>
+    request("GET", "/api/compare" + query({ case: caseId, a, b }), undefined, signal),
   templates: (caseId, family, signal) =>
     request("GET", "/api/templates" + query({ case: caseId, family }), undefined, signal),
   unknown: (caseId, family, limit, signal) =>

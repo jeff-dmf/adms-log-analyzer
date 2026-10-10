@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  bookmarkKey,
   NAV_ERROR_FILTER, TPL_LEAF, andFilters, buildFilter, composeFilter, isTypingTarget, navKey, navRequest,
   parseTplList, stateFromForm, timeSpan, withTemplate, withTsRange,
 } from "../../src/dmslog/web/js/filters.js";
@@ -113,4 +114,14 @@ test("template leaf validates and round-trips ids and codes", () => {
   assert.equal(TPL_LEAF.fromJson({ tpl: [{}] }), null);
   assert.deepEqual(parseTplList("12, ABC_1,,"), [12, "ABC_1"]);
   assert.deepEqual(parseTplList("a b"), [-1]);
+});
+
+test("bookmarkKey maps b, B and c and ignores modified keys", () => {
+  assert.equal(bookmarkKey({ key: "b" }), "toggle");
+  assert.equal(bookmarkKey({ key: "B" }), "panel");
+  assert.equal(bookmarkKey({ key: "c" }), "compare");
+  assert.equal(bookmarkKey({ key: "b", ctrlKey: true }), null);
+  assert.equal(bookmarkKey({ key: "c", metaKey: true }), null);
+  assert.equal(bookmarkKey({ key: "constructor" }), null);
+  assert.equal(bookmarkKey({ key: "x" }), null);
 });

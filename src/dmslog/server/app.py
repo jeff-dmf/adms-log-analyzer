@@ -23,7 +23,7 @@ from .. import __version__, messages
 from ..buildinfo import get_commit
 from ..paths import check_sqlite_fts5, resolve_data_dir
 from . import sse
-from .api import MAX_BODY_BYTES, Api, ApiError, Stream
+from .api import Api, ApiError, Stream, body_limit
 
 LOOPBACK_HOST = "127.0.0.1"
 COOKIE_NAME = "dmslog_session"
@@ -242,9 +242,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             raise ApiError(400, "bad_content_length", messages.API_BAD_LENGTH) from None
         if length < 0:
             raise ApiError(400, "bad_content_length", messages.API_BAD_LENGTH)
-        if length > MAX_BODY_BYTES:
+        limit = body_limit(urlsplit(self.path).path)
+        if length > limit:
             self._discard(length)
-            raise ApiError(413, "body_too_large", messages.API_BODY_TOO_LARGE.format(limit=MAX_BODY_BYTES))
+            raise ApiError(413, "body_too_large", messages.API_BODY_TOO_LARGE.format(limit=limit))
         raw = self.rfile.read(length)
         try:
             data = json.loads(raw)

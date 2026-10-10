@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/css/app.css">
   <link rel="stylesheet" href="/css/grid-extras.css">
   <link rel="stylesheet" href="/css/filter-tree.css">
+  <link rel="stylesheet" href="/css/bookmarks.css">
   <script type="module" src="/js/main.js"></script>
 </head>
 <body>
@@ -30,6 +31,7 @@
         <div id="columns-menu" class="menu" role="group" hidden></div>
       </div>
       <button type="button" id="filter-tree-button" aria-expanded="false" data-i18n="toolbarFilterTree"></button>
+      <button type="button" id="bookmarks-button" aria-expanded="false" data-i18n="bmButton" hidden></button>
       <button type="button" id="unknown-button" aria-expanded="false" data-i18n="toolbarUnknown" hidden></button>
       <button type="button" id="events-button" aria-expanded="false" data-i18n="toolbarEvents" hidden></button>
       <button type="button" id="payload-button" aria-expanded="false" data-i18n="plgButton" hidden></button>
@@ -80,6 +82,8 @@
         <section id="dashboard-host" class="panel host-panel" hidden></section>
         <section id="side-by-side-host" class="panel host-panel" hidden></section>
         <section id="key-panel-host" class="panel host-panel" hidden></section>
+        <section id="bookmarks-host" class="panel host-panel" hidden></section>
+        <section id="compare-host" class="panel host-panel" hidden></section>
         <form id="filter-form" class="filter-bar">
           <div class="field">
             <label for="sev-select" data-i18n="filterSeverity"></label>
@@ -108,6 +112,7 @@
           <div id="grid-spacer" class="grid-spacer" aria-hidden="true"></div>
         </div>
         <div id="grid-status" class="grid-status" role="status" aria-live="polite"></div>
+        <div class="shortcuts-help" data-i18n="shortcutsHelp"></div>
       </section>
 
       <aside id="detail-panel" class="panel" aria-labelledby="detail-title">
@@ -118,11 +123,13 @@
           <select id="context-same"></select>
           <button type="button" id="context-button" data-i18n="contextButton"></button>
           <button type="button" id="copy-button" data-i18n="copyButton"></button>
+          <button type="button" id="compare-button" data-i18n="cmpButton"></button>
           <span id="copy-status" class="source-meta" role="status"></span>
         </div>
         <button type="button" id="detail-template" class="tpl-link-button" hidden></button>
         <pre id="detail-text" class="detail-text"></pre>
         <div id="detail-fields" class="detail-fields"></div>
+        <section id="detail-bookmark" class="detail-bookmark" data-i18n-aria-label="bmDetailTitle" hidden></section>
         <section id="detail-knowledge" class="detail-knowledge" data-i18n-aria-label="knowTitle" hidden></section>
         <section id="detail-payload" class="detail-payload" data-i18n-aria-label="plTitle" hidden></section>
         <section id="detail-links" class="detail-links" data-i18n-aria-label="lnkTitle" hidden></section>

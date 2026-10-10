@@ -240,7 +240,7 @@ function editorFor(type) {
 
 // ---- the editor ------------------------------------------------------------------------------
 
-export function initFilterTree(container, { api, caseId, onChange, initial }) {
+export function initFilterTree(container, { api, caseId, onChange, initial, getExtraFilter, onSavedApplied }) {
   let currentCase = caseId;
   let history = new History(fromJson(initial));
   let sources = [];
@@ -553,7 +553,11 @@ export function initFilterTree(container, { api, caseId, onChange, initial }) {
     api,
     caseId: currentCase,
     getFilter: () => buildFilter(root()).filter,
+    getExtraFilter,
     onApply: (filter) => {
+      if (onSavedApplied) {
+        onSavedApplied(); // clears the toolbar filters: a saved filter replaces the whole view
+      }
       commit(fromJson(filter), null);
       apply();
     },

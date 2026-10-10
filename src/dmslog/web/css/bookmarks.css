@@ -1,0 +1,261 @@
+/* Bookmarks, compare and the grid marker. The color is always accompanied by its name as text; the
+   palette tokens come in a light and a dark variant (explicit data-theme wins over the OS setting). */
+:root {
+  --bm-red: #c62828;
+  --bm-orange: #c25e00;
+  --bm-yellow: #a37a00;
+  --bm-green: #2e7d32;
+  --bm-blue: #1f6feb;
+  --bm-purple: #7b3fc4;
+  --bm-gray: #5d6778;
+  --cmp-add: #dff3e1;
+  --cmp-remove: #fde8e8;
+  --cmp-change: #fff3cd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bm-red: #ff8a80;
+    --bm-orange: #ffb066;
+    --bm-yellow: #f2c14e;
+    --bm-green: #7fd18a;
+    --bm-blue: #8ab4ff;
+    --bm-purple: #c9a3ff;
+    --bm-gray: #9aa5b8;
+    --cmp-add: #1d3a24;
+    --cmp-remove: #4a1d1d;
+    --cmp-change: #4a3d12;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bm-red: #ff8a80;
+  --bm-orange: #ffb066;
+  --bm-yellow: #f2c14e;
+  --bm-green: #7fd18a;
+  --bm-blue: #8ab4ff;
+  --bm-purple: #c9a3ff;
+  --bm-gray: #9aa5b8;
+  --cmp-add: #1d3a24;
+  --cmp-remove: #4a1d1d;
+  --cmp-change: #4a3d12;
+}
+
+/* Grid marker: a star in the first cell and a colored edge. */
+.grid-row[data-bm] .grid-cell:first-child::before {
+  content: "\2605\00a0";
+}
+
+.grid-row[data-bm="red"] .grid-cell:first-child { color: var(--bm-red); }
+.grid-row[data-bm="orange"] .grid-cell:first-child { color: var(--bm-orange); }
+.grid-row[data-bm="yellow"] .grid-cell:first-child { color: var(--bm-yellow); }
+.grid-row[data-bm="green"] .grid-cell:first-child { color: var(--bm-green); }
+.grid-row[data-bm="blue"] .grid-cell:first-child { color: var(--bm-blue); }
+.grid-row[data-bm="purple"] .grid-cell:first-child { color: var(--bm-purple); }
+.grid-row[data-bm="gray"] .grid-cell:first-child { color: var(--bm-gray); }
+
+.shortcuts-help {
+  color: var(--muted);
+  font-size: 0.85em;
+  padding: 2px 6px;
+}
+
+.bm-muted {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.bm-error {
+  color: var(--error-text);
+}
+
+.bm-mono {
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.detail-bookmark {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.bm-detail-title,
+.bm-title,
+.cmp-title,
+.cmp-side-title {
+  margin: 4px 0;
+  font-size: 1em;
+}
+
+.bm-toggle {
+  margin: 4px 0;
+}
+
+.bm-editor,
+.bm-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+}
+
+.bm-note-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+
+.bm-head,
+.cmp-head,
+.bm-filters,
+.cmp-tools,
+.bm-item-top,
+.bm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.bm-head .bm-title,
+.cmp-head .cmp-title {
+  margin-right: auto;
+}
+
+.bm-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}
+
+.bm-editor .bm-field,
+.bm-edit .bm-field {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.bm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bm-item {
+  border-top: 1px solid var(--border);
+  padding: 4px 0;
+}
+
+.bm-orphan {
+  opacity: 0.8;
+}
+
+.bm-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.bm-swatch::before {
+  content: "\2605";
+}
+
+.bm-c-red { color: var(--bm-red); }
+.bm-c-orange { color: var(--bm-orange); }
+.bm-c-yellow { color: var(--bm-yellow); }
+.bm-c-green { color: var(--bm-green); }
+.bm-c-blue { color: var(--bm-blue); }
+.bm-c-purple { color: var(--bm-purple); }
+.bm-c-gray { color: var(--bm-gray); }
+
+.bm-text,
+.bm-note {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bm-note {
+  border-left: 3px solid var(--border);
+  padding-left: 6px;
+  margin: 2px 0;
+}
+
+.bm-danger {
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+
+.cmp-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.cmp-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0 8px;
+  margin: 0;
+}
+
+.cmp-meta dt {
+  color: var(--muted);
+}
+
+.cmp-meta dd {
+  margin: 0;
+}
+
+.cmp-hide {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cmp-wrap {
+  overflow: auto;
+}
+
+.cmp-table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  font-family: ui-monospace, monospace;
+}
+
+.cmp-table th {
+  text-align: left;
+}
+
+.cmp-table th:nth-child(odd),
+.cmp-line {
+  width: 3.5em;
+}
+
+.cmp-line {
+  color: var(--muted);
+  text-align: right;
+  padding-right: 6px;
+  vertical-align: top;
+}
+
+.cmp-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  padding: 0 6px;
+  width: 50%;
+}
+
+.cmp-change .cmp-text { background: var(--cmp-change); }
+.cmp-remove .cmp-text:nth-child(2) { background: var(--cmp-remove); }
+.cmp-add .cmp-text:nth-child(4) { background: var(--cmp-add); }
+
+.cmp-skip {
+  color: var(--muted);
+  text-align: center;
+  font-style: italic;
+}

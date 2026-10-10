@@ -24,6 +24,7 @@ EXPECTED_MODULES = {
     "strings.js", "theme.js", "time.js", "timeline-model.js", "timeline.js", "unknown-panel-model.js",
     "unknown-panel.js", "key-panel-model.js", "key-panel.js", "links-model.js", "links.js", "side-by-side.js",
     "payload-model.js", "payload.js", "payload-list-model.js", "payload-list.js",
+    "bookmarks-model.js", "bookmarks-panel.js", "compare-model.js", "compare.js", "saved-views-model.js",
 }
 
 FORBIDDEN_JS = [
@@ -196,6 +197,21 @@ def test_node_unit_tests_pass_in_any_time_zone(zone):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_every_web_module_passes_node_syntax_check():
+    """`node --check` on every shipped module: a merge slip in a DOM-only module (main.js) must not pass."""
+    node = _node_ok()
+    if node is None:
+        pytest.skip("node >= 22.12 not available")
+    failures = []
+    for path in sorted(js_files()):
+        result = subprocess.run(
+            [node, "--check", str(path)], capture_output=True, text=True, encoding="utf-8", check=False
+        )
+        if result.returncode != 0:
+            failures.append(f"{path.name}: {result.stderr.strip().splitlines()[:3]}")
+    assert not failures, failures
+
+
 # -- Served from the built .pyz ---------------------------------------------------------------
 
 
@@ -239,6 +255,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         "/css/grid-extras.css", "/css/filter-tree.css", "/css/config-panel.css", "/css/knowledge.css",
         "/css/events.css", "/css/dashboard.css", "/css/links.css", "/css/key-panel.css",
         "/css/payload.css", "/css/payload-list.css",
+        "/css/bookmarks.css",
         "/vendor/uplot/uPlot.esm.js", "/vendor/uplot/uPlot.min.css",
         *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),
     ]  # fmt: skip

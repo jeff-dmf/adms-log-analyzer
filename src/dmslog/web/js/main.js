@@ -1,9 +1,11 @@
 // Orchestration: wires the panels together. Everything shown comes from strings.js or the API
 // and reaches the page through textContent / DOM nodes only.
 import { api, onForbidden } from "./api.js";
+import { createBookmarkStore } from "./bookmarks-model.js";
+import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { Detail } from "./detail.js";
 import {
-  NAV_ERROR_FILTER, TPL_LEAF, composeFilter, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
+  NAV_ERROR_FILTER, TPL_LEAF, bookmarkKey, composeFilter, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { registerLeafType } from "./filter-tree-model.js";
@@ -179,6 +181,29 @@ function start() {
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
   let navSeq = 0;
+  let bookmarksPanel = null;
+  let detailBookmark = null;
+  let compare = null;
+  const compareSelection = createCompareSelection();
+  const compareButton = byId("compare-button");
+  function paintCompareButton(entry) {
+    compareButton.textContent = compareButtonLabel(compareSelection.first, entry ? entry.id : null);
+  }
+
+  // Bookmark markers shared by the grid, the detail pane and the panel.
+  const bookmarkStore = createBookmarkStore({
+    api,
+    getCase: () => caseId,
+    onChange: (kind) => {
+      grid.render();
+      if (detailBookmark) {
+        detailBookmark.refresh();
+      }
+      if (kind === "edit" && bookmarksPanel && bookmarksPanel.isOpen()) {
+        bookmarksPanel.refresh();
+      }
+    },
+  });
 
   // Panels fed by the derived events: visible ones reload, hidden ones load when opened.
   const refreshDerived = () => {
@@ -235,6 +260,8 @@ function start() {
     },
     onError: showError,
     onTemplate: (tplId) => addTemplateFilter(tplId),
+    getMark: (id) => bookmarkStore.get(id),
+    onVisible: (ids) => bookmarkStore.ensure(ids),
   });
   const detail = new Detail({
     meta: byId("detail-meta"),
@@ -260,6 +287,10 @@ function start() {
       if (payloadSection) {
         payloadSection.show(entry);
       }
+      if (detailBookmark) {
+        detailBookmark.show(entry);
+      }
+      paintCompareButton(entry);
     },
     getTemplateCode: (id) => templateCodes.get(id) || "",
     onTemplate: (tplId) => addTemplateFilter(tplId),
@@ -317,6 +348,14 @@ function start() {
     onCase: (id) => {
       caseId = id;
       detail.clear(); // drop the old case's entry right away, before /sources answers
+      bookmarkStore.reset();
+      compareSelection.reset();
+      if (bookmarksPanel) {
+        bookmarksPanel.reset();
+      }
+      if (compare) {
+        compare.reset();
+      }
       userFilter = null; // conditions of the old case do not carry over
       if (filterTree) {
         filterTree.setCase(id);
@@ -352,6 +391,10 @@ function start() {
     },
     onSelection: () => applyView(),
     onDone: () => {
+      bookmarkStore.invalidate(); // the records were (re)indexed: markers are looked up again
+      if (bookmarksPanel && bookmarksPanel.isOpen()) {
+        bookmarksPanel.refresh();
+      }
       loadTemplates(caseId);
       knowledge.reset(); // the ERS configuration may have been read again
       if (unknownPanel) {
@@ -506,6 +549,15 @@ function start() {
           userFilter = filter;
           applyView();
         },
+        // Saved filters can include the toolbar filters; applying one replaces them.
+        getExtraFilter: () => composeFilter({ sourceIds: [], text: searchText, ...formState }, null, toggles),
+        onSavedApplied: () => {
+          byId("filter-form").reset();
+          byId("search-input").value = "";
+          searchText = "";
+          formState = { sevMax: null, levelMax: null, from: null, to: null };
+          toggles = { hideNoise: false, unclassified: false };
+        },
       });
     }
   });
@@ -648,6 +700,93 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: the button stays hidden.
+  });
+  // Bookmarks (detail section, panel, shortcuts) and "Compare with...": optional modules.
+  const bookmarksHost = byId("bookmarks-host");
+  const bookmarksButton = byId("bookmarks-button");
+  const toggleBookmarksPanel = () => {
+    if (!bookmarksPanel) {
+      return;
+    }
+    if (bookmarksPanel.isOpen()) {
+      bookmarksPanel.close();
+    } else if (caseId === null) {
+      showMessage(S.needCase, true);
+      return;
+    } else {
+      bookmarksPanel.open();
+    }
+    bookmarksButton.setAttribute("aria-expanded", bookmarksPanel.isOpen() ? "true" : "false");
+  };
+  import("./bookmarks-panel.js").then((module) => {
+    detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
+    bookmarksPanel = module.initBookmarksPanel(bookmarksHost, {
+      getCase: () => caseId,
+      store: bookmarkStore,
+      onReveal: revealEntry,
+      onError: showError,
+    });
+    bookmarksButton.hidden = false;
+    bookmarksButton.addEventListener("click", toggleBookmarksPanel);
+    if (detail.entry) {
+      detailBookmark.show(detail.entry);
+    }
+  }).catch(() => {
+    // Module missing or failing: no bookmarks UI.
+  });
+
+  const compareCurrent = () => {
+    const current = detail.entry;
+    if (!current || caseId === null) {
+      showMessage(S.cmpNeedRecord, false);
+      return;
+    }
+    const step = compareSelection.pick(current.id);
+    if (step.action === "mark") {
+      showMessage(format(S.cmpPicked, { id: step.a }), false);
+    } else if (step.action === "cancel") {
+      showMessage(S.cmpCancelled, false);
+    } else if (step.action === "compare" && compare) {
+      showMessage("", false);
+      compare.open(step.a, step.b);
+    }
+    paintCompareButton(detail.entry);
+  };
+  compareButton.addEventListener("click", compareCurrent);
+  import("./compare.js").then((module) => {
+    compare = module.initCompare(byId("compare-host"), { getCase: () => caseId });
+  }).catch(() => {
+    compareButton.hidden = true; // module missing or failing: no compare
+  });
+
+  // Shortcuts: b toggles the bookmark of the selected record, B opens the panel, c compares.
+  document.addEventListener("keydown", async (event) => {
+    const action = bookmarkKey(event);
+    if (!action || isTypingTarget(event.target) || caseId === null) {
+      return;
+    }
+    if (action === "panel") {
+      event.preventDefault();
+      toggleBookmarksPanel();
+      return;
+    }
+    const row = grid.selectedRow();
+    if (!row) {
+      showMessage(S.navNoSelection, false);
+      return;
+    }
+    event.preventDefault();
+    if (action === "toggle") {
+      try {
+        await bookmarkStore.toggle(row.id);
+      } catch (err) {
+        showError(err);
+      }
+    } else if (detail.entry && detail.entry.id === row.id) {
+      compareCurrent();
+    } else {
+      detail.show(row.id).then(() => compareCurrent());
+    }
   });
 
   // Operations panel, adapter dashboard and clock-jump banner: optional modules like the panels above.

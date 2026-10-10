@@ -8,6 +8,7 @@ which is only handed to the ingest as its input; case ids are validated strictly
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -38,13 +39,23 @@ from ..ingest.reader import ReadLimitError
 from ..knowledge.installation import read_installation
 from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
+from ..store import bookmarks, db, events, keys, payloads, query, views
 from ..store import config as config_store
-from ..store import db, events, keys, payloads, query, views
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
 from .sse import ProgressHub
 
 MAX_BODY_BYTES = 256 * 1024
+# Bookmarks import takes a whole export: sized from the export cap (bookmarks.MAX_EXPORT_BYTES) plus margin.
+MAX_IMPORT_BODY_BYTES = bookmarks.MAX_EXPORT_BYTES + 4 * 1024 * 1024
+_BODY_LIMITS = {"/api/bookmarks/import": MAX_IMPORT_BODY_BYTES}
+
+
+def body_limit(path: str) -> int:
+    """Largest request body accepted by a route."""
+    return _BODY_LIMITS.get(path, MAX_BODY_BYTES)
+
+
 MAX_PAGE_LIMIT = 500
 DEFAULT_PAGE_LIMIT = 200
 MAX_PATH_CHARS = 4096
@@ -56,6 +67,10 @@ SCOPE_LEAVES = frozenset({"source", "stream", "family", "ts"})
 _ENTRY_ID = re.compile(r"\d{1,18}\Z")
 _SMALL_INT = re.compile(r"\d{1,6}\Z")
 _VIEW_STATUS = {"filter_too_large": 413, "duplicate_name": 409, "too_many_views": 409, "not_found": 404}
+_BOOKMARK_STATUS = {
+    "not_found": 404, "entry_not_found": 404, "already_bookmarked": 409, "too_many": 409,
+    "import_too_large": 413,
+}  # fmt: skip
 
 
 class ApiError(Exception):
@@ -497,6 +512,17 @@ def _key_value_param(raw: str) -> str:
     return value
 
 
+def _bookmark_extra(exc: bookmarks.BookmarkError) -> dict[str, Any]:
+    return {"bookmark_id": exc.params["bookmark_id"]} if exc.code == "already_bookmarked" else {}
+
+
+def _int_field(body: dict[str, Any], name: str) -> int:
+    value = body.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < _INT64:
+        raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field=name))
+    return value
+
+
 def _case_from_body(store: CaseStore, body: dict[str, Any]) -> str:
     return store.require(body.get("case"))
 
@@ -627,6 +653,16 @@ class Api:
             ("GET", re.compile(r"/api/views\Z"), self.list_views),
             ("POST", re.compile(r"/api/views\Z"), self.create_view),
             ("DELETE", re.compile(r"/api/views/(?P<id>[^/]+)\Z"), self.delete_view),
+            ("PUT", re.compile(r"/api/views/(?P<id>[^/]+)\Z"), self.update_view),
+            ("GET", re.compile(r"/api/bookmarks\Z"), self.list_bookmarks),
+            ("POST", re.compile(r"/api/bookmarks\Z"), self.create_bookmark),
+            ("POST", re.compile(r"/api/bookmarks/lookup\Z"), self.lookup_bookmarks),
+            ("GET", re.compile(r"/api/bookmarks/export\Z"), self.export_bookmarks),
+            ("POST", re.compile(r"/api/bookmarks/import\Z"), self.import_bookmarks),
+            ("GET", re.compile(r"/api/bookmarks/(?P<id>[^/]+)\Z"), self.get_bookmark),
+            ("PATCH", re.compile(r"/api/bookmarks/(?P<id>[^/]+)\Z"), self.update_bookmark),
+            ("DELETE", re.compile(r"/api/bookmarks/(?P<id>[^/]+)\Z"), self.delete_bookmark),
+            ("GET", re.compile(r"/api/compare\Z"), self.compare),
             ("GET", re.compile(r"/api/events\Z"), self.list_events),
             ("GET", re.compile(r"/api/events/stats\Z"), self.events_stats),
             ("GET", re.compile(r"/api/events/histogram\Z"), self.events_histogram),
@@ -668,6 +704,9 @@ class Api:
         except views.ViewError as exc:
             status = _VIEW_STATUS.get(exc.code, 400)
             return Response(status, {"error": exc.code, "message": str(exc)})
+        except bookmarks.BookmarkError as exc:
+            status = _BOOKMARK_STATUS.get(exc.code, 400)
+            return Response(status, {"error": exc.code, "message": str(exc), **_bookmark_extra(exc)})
         except QueryInputError as exc:
             return Response(400, {"error": exc.code, "message": str(exc), "path": exc.path})
         except query.QueryTimeout:
@@ -1244,6 +1283,146 @@ class Api:
         with self._writer(cid) as conn:
             views.delete_view(conn, int(raw))
         return Response(204)
+
+    def update_view(self, request: Request) -> Response:
+        """Rename and/or overwrite the filter (and columns) of a saved filter; ``name`` is required."""
+        raw = request.match["id"]
+        if not _ENTRY_ID.match(raw):
+            raise ApiError(400, "invalid_view_id", messages.API_VIEW_BAD_ID)
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        name = views.sanitize_name(body.get("name"))
+        flt = body.get("filter")
+        if isinstance(flt, dict) and flt:
+            _check_scan_filter(flt)
+        flt_text = views.validate_filter(flt)
+        cols = body.get("columns")
+        cols_text = None if cols is None else json.dumps(views._columns(cols))
+        with self._writer(cid) as conn:
+            with conn:
+                if any(
+                    r[0].casefold() == name.casefold()
+                    for r in conn.execute("SELECT name FROM saved_view WHERE id <> ?", (int(raw),))
+                ):
+                    raise views.ViewError("duplicate_name", name=name)
+                cur = conn.execute(
+                    "UPDATE saved_view SET name = ?, filter = ?, columns = ? WHERE id = ?",
+                    (name, flt_text, cols_text, int(raw)),
+                )
+                if cur.rowcount == 0:
+                    raise views.ViewError("not_found", view_id=int(raw))
+            row = next(r for r in views.list_views(conn) if r["id"] == int(raw))
+        return Response(200, row)
+
+    # -- bookmarks (per case, table bookmark) and compare
+
+    @staticmethod
+    def _bookmark_id(request: Request) -> int:
+        raw = request.match["id"]
+        if not _ENTRY_ID.match(raw):
+            raise ApiError(400, "invalid_bookmark_id", messages.API_BAD_BOOKMARK_ID)
+        return int(raw)
+
+    def list_bookmarks(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        limit = bookmarks.DEFAULT_LIMIT
+        raw_limit = request.query.get("limit")
+        if raw_limit is not None:
+            if not _SMALL_INT.match(raw_limit) or not 1 <= int(raw_limit) <= bookmarks.MAX_LIMIT:
+                raise _bad(messages.API_BAD_KEY_LIMIT.format(limit=bookmarks.MAX_LIMIT))
+            limit = int(raw_limit)
+        after = None
+        raw_after = request.query.get("after")
+        if raw_after:
+            if not _ENTRY_ID.match(raw_after):
+                raise _bad(messages.API_BAD_CURSOR)
+            after = int(raw_after)
+        with self.store.reader(cid) as conn:
+            items, nxt = bookmarks.list_bookmarks(
+                conn,
+                color=request.query.get("color") or None,
+                text=request.query.get("q") or None,
+                limit=limit,
+                after=after,
+            )
+        return Response(200, {"bookmarks": items, "next": nxt})
+
+    def get_bookmark(self, request: Request) -> Response:
+        bookmark_id = self._bookmark_id(request)
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            return Response(200, bookmarks.get_bookmark(conn, bookmark_id))
+
+    def create_bookmark(self, request: Request) -> Response:
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        entry_id = _int_field(body, "entry_id")
+        with self._writer(cid) as conn:
+            made = bookmarks.create_bookmark(conn, entry_id, body.get("color"), body.get("note"))
+        return Response(201, made)
+
+    def update_bookmark(self, request: Request) -> Response:
+        bookmark_id = self._bookmark_id(request)
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        changes = {k: body[k] for k in ("color", "note") if k in body}
+        with self._writer(cid) as conn:
+            changed = bookmarks.update_bookmark(conn, bookmark_id, **changes)
+        return Response(200, changed)
+
+    def delete_bookmark(self, request: Request) -> Response:
+        bookmark_id = self._bookmark_id(request)
+        cid = _case_from_query(self.store, request)
+        with self._writer(cid) as conn:
+            bookmarks.delete_bookmark(conn, bookmark_id)
+        return Response(204)
+
+    def lookup_bookmarks(self, request: Request) -> Response:
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        with self.store.reader(cid) as conn:
+            found = bookmarks.for_entries(conn, body.get("entry_ids"))
+        return Response(200, {"bookmarks": {str(k): v for k, v in found.items()}})
+
+    def export_bookmarks(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            return Response(200, bookmarks.export_bookmarks(conn))
+
+    def import_bookmarks(self, request: Request) -> Response:
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        with self._writer(cid) as conn:
+            counts = bookmarks.import_bookmarks(conn, body.get("data"))
+        return Response(200, counts)
+
+    def compare(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        ids = []
+        for name in ("a", "b"):
+            raw = request.query.get(name, "")
+            if not _ENTRY_ID.match(raw):
+                raise ApiError(400, "invalid_entry_id", messages.API_BAD_ENTRY_ID)
+            ids.append(int(raw))
+        sides = []
+        with self.store.reader(cid) as conn:
+            for entry_id in ids:
+                entry = query.get_entry(conn, entry_id, max_cont_lines=bookmarks.COMPARE_MAX_LINES)
+                if entry is None:
+                    raise ApiError(
+                        404,
+                        "entry_not_found",
+                        messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid),
+                    )
+                sides.append(entry)
+        out = []
+        for side in sides:
+            item = _entry_json(side)
+            item["cont_truncated"] = bool(side.get("cont_truncated"))
+            out.append(item)
+        diff = bookmarks.diff_records(sides[0], sides[1])
+        diff["truncated"] = diff["truncated"] or any(i["cont_truncated"] for i in out)
+        return Response(200, {"a": out[0], "b": out[1], "diff": diff})
 
     @contextmanager
     def _writer(self, case_id: str) -> Iterator[sqlite3.Connection]:
