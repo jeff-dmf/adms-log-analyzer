@@ -751,6 +751,34 @@ class Knowledge:
 
 Precedência: configuração do ERS > pack do vault. Divergências (código no log que não existe no vault, como `ImsCallbackNotReceived`, ou no XML) aparecem como "fora do vault" no painel de conhecimento.
 
+### 7.3 Apelidos locais (`aliases.toml`)
+
+**O quê.** Arquivo opcional `<data dir>/aliases.toml` (fora do git) que mapeia a grafia real de um nome (como aparece nos logs e configs reais do ambiente) para o token neutro usado no repositório (`Custom`). Implementação: `src/dmslog/aliases.py` (`load(data_dir)` -> `Aliases` com `.apply(texto)` e `.apply_name(nome)`; `get(data_dir)` guarda em cache por processo e recarrega se o arquivo mudar).
+
+**Por quê.** Para tornar o repositório público, o nome do adapter específico do cliente foi trocado por `Custom` em tudo. Os ERS reais ainda trazem o nome original, então sem o mapa a família não seria reconhecida (`families.toml`, Registry, `process_map`).
+
+**Esquema.**
+```toml
+version = 1
+[[alias]]
+public = "Custom"        # 1-64 caracteres: letras, dígitos, _ . -
+real = "<texto original>" # 1-128 caracteres, sem caracteres de controle
+```
+Várias entradas podem repetir o mesmo `public` (uma grafia real por forma: CamelCase, com underscore etc.). O mesmo `real` com dois `public` diferentes é erro. Arquivo ausente = sem apelidos; arquivo inválido é ignorado inteiro, com mensagem em inglês (sem os valores) em `Aliases.error`, exibida por `dmslog info`, que mostra apenas a contagem.
+
+**Onde se aplica (fronteiras de ingestão, `real` -> `public`, mais longo primeiro).** O objeto `Aliases` é injetado (`IngestOptions.aliases`; CLI e API carregam do data dir), nunca lido por global dentro dos módulos:
+- `ingest/discover.py`, `discover(..., aliases=)`: o caminho lógico é normalizado só para classificar (`families.toml`); `process`, `family` e `stream_key` já saem com o token público. `member` e `file_name` continuam reais, pois o arquivo é relido por eles.
+- `knowledge/registry.py`, `parse_registry_xml(..., aliases=)`: nome do arquivo (camada e rótulo `_N_<rótulo>`) e nome do produto.
+- `knowledge/installation.py`, `read_installation(..., aliases=)`: nomes das operações do `WebServiceConfiguration`, caminhos dos arquivos de configuração exibidos (`web_service_path`, erros) e mensagens de `problems`. A busca do arquivo na coleta continua usando o caminho real.
+
+**Semântica.** Uma passada sobre o texto original, mais longo primeiro (alternância de regex), sem reescanear a saída: `AcmeWidget->Custom` com `Custom->Other` não vira `Other`. `apply` é sensível a maiúsculas; `apply_name`/`sanitize` casam a string `real` inteira em qualquer caixa (sem misturas parciais). Validação: `version` inteiro 1 (não 1.0, não bool); `real` e `public` sem caracteres de controle (C0, DEL, C1) nem de formatação; `real` iguais ignorando caixa com `public` diferente são erro. Diagnósticos são mensagens fixas (no máximo o número da entrada ou da linha), nunca conteúdo do arquivo.
+
+**Também normalizados (texto derivado de nomes):** `source.error`, `SourceResult.member`, eventos de progresso/SSE, `result.warnings`, saída de erro da CLI, mensagens de job da API e erros de diagnóstico do Registry (`Aliases.sanitize`, `_Run._shown`).
+
+**Diagnósticos (`src/dmslog/diagnostics.py`).** Nunca embutem `str(exc)` de OSError, zip, XML ou codec (o texto pode trazer o nome escapado, por exemplo `\\\\`, que o matcher não reconhece). Cada mensagem é montada com texto fixo escolhido pela CLASSE da exceção (`describe_error`: "file not found", "permission denied", "bad zip file or member", "invalid XML at line N, column M", "unknown encoding", ...), inteiros (linha, coluna, errno) e componentes (caminho, membro) normalizados uma única vez. Exceções do app declaram `diag_reason`/`diag_component` ou `diag_safe`. Com `aliases.toml` ativo, avisos de derivação/correlação mostram só o nome da classe. O matcher também casa a variante com `/` de um `real` que contém `\\` (e vice-versa).
+
+**Limites.** Só nomes: não reescreve texto de mensagem nem payload (os templates não contêm o nome). O banco mantém a grafia real em `source.member` e `source.file_name` (são a chave para reabrir o arquivo; a lista de fontes da API/UI os exibe), em valores de parâmetros do Registry (por exemplo o caminho do `WebServiceConfiguration`) e no nome do zip/pasta ingerido (`collection.path`, `label`). Uma coluna de nome de exibição seria a evolução natural, mas não foi feita. Não compartilhar índice ou exportação gerados com nomes reais. Mudou o `aliases.toml`: reingerir o caso.
+
 ## 8. Correlação
 
 | Tipo | Regra | Confiança |

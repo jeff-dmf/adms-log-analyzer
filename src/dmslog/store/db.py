@@ -20,6 +20,8 @@ _COMMON_PRAGMAS = (
 class SchemaVersionError(RuntimeError):
     """The database was written by a newer dmslog than this one."""
 
+    diag_safe = True  # the message holds two schema numbers and fixed words
+
 
 def read_schema() -> str:
     """Return schema.sql, read through importlib.resources (works inside a zipapp)."""

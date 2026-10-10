@@ -10,7 +10,10 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from . import __version__, messages
+from .aliases import describe as describe_aliases
+from .aliases import get as aliases_get
 from .buildinfo import get_commit
+from .diagnostics import component, describe_error
 from .paths import check_sqlite_fts5, resolve_data_dir
 
 # command name -> (help text, milestone that implements it)
@@ -145,10 +148,16 @@ def cmd_info(args: argparse.Namespace) -> int:
         "fts5": "yes" if check["fts5"] else "NO",
         "data_dir": resolve_data_dir(getattr(args, "data_dir", None)),
     }
+    values["aliases"] = describe_aliases(aliases_get(values["data_dir"]))
     for label, template in messages.INFO_LINES:
         print(f"{label}: {template.format(**values)}")
     print(f"cases: {_describe_cases(values['data_dir'])}")
     return 0
+
+
+def _shown(error: BaseException, data_dir: Path) -> str:
+    """Safe error text: fixed description plus alias-normalized components (never the exception text)."""
+    return describe_error(error, aliases_get(data_dir))
 
 
 def _describe_cases(data_dir: Path) -> str:
@@ -198,14 +207,15 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(getattr(args, "data_dir", None))
     limits = ReadLimits()
     try:
-        plan = build_plan(args.path, limits)
-        case = args.case if args.case is not None else default_case_name(plan)
+        plan_aliases = aliases_get(data_dir)
+        plan = build_plan(args.path, limits, plan_aliases)
+        case = args.case if args.case is not None else default_case_name(plan, plan_aliases)
         db_path = case_db_path(data_dir, case)
     except (SourceNotFoundError, OSError) as exc:
-        print(messages.INGEST_NOT_FOUND.format(error=exc), file=sys.stderr)
+        print(messages.INGEST_NOT_FOUND.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
     except UnsafeArchiveError as exc:
-        print(messages.INGEST_UNSAFE.format(error=exc), file=sys.stderr)
+        print(messages.INGEST_UNSAFE.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
     except ValueError as exc:
         print(messages.INGEST_INVALID_CASE.format(error=exc), file=sys.stderr)
@@ -213,7 +223,11 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     scope = SCOPE_ALL if args.all_logs else SCOPE_DEFAULT
     scope_text = messages.INGEST_SCOPE_ALL if args.all_logs else messages.INGEST_SCOPE_DEFAULT
-    print(messages.INGEST_START.format(path=args.path, case=case, scope=scope_text))
+    print(
+        messages.INGEST_START.format(
+            path=component(plan_aliases, str(args.path)), case=case, scope=scope_text
+        )
+    )
     interactive = sys.stdout.isatty()
 
     def progress(event: ProgressEvent) -> None:
@@ -234,13 +248,13 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     conn = create_case_db(db_path)
     try:
-        options = IngestOptions(scope=scope, case_name=case, limits=limits)
+        options = IngestOptions(scope=scope, case_name=case, limits=limits, aliases=plan_aliases)
         result = run_ingest(conn, args.path, options, progress)
     except CollectionConflictError as exc:
-        print(messages.INGEST_CONFLICT.format(case=case, error=exc), file=sys.stderr)
+        print(messages.INGEST_CONFLICT.format(case=case, error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_CONFLICT
     except (SourceNotFoundError, UnsafeArchiveError, OSError) as exc:
-        print(messages.INGEST_UNSAFE.format(error=exc), file=sys.stderr)
+        print(messages.INGEST_UNSAFE.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
     finally:
         conn.close()
@@ -437,7 +451,12 @@ def cmd_watch(args: argparse.Namespace) -> int:
     scope = SCOPE_ALL if args.all_logs else SCOPE_DEFAULT
     scope_text = messages.INGEST_SCOPE_ALL if args.all_logs else messages.INGEST_SCOPE_DEFAULT
     print(
-        messages.WATCH_START.format(path=args.path, case=args.case, interval=args.interval, scope=scope_text),
+        messages.WATCH_START.format(
+            path=component(aliases_get(data_dir), str(args.path)),
+            case=args.case,
+            interval=args.interval,
+            scope=scope_text,
+        ),
         flush=True,
     )
 
@@ -447,22 +466,26 @@ def cmd_watch(args: argparse.Namespace) -> int:
             print(messages.WATCH_WARNING.format(message=warning), file=sys.stderr, flush=True)
 
     def on_error(exc: Exception, delay: float) -> None:
-        print(messages.WATCH_ERROR.format(error=exc, delay=delay), file=sys.stderr, flush=True)
+        print(
+            messages.WATCH_ERROR.format(error=_shown(exc, data_dir), delay=delay), file=sys.stderr, flush=True
+        )
 
     conn = create_case_db(db_path)
     stop = threading.Event()
     # SIGTERM: ask the loop to stop; a running ingestion is abandoned at its next batch boundary.
     restore_signals = _install_stop_handler(lambda _signum, _frame: stop.set())
     try:
-        watcher = Watcher(conn, args.path, IngestOptions(scope=scope, case_name=args.case))
+        watcher = Watcher(
+            conn, args.path, IngestOptions(scope=scope, case_name=args.case, aliases=aliases_get(data_dir))
+        )
         watcher.run(stop, args.interval, on_report=on_report, on_error=on_error)
     except KeyboardInterrupt:
         stop.set()
     except CollectionConflictError as exc:
-        print(messages.WATCH_CONFLICT.format(case=args.case, error=exc), file=sys.stderr)
+        print(messages.WATCH_CONFLICT.format(case=args.case, error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_CONFLICT
     except (SourceNotFoundError, UnsafeArchiveError, OSError) as exc:
-        print(messages.INGEST_UNSAFE.format(error=exc), file=sys.stderr)
+        print(messages.INGEST_UNSAFE.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
     finally:
         restore_signals()
@@ -509,9 +532,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
             print(messages.WATCH_NOT_A_FOLDER.format(path=args.watch), file=sys.stderr)
             return EXIT_FAILED
         try:
-            case = args.watch_case or default_case_name(build_plan(args.watch, ReadLimits()))
+            case = args.watch_case or default_case_name(
+                build_plan(args.watch, ReadLimits()),
+                aliases_get(resolve_data_dir(getattr(args, "data_dir", None))),
+            )
         except OSError as exc:
-            print(messages.INGEST_NOT_FOUND.format(error=exc), file=sys.stderr)
+            print(
+                messages.INGEST_NOT_FOUND.format(
+                    error=_shown(exc, resolve_data_dir(getattr(args, "data_dir", None)))
+                ),
+                file=sys.stderr,
+            )
             return EXIT_FAILED
         watch = {
             "path": Path(args.watch),

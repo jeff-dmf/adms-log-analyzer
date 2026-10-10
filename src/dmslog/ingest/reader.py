@@ -55,6 +55,8 @@ BOM_UTF16_BE = b"\xfe\xff"
 class ReadLimitError(Exception):
     """A read limit was exceeded; ``reason`` is a short code (``total_bytes``, ``member_bytes``)."""
 
+    diag_safe = True  # the message holds only numbers and fixed words
+
     def __init__(self, reason: str, message: str) -> None:
         super().__init__(message)
         self.reason = reason

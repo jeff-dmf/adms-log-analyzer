@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dmslog import __version__
+from dmslog.aliases import Aliases
+from dmslog.diagnostics import component, describe_error, error_label
 from dmslog.ingest.discover import SourceInfo, discover, resolve_scope
 from dmslog.ingest.ers import (
     KIND_ERS_ZIP,
@@ -77,6 +79,7 @@ class IngestOptions:
     limits: ReadLimits = field(default_factory=ReadLimits)
     max_record_bytes: int = DEFAULT_MAX_RECORD_BYTES
     catalog: Catalog | None = None  # template catalog; None = the packaged adapters/*.toml
+    aliases: Aliases | None = None  # local aliases (real -> public names); None = no aliases
 
 
 @dataclass(frozen=True)
@@ -140,7 +143,7 @@ class IngestResult:
 # --------------------------------------------------------------------------- planning
 
 
-def build_plan(path: str | Path, limits: ReadLimits) -> CollectionPlan:
+def build_plan(path: str | Path, limits: ReadLimits, aliases: Aliases | None = None) -> CollectionPlan:
     """Like ``plan_collection`` but applying the run's limits and the ratio policy."""
     target = Path(path)
     sources = list(
@@ -150,6 +153,7 @@ def build_plan(path: str | Path, limits: ReadLimits) -> CollectionPlan:
             max_ratio=limits.max_ratio,
             max_members=limits.max_members,
             max_total_bytes=limits.max_total_bytes,
+            aliases=aliases,
         )
     )
     if target.is_dir():
@@ -189,11 +193,15 @@ def _slug(text: str) -> str:
     return slug[:80] or "case"
 
 
-def default_case_name(plan: CollectionPlan) -> str:
-    """Case name from the ERS GUID and capture time, or from the folder or file name."""
+def default_case_name(plan: CollectionPlan, aliases: Aliases | None = None) -> str:
+    """Case name from the ERS GUID and capture time, or from the folder or file name.
+
+    With `aliases` the folder or file name carries the public spelling (the case name is stored and shown).
+    """
     if plan.identity is not None:
         return f"{plan.identity.guid[:8].lower()}-{plan.identity.timestamp}"
-    return _slug(plan.path.stem if plan.kind == KIND_FILE else plan.path.name)
+    name = plan.path.stem if plan.kind == KIND_FILE else plan.path.name
+    return _slug(aliases.apply_name(name) if aliases else name)
 
 
 def validate_case_name(name: str) -> str:
@@ -328,12 +336,34 @@ class _Run:
         self.catalog: Catalog = options.catalog if options.catalog is not None else default_catalog()
         self.severity = SeverityHook()
 
+    def _shown(self, text: str | None) -> str | None:
+        """A name as presented or stored (progress, results): public spelling, control characters escaped."""
+        return component(self.opt.aliases, text) if text else text
+
+    def _exc_text(self, exc: BaseException) -> str:
+        """``Class: detail`` of a failure. With local aliases the detail is the class-based fixed text:
+        exception text cannot be proven free of (escaped) real names."""
+        aliases = self.opt.aliases
+        return error_label(exc, aliases) if aliases else f"{type(exc).__name__}: {exc}"
+
+    def _detail(self, message: str) -> str:
+        """Derivation/link messages (``Class: detail``) as presented: class name only with aliases."""
+        if not self.opt.aliases:
+            return message
+        match = re.match(r"[A-Za-z_][\w.]*(?=:|$)", message)
+        return match.group(0) if match else "error"
+
+    def _warn(self, message: str) -> None:
+        """Warnings are fixed text plus describe_error() output: names-free, never re-sanitized."""
+        self.result.warnings.append(message)
+
     def emit(self, phase: str, source_bytes: int = 0, source_total: int = 0, source_records: int = 0) -> None:
         if self.progress is None:
             return
         self.progress(
             ProgressEvent(
-                phase, self.current_member, self.current_action, source_bytes, source_total, source_records,
+                phase, self._shown(self.current_member), self.current_action,
+                source_bytes, source_total, source_records,
                 self.bytes_done,
                 self.bytes_total, self.result.records, self.sources_done, self.sources_total,
             )
@@ -353,12 +383,12 @@ class _Run:
             summary = derive_pending(self.w.conn, self.catalog)
         except Exception as exc:  # e.g. a locked database
             self.result.derive_seconds = time.perf_counter() - started
-            self.result.warnings.append(f"derivation failed: {type(exc).__name__}: {exc}")
+            self._warn(f"derivation failed: {self._exc_text(exc)}")
             return
         self.result.derive_seconds = time.perf_counter() - started
         self.result.events_derived = summary.events
         for stream_id, message in summary.errors:
-            self.result.warnings.append(f"derivation failed for stream {stream_id}: {message}")
+            self._warn(f"derivation failed for stream {stream_id}: {self._detail(message)}")
 
     def correlate(self) -> None:
         """Correlate the groups that changed (after the derivation): normal<->sensitive pairing and, when
@@ -376,20 +406,20 @@ class _Run:
             links = importlib.import_module("dmslog.derive.links")
         except ModuleNotFoundError as exc:
             if exc.name != "dmslog.derive.links":
-                self.result.warnings.append(f"link rules failed: {type(exc).__name__}: {exc}")
+                self._warn(f"link rules failed: {self._exc_text(exc)}")
         except Exception as exc:  # a broken module must not abort the ingestion
-            self.result.warnings.append(f"link rules failed: {type(exc).__name__}: {exc}")
+            self._warn(f"link rules failed: {self._exc_text(exc)}")
         else:
             steps.append(("link rules", links.link_pending))
         for name, step in steps:
             try:
                 summary = step(self.w.conn, self.catalog)
             except Exception as exc:  # e.g. a locked database
-                self.result.warnings.append(f"{name} failed: {type(exc).__name__}: {exc}")
+                self._warn(f"{name} failed: {self._exc_text(exc)}")
                 continue
             self.result.links_created += summary.links
             for group, message in summary.errors:
-                self.result.warnings.append(f"{name} failed for group {group}: {message}")
+                self._warn(f"{name} failed for group {group}: {self._detail(message)}")
         self.result.correlate_seconds = time.perf_counter() - started
 
     def link_payloads(self) -> None:
@@ -406,12 +436,12 @@ class _Run:
             summary = link_payloads(self.w.conn, self.catalog)
         except Exception as exc:  # e.g. a locked database
             self.result.payload_seconds = time.perf_counter() - started
-            self.result.warnings.append(f"payload linking failed: {type(exc).__name__}: {exc}")
+            self._warn(f"payload linking failed: {self._exc_text(exc)}")
             return
         self.result.payload_seconds = time.perf_counter() - started
         self.result.payloads_linked = summary.linked
         for group, message in summary.errors:
-            self.result.warnings.append(f"payload linking failed for group {group}: {message}")
+            self._warn(f"payload linking failed for group {group}: {self._detail(message)}")
 
     # ---- collection
 
@@ -466,7 +496,7 @@ class _Run:
         if not processes:
             return
         try:
-            installation = read_installation(self.plan.path)
+            installation = read_installation(self.plan.path, aliases=self.opt.aliases)
         except (RegistryError, OSError, zipfile.BadZipFile):
             return
         self.severity.set_installation(installation)
@@ -598,7 +628,7 @@ class _Run:
         self.current_action = action.value
         if action is Action.UNCHANGED:
             self.result.sources_unchanged += 1
-            self.result.details.append(SourceResult(info.member, action.value))
+            self.result.details.append(SourceResult(self._shown(info.member), action.value))
             self._finish_source(info, 0)
             return
         self.emit("source_start", 0, info.size)
@@ -621,7 +651,9 @@ class _Run:
         self.result.records += stats.records
         self.result.lines += stats.lines
         self.result.bytes += fed
-        self.result.details.append(SourceResult(info.member, action.value, stats.records, stats.lines, fed))
+        self.result.details.append(
+            SourceResult(self._shown(info.member), action.value, stats.records, stats.lines, fed)
+        )
         self._finish_source(info, fed, stats.records)
 
     def _finish_source(self, info: SourceInfo, fed: int, records: int = 0) -> None:
@@ -630,11 +662,12 @@ class _Run:
         self.emit("source_done", fed, info.size, records)
 
     def _fail(self, row: SourceRow, info: SourceInfo, exc: Exception, reason: str | None = None) -> None:
-        text = f"{reason}: {exc}" if reason else f"{type(exc).__name__}: {exc}"
+        detail = describe_error(exc, self.opt.aliases)
+        text = f"{reason}: {detail}" if reason else f"{type(exc).__name__}: {detail}"
         self.w.update_source(row.id, status="error", error=text[:500])
         self.w.commit()
         self.result.sources_failed += 1
-        self.result.details.append(SourceResult(info.member, "error", error=text))
+        self.result.details.append(SourceResult(self._shown(info.member), "error", error=text))
         self._finish_source(info, 0)
 
     @staticmethod
@@ -807,7 +840,7 @@ def run_ingest(
         raise ValueError(f"scope must be 'default' or 'all', got {options.scope!r}")
     t0 = time.perf_counter()
     changes_before = conn.total_changes
-    plan = build_plan(path, options.limits)
+    plan = build_plan(path, options.limits, options.aliases)
     run_hook = SeverityHook()
     writer = IndexWriter(conn, severity=generic_severity, infer_severity=run_hook)
     writer.init_meta(options.case_name or default_case_name(plan), __version__)
