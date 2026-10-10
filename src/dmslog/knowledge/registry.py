@@ -15,6 +15,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from dmslog.aliases import Aliases
+
 DEFAULT_MAX_XML_BYTES = 4 * 1024 * 1024
 
 STATUS_ONLY = "only"
@@ -140,11 +142,13 @@ def parse_registry_xml(
     *,
     filename: str | None = None,
     max_bytes: int = DEFAULT_MAX_XML_BYTES,
+    aliases: Aliases | None = None,
 ) -> RegistryLayer:
     """Parse one ``<OASYSDNARegistry><Product Name=...>`` file into a layer.
 
     ``filename`` is required for bytes input (it carries the layer and label).
-    Raises :class:`RegistryError` for oversized, malformed or unexpected files.
+    Raises :class:`RegistryError` for oversized, malformed or unexpected files. With ``aliases`` the
+    file name (layer label, product guess) and the product name carry the public spelling.
     """
     if isinstance(source, bytes):
         data = source
@@ -159,11 +163,13 @@ def parse_registry_xml(
     if len(products) != 1 or not products[0].get("Name"):
         raise RegistryError(f"{file_name}: expected exactly one named <Product> element")
     product = products[0]
+    if aliases:
+        file_name = aliases.apply_name(file_name)
     guess, layer, label = parse_registry_filename(file_name)
     values: dict[tuple[str, str], RegistryValue] = {}
     _collect_values(product, "", values)
     return RegistryLayer(
-        product=product.get("Name") or guess,
+        product=(aliases.apply_name(product.get("Name") or "") if aliases else product.get("Name")) or guess,
         file=file_name,
         layer=layer,
         label=label,

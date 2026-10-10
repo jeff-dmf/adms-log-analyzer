@@ -10,6 +10,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from . import __version__, messages
+from .aliases import describe as describe_aliases
+from .aliases import get as aliases_get
 from .buildinfo import get_commit
 from .paths import check_sqlite_fts5, resolve_data_dir
 
@@ -145,6 +147,7 @@ def cmd_info(args: argparse.Namespace) -> int:
         "fts5": "yes" if check["fts5"] else "NO",
         "data_dir": resolve_data_dir(getattr(args, "data_dir", None)),
     }
+    values["aliases"] = describe_aliases(aliases_get(values["data_dir"]))
     for label, template in messages.INFO_LINES:
         print(f"{label}: {template.format(**values)}")
     print(f"cases: {_describe_cases(values['data_dir'])}")
@@ -198,7 +201,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     data_dir = resolve_data_dir(getattr(args, "data_dir", None))
     limits = ReadLimits()
     try:
-        plan = build_plan(args.path, limits)
+        plan_aliases = aliases_get(data_dir)
+        plan = build_plan(args.path, limits, plan_aliases)
         case = args.case if args.case is not None else default_case_name(plan)
         db_path = case_db_path(data_dir, case)
     except (SourceNotFoundError, OSError) as exc:
@@ -234,7 +238,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     conn = create_case_db(db_path)
     try:
-        options = IngestOptions(scope=scope, case_name=case, limits=limits)
+        options = IngestOptions(scope=scope, case_name=case, limits=limits, aliases=plan_aliases)
         result = run_ingest(conn, args.path, options, progress)
     except CollectionConflictError as exc:
         print(messages.INGEST_CONFLICT.format(case=case, error=exc), file=sys.stderr)
@@ -454,7 +458,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
     # SIGTERM: ask the loop to stop; a running ingestion is abandoned at its next batch boundary.
     restore_signals = _install_stop_handler(lambda _signum, _frame: stop.set())
     try:
-        watcher = Watcher(conn, args.path, IngestOptions(scope=scope, case_name=args.case))
+        watcher = Watcher(
+            conn, args.path, IngestOptions(scope=scope, case_name=args.case, aliases=aliases_get(data_dir))
+        )
         watcher.run(stop, args.interval, on_report=on_report, on_error=on_error)
     except KeyboardInterrupt:
         stop.set()

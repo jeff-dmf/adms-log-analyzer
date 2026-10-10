@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dmslog import __version__
+from dmslog.aliases import Aliases
 from dmslog.ingest.discover import SourceInfo, discover, resolve_scope
 from dmslog.ingest.ers import (
     KIND_ERS_ZIP,
@@ -77,6 +78,7 @@ class IngestOptions:
     limits: ReadLimits = field(default_factory=ReadLimits)
     max_record_bytes: int = DEFAULT_MAX_RECORD_BYTES
     catalog: Catalog | None = None  # template catalog; None = the packaged adapters/*.toml
+    aliases: Aliases | None = None  # local aliases (real -> public names); None = no aliases
 
 
 @dataclass(frozen=True)
@@ -140,7 +142,7 @@ class IngestResult:
 # --------------------------------------------------------------------------- planning
 
 
-def build_plan(path: str | Path, limits: ReadLimits) -> CollectionPlan:
+def build_plan(path: str | Path, limits: ReadLimits, aliases: Aliases | None = None) -> CollectionPlan:
     """Like ``plan_collection`` but applying the run's limits and the ratio policy."""
     target = Path(path)
     sources = list(
@@ -150,6 +152,7 @@ def build_plan(path: str | Path, limits: ReadLimits) -> CollectionPlan:
             max_ratio=limits.max_ratio,
             max_members=limits.max_members,
             max_total_bytes=limits.max_total_bytes,
+            aliases=aliases,
         )
     )
     if target.is_dir():
@@ -466,7 +469,7 @@ class _Run:
         if not processes:
             return
         try:
-            installation = read_installation(self.plan.path)
+            installation = read_installation(self.plan.path, aliases=self.opt.aliases)
         except (RegistryError, OSError, zipfile.BadZipFile):
             return
         self.severity.set_installation(installation)
@@ -807,7 +810,7 @@ def run_ingest(
         raise ValueError(f"scope must be 'default' or 'all', got {options.scope!r}")
     t0 = time.perf_counter()
     changes_before = conn.total_changes
-    plan = build_plan(path, options.limits)
+    plan = build_plan(path, options.limits, options.aliases)
     run_hook = SeverityHook()
     writer = IndexWriter(conn, severity=generic_severity, infer_severity=run_hook)
     writer.init_meta(options.case_name or default_case_name(plan), __version__)

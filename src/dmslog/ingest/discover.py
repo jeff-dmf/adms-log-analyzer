@@ -19,6 +19,8 @@ from importlib import resources
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from dmslog.aliases import Aliases
+
 FAMILIES_RESOURCE = "families.toml"
 ENVELOPES = ("adms", "oaserr", "plain")
 SCOPES = ("default", "service", "optional")
@@ -265,6 +267,17 @@ def normalize_member_name(name: str) -> str:
     return "/".join(cleaned)
 
 
+class _AliasedRules:
+    """RuleSet view that classifies the alias-normalized path (real name -> public token)."""
+
+    def __init__(self, rules: RuleSet, aliases: Aliases) -> None:
+        self._rules = rules
+        self._aliases = aliases
+
+    def classify(self, path: str) -> Classification:
+        return self._rules.classify(self._aliases.apply_path(path))
+
+
 # --------------------------------------------------------------------------- discovery
 
 
@@ -276,14 +289,20 @@ def discover(
     max_ratio: float = DEFAULT_MAX_RATIO,
     max_members: int = DEFAULT_MAX_MEMBERS,
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+    aliases: Aliases | None = None,
 ) -> Iterator[SourceInfo]:
     """Yield a SourceInfo for every file of an ERS zip, an installation folder or one file.
+
+    With `aliases`, the real spelling of a name in a member path is replaced by its public token
+    before the path is classified, so `process` (and everything derived from it) carries the public
+    name. `member` and `file_name` stay as in the container because the file is read back through them.
 
     The listing is complete before the first item is yielded because the default scope of
     service logs depends on which services host adapters. Nothing is decompressed or read.
     """
     target = Path(path)
     rules = rules or load_rules()
+    rules = _AliasedRules(rules, aliases) if aliases else rules
     if target.is_dir():
         raw = list(_scan_folder(target, rules))
         kind = "folder"
@@ -373,7 +392,7 @@ def _build(
 
 def _scan_zip(
     path: Path,
-    rules: RuleSet,
+    rules: RuleSet | _AliasedRules,
     *,
     max_member_bytes: int,
     max_ratio: float,
@@ -431,7 +450,7 @@ def _zip_mtime(info: zipfile.ZipInfo) -> float | None:
         return None
 
 
-def _scan_folder(root: Path, rules: RuleSet) -> Iterator[SourceInfo]:
+def _scan_folder(root: Path, rules: RuleSet | _AliasedRules) -> Iterator[SourceInfo]:
     for current, dirs, files in os.walk(root, followlinks=False):
         dirs.sort()
         for name in sorted(files):
@@ -456,7 +475,7 @@ def _scan_folder(root: Path, rules: RuleSet) -> Iterator[SourceInfo]:
             )
 
 
-def _single_file(path: Path, rules: RuleSet) -> SourceInfo:
+def _single_file(path: Path, rules: RuleSet | _AliasedRules) -> SourceInfo:
     st = path.stat()
     member = normalize_member_name(path.name)
     return _build(

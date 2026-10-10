@@ -14,6 +14,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dmslog.aliases import Aliases
+
 from .registry import (
     DEFAULT_MAX_XML_BYTES,
     ConfigParam,
@@ -166,7 +168,7 @@ def _child_text(element: ET.Element, tag: str) -> str | None:
     return None if child is None else (child.text or "").strip()
 
 
-def _parse_web_services(root: ET.Element) -> tuple[WebServiceOperation, ...]:
+def _parse_web_services(root: ET.Element, aliases: Aliases | None = None) -> tuple[WebServiceOperation, ...]:
     ops = []
     for node in root.iter("WebServiceConfiguration"):
         name = node.get("Name")
@@ -174,7 +176,7 @@ def _parse_web_services(root: ET.Element) -> tuple[WebServiceOperation, ...]:
             continue
         ops.append(
             WebServiceOperation(
-                operation=name,
+                operation=aliases.apply_name(name) if aliases else name,
                 message_log_level=_child_text(node, "MessageLogLevel"),
                 auditing_period=_child_text(node, "AuditingPeriod"),
                 num_of_retries=_child_text(node, "NumOfRetries"),
@@ -208,7 +210,9 @@ def _parse_error_config(root: ET.Element, param_name: str, path: str) -> ErrorCo
     )
 
 
-def read_installation(path: Path | str, *, max_xml_bytes: int = DEFAULT_MAX_XML_BYTES) -> InstallationConfig:
+def read_installation(
+    path: Path | str, *, max_xml_bytes: int = DEFAULT_MAX_XML_BYTES, aliases: Aliases | None = None
+) -> InstallationConfig:
     """Read a collection root (folder or zip) and resolve the effective configuration.
 
     Per-file problems (malformed, oversized, missing target) are collected in
@@ -217,12 +221,12 @@ def read_installation(path: Path | str, *, max_xml_bytes: int = DEFAULT_MAX_XML_
     """
     collection = _Collection(Path(path), max_xml_bytes)
     try:
-        return _read(collection)
+        return _read(collection, aliases)
     finally:
         collection.close()
 
 
-def _read(collection: _Collection) -> InstallationConfig:
+def _read(collection: _Collection, aliases: Aliases | None = None) -> InstallationConfig:
     problems: list[str] = []
     layers: list[RegistryLayer] = []
     data_root = ""  # prefix (with trailing "/") of the data root inside the collection
@@ -242,7 +246,9 @@ def _read(collection: _Collection) -> InstallationConfig:
         file_name = real.replace("\\", "/").rsplit("/", 1)[-1]
         try:
             layers.append(
-                parse_registry_xml(collection.read(real), filename=file_name, max_bytes=collection.max_bytes)
+                parse_registry_xml(
+                    collection.read(real), filename=file_name, max_bytes=collection.max_bytes, aliases=aliases
+                )
             )
         except RegistryError as exc:
             problems.append(str(exc))
@@ -273,9 +279,12 @@ def _read(collection: _Collection) -> InstallationConfig:
                 problems.append(str(exc))
                 continue
             if is_ws:
-                ws_path, operations = member, _parse_web_services(root)
+                ws_path = aliases.apply_path(member) if aliases else member
+                operations = _parse_web_services(root, aliases)
             else:
-                errors.append(_parse_error_config(root, name, member))
+                errors.append(
+                    _parse_error_config(root, name, aliases.apply_path(member) if aliases else member)
+                )
         products.append(
             ProductConfig(
                 product=product,
@@ -285,4 +294,6 @@ def _read(collection: _Collection) -> InstallationConfig:
                 error_configurations=tuple(errors),
             )
         )
+    if aliases:
+        problems = [aliases.apply_name(p) for p in problems]
     return InstallationConfig(products=tuple(products), problems=tuple(problems))

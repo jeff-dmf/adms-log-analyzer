@@ -155,7 +155,7 @@ class Watcher:
         return self._seen is None or stats != self._seen
 
     def _rescan(self) -> None:
-        plan = build_plan(self.path, self.options.limits)
+        plan = build_plan(self.path, self.options.limits, self.options.aliases)
         selected = select_sources(plan.sources, self.options.scope)
         self._files = {s.member: self.path.joinpath(*s.member.split("/")) for s in selected}
         root = self.path

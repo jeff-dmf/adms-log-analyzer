@@ -75,6 +75,31 @@ its index):
 - Linux: `${XDG_DATA_HOME:-~/.local/share}/dmslog`
 - Anywhere else: `--data-dir DIR` (for example an encrypted USB drive).
 
+## Local aliases
+
+The repository uses the neutral token `Custom` where a customer-specific adapter name used to be.
+Real logs and configs still carry the original spelling. To make the analyzer recognize it, create
+the optional file `aliases.toml` in the data directory (it is never part of the repository):
+
+```toml
+version = 1
+
+[[alias]]
+public = "Custom"            # token used in the repository: 1-64 chars, letters digits _ . -
+real = "<original text>"     # spelling in real logs and configs: 1-128 chars, no control characters
+
+[[alias]]                    # several entries may share one `public` (one per spelling or form)
+public = "Custom"
+real = "<original_underscore_form>"
+```
+
+At ingestion, `real` is replaced by `public` in names read from the ERS (log file and process
+names, Registry file names, layer labels, product and Web Service operation names), so the stored
+index and the UI show the public token only. Longest `real` wins; file names also match regardless
+of case. Log message text and payloads are not rewritten. A missing file means no aliases; an
+invalid file is ignored with a message in `dmslog info`, which also shows how many aliases were loaded
+(never their values). Re-ingest a case after changing the file.
+
 ## Privacy and security
 
 - The server listens on `127.0.0.1` only. `serve` prints a URL with a random access token; the

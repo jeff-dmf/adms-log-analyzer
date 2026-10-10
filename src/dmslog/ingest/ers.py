@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from dmslog.aliases import Aliases
 from dmslog.ingest.discover import SourceInfo, discover
 
 _NAME = re.compile(
@@ -172,10 +173,10 @@ def select_sources(
     return chosen
 
 
-def plan_collection(path: str | os.PathLike[str]) -> CollectionPlan:
+def plan_collection(path: str | os.PathLike[str], aliases: Aliases | None = None) -> CollectionPlan:
     """Discover a zip, folder or file and describe it as one collection."""
     target = Path(path)
-    sources = tuple(discover(target))
+    sources = tuple(discover(target, aliases=aliases))
     if target.is_dir():
         kind = KIND_FOLDER
     elif target.is_file() and zipfile.is_zipfile(target):

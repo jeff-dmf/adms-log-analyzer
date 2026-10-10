@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from .. import __version__, messages
+from .. import __version__, aliases, messages
 from ..ingest import pipeline
 from ..ingest.discover import SourceNotFoundError, UnsafeArchiveError
 from ..ingest.ers import (
@@ -123,7 +123,8 @@ class CaseStore:
     """Cases live in ``<data-dir>/cases/<id>/case.sqlite``; the id is the folder name."""
 
     def __init__(self, data_dir: Path) -> None:
-        self.root = Path(data_dir) / "cases"
+        self.data_dir = Path(data_dir)
+        self.root = self.data_dir / "cases"
         self._create_lock = threading.Lock()
 
     def validate_id(self, value: Any) -> str:
@@ -318,7 +319,9 @@ class IngestJobs:
 
         try:
             conn = db.create_case_db(self._store.db_path(case_id))
-            options = pipeline.IngestOptions(scope=scope, case_name=case_id)
+            options = pipeline.IngestOptions(
+                scope=scope, case_name=case_id, aliases=aliases.get(self._store.data_dir)
+            )
             result = pipeline.run_ingest(conn, path, options, progress)
             done["records"] = result.records
             done["failed"] = result.sources_failed
@@ -362,7 +365,11 @@ class IngestJobs:
             if exc.status != 404:
                 raise
             cid = self._store.create(case_id)
-        watcher = Watcher(None, path, pipeline.IngestOptions(scope=scope, case_name=cid))
+        watcher = Watcher(
+            None,
+            path,
+            pipeline.IngestOptions(scope=scope, case_name=cid, aliases=aliases.get(self._store.data_dir)),
+        )
         thread = threading.Thread(
             target=self._watch, args=(cid, watcher, interval), name=f"watch-{cid}", daemon=True
         )
@@ -989,7 +996,7 @@ class Api:
         installations: dict[int, Any] = {}
         for path in paths:
             try:
-                installation = read_installation(path)
+                installation = read_installation(path, aliases=aliases.get(self.data_dir))
             except (RegistryError, OSError, zipfile.BadZipFile):
                 continue
             if installation.products:
@@ -1390,6 +1397,7 @@ class Api:
             fmt_name = result["payload"]["fmt"]
             result["formatted"] = _pretty(result["text"], fmt_name, result["truncated_display"])
         return Response(200, result)
+
     # -- redaction profile and the .txt export (report/redact.py, report/export.py)
 
     @staticmethod
