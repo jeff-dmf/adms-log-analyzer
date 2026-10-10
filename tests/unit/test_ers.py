@@ -159,8 +159,17 @@ def test_two_different_zips_in_one_case_raise_through_the_plan_identities(tmp_pa
 
 
 def _real_zips():
-    found = sorted(REAL_DIR.glob("ERS_CL_*.zip"))
-    return [p for p in found if p.stat().st_size >= 1024]  # skip Git LFS pointers
+    def big_enough(path):
+        try:
+            return path.stat().st_size >= 1024  # skip Git LFS pointers
+        except OSError:  # vanished or unreadable: skipped without printing the exception
+            return False
+
+    try:
+        found = sorted(REAL_DIR.glob("ERS_CL_*.zip"))
+    except OSError:
+        return []
+    return [p for p in found if big_enough(p)]
 
 
 REAL = _real_zips()

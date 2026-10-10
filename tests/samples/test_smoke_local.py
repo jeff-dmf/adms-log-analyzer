@@ -18,15 +18,27 @@ SENSITIVE = re.compile(r"^ERS_CL_.*_\d{14}_Sensitive_Enterprise_.*\.zip$")
 MIN_REAL_SIZE = 1_000_000
 
 
+def _usable(path: Path) -> bool:
+    """A real zip of a plausible size; an unreadable or vanished file is just skipped (no exception text)."""
+    try:
+        return path.stat().st_size >= MIN_REAL_SIZE and zipfile.is_zipfile(path)
+    except OSError:
+        return False
+
+
 def _has_real_samples() -> bool:
     """Return True if both Enterprise and Sensitive ERS samples exist and are real."""
-    files = {}
-    for path in sorted(SAMPLES.glob("*.zip")):
-        if ENTERPRISE.match(path.name) and path.stat().st_size >= MIN_REAL_SIZE and zipfile.is_zipfile(path):
-            files["enterprise"] = path
-        elif SENSITIVE.match(path.name) and path.stat().st_size >= MIN_REAL_SIZE and zipfile.is_zipfile(path):
-            files["sensitive"] = path
-    return len(files) == 2
+    found = set()
+    try:
+        paths = sorted(SAMPLES.glob("*.zip"))
+    except OSError:
+        return False
+    for path in paths:
+        if ENTERPRISE.match(path.name) and _usable(path):
+            found.add("enterprise")
+        elif SENSITIVE.match(path.name) and _usable(path):
+            found.add("sensitive")
+    return len(found) == 2
 
 
 def _check(ok: object, label: str) -> None:

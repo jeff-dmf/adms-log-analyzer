@@ -28,9 +28,21 @@ TIME_TARGET_S = 40.0
 RSS_TARGET_MB = 500.0
 
 
+def _usable(path: Path) -> bool:
+    """A real zip of a plausible size; an unreadable or vanished file is skipped (no exception text)."""
+    try:
+        return path.stat().st_size >= MIN_REAL_SIZE and zipfile.is_zipfile(path)
+    except OSError:
+        return False
+
+
 def _find_sample() -> Path | None:
-    for path in sorted(SAMPLES.glob("*.zip")):
-        if ENTERPRISE.match(path.name) and path.stat().st_size >= MIN_REAL_SIZE and zipfile.is_zipfile(path):
+    try:
+        paths = sorted(SAMPLES.glob("*.zip"))
+    except OSError:
+        return None
+    for path in paths:
+        if ENTERPRISE.match(path.name) and _usable(path):
             return path
     return None
 
