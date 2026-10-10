@@ -21,12 +21,18 @@ def _find_samples() -> dict[str, Path]:
     return mod.find_samples()
 
 
+def _check(ok: object, label: str) -> None:
+    """Assert with a FIXED message computed from booleans: no object holding sample output is asserted on."""
+    assert ok, f"real-sample check failed: {label}"
+
+
 @pytest.mark.skipif(not _find_samples(), reason="real extracted ERS sample folders are not available")
 def test_template_smoke_runs() -> None:
     proc = subprocess.run(
         [sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=1800, cwd=ROOT, check=False
     )
-    assert proc.returncode == 0, proc.stderr[-500:]
-    assert "COVERAGE" in proc.stdout
-    assert "WINDOW EFFECT" in proc.stdout
-    assert "source error" not in proc.stdout
+    out = proc.stdout
+    _check(proc.returncode == 0, "smoke_templates.py exit code 0")
+    _check("COVERAGE" in out, "coverage section present")
+    _check("WINDOW EFFECT" in out, "window section present")
+    _check("source error" not in out, "no source error reported")

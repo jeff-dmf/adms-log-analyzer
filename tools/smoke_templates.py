@@ -64,7 +64,7 @@ def percentile(sorted_values: list[int], p: float) -> int:
     return sorted_values[idx]
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--samples", help="folder holding enterprise/, sensitive/, enterprise2/, sensitive2/")
     args = ap.parse_args(argv)
@@ -237,6 +237,15 @@ def main(argv: list[str] | None = None) -> int:
         for f in failures:
             print(f"  {f}")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the smoke; an unexpected exception prints only its class name (no traceback, no message)."""
+    try:
+        return _main(argv)
+    except Exception as exc:  # noqa: BLE001 - messages and tracebacks may hold sample names
+        print(f"smoke_templates: unexpected {type(exc).__name__} (details withheld)")
+        return 1
 
 
 if __name__ == "__main__":

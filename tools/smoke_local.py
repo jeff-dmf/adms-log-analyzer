@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import statistics
 import sys
 import tempfile
@@ -27,6 +28,7 @@ from typing import Any
 
 # Detect if we can run
 try:
+    from dmslog import aliases as aliases_mod
     from dmslog.ingest.ers import plan_collection, select_sources
     from dmslog.server.app import DmslogServer
     from dmslog.store import connect
@@ -39,6 +41,55 @@ SAMPLES = ROOT / "local-samples"
 ENTERPRISE = re.compile(r"^ERS_CL_.*_\d{14}_Enterprise_.*\.zip$")
 SENSITIVE = re.compile(r"^ERS_CL_.*_\d{14}_Sensitive_Enterprise_.*\.zip$")
 MIN_REAL_SIZE = 1_000_000  # smaller files are Git LFS pointers or placeholders
+ALIASES_FILE = SAMPLES / "aliases.toml"  # optional, local only
+
+
+def _ingest_failure(label: str, returncode: int) -> str:
+    """Neutral diagnostic for a failed ingest: a label, the exit code and a fixed text.
+
+    Never includes file names, GUIDs, raw stderr or log text (the samples are sensitive).
+    """
+    return f"ingest of {label} failed (exit code {returncode}; details withheld)"
+
+
+def _safe_error(label: str, exc: BaseException) -> str:
+    """Fixed diagnostic for an exception: label, class name and errno only.
+
+    Never includes the exception message, which may hold a zip member name or log text.
+    """
+    errno = getattr(exc, "errno", None)
+    suffix = f", errno={errno}" if isinstance(errno, int) else ""
+    return f"{label} failed ({type(exc).__name__}{suffix}; details withheld)"
+
+
+def _zip_physical_lines(path: Path, selected, label: str) -> tuple[int, str | None]:
+    """Sum the physical lines of the selected members. Any read error becomes a sanitized message."""
+    total = 0
+    try:
+        with zipfile.ZipFile(path) as zf:
+            for info in selected:
+                with zf.open(info.member) as fh:
+                    head = fh.read(2)
+                    if head in (b"\xff\xfe", b"\xfe\xff"):  # UTF-16
+                        text = (head + fh.read()).decode("utf-16", errors="replace")
+                        total += _physical_lines(text.encode("utf-8"))
+                    else:
+                        total += _physical_lines(head + fh.read())
+    except Exception as exc:  # noqa: BLE001 - zipfile/zlib/OS errors carry member names
+        return 0, _safe_error(f"reading {label}", exc)
+    return total, None
+
+
+def _seed_aliases(data_dir: Path) -> None:
+    """Copy the optional local alias file into a temp data dir (never touches the real one)."""
+    if ALIASES_FILE.is_file():
+        shutil.copyfile(ALIASES_FILE, Path(data_dir) / "aliases.toml")
+
+
+def _plan(path: Path, data_dir: Path):
+    """plan_collection with the aliases that the ingest subprocess will load from `data_dir`."""
+    return plan_collection(path, aliases_mod.get(data_dir))
+
 
 TIME_TARGET_S = 40.0  # indexing only (M1 acceptance); derivation is checked separately
 DERIVE_TARGET_S = 20.0
@@ -115,17 +166,20 @@ def _ingest_default_scope(
 
     started = time.perf_counter()
     derive_s = 0.0
-    for path in [enterprise_zip, sensitive_zip]:
+    for label, path in (
+        ("zip 1 of 2 (enterprise)", enterprise_zip),
+        ("zip 2 of 2 (sensitive)", sensitive_zip),
+    ):
         cmd = [sys.executable, "-I", "-m", "dmslog", "--data-dir", str(data_dir), "ingest", str(path)]
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
-            return time.perf_counter() - started, f"ingest {path.name} failed: {proc.stderr[-200:]}", None
+            return time.perf_counter() - started, _ingest_failure(label, proc.returncode), None
         found = re.search(r"derivation took ([0-9.]+) s", proc.stdout)
         elapsed_now = time.perf_counter() - started
         if found is None:
-            return elapsed_now, f"ingest {path.name}: derivation line missing from the output", None
+            return elapsed_now, f"ingest of {label}: derivation line missing from the output", None
         if "[warning]" in proc.stdout:
-            return elapsed_now, f"ingest {path.name} printed a warning (derivation or ingest)", None
+            return elapsed_now, f"ingest of {label} printed a warning (derivation or ingest)", None
         derive_s += float(found.group(1))
 
     # M1 target covers indexing; the M4 derivation pass is reported and checked on its own.
@@ -165,22 +219,17 @@ def _verify_envelope_coverage(data_dir: Path, enterprise_zip: Path, sensitive_zi
         # Sum nlines and count physical lines in selected sources
         selected_by_path = {}
         for path in [enterprise_zip, sensitive_zip]:
-            plan = plan_collection(path)
+            plan = _plan(path, data_dir)
             selected = select_sources(plan.sources)
             selected_by_path[path] = selected
 
         entries, db_lines = conn.execute("SELECT count(*), coalesce(sum(nlines), 0) FROM entry").fetchone()
         expected_lines = 0
-        for path, selected in selected_by_path.items():
-            with zipfile.ZipFile(path) as zf:
-                for info in selected:
-                    with zf.open(info.member) as fh:
-                        head = fh.read(2)
-                        if head in (b"\xff\xfe", b"\xfe\xff"):  # UTF-16
-                            text = (head + fh.read()).decode("utf-16", errors="replace")
-                            expected_lines += _physical_lines(text.encode("utf-8"))
-                        else:
-                            expected_lines += _physical_lines(head + fh.read())
+        for idx, (_path, selected) in enumerate(selected_by_path.items(), start=1):
+            lines, read_error = _zip_physical_lines(_path, selected, f"zip {idx} of 2")
+            if read_error:
+                return read_error
+            expected_lines += lines
         if db_lines != expected_lines:
             return f"nlines sum {db_lines} != physical lines {expected_lines}"
         return None
@@ -198,9 +247,10 @@ def _test_all_logs_scope(enterprise_zip: Path) -> tuple[bool, str | None]:
 
     with tf.TemporaryDirectory() as tmp_dir:
         tmp_data_dir = Path(tmp_dir)
+        _seed_aliases(tmp_data_dir)
 
         # First, find which logs are in the default scope
-        plan = plan_collection(enterprise_zip)
+        plan = _plan(enterprise_zip, tmp_data_dir)
         default_selected = select_sources(plan.sources)
         default_names = {Path(info.member).name for info in default_selected}
 
@@ -218,7 +268,7 @@ def _test_all_logs_scope(enterprise_zip: Path) -> tuple[bool, str | None]:
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
-            return False, f"--all-logs ingest failed: {proc.stderr[-200:]}"
+            return False, _ingest_failure("the --all-logs run", proc.returncode)
 
         # Check if we indexed something new
         dbs = list((tmp_data_dir / "cases").glob("*/case.sqlite"))
@@ -245,12 +295,12 @@ def _test_all_logs_scope(enterprise_zip: Path) -> tuple[bool, str | None]:
                 out_of_scope,
             ).fetchall()
             if not sources:
-                return False, f"Could not find sources for out-of-scope logs: {out_of_scope}"
+                return False, f"Could not find sources for {len(out_of_scope)} out-of-scope logs"
 
             source_id = sources[0][0]
             entry = conn.execute("SELECT id FROM entry WHERE source_id = ? LIMIT 1", (source_id,)).fetchone()
             if entry is None:
-                return False, f"No entries found in out-of-scope source {sources[0][1]}"
+                return False, "No entries found in the first out-of-scope source"
 
             return True, None
         finally:
@@ -319,7 +369,7 @@ def _measure_http_requests(server: DmslogServer, case_id: str) -> dict[str, Any]
         with opener.open(start_url) as resp:
             resp.read()
     except Exception as e:
-        return {"error": f"Failed to exchange token: {e}"}
+        return {"error": f"Failed to exchange token ({type(e).__name__})"}
 
     # Get an entry ID for later
     dbs = list((server.data_dir / "cases").glob("*/case.sqlite"))
@@ -403,17 +453,18 @@ def _measure_http_requests(server: DmslogServer, case_id: str) -> dict[str, Any]
     return stats
 
 
-def main() -> int:
+def _main() -> int:
     """Run the smoke test. Return 0 on success, 1 on failure, 0 (skip) if samples unavailable."""
     enterprise_zip, sensitive_zip = _find_samples()
     if enterprise_zip is None or sensitive_zip is None:
         print("skipped")
         return 0
 
-    print(f"Testing with samples: {enterprise_zip.name}, {sensitive_zip.name}")
+    print("Testing with samples: zip 1 of 2 (enterprise), zip 2 of 2 (sensitive)")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         data_dir = Path(tmp_dir)
+        _seed_aliases(data_dir)
 
         # Phase 1: Ingest default scope
         print("Ingesting default scope...", end=" ", flush=True)
@@ -514,6 +565,15 @@ def main() -> int:
         else:
             print("Overall: FAIL")
             return 1
+
+
+def main() -> int:
+    """Run the smoke test; an unexpected exception prints only its class name (no traceback, no message)."""
+    try:
+        return _main()
+    except Exception as exc:  # noqa: BLE001 - messages and tracebacks may hold sample names
+        print(f"\nFAIL: unexpected {type(exc).__name__} (details withheld)")
+        return 1
 
 
 if __name__ == "__main__":
