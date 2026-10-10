@@ -36,6 +36,7 @@ from ..ingest.ers import (
     parse_ers_name,
 )
 from ..ingest.reader import ReadLimitError
+from ..ingest.watch import MAX_BACKOFF_S, CycleReport, Watcher, backoff_delay
 from ..knowledge.installation import read_installation
 from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
@@ -345,8 +346,135 @@ class IngestJobs:
             with self._lock:
                 self._threads.discard(threading.current_thread())
 
+    # ---- follow mode (``dmslog serve --watch``)
+
+    def start_watch(self, case_id: str, path: Path, scope: str, interval: float) -> str:
+        """Follow a Log folder into ``case_id`` (created when missing) until the server stops.
+
+        Each cycle that finds changes runs like a UI job: it takes the case's hub (so the UI sees the case
+        as ingesting and other jobs get 409), then publishes one ``watch`` event with what changed.
+        """
+        try:
+            cid = self._store.canonical_case_id(case_id)
+        except ApiError as exc:
+            if exc.status != 404:
+                raise
+            cid = self._store.create(case_id)
+        watcher = Watcher(None, path, pipeline.IngestOptions(scope=scope, case_name=cid))
+        thread = threading.Thread(
+            target=self._watch, args=(cid, watcher, interval), name=f"watch-{cid}", daemon=True
+        )
+        with self._lock:
+            self._threads.add(thread)
+        thread.start()
+        return cid
+
+    def _watch(self, cid: str, watcher: Watcher, interval: float) -> None:
+        hub = self.hub(cid)
+        failures = 0
+        try:
+            while not self.stopping.is_set():
+                delay = interval
+                try:
+                    self._store.require(cid)  # the case was deleted: stop following
+                    if watcher.poll() and hub.try_begin(uuid.uuid4().hex[:12]):
+                        report = self._watch_cycle(cid, watcher, hub)
+                        if report is not None and report.has_news:
+                            hub.publish("watch", watch_payload(report), coalesce=True)
+                        if report is not None and report.failed:
+                            failures += 1  # partial failure: the change stays pending, retry with a backoff
+                            delay = min(backoff_delay(interval, failures), MAX_BACKOFF_S)
+                        else:
+                            failures = 0
+                except ApiError:
+                    return
+                except JobCancelledError:
+                    return
+                except CollectionConflictError:
+                    return  # the case holds another collection: nothing sensible to follow
+                except Exception:  # vanished folder, locked database...: retry with a backoff
+                    failures += 1
+                    delay = min(backoff_delay(interval, failures), MAX_BACKOFF_S)
+                self.stopping.wait(delay)
+        finally:
+            with self._lock:
+                self._threads.discard(threading.current_thread())
+
+    def _watch_cycle(self, cid: str, watcher: Watcher, hub: ProgressHub) -> CycleReport | None:
+        """Ingest what ``watcher.poll`` found, publishing progress; always finishes the hub's job."""
+        job_id = hub.job_id or ""
+        done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
+        conn: sqlite3.Connection | None = None
+        report: CycleReport | None = None
+
+        def progress(event: pipeline.ProgressEvent) -> None:
+            if self.stopping.is_set():
+                raise JobCancelledError
+            hub.publish(
+                "progress",
+                {
+                    "job_id": job_id,
+                    "source": event.member,
+                    "bytes_done": event.bytes_done,
+                    "bytes_total": event.bytes_total,
+                    "records": event.records,
+                    "status": event.phase,
+                },
+                coalesce=event.phase == "progress",
+            )
+
+        try:
+            conn = db.create_case_db(self._store.db_path(cid))
+            watcher.conn = conn
+            report = watcher.ingest(progress)
+            done["records"] = report.result.records if report.result else 0
+            if report.failed:
+                done.update(code="partial_failure", failed=report.failed)
+                done["message"] = messages.JOB_DONE_WITH_FAILURES.format(
+                    records=done["records"], failed=report.failed, sources=len(report.news)
+                )
+            else:
+                done.update(status="ok", message=messages.API_WATCH_DONE.format(records=done["records"]))
+        except JobCancelledError:
+            done.update(code="cancelled", message=messages.JOB_CANCELLED)
+            raise
+        except CollectionConflictError as exc:
+            done.update(code=exc.reason, message=str(exc))
+            raise
+        except (SourceNotFoundError, ReadLimitError, OSError, ValueError, sqlite3.Error) as exc:
+            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=exc))
+            raise
+        finally:
+            watcher.conn = None
+            if conn is not None:
+                conn.close()
+            hub.finish(done)
+        return report
+
 
 # --------------------------------------------------------------------------- helpers
+
+
+MAX_WATCH_SOURCES = 50
+
+
+def watch_payload(report: CycleReport) -> dict[str, Any]:
+    """Body of the ``watch`` SSE event: what one follow cycle changed."""
+    result = report.result
+    sources = [
+        {"source": d.member, "records": d.records, "action": d.action}
+        for d in report.news[:MAX_WATCH_SOURCES]
+    ]
+    return {
+        "status": "partial" if report.failed else "ok",
+        "failed": report.failed,
+        "cycle": report.cycle,
+        "records": result.records if result else 0,
+        "events": result.events_derived if result else 0,
+        "links": result.links_created if result else 0,
+        "payloads": result.payloads if result else 0,
+        "sources": sources,
+    }
 
 
 def _identity_of_row(kind: str, guid: str | None, stamp: str | None, variant: str | None, label: str | None,

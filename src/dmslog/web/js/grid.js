@@ -33,7 +33,7 @@ function fieldText(value) {
 
 export class Grid {
   constructor({
-    viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, onTemplate, getMark, onVisible,
+    viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, onTemplate, getMark, onVisible, onView,
   }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
@@ -45,6 +45,10 @@ export class Grid {
     this.onTemplate = onTemplate || (() => {});
     this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
     this.onVisible = onVisible || (() => {}); // ids of the rendered rows (bookmark lookup)
+    this.onView = onView || (() => {});
+    this.countGeneration = 0;
+    this.countController = null;
+    this.total = null; // last entry count of the filter (a number), the baseline of "follow tail"
     this.templateCodes = new Map();
     this.fieldColumns = [];
     this.window = new RowWindow();
@@ -200,6 +204,14 @@ export class Grid {
   async reload() {
     this.cancel();
     this.window.reset();
+    // New case or filter: the old count is no longer a baseline, and its answer must not arrive.
+    this.total = null;
+    this.countText = "";
+    this.countGeneration += 1;
+    if (this.countController) {
+      this.countController.abort();
+      this.countController = null;
+    }
     this.render();
     if (this.caseId === null) {
       this.onStatus("");
@@ -209,19 +221,32 @@ export class Grid {
     await this.jump(null, "fwd");
   }
 
+  // The count has its own generation: navigation (jump, scroll) must not discard its answer; only a newer
+  // count or a reload (new case or filter) does.
   async refreshCount() {
-    const generation = this.generation;
+    this.countGeneration += 1;
+    const generation = this.countGeneration;
+    if (this.countController) {
+      this.countController.abort();
+    }
+    const controller = new AbortController();
+    this.countController = controller;
     try {
-      const result = await api.count(this.caseId, this.filter);
-      if (generation === this.generation) {
+      const result = await api.count(this.caseId, this.filter, controller.signal);
+      if (generation === this.countGeneration) {
+        this.total = Number(result.count);
         const template = result.exact ? S.gridCount : S.gridCountApprox;
         this.countText = format(template, { count: Number(result.count).toLocaleString("en-US") });
         this.updateStatus();
       }
     } catch (err) {
-      if (generation === this.generation) {
+      if (generation === this.countGeneration && !(err && err.name === "AbortError")) {
         this.countText = "";
         this.onError(err);
+      }
+    } finally {
+      if (generation === this.countGeneration) {
+        this.countController = null;
       }
     }
   }
@@ -305,6 +330,26 @@ export class Grid {
       }
       this.render();
     }
+  }
+
+  // Where the view stands relative to the end of the data (see follow-tail-model.js).
+  tailInfo() {
+    return { atEnd: this.window.atEnd, top: this.window.top, visible: this.visible, length: this.window.rows.length };
+  }
+
+  // Reloads the end of the data and keeps the view at the bottom; the selected entry stays selected
+  // when it is still in the buffer.
+  async followTail() {
+    const selected = this.selectedRow();
+    await this.goEnd();
+    if (selected) {
+      const index = this.window.rows.findIndex((r) => r.id === selected.id);
+      if (index >= 0) {
+        this.window.selected = index;
+        this.render();
+      }
+    }
+    await this.refreshCount();
   }
 
   jumpToTime(ms) {
@@ -450,6 +495,7 @@ export class Grid {
     }
     this.onVisible(shown);
     this.updateStatus();
+    this.onView();
   }
 
   fillCells(slot, row) {

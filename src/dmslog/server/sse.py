@@ -38,6 +38,7 @@ class ProgressHub:
         self._seq = 0
         self._running = False
         self._job_id: str | None = None
+        self._last_watch: HubEvent | None = None  # survives try_begin(): late subscribers still get it
 
     @property
     def running(self) -> bool:
@@ -65,7 +66,10 @@ class ProgressHub:
             self._seq += 1
             if coalesce and self._events and self._events[-1].coalescable:
                 self._events.pop()
-            self._events.append(HubEvent(self._seq, name, data, coalesce))
+            event = HubEvent(self._seq, name, data, coalesce)
+            self._events.append(event)
+            if name == "watch":
+                self._last_watch = event
             self._cond.notify_all()
 
     def finish(self, data: dict[str, Any]) -> None:
@@ -81,6 +85,9 @@ class ProgressHub:
         with self._cond:
             self._cond.wait_for(lambda: self._seq > after, timeout)
             events = [e for e in self._events if e.seq > after]
+            last = self._last_watch
+            if after == 0 and last is not None and all(e.seq != last.seq for e in events):
+                events.insert(0, last)  # a new subscriber learns about the latest follow-mode change
             return events, self._seq
 
     def wake_all(self) -> None:

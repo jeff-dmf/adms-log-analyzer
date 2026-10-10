@@ -331,22 +331,50 @@ def find_web_resource(url_path: str) -> Traversable | None:
     return node
 
 
-def serve(port: int = 0, open_browser: bool = True, data_dir: str | os.PathLike[str] | None = None) -> int:
-    """Run the server until Ctrl+C. Returns the process exit code."""
+def serve(
+    port: int = 0,
+    open_browser: bool = True,
+    data_dir: str | os.PathLike[str] | None = None,
+    watch: dict[str, Any] | None = None,
+) -> int:
+    """Run the server until Ctrl+C. Returns the process exit code.
+
+    ``watch`` (``path``, ``case``, ``interval``, ``scope``) also follows a Log folder into a case.
+    """
     try:
         server = DmslogServer(port, data_dir)
     except OSError as exc:
         print(messages.BIND_FAILED.format(port=port, error=exc), flush=True)
         return 1
     with server:
+        if watch is not None:
+            try:
+                case = server.api.jobs.start_watch(
+                    watch["case"], watch["path"], watch["scope"], watch["interval"]
+                )
+            except ApiError as exc:
+                print(exc.message, flush=True)
+                return 1
+            print(
+                messages.SERVE_WATCHING.format(path=watch["path"], case=case, interval=watch["interval"]),
+                flush=True,
+            )
         url = server.start_url
         print(messages.SERVING.format(url=url), flush=True)
         print(messages.SERVING_HINT, flush=True)
         if open_browser:
             webbrowser.open(url)
+        from ..cli import _install_stop_handler
+
+        def interrupt(_signum: int, _frame: Any) -> None:
+            raise KeyboardInterrupt  # SIGTERM takes the same coordinated path as Ctrl+C
+
+        restore_signals = _install_stop_handler(interrupt)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
             pass
+        finally:
+            restore_signals()
     print(messages.STOPPED, flush=True)
     return 0

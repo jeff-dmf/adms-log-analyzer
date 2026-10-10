@@ -25,6 +25,7 @@ EXPECTED_MODULES = {
     "unknown-panel.js", "key-panel-model.js", "key-panel.js", "links-model.js", "links.js", "side-by-side.js",
     "payload-model.js", "payload.js", "payload-list-model.js", "payload-list.js",
     "bookmarks-model.js", "bookmarks-panel.js", "compare-model.js", "compare.js", "saved-views-model.js",
+    "follow-tail-model.js", "follow-tail.js",
 }
 
 FORBIDDEN_JS = [

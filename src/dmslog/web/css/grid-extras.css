@@ -72,3 +72,16 @@
   font-weight: 600;
   color: var(--muted);
 }
+
+/* Follow tail: the "N new records" button sits above the status line while the view is scrolled up. */
+.follow-new {
+  display: block;
+  margin: 4px 0 0 auto;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-alt);
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}

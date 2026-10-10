@@ -57,6 +57,8 @@ DEFAULT_BATCH_BYTES = 16 * 1024 * 1024
 DETECT_BYTES = 64 * 1024  # bytes examined to pick the envelope of a new source ...
 DETECT_LINES = 50  # ... or this many lines, whichever comes first (what detect_envelope looks at)
 
+PLAIN_ENVELOPE = "plain"  # Envelope.name of the fallback envelope
+
 SCOPE_DEFAULT = "default"
 SCOPE_ALL = "all"
 
@@ -584,6 +586,13 @@ class _Run:
             _source_mark(self.w.conn, row.id) < PAYLOAD_EXTRACTION_VERSION
         ):
             action = Action.REINDEX  # its records predate the current payload extraction
+        if (
+            action in (Action.APPEND, Action.RESUME)
+            and row.envelope == PLAIN_ENVELOPE
+            and row.indexed_bytes < DETECT_BYTES
+        ):
+            # picked as plain from a first, still tiny read (a live file): detect the envelope again
+            action = Action.REINDEX
         if action in (Action.NEW, Action.REINDEX):
             _mark_source(self.w.conn, row.id)  # from here on every record of it is extracted by this code
         self.current_action = action.value

@@ -91,6 +91,10 @@ export const S = {
   extraLines: "+{count} lines",
   rowLabel: "Entry {id}",
 
+  // Follow tail
+  followLabel: "Follow tail",
+  followNew: "{count} new records",
+
   // Detail
   detailEmpty: "Select an entry to see its full text.",
   detailMeta: "{time} - pid {pid} - tid {tid} - {level} - {source}",

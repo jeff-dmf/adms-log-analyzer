@@ -34,6 +34,16 @@ def _port(value: str) -> int:
     return port
 
 
+def _interval(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = -1.0
+    if not 0.2 <= seconds <= 3600:
+        raise argparse.ArgumentTypeError(messages.WATCH_INVALID_INTERVAL.format(value=value))
+    return seconds
+
+
 def build_parser() -> argparse.ArgumentParser:
     # --data-dir is accepted both before and after the subcommand.
     data_dir_parent = argparse.ArgumentParser(add_help=False)
@@ -52,6 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--port", type=_port, default=0, metavar="PORT", help=messages.HELP_PORT)
     serve.add_argument("--no-browser", action="store_true", help=messages.HELP_NO_BROWSER)
+    serve.add_argument("--watch", metavar="PATH", default=None, help=messages.HELP_SERVE_WATCH)
+    serve.add_argument("--watch-case", metavar="NAME", default=None, help=messages.HELP_SERVE_WATCH_CASE)
+    serve.add_argument(
+        "--watch-interval", type=_interval, default=2.0, metavar="S", help=messages.HELP_SERVE_WATCH_INTERVAL
+    )
+    serve.add_argument("--all-logs", action="store_true", help=messages.HELP_WATCH_ALL)
 
     ingest = sub.add_parser(
         "ingest", help=messages.HELP_INGEST, description=messages.HELP_INGEST, parents=[data_dir_parent]
@@ -59,6 +75,16 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("path", metavar="PATH", help=messages.HELP_INGEST_PATH)
     ingest.add_argument("--case", metavar="NAME", default=None, help=messages.HELP_INGEST_CASE)
     ingest.add_argument("--all-logs", action="store_true", help=messages.HELP_INGEST_ALL)
+
+    watch = sub.add_parser(
+        "watch", help=messages.HELP_WATCH, description=messages.HELP_WATCH, parents=[data_dir_parent]
+    )
+    watch.add_argument("path", metavar="PATH", help=messages.HELP_WATCH_PATH)
+    watch.add_argument("--case", metavar="NAME", required=True, help=messages.HELP_WATCH_CASE)
+    watch.add_argument(
+        "--interval", type=_interval, default=2.0, metavar="S", help=messages.HELP_WATCH_INTERVAL
+    )
+    watch.add_argument("--all-logs", action="store_true", help=messages.HELP_WATCH_ALL)
 
     sub.add_parser("info", help=messages.HELP_INFO, description=messages.HELP_INFO, parents=[data_dir_parent])
 
@@ -209,6 +235,116 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return EXIT_FAILED if result.sources_failed else 0
 
 
+def _stop_signals() -> list:
+    """Signals that mean "stop": SIGTERM, and SIGBREAK on Windows (Ctrl+C is KeyboardInterrupt)."""
+    import signal
+
+    return [getattr(signal, name) for name in ("SIGTERM", "SIGBREAK") if hasattr(signal, name)]
+
+
+def _install_stop_handler(handler):
+    """Install ``handler`` for the stop signals; returns a function restoring the previous handlers."""
+    import signal
+
+    previous = []
+    for sig in _stop_signals():
+        try:
+            previous.append((sig, signal.signal(sig, handler)))
+        except (ValueError, OSError):  # not the main thread, or the platform refuses
+            continue
+
+    def restore() -> None:
+        for sig, old in previous:
+            try:
+                signal.signal(sig, old)
+            except (ValueError, OSError, TypeError):
+                pass
+
+    return restore
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    import threading
+    import time
+
+    from .ingest.discover import SourceNotFoundError, UnsafeArchiveError
+    from .ingest.ers import CollectionConflictError
+    from .ingest.pipeline import SCOPE_ALL, SCOPE_DEFAULT, IngestOptions, case_db_path
+    from .ingest.watch import CycleReport, Watcher
+    from .store.db import create_case_db
+
+    check = check_sqlite_fts5()
+    if not check["fts5"]:
+        print(
+            messages.SQLITE_FTS5_MISSING.format(version=check["sqlite"], error=check["error"]),
+            file=sys.stderr,
+        )
+        return EXIT_FAILED
+    if not Path(args.path).is_dir():
+        print(messages.WATCH_NOT_A_FOLDER.format(path=args.path), file=sys.stderr)
+        return EXIT_FAILED
+    data_dir = resolve_data_dir(getattr(args, "data_dir", None))
+    try:
+        db_path = case_db_path(data_dir, args.case)
+    except ValueError as exc:
+        print(messages.INGEST_INVALID_CASE.format(error=exc), file=sys.stderr)
+        return EXIT_FAILED
+    scope = SCOPE_ALL if args.all_logs else SCOPE_DEFAULT
+    scope_text = messages.INGEST_SCOPE_ALL if args.all_logs else messages.INGEST_SCOPE_DEFAULT
+    print(
+        messages.WATCH_START.format(path=args.path, case=args.case, interval=args.interval, scope=scope_text),
+        flush=True,
+    )
+
+    def on_report(report: CycleReport) -> None:
+        print(format_cycle_line(report, time.strftime("%H:%M:%S")), flush=True)
+        for warning in report.result.warnings if report.result else ():
+            print(messages.WATCH_WARNING.format(message=warning), file=sys.stderr, flush=True)
+
+    def on_error(exc: Exception, delay: float) -> None:
+        print(messages.WATCH_ERROR.format(error=exc, delay=delay), file=sys.stderr, flush=True)
+
+    conn = create_case_db(db_path)
+    stop = threading.Event()
+    # SIGTERM: ask the loop to stop; a running ingestion is abandoned at its next batch boundary.
+    restore_signals = _install_stop_handler(lambda _signum, _frame: stop.set())
+    try:
+        watcher = Watcher(conn, args.path, IngestOptions(scope=scope, case_name=args.case))
+        watcher.run(stop, args.interval, on_report=on_report, on_error=on_error)
+    except KeyboardInterrupt:
+        stop.set()
+    except CollectionConflictError as exc:
+        print(messages.WATCH_CONFLICT.format(case=args.case, error=exc), file=sys.stderr)
+        return EXIT_CONFLICT
+    except (SourceNotFoundError, UnsafeArchiveError, OSError) as exc:
+        print(messages.INGEST_UNSAFE.format(error=exc), file=sys.stderr)
+        return EXIT_FAILED
+    finally:
+        restore_signals()
+        conn.close()
+    print(messages.WATCH_STOPPED, flush=True)
+    return 0
+
+
+def format_cycle_line(report, clock: str) -> str:
+    """The one line printed for a cycle that changed something."""
+    result = report.result
+    parts = []
+    for detail in report.news:
+        template = (
+            messages.WATCH_SOURCE
+            if detail.action in ("new", "append", "resume")
+            else messages.WATCH_SOURCE_ACTION
+        )
+        parts.append(template.format(records=detail.records, member=detail.member, action=detail.action))
+    derived = ""
+    if result is not None and (result.events_derived or result.links_created or result.payloads):
+        derived = messages.WATCH_DERIVED.format(
+            events=result.events_derived, links=result.links_created, payloads=result.payloads
+        )
+    return messages.WATCH_CYCLE.format(time=clock, sources=", ".join(parts), derived=derived).rstrip()
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from .server.app import serve
 
@@ -219,10 +355,30 @@ def cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    watch = None
+    if args.watch is not None:
+        from .ingest.pipeline import SCOPE_ALL, SCOPE_DEFAULT, build_plan, default_case_name
+        from .ingest.reader import ReadLimits
+
+        if not Path(args.watch).is_dir():
+            print(messages.WATCH_NOT_A_FOLDER.format(path=args.watch), file=sys.stderr)
+            return EXIT_FAILED
+        try:
+            case = args.watch_case or default_case_name(build_plan(args.watch, ReadLimits()))
+        except OSError as exc:
+            print(messages.INGEST_NOT_FOUND.format(error=exc), file=sys.stderr)
+            return EXIT_FAILED
+        watch = {
+            "path": Path(args.watch),
+            "case": case,
+            "interval": args.watch_interval,
+            "scope": SCOPE_ALL if args.all_logs else SCOPE_DEFAULT,
+        }
     return serve(
         port=args.port,
         open_browser=not args.no_browser,
         data_dir=getattr(args, "data_dir", None),
+        watch=watch,
     )
 
 
@@ -241,6 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "serve": cmd_serve,
         "info": cmd_info,
         "ingest": cmd_ingest,
+        "watch": cmd_watch,
         **{name: _stub_handler(name, milestone) for name, (_h, milestone) in STUB_COMMANDS.items()},
     }
     if args.command is None:

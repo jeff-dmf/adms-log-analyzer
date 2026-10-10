@@ -169,6 +169,7 @@ function start() {
   let configPanel = null;
   let eventsPanel = null;
   let dashboard = null;
+  let followTail = null;
   let clockBanner = null;
   let knowledge = null;
   let linksSection = null;
@@ -262,6 +263,7 @@ function start() {
     onTemplate: (tplId) => addTemplateFilter(tplId),
     getMark: (id) => bookmarkStore.get(id),
     onVisible: (ids) => bookmarkStore.ensure(ids),
+    onView: () => followTail && followTail.viewChanged(),
   });
   const detail = new Detail({
     meta: byId("detail-meta"),
@@ -379,6 +381,9 @@ function start() {
         configPanel.refresh();
       }
       refreshDerived();
+      if (followTail) {
+        followTail.onCase();
+      }
     },
     onSources: (list, quiet) => {
       sources = list;
@@ -787,6 +792,23 @@ function start() {
     } else {
       detail.show(row.id).then(() => compareCurrent());
     }
+  });
+
+  import("./follow-tail.js").then((module) => {
+    followTail = module.initFollowTail({
+      toggle: byId("follow-tail"),
+      newButton: byId("follow-new"),
+      grid,
+      getCase: () => caseId,
+      getFilter: () => currentFilter,
+      onChanged: () => {
+        refreshDerived();
+        panel.refreshSources(true).catch(showError);
+      },
+      onError: showError,
+    });
+  }).catch(() => {
+    // Module missing or failing: the toggle does nothing.
   });
 
   // Operations panel, adapter dashboard and clock-jump banner: optional modules like the panels above.
