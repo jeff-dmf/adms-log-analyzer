@@ -52,12 +52,17 @@ def _peak_rss_mb_of_child(cmd: list[str]) -> tuple[subprocess.CompletedProcess[s
     return proc, peak / 1024.0  # Linux reports KiB
 
 
+def _check(ok: object, label: str) -> None:
+    """Assert with a FIXED message: pytest must never echo sample names, stderr or log text."""
+    assert ok, f"real-sample check failed: {label}"
+
+
 def _physical_lines(data: bytes) -> int:
     return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
 
 def test_default_scope_meets_the_acceptance_targets(tmp_path, capsys):
-    assert SAMPLE is not None
+    _check(SAMPLE is not None, "sample present")
     alias_file = SAMPLES / "aliases.toml"  # optional, local only
     if alias_file.is_file():
         shutil.copyfile(alias_file, tmp_path / "aliases.toml")
@@ -65,16 +70,16 @@ def test_default_scope_meets_the_acceptance_targets(tmp_path, capsys):
     started = time.perf_counter()
     proc, rss_mb = _peak_rss_mb_of_child(cmd)
     wall = time.perf_counter() - started
-    assert proc.returncode == 0, proc.stderr[-500:]
+    _check(proc.returncode == 0, "ingest exit code 0")
 
     dbs = list((tmp_path / "cases").glob("*/case.sqlite"))
-    assert len(dbs) == 1
+    _check(len(dbs) == 1, "one case database")
     conn = connect(dbs[0], readonly=True)
     try:
         selected = select_sources(plan_collection(SAMPLE, aliases_mod.get(tmp_path)).sources)
         statuses = dict(conn.execute("SELECT status, count(*) FROM source GROUP BY status").fetchall())
-        assert statuses.get("ready") == len(selected)
-        assert statuses.get("error", 0) == 0
+        _check(statuses.get("ready") == len(selected), "all selected sources ready")
+        _check(statuses.get("error", 0) == 0, "no source in error")
         entries, db_lines = conn.execute("SELECT count(*), coalesce(sum(nlines), 0) FROM entry").fetchone()
         sources_without_records = conn.execute(
             "SELECT count(*) FROM source WHERE status='ready' AND n_entries = 0"
@@ -91,12 +96,14 @@ def test_default_scope_meets_the_acceptance_targets(tmp_path, capsys):
                         expected_lines += _physical_lines(text.encode("utf-8"))
                     else:
                         expected_lines += _physical_lines(head + fh.read())
-        assert db_lines == expected_lines
+        _check(db_lines == expected_lines, "nlines sum equals physical lines")
         fts_rows = conn.execute("SELECT count(*) FROM entry_fts_docsize").fetchone()[0]
         not_indexed = conn.execute(
             "SELECT count(*) FROM entry WHERE tpl_id IN (SELECT id FROM template WHERE fts = 0)"
         ).fetchone()[0]
-        assert fts_rows == entries - not_indexed  # fts=0 templates (Verbose trace) stay out of the FTS
+        _check(
+            fts_rows == entries - not_indexed, "FTS row count"
+        )  # fts=0 templates (Verbose trace) stay out of the FTS
     finally:
         conn.close()
 
@@ -108,13 +115,13 @@ def test_default_scope_meets_the_acceptance_targets(tmp_path, capsys):
             f"peak RSS {'n/a' if rss_mb is None else f'{rss_mb:.0f} MB'}, "
             f"{sources_without_records} sources without records"
         )
-    assert wall <= TIME_TARGET_S
+    _check(wall <= TIME_TARGET_S, "time target")
     if rss_mb is not None:
-        assert rss_mb < RSS_TARGET_MB
+        _check(rss_mb < RSS_TARGET_MB, "RSS target")
 
     # Re-ingesting the same zip changes nothing and is fast.
     started = time.perf_counter()
     again = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    assert again.returncode == 0
-    assert "0 indexed" in again.stdout and "Records: 0" in again.stdout
-    assert time.perf_counter() - started < 10
+    _check(again.returncode == 0, "re-ingest exit code 0")
+    _check("0 indexed" in again.stdout and "Records: 0" in again.stdout, "re-ingest is a no-op")
+    _check(time.perf_counter() - started < 10, "re-ingest is fast")

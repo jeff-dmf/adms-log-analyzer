@@ -44,6 +44,14 @@ MIN_REAL_SIZE = 1_000_000  # smaller files are Git LFS pointers or placeholders
 ALIASES_FILE = SAMPLES / "aliases.toml"  # optional, local only
 
 
+def _ingest_failure(label: str, returncode: int) -> str:
+    """Neutral diagnostic for a failed ingest: a label, the exit code and a fixed text.
+
+    Never includes file names, GUIDs, raw stderr or log text (the samples are sensitive).
+    """
+    return f"ingest of {label} failed (exit code {returncode}; details withheld)"
+
+
 def _seed_aliases(data_dir: Path) -> None:
     """Copy the optional local alias file into a temp data dir (never touches the real one)."""
     if ALIASES_FILE.is_file():
@@ -130,17 +138,20 @@ def _ingest_default_scope(
 
     started = time.perf_counter()
     derive_s = 0.0
-    for path in [enterprise_zip, sensitive_zip]:
+    for label, path in (
+        ("zip 1 of 2 (enterprise)", enterprise_zip),
+        ("zip 2 of 2 (sensitive)", sensitive_zip),
+    ):
         cmd = [sys.executable, "-I", "-m", "dmslog", "--data-dir", str(data_dir), "ingest", str(path)]
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
-            return time.perf_counter() - started, f"ingest {path.name} failed: {proc.stderr[-200:]}", None
+            return time.perf_counter() - started, _ingest_failure(label, proc.returncode), None
         found = re.search(r"derivation took ([0-9.]+) s", proc.stdout)
         elapsed_now = time.perf_counter() - started
         if found is None:
-            return elapsed_now, f"ingest {path.name}: derivation line missing from the output", None
+            return elapsed_now, f"ingest of {label}: derivation line missing from the output", None
         if "[warning]" in proc.stdout:
-            return elapsed_now, f"ingest {path.name} printed a warning (derivation or ingest)", None
+            return elapsed_now, f"ingest of {label} printed a warning (derivation or ingest)", None
         derive_s += float(found.group(1))
 
     # M1 target covers indexing; the M4 derivation pass is reported and checked on its own.
@@ -234,7 +245,7 @@ def _test_all_logs_scope(enterprise_zip: Path) -> tuple[bool, str | None]:
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
-            return False, f"--all-logs ingest failed: {proc.stderr[-200:]}"
+            return False, _ingest_failure("the --all-logs run", proc.returncode)
 
         # Check if we indexed something new
         dbs = list((tmp_data_dir / "cases").glob("*/case.sqlite"))
@@ -261,12 +272,12 @@ def _test_all_logs_scope(enterprise_zip: Path) -> tuple[bool, str | None]:
                 out_of_scope,
             ).fetchall()
             if not sources:
-                return False, f"Could not find sources for out-of-scope logs: {out_of_scope}"
+                return False, f"Could not find sources for {len(out_of_scope)} out-of-scope logs"
 
             source_id = sources[0][0]
             entry = conn.execute("SELECT id FROM entry WHERE source_id = ? LIMIT 1", (source_id,)).fetchone()
             if entry is None:
-                return False, f"No entries found in out-of-scope source {sources[0][1]}"
+                return False, "No entries found in the first out-of-scope source"
 
             return True, None
         finally:
@@ -335,7 +346,7 @@ def _measure_http_requests(server: DmslogServer, case_id: str) -> dict[str, Any]
         with opener.open(start_url) as resp:
             resp.read()
     except Exception as e:
-        return {"error": f"Failed to exchange token: {e}"}
+        return {"error": f"Failed to exchange token ({type(e).__name__})"}
 
     # Get an entry ID for later
     dbs = list((server.data_dir / "cases").glob("*/case.sqlite"))
@@ -426,7 +437,7 @@ def main() -> int:
         print("skipped")
         return 0
 
-    print(f"Testing with samples: {enterprise_zip.name}, {sensitive_zip.name}")
+    print("Testing with samples: zip 1 of 2 (enterprise), zip 2 of 2 (sensitive)")
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         data_dir = Path(tmp_dir)

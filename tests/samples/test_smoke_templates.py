@@ -26,7 +26,7 @@ def test_template_smoke_runs() -> None:
     proc = subprocess.run(
         [sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=1800, cwd=ROOT, check=False
     )
-    assert proc.returncode == 0, proc.stderr[-500:]
+    assert proc.returncode == 0, "smoke_templates.py failed (output withheld)"
     assert "COVERAGE" in proc.stdout
     assert "WINDOW EFFECT" in proc.stdout
     assert "source error" not in proc.stdout

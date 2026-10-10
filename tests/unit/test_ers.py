@@ -164,24 +164,34 @@ def _real_zips():
 
 
 REAL = _real_zips()
+
+
+def _check(ok: object, label: str) -> None:
+    """Assert with a FIXED message: pytest must never echo real names, GUIDs or counts from samples."""
+    assert ok, f"real-sample check failed: {label}"
+
+
 REAL_ALIASES = aliases_mod.load(REAL_DIR)  # optional local-samples/aliases.toml; empty when absent
 
 
 @pytest.mark.skipif(len(REAL) < 6, reason="real ERS zips not available (missing or LFS pointers)")
 def test_real_ers_zips_every_member_gets_a_family_by_name_only():
     total = 0
-    unknown = []
+    unknown = 0
     for path in REAL:
         with zipfile.ZipFile(path) as z:
             names = [i.filename for i in z.infolist() if not i.is_dir()]
         # names, sizes and CRC only; nothing is extracted
         sources = list(discover(path, aliases=REAL_ALIASES))
-        assert [s.member for s in sources] == names
-        assert all(s.family for s in sources)
+        _check([s.member for s in sources] == names, "members match the zip listing")
+        _check(all(s.family for s in sources), "every member has a family")
         total += len(sources)
-        unknown += [s.member for s in sources if s.family == "UNKNOWN"]
-    assert total == sum(members for members, _default, _indexable in REAL_COUNTS.values())
-    assert unknown == []
+        unknown += sum(1 for s in sources if s.family == "UNKNOWN")
+    _check(
+        total == sum(members for members, _default, _indexable in REAL_COUNTS.values()),
+        "total member count",
+    )
+    _check(unknown == 0, "no member with an UNKNOWN family")
 
 
 ADAPTER_FAMILIES = (
@@ -218,51 +228,57 @@ def test_real_ers_default_scope_counts():
         plan = plan_collection(path, REAL_ALIASES)
         ident = plan.identity
         expected = parse_ers_name(path.name)  # GUID and timestamp come from the file name
-        assert ident is not None and expected is not None
-        assert (ident.guid, ident.timestamp, ident.variant) == (
+        _check(ident is not None and expected is not None, "identity parsed")
+        same_identity = (ident.guid, ident.timestamp, ident.variant) == (
             expected.guid,
             expected.timestamp,
             expected.variant,
         )
-        members, default, indexable = REAL_COUNTS[(ident.timestamp, ident.variant)]
-        assert (len(plan.sources), len(plan.default_sources), len(plan.indexable_sources)) == (
-            members,
-            default,
-            indexable,
-        )
-        assert all(s.limit_violation is None for s in plan.default_sources)
+        _check(same_identity, "identity matches the zip name")
+        counts = REAL_COUNTS.get((ident.timestamp, ident.variant))
+        _check(counts is not None, "known capture in REAL_COUNTS")
+        got = (len(plan.sources), len(plan.default_sources), len(plan.indexable_sources))
+        _check(got == counts, "member/default/indexable counts")
+        _check(all(s.limit_violation is None for s in plan.default_sources), "no limit violation")
         families = {}
         for s in plan.default_sources:
             families[s.family] = families.get(s.family, 0) + 1
-        assert set(families) <= {*ADAPTER_FAMILIES, "BLTHOST", "OASERR", "SERVICE"}
+        _check(set(families) <= {*ADAPTER_FAMILIES, "BLTHOST", "OASERR", "SERVICE"}, "family set")
         if ident.variant == "sensitive":
-            assert all(s.sensitive for s in plan.sources)
-            assert families == dict.fromkeys(
-                (
-                    "AWFM",
-                    "AONT",
-                    "AAVL",
-                    "AOSR",
-                    "ASMN",
-                    "ACRM",
-                    "AAMI",
-                    "ASMR",
-                    "AWDI",
-                    "ACLC",
-                    "AFUP",
-                    "BLTHOST",
-                    *(("AEDP",) if ident.timestamp == "20261009145038" else ()),
+            _check(all(s.sensitive for s in plan.sources), "all sources sensitive")
+            _check(
+                families
+                == dict.fromkeys(
+                    (
+                        "AWFM",
+                        "AONT",
+                        "AAVL",
+                        "AOSR",
+                        "ASMN",
+                        "ACRM",
+                        "AAMI",
+                        "ASMR",
+                        "AWDI",
+                        "ACLC",
+                        "AFUP",
+                        "BLTHOST",
+                        *(("AEDP",) if ident.timestamp == "20261009145038" else ()),
+                    ),
+                    1,
                 ),
-                1,
+                "sensitive family set",
             )
         else:
-            assert families["OASERR"] == 6  # oasErrLog.log plus .log.0 to .log.4
-            assert (
-                families["SERVICE"] == 6
-            )  # dnaService, ProcessMonitor, dnaHealthMonitor, arbRx, arbTx, arbMonitor.exe
-            assert not any(
-                "RCS" in s.member or "COMMON" in s.member
-                for s in plan.default_sources
-                if s.family == "SERVICE"
+            # oasErrLog.log plus .log.0 to .log.4
+            _check(families.get("OASERR") == 6, "OASERR count")
+            # dnaService, ProcessMonitor, dnaHealthMonitor, arbRx, arbTx, arbMonitor.exe
+            _check(families.get("SERVICE") == 6, "SERVICE count")
+            _check(
+                not any(
+                    "RCS" in s.member or "COMMON" in s.member
+                    for s in plan.default_sources
+                    if s.family == "SERVICE"
+                ),
+                "no RCS/COMMON service in default scope",
             )
-            assert all(families.get(f, 0) >= 1 for f in ADAPTER_FAMILIES)
+            _check(all(families.get(f, 0) >= 1 for f in ADAPTER_FAMILIES), "every adapter family present")
