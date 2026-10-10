@@ -22,6 +22,7 @@ from pathlib import Path
 
 from dmslog import __version__
 from dmslog.aliases import Aliases
+from dmslog.diagnostics import describe_error, error_label
 from dmslog.ingest.discover import SourceInfo, discover, resolve_scope
 from dmslog.ingest.ers import (
     KIND_ERS_ZIP,
@@ -192,11 +193,15 @@ def _slug(text: str) -> str:
     return slug[:80] or "case"
 
 
-def default_case_name(plan: CollectionPlan) -> str:
-    """Case name from the ERS GUID and capture time, or from the folder or file name."""
+def default_case_name(plan: CollectionPlan, aliases: Aliases | None = None) -> str:
+    """Case name from the ERS GUID and capture time, or from the folder or file name.
+
+    With `aliases` the folder or file name carries the public spelling (the case name is stored and shown).
+    """
     if plan.identity is not None:
         return f"{plan.identity.guid[:8].lower()}-{plan.identity.timestamp}"
-    return _slug(plan.path.stem if plan.kind == KIND_FILE else plan.path.name)
+    name = plan.path.stem if plan.kind == KIND_FILE else plan.path.name
+    return _slug(aliases.apply_name(name) if aliases else name)
 
 
 def validate_case_name(name: str) -> str:
@@ -336,8 +341,22 @@ class _Run:
         aliases = self.opt.aliases
         return aliases.sanitize(text) if aliases and text else text
 
+    def _exc_text(self, exc: BaseException) -> str:
+        """``Class: detail`` of a failure. With local aliases the detail is the class-based fixed text:
+        exception text cannot be proven free of (escaped) real names."""
+        aliases = self.opt.aliases
+        return error_label(exc, aliases) if aliases else f"{type(exc).__name__}: {exc}"
+
+    def _detail(self, message: str) -> str:
+        """Derivation/link messages (``Class: detail``) as presented: class name only with aliases."""
+        if not self.opt.aliases:
+            return message
+        match = re.match(r"[A-Za-z_][\w.]*(?=:|$)", message)
+        return match.group(0) if match else "error"
+
     def _warn(self, message: str) -> None:
-        self.result.warnings.append(self._shown(message) or message)
+        """Warnings are fixed text plus describe_error() output: names-free, never re-sanitized."""
+        self.result.warnings.append(message)
 
     def emit(self, phase: str, source_bytes: int = 0, source_total: int = 0, source_records: int = 0) -> None:
         if self.progress is None:
@@ -365,12 +384,12 @@ class _Run:
             summary = derive_pending(self.w.conn, self.catalog)
         except Exception as exc:  # e.g. a locked database
             self.result.derive_seconds = time.perf_counter() - started
-            self._warn(f"derivation failed: {type(exc).__name__}: {exc}")
+            self._warn(f"derivation failed: {self._exc_text(exc)}")
             return
         self.result.derive_seconds = time.perf_counter() - started
         self.result.events_derived = summary.events
         for stream_id, message in summary.errors:
-            self._warn(f"derivation failed for stream {stream_id}: {message}")
+            self._warn(f"derivation failed for stream {stream_id}: {self._detail(message)}")
 
     def correlate(self) -> None:
         """Correlate the groups that changed (after the derivation): normal<->sensitive pairing and, when
@@ -388,20 +407,20 @@ class _Run:
             links = importlib.import_module("dmslog.derive.links")
         except ModuleNotFoundError as exc:
             if exc.name != "dmslog.derive.links":
-                self._warn(f"link rules failed: {type(exc).__name__}: {exc}")
+                self._warn(f"link rules failed: {self._exc_text(exc)}")
         except Exception as exc:  # a broken module must not abort the ingestion
-            self._warn(f"link rules failed: {type(exc).__name__}: {exc}")
+            self._warn(f"link rules failed: {self._exc_text(exc)}")
         else:
             steps.append(("link rules", links.link_pending))
         for name, step in steps:
             try:
                 summary = step(self.w.conn, self.catalog)
             except Exception as exc:  # e.g. a locked database
-                self._warn(f"{name} failed: {type(exc).__name__}: {exc}")
+                self._warn(f"{name} failed: {self._exc_text(exc)}")
                 continue
             self.result.links_created += summary.links
             for group, message in summary.errors:
-                self._warn(f"{name} failed for group {group}: {message}")
+                self._warn(f"{name} failed for group {group}: {self._detail(message)}")
         self.result.correlate_seconds = time.perf_counter() - started
 
     def link_payloads(self) -> None:
@@ -418,12 +437,12 @@ class _Run:
             summary = link_payloads(self.w.conn, self.catalog)
         except Exception as exc:  # e.g. a locked database
             self.result.payload_seconds = time.perf_counter() - started
-            self._warn(f"payload linking failed: {type(exc).__name__}: {exc}")
+            self._warn(f"payload linking failed: {self._exc_text(exc)}")
             return
         self.result.payload_seconds = time.perf_counter() - started
         self.result.payloads_linked = summary.linked
         for group, message in summary.errors:
-            self._warn(f"payload linking failed for group {group}: {message}")
+            self._warn(f"payload linking failed for group {group}: {self._detail(message)}")
 
     # ---- collection
 
@@ -644,7 +663,8 @@ class _Run:
         self.emit("source_done", fed, info.size, records)
 
     def _fail(self, row: SourceRow, info: SourceInfo, exc: Exception, reason: str | None = None) -> None:
-        text = self._shown(f"{reason}: {exc}" if reason else f"{type(exc).__name__}: {exc}")
+        detail = describe_error(exc, self.opt.aliases)
+        text = f"{reason}: {detail}" if reason else f"{type(exc).__name__}: {detail}"
         self.w.update_source(row.id, status="error", error=text[:500])
         self.w.commit()
         self.result.sources_failed += 1

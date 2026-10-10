@@ -38,6 +38,8 @@ class CollectionConflictError(ValueError):
     `reason` is one of: "different_guid", "different_capture", "not_an_ers", "case_has_folder".
     """
 
+    diag_safe = True  # messages hold GUIDs, capture times and fixed words only
+
     def __init__(self, reason: str, message: str) -> None:
         super().__init__(message)
         self.reason = reason

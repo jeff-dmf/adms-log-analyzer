@@ -13,6 +13,7 @@ from . import __version__, messages
 from .aliases import describe as describe_aliases
 from .aliases import get as aliases_get
 from .buildinfo import get_commit
+from .diagnostics import describe_error
 from .paths import check_sqlite_fts5, resolve_data_dir
 
 # command name -> (help text, milestone that implements it)
@@ -154,9 +155,9 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
-def _shown(error: object, data_dir: Path) -> str:
-    """Error text with real names replaced by their public spelling (local aliases)."""
-    return aliases_get(data_dir).sanitize(str(error))
+def _shown(error: BaseException, data_dir: Path) -> str:
+    """Safe error text: fixed description plus alias-normalized components (never the exception text)."""
+    return describe_error(error, aliases_get(data_dir))
 
 
 def _describe_cases(data_dir: Path) -> str:
@@ -208,7 +209,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     try:
         plan_aliases = aliases_get(data_dir)
         plan = build_plan(args.path, limits, plan_aliases)
-        case = args.case if args.case is not None else default_case_name(plan)
+        case = args.case if args.case is not None else default_case_name(plan, plan_aliases)
         db_path = case_db_path(data_dir, case)
     except (SourceNotFoundError, OSError) as exc:
         print(messages.INGEST_NOT_FOUND.format(error=_shown(exc, data_dir)), file=sys.stderr)
@@ -222,7 +223,11 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     scope = SCOPE_ALL if args.all_logs else SCOPE_DEFAULT
     scope_text = messages.INGEST_SCOPE_ALL if args.all_logs else messages.INGEST_SCOPE_DEFAULT
-    print(messages.INGEST_START.format(path=args.path, case=case, scope=scope_text))
+    print(
+        messages.INGEST_START.format(
+            path=plan_aliases.apply_name(str(args.path)), case=case, scope=scope_text
+        )
+    )
     interactive = sys.stdout.isatty()
 
     def progress(event: ProgressEvent) -> None:
@@ -446,7 +451,12 @@ def cmd_watch(args: argparse.Namespace) -> int:
     scope = SCOPE_ALL if args.all_logs else SCOPE_DEFAULT
     scope_text = messages.INGEST_SCOPE_ALL if args.all_logs else messages.INGEST_SCOPE_DEFAULT
     print(
-        messages.WATCH_START.format(path=args.path, case=args.case, interval=args.interval, scope=scope_text),
+        messages.WATCH_START.format(
+            path=aliases_get(data_dir).apply_name(str(args.path)),
+            case=args.case,
+            interval=args.interval,
+            scope=scope_text,
+        ),
         flush=True,
     )
 
@@ -522,7 +532,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
             print(messages.WATCH_NOT_A_FOLDER.format(path=args.watch), file=sys.stderr)
             return EXIT_FAILED
         try:
-            case = args.watch_case or default_case_name(build_plan(args.watch, ReadLimits()))
+            case = args.watch_case or default_case_name(
+                build_plan(args.watch, ReadLimits()),
+                aliases_get(resolve_data_dir(getattr(args, "data_dir", None))),
+            )
         except OSError as exc:
             print(
                 messages.INGEST_NOT_FOUND.format(

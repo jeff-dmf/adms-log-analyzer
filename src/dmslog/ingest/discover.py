@@ -41,11 +41,24 @@ class FamiliesConfigError(ValueError):
 
 
 class UnsafeArchiveError(ValueError):
-    """The zip has an unsafe member name (zip-slip) or exceeds a structural limit."""
+    """The zip has an unsafe member name (zip-slip) or exceeds a structural limit.
+
+    `diag_reason` is fixed text and `diag_component` the raw name involved (see dmslog.diagnostics).
+    """
+
+    def __init__(self, reason: str, component: str = "") -> None:
+        super().__init__(f"{reason}: {component}" if component else reason)
+        self.diag_reason = reason
+        self.diag_component = component
 
 
 class SourceNotFoundError(FileNotFoundError):
     """The path given to discover() does not exist or is not a zip, folder or file."""
+
+    def __init__(self, reason: str, component: str = "") -> None:
+        super().__init__(f"{reason}: {component}" if component else reason)
+        self.diag_reason = reason
+        self.diag_component = component
 
 
 @dataclass(frozen=True)
@@ -252,18 +265,18 @@ def normalize_member_name(name: str) -> str:
     characters (zip-slip). Backslashes count as separators, as Windows tools write them.
     """
     if not name or len(name) > MAX_NAME_LENGTH:
-        raise UnsafeArchiveError(f"invalid member name length: {name[:80]!r}")
+        raise UnsafeArchiveError("invalid member name length", name[:80])
     if any(ord(ch) < 32 for ch in name):
-        raise UnsafeArchiveError(f"control character in member name: {name[:80]!r}")
+        raise UnsafeArchiveError("control character in member name", name[:80])
     unified = name.replace("\\", "/")
     if unified.startswith("/") or re.match(r"^[A-Za-z]:", unified):
-        raise UnsafeArchiveError(f"absolute member name: {name[:80]!r}")
+        raise UnsafeArchiveError("absolute member name", name[:80])
     parts = unified.split("/")
     if ".." in parts:
-        raise UnsafeArchiveError(f"path traversal in member name: {name[:80]!r}")
+        raise UnsafeArchiveError("path traversal in member name", name[:80])
     cleaned = [p for p in parts if p not in ("", ".")]
     if not cleaned:
-        raise UnsafeArchiveError(f"empty member name: {name[:80]!r}")
+        raise UnsafeArchiveError("empty member name", name[:80])
     return "/".join(cleaned)
 
 
@@ -322,7 +335,7 @@ def discover(
         raw = [_single_file(target, rules)]
         kind = "file"
     else:
-        raise SourceNotFoundError(f"no such zip, folder or file: {target}")
+        raise SourceNotFoundError("no such zip, folder or file", str(target))
     yield from resolve_scope(raw, explicit=kind == "file")
 
 
@@ -402,7 +415,7 @@ def _scan_zip(
     try:
         archive = zipfile.ZipFile(path)
     except zipfile.BadZipFile as exc:
-        raise UnsafeArchiveError(f"not a valid zip: {path.name}: {exc}") from exc
+        raise UnsafeArchiveError("not a valid zip", path.name) from exc
     with archive:
         infos = archive.infolist()
         if len(infos) > max_members:
@@ -417,7 +430,7 @@ def _scan_zip(
                 continue
             key = member.lower()
             if key in seen:
-                raise UnsafeArchiveError(f"duplicate member name: {member[:80]!r}")
+                raise UnsafeArchiveError("duplicate member name", member[:80])
             seen.add(key)
             violation = _member_violation(info, max_member_bytes, max_ratio)
             yield _build(

@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dmslog.aliases import Aliases
+from dmslog.diagnostics import component as shown
+from dmslog.diagnostics import describe_error
 
 DEFAULT_MAX_XML_BYTES = 4 * 1024 * 1024
 
@@ -25,15 +27,6 @@ STATUS_OVERRIDDEN = "overridden"
 STATUS_AMBIGUOUS = "ambiguous"
 
 RegistryValue = str | tuple[str, ...]
-
-
-def shown(aliases: Aliases | None, component: str) -> str:
-    """Public spelling of ONE raw component (file, path, tag, name, error text) of a diagnostic.
-
-    Diagnostics are built from components, each normalized exactly once here; a composed message is
-    never normalized again.
-    """
-    return aliases.apply_name(component) if aliases else component
 
 
 class RegistryError(Exception):
@@ -96,8 +89,8 @@ def load_xml_root(
         raise RegistryError(f"{where}: DTD/entity declarations are not allowed")
     try:
         root = ET.fromstring(data)
-    except (ET.ParseError, ValueError, RecursionError, MemoryError) as exc:
-        raise RegistryError(f"{where}: malformed XML ({shown(aliases, str(exc))})") from exc
+    except Exception as exc:  # parser, codec (unknown encoding), recursion, memory: one choke point
+        raise RegistryError(f"{where}: malformed XML ({describe_error(exc)})") from None
     if _too_deep(root):
         raise RegistryError(f"{where}: XML nesting exceeds {MAX_XML_DEPTH} levels")
     return root
@@ -142,7 +135,7 @@ def read_limited(path: Path, max_bytes: int, aliases: Aliases | None = None) -> 
             data = handle.read(max_bytes + 1)
     except OSError as exc:
         raise RegistryError(
-            f"{shown(aliases, str(path))}: cannot read file ({shown(aliases, str(exc))})"
+            f"{shown(aliases, str(path))}: cannot read file ({describe_error(exc, with_filename=False)})"
         ) from exc
     if len(data) > max_bytes:
         raise RegistryError(f"{shown(aliases, str(path))}: file exceeds the {max_bytes}-byte limit")

@@ -75,12 +75,19 @@ class Aliases:
     def from_pairs(cls, pairs: list[tuple[str, str]] | tuple[tuple[str, str], ...]) -> Aliases:
         """Build from ``(real, public)`` pairs (no validation; for tests and callers that validated)."""
         ordered = tuple(sorted(dict.fromkeys(pairs), key=lambda p: (-len(p[0]), p[0])))
-        reals = [r for r, _ in ordered]
+        # Logical paths use "/" while Windows tools write "\\": match both spellings of a real name.
+        matcher = list(ordered)
+        for real, public in ordered:
+            for variant in (real.replace("\\", "/"), real.replace("/", "\\")):
+                if variant != real and all(variant != r for r, _ in matcher):
+                    matcher.append((variant, public))
+        matcher.sort(key=lambda p: (-len(p[0]), p[0]))
+        reals = [r for r, _ in matcher]
         return cls(
             pairs=ordered,
             _exact=_compile(reals, 0),
             _fold=_compile(reals, re.IGNORECASE),
-            _publics=tuple(p for _, p in ordered),
+            _publics=tuple(p for _, p in matcher),
         )
 
     def __len__(self) -> int:

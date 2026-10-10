@@ -775,6 +775,8 @@ Várias entradas podem repetir o mesmo `public` (uma grafia real por forma: Came
 
 **Também normalizados (texto derivado de nomes):** `source.error`, `SourceResult.member`, eventos de progresso/SSE, `result.warnings`, saída de erro da CLI, mensagens de job da API e erros de diagnóstico do Registry (`Aliases.sanitize`, `_Run._shown`).
 
+**Diagnósticos (`src/dmslog/diagnostics.py`).** Nunca embutem `str(exc)` de OSError, zip, XML ou codec (o texto pode trazer o nome escapado, por exemplo `\\\\`, que o matcher não reconhece). Cada mensagem é montada com texto fixo escolhido pela CLASSE da exceção (`describe_error`: "file not found", "permission denied", "bad zip file or member", "invalid XML at line N, column M", "unknown encoding", ...), inteiros (linha, coluna, errno) e componentes (caminho, membro) normalizados uma única vez. Exceções do app declaram `diag_reason`/`diag_component` ou `diag_safe`. Com `aliases.toml` ativo, avisos de derivação/correlação mostram só o nome da classe. O matcher também casa a variante com `/` de um `real` que contém `\\` (e vice-versa).
+
 **Limites.** Só nomes: não reescreve texto de mensagem nem payload (os templates não contêm o nome). O banco mantém a grafia real em `source.member` e `source.file_name` (são a chave para reabrir o arquivo; a lista de fontes da API/UI os exibe), em valores de parâmetros do Registry (por exemplo o caminho do `WebServiceConfiguration`) e no nome do zip/pasta ingerido (`collection.path`, `label`). Uma coluna de nome de exibição seria a evolução natural, mas não foi feita. Não compartilhar índice ou exportação gerados com nomes reais. Mudou o `aliases.toml`: reingerir o caso.
 
 ## 8. Correlação

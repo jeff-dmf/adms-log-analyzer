@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from .. import __version__, aliases, messages
+from ..diagnostics import describe_error
 from ..ingest import pipeline
 from ..ingest.discover import SourceNotFoundError, UnsafeArchiveError
 from ..ingest.ers import (
@@ -258,6 +259,10 @@ class IngestJobs:
         self._threads: set[threading.Thread] = set()
         self.stopping = threading.Event()
 
+    def _describe(self, error: BaseException) -> str:
+        """Safe error text (fixed description plus alias-normalized components)."""
+        return describe_error(error, aliases.get(self._store.data_dir))
+
     def hub(self, case_id: str) -> ProgressHub:
         case_id = self._store.canonical_case_id(case_id)
         with self._lock:
@@ -337,17 +342,16 @@ class IngestJobs:
         except JobCancelledError:
             done.update(code="cancelled", message=messages.JOB_CANCELLED)
         except CollectionConflictError as exc:
-            done.update(code=exc.reason, message=str(exc))
+            done.update(code=exc.reason, message=self._describe(exc))
         except UnsafeArchiveError as exc:
-            done.update(code="unsafe_archive", message=messages.JOB_UNSAFE.format(error=exc))
+            done.update(code="unsafe_archive", message=messages.JOB_UNSAFE.format(error=self._describe(exc)))
         except (SourceNotFoundError, ReadLimitError, OSError, ValueError, sqlite3.Error) as exc:
-            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=exc))
+            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=self._describe(exc)))
         except Exception as exc:  # the thread must always publish a final event
             done.update(code="internal_error", message=messages.JOB_FAILED.format(error=type(exc).__name__))
         finally:
             if conn is not None:
                 conn.close()
-            done["message"] = aliases.get(self._store.data_dir).sanitize(str(done.get("message", "")))
             hub.finish(done)
             with self._lock:
                 self._threads.discard(threading.current_thread())
@@ -449,16 +453,15 @@ class IngestJobs:
             done.update(code="cancelled", message=messages.JOB_CANCELLED)
             raise
         except CollectionConflictError as exc:
-            done.update(code=exc.reason, message=str(exc))
+            done.update(code=exc.reason, message=self._describe(exc))
             raise
         except (SourceNotFoundError, ReadLimitError, OSError, ValueError, sqlite3.Error) as exc:
-            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=exc))
+            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=self._describe(exc)))
             raise
         finally:
             watcher.conn = None
             if conn is not None:
                 conn.close()
-            done["message"] = aliases.get(self._store.data_dir).sanitize(str(done.get("message", "")))
             hub.finish(done)
         return report
 
@@ -896,7 +899,9 @@ class Api:
         if not path.is_absolute():
             raise ApiError(400, "path_not_absolute", messages.API_PATH_NOT_ABSOLUTE)
         if not path.exists():
-            raise ApiError(400, "path_not_found", self._shown(messages.API_PATH_NOT_FOUND.format(path=path)))
+            raise ApiError(
+                400, "path_not_found", messages.API_PATH_NOT_FOUND.format(path=self._component(str(path)))
+            )
         if self.jobs.is_running(cid):
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
         try:
@@ -917,9 +922,12 @@ class Api:
 
     # -- sources
 
-    def _shown(self, error: object) -> str:
-        """Error text with real names replaced by their public spelling (local aliases)."""
-        return aliases.get(self.data_dir).sanitize(str(error))
+    def _component(self, text: str) -> str:
+        return aliases.get(self.data_dir).apply_name(text)
+
+    def _shown(self, error: BaseException) -> str:
+        """Safe error text: fixed description plus alias-normalized components."""
+        return describe_error(error, aliases.get(self.data_dir))
 
     def list_sources(self, request: Request) -> Response:
         cid = _case_from_query(self.store, request)

@@ -272,7 +272,7 @@ def test_failed_source_error_and_warnings_use_the_public_name(tmp_path):
     result = run_ingest(conn, zpath, IngestOptions(scope="all", aliases=a), events.append)
     assert result.sources_failed == 1
     stored = conn.execute("SELECT error FROM source WHERE status = 'error'").fetchone()[0]
-    assert stored and "Acme" not in stored and "Custom" in stored
+    assert stored and "Acme" not in stored and stored.startswith("BadZipFile")
     assert all("Acme" not in (d.member + (d.error or "")) for d in result.details)
     assert all("Acme" not in (e.member or "") for e in events)
     assert not any("Acme" in w for w in result.warnings)
@@ -521,3 +521,121 @@ def test_zip_read_error_and_unusable_path_diagnostics(tmp_path):
         read_installation(tmp_path / "AcmeWidget_missing.bin", aliases=a)
     assert "Custom_missing" in str(info.value) and "Acme" not in str(info.value)
     assert "Other" not in str(info.value)
+
+
+# ----------------------------------------------------------------------------- review round 4
+
+NASTY = [
+    ("Acme\\Widget", "Custom"),  # backslash (Windows style)
+    ('Acme"W(id)get+[x]*', "Custom"),  # quotes and regex metacharacters
+    ("AcmeWidget", "Custom"),
+    ("Custom", "Other"),
+]
+
+
+def test_backslash_reals_match_in_slash_paths_and_regex_metacharacters_are_literal():
+    a = al.Aliases.from_pairs(NASTY)
+    assert a.apply_path("Log/Acme/Widget/x.log") == "Log/Custom/x.log"
+    assert a.apply_name("Acme\\Widget.log") == "Custom.log"
+    assert a.sanitize('Acme"W(id)get+[x]*_1') == "Custom_1"
+    assert a.sanitize("AcmeXWXidXgetXX") == "AcmeXWXidXgetXX"
+    assert len(a) == 4
+
+
+def test_describe_error_never_uses_exception_text():
+    import zlib
+
+    from dmslog.diagnostics import describe_error
+
+    nasty = "C:\\Acme\\Widget\\x.xml"
+    for exc in (
+        PermissionError(13, "denied " + nasty, nasty),
+        FileNotFoundError(2, nasty, nasty),
+        OSError(5, nasty),
+        zipfile.BadZipFile("Bad CRC-32 for file " + repr(nasty)),
+        zlib.error("Error -3 " + nasty),
+        LookupError("unknown encoding: " + nasty),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, nasty),
+        ValueError(nasty),
+        KeyError(nasty),
+        RuntimeError(nasty),
+    ):
+        text = describe_error(exc, al.Aliases.from_pairs(NASTY), with_filename=False)
+        assert "Acme" not in text and "Widget" not in text and "Other" not in text, text
+    assert describe_error(FileNotFoundError(2, "x", nasty), al.Aliases.from_pairs(NASTY)) == (
+        "file not found: C:\\Custom\\x.xml"
+    ) or "Acme" not in describe_error(FileNotFoundError(2, "x", nasty), al.Aliases.from_pairs(NASTY))
+
+
+def _folder_with_registry(tmp_path: Path, text: str, name: str = "AdapterAcmeWidget.xml") -> Path:
+    registry = tmp_path / "SchneiderElectricData" / "OASyS" / "Servers" / "config" / "Registry"
+    registry.mkdir(parents=True)
+    (registry / name).write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+def test_unknown_xml_encoding_is_a_diagnostic_not_an_escape(tmp_path):
+    a = al.Aliases.from_pairs(NASTY)
+    root = _folder_with_registry(
+        tmp_path,
+        '<?xml version="1.0" encoding="AcmeWidget"?><OASYSDNARegistry><Product Name="x"/></OASYSDNARegistry>',
+    )
+    problems = "\n".join(read_installation(root, aliases=a).problems)
+    assert "AdapterCustom.xml" in problems and "malformed XML" in problems
+    assert "Acme" not in problems and "Other" not in problems
+
+
+def test_permission_error_on_open_is_normalized(tmp_path, monkeypatch):
+    a = al.Aliases.from_pairs(NASTY)
+    root = _folder_with_registry(tmp_path, "<OASYSDNARegistry/>")
+    real_open = Path.open
+
+    def deny(self, *args, **kwargs):
+        if self.suffix == ".xml":
+            raise PermissionError(13, "Permission denied: C:\\Acme\\Widget", "C:\\Acme\\Widget")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", deny)
+    problems = "\n".join(read_installation(root, aliases=a).problems)
+    assert "permission denied" in problems
+    assert "Acme" not in problems and "Widget" not in problems and "Other" not in problems
+
+
+def test_source_error_from_an_oserror_with_an_escaped_name_is_fixed_text(tmp_path, monkeypatch):
+    from dmslog.ingest import pipeline
+
+    folder = _folder(tmp_path)
+    a = al.Aliases.from_pairs(NASTY)
+
+    def boom(self, *args, **kwargs):
+        raise OSError(5, "read failed for C:\\Acme\\Widget", "C:\\Acme\\Widget")
+
+    monkeypatch.setattr(pipeline._Run, "_index", boom)
+    events = []
+    conn = create_case_db(tmp_path / "case.sqlite")
+    result = run_ingest(conn, folder, IngestOptions(scope="all", aliases=a), events.append)
+    assert result.sources_failed == 1
+    stored = conn.execute("SELECT error FROM source WHERE status = 'error'").fetchone()[0]
+    shown = [stored, *(d.member + (d.error or "") for d in result.details), *result.warnings]
+    shown += [e.member or "" for e in events]
+    assert "I/O error (errno 5)" in stored
+    assert all("Acme" not in t and "Widget" not in t and "Other" not in t for t in shown), shown
+    conn.close()
+
+
+def test_cli_output_for_invalid_zip_and_failed_source_is_normalized(tmp_path, capsys):
+    from dmslog.cli import main
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "aliases.toml").write_text(
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "AcmeWidget"\n'
+        '[[alias]]\npublic = "Other"\nreal = "Custom"\n',
+        encoding="utf-8",
+    )
+    bad = tmp_path / "AcmeWidget_bad.zip"
+    bad.write_bytes(b"PK\x03\x04" + b"\x00" * 40)
+    main(["ingest", str(bad), "--data-dir", str(data)])
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert "Acme" not in text and "Other" not in text

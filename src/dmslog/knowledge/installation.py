@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dmslog.aliases import Aliases
+from dmslog.diagnostics import component as shown
+from dmslog.diagnostics import describe_error
 
 from .registry import (
     DEFAULT_MAX_XML_BYTES,
@@ -25,7 +27,6 @@ from .registry import (
     parse_registry_xml,
     read_limited,
     resolve_registry,
-    shown,
 )
 
 _REGISTRY_DIR = ("oasys", "servers", "config", "registry")
@@ -67,19 +68,27 @@ class _Collection:
         self.max_bytes = max_bytes
         self._zip: zipfile.ZipFile | None = None
         self._index: dict[str, str] = {}  # normalized lower-case key -> real member / path
-        if path.is_dir():
-            for item in path.rglob("*"):
-                if item.suffix.lower() == ".xml" and item.is_file():
-                    rel = item.relative_to(path).as_posix()
-                    self._index.setdefault(rel.lower(), rel)
-        elif zipfile.is_zipfile(path):
-            self._zip = zipfile.ZipFile(path)
-            for name in self._zip.namelist():
-                if name.lower().endswith(".xml") and not name.endswith("/"):
-                    norm = name.replace("\\", "/")
-                    self._index.setdefault(norm.lower(), name)
-        else:
-            raise RegistryError(f"{shown(aliases, str(path))}: not a folder or a zip file")
+        try:
+            if path.is_dir():
+                for item in path.rglob("*"):
+                    if item.suffix.lower() == ".xml" and item.is_file():
+                        rel = item.relative_to(path).as_posix()
+                        self._index.setdefault(rel.lower(), rel)
+            elif zipfile.is_zipfile(path):
+                self._zip = zipfile.ZipFile(path)
+                for name in self._zip.namelist():
+                    if name.lower().endswith(".xml") and not name.endswith("/"):
+                        norm = name.replace("\\", "/")
+                        self._index.setdefault(norm.lower(), name)
+            else:
+                raise RegistryError(f"{shown(aliases, str(path))}: not a folder or a zip file")
+        except RegistryError:
+            raise
+        except Exception as exc:  # OS, zip and codec errors: fixed text only, never exc text
+            self.close()
+            raise RegistryError(
+                f"{shown(aliases, str(path))}: cannot open ({describe_error(exc, with_filename=False)})"
+            ) from None
 
     def close(self) -> None:
         if self._zip is not None:
@@ -105,10 +114,13 @@ class _Collection:
                 )
             with self._zip.open(info) as handle:
                 data = handle.read(self.max_bytes + 1)
-        except (KeyError, OSError, zipfile.BadZipFile, RuntimeError) as exc:
+        except RegistryError:
+            raise
+        except Exception as exc:  # zip, zlib, OS and codec errors: fixed text only, never exc text
             raise RegistryError(
-                f"{shown(self.aliases, member)}: cannot read zip member ({shown(self.aliases, str(exc))})"
-            ) from exc
+                f"{shown(self.aliases, member)}: cannot read zip member "
+                f"({describe_error(exc, with_filename=False)})"
+            ) from None
         if len(data) > self.max_bytes:
             raise RegistryError(
                 f"{shown(self.aliases, member)}: file exceeds the {self.max_bytes}-byte limit"
@@ -230,6 +242,13 @@ def read_installation(
     collection = _Collection(Path(path), max_xml_bytes, aliases)
     try:
         return _read(collection, aliases)
+    except RegistryError:
+        raise
+    except Exception as exc:  # last choke point: fixed text only, never exception text
+        raise RegistryError(
+            f"{shown(aliases, str(path))}: cannot read the installation "
+            f"({describe_error(exc, with_filename=False)})"
+        ) from None
     finally:
         collection.close()
 

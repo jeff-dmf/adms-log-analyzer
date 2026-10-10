@@ -34,6 +34,8 @@ _ScanFn = Callable[[bytearray, int, int], Iterable[tuple[int, Header]]]
 class RecordTooLargeError(ValueError):
     """The pending record (or the unterminated line after it) exceeded ``max_record_bytes``."""
 
+    diag_safe = True  # the message holds only numbers
+
     def __init__(self, offset: int, size: int, limit: int) -> None:
         super().__init__(f"record starting at byte {offset} exceeds {limit} bytes (at least {size} bytes)")
         self.offset = offset  # source offset where the oversized record starts
