@@ -178,6 +178,29 @@ def test_statistics_fields_and_continuation(common_only: Catalog) -> None:
     assert tm.sev_hint == 5
 
 
+def test_statistics_templates_declare_side(common_only: Catalog) -> None:
+    by_code = {t.code: t for t in common_only.families["_common"].templates}
+    assert (
+        by_code["GEN-STA-01"].field_types["side"] == "str"
+        and by_code["GEN-STA-02"].field_types["side"] == "str"
+    )
+    normal = common_only.for_family("UNKNOWN", sensitive=False)
+    tm = normal.classify_text("[Communication2] - Client-side statistics:")
+    assert tm is not None and tm.code == "GEN-STA-01" and tm.fields["side"] == "Client"
+
+
+def test_statistics_csv_rows_are_not_capped_at_64(common_only: Catalog) -> None:
+    n = 300
+    body = "[methodname, call count, request total size, response total size]\n"
+    body += "".join(f"Example.IQuery.M{i},{i},{i + 1},{i + 2}\n" for i in range(n))
+    tm = common_only.for_family("UNKNOWN", sensitive=False).classify_text(
+        "[Communication2] - By call count: ", body
+    )
+    assert tm is not None and tm.code == "GEN-STA-03"
+    assert tm.fields["n_rows"] == n and len(tm.fields["rows"]) == n
+    assert tm.fields["rows"][-1] == [f"Example.IQuery.M{n - 1}", n - 1, n, n + 1]
+
+
 def test_error_codes_become_keys_in_the_normal_stream_only(common_only: Catalog) -> None:
     normal = common_only.for_family("UNKNOWN", sensitive=False)
     tm = normal.classify_text("Detected errors:", "ExampleCodeOne\nExampleCodeTwo\n")

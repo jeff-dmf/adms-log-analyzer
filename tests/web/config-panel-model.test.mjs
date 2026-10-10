@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   baseName, buildKeyRows, buildOperationRows, countDiverging, filterKeyRows, formatValue, levelRank,
-  logLevelText, payloadReason, productOptions,
+  logLevelText, payloadReason, productOptions, windowsText,
 } from "../../src/dmslog/web/js/config-panel-model.js";
 
 const CONFIG = {
@@ -132,4 +132,32 @@ test("productOptions indexes the products of the answer", () => {
     { value: "0", label: "AdapterWfm (group 0, 4 keys)" },
   ]);
   assert.deepEqual(productOptions(undefined), []);
+});
+
+test("windowsText lists the expected windows as text and counts the rest", () => {
+  const t0 = Date.UTC(2026, 9, 8, 10, 0, 0);
+  const windows = [[t0, t0 + 60000, true], [t0 + 60000, t0 + 120000, false], [t0 + 120000, null, true]];
+  assert.equal(
+    windowsText(windows, 0),
+    "Payload expected in 2 of 3 window(s): 2026-10-08 10:00:00.000 - 2026-10-08 10:01:00.000; 2026-10-08 10:02:00.000 - open",
+  );
+  assert.equal(windowsText([[t0, t0 + 1000, false]], 0), "Payload expected in 0 of 1 window(s)");
+  assert.equal(windowsText(windows, 4).startsWith("Payload expected in 2 of 3 window(s) (4 more window(s) omitted):"), true);
+  assert.equal(windowsText([], 0), "");
+  assert.equal(windowsText(undefined, undefined), "");
+  const many = Array.from({ length: 7 }, (_, i) => [t0 + i * 2000, t0 + i * 2000 + 1000, true]);
+  assert.equal(windowsText(many, 0).endsWith("(+2 more)"), true);
+});
+
+test("operation rows carry the windows text, empty without windows", () => {
+  const config = {
+    log_level: { value: "Info", source: "observed" },
+    operations: [
+      { operation: "A", message_log_level: "Info", payload_expected: true, payload_expected_windows: [[0, 1000, true]] },
+      { operation: "B", message_log_level: "Info", payload_expected: true },
+    ],
+  };
+  const rows = buildOperationRows(config);
+  assert.equal(rows[0].windowsText, "Payload expected in 1 of 1 window(s): 1970-01-01 00:00:00.000 - 1970-01-01 00:00:01.000");
+  assert.equal(rows[1].windowsText, "");
 });

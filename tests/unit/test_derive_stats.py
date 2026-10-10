@@ -334,3 +334,23 @@ def test_drain_samples_returns_and_clears() -> None:
     assert first
     assert d.drain_samples() == first
     assert d.samples == [] and d.drain_samples() == []
+
+
+def test_side_field_of_the_template_wins_over_the_text() -> None:
+    f = Feed()
+    f.header(T0, "Client")
+    f.entries[-1].fields["side"] = "Service"  # a template that declares ``side`` hands it over
+    f.total(T0, "Service", 3, 30, 300)
+    f.entries[-1].fields["side"] = "Service"
+    f.section(T0, "call count", [("Example.Contract.IQuery.Get", 2, 20, 200)])
+    f.other(T0 + 5)
+    _, events = derive(f.entries)
+    blocks = [e for e in events if e.kind == "stats_block"]
+    assert [(e.name, e.detail["calls"]) for e in blocks] == [("service", 3)]
+
+
+def test_side_falls_back_to_the_text_without_the_field() -> None:
+    f = Feed()
+    f.block(T0, 1)
+    _, events = derive(f.entries)
+    assert [e.name for e in events if e.kind == "stats_block"] == ["client", "service"]

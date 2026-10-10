@@ -26,7 +26,7 @@ Cobertura da família na amostra: antes 46,29% (só `_common`, 3 assinaturas des
 | AEDP-002 | `[ReceiveIncidentDeviceService] - Processing message with Id '<msgid>' successfully finished.` | fim | 2.918 | msg_id (chave `msgid`) |
 | AEDP-003 | `[ReceiveIncidentDeviceService] - Processing message with Id '<msgid>' failed. ` + `Reason: …`, `Full exception: …`, `   at …` | erro | 13 | msg_id (chave `msgid`), frame |
 
-Operação `ReceiveIncidentDevice`: início AEDP-001, fim AEDP-002, falha AEDP-003, pareados por TID (e pelo `msg_id`).
+Operação `ReceiveIncidentDevice`: início AEDP-001, fim AEDP-002 ou AEDP-003 (`end_ok`), pareados por TID. O AEDP-003 fecha a operação no próprio registro de falha (a operação ganha duração) e é declarado `business_error`: todas as 13 falhas da amostra têm a razão "dispositivo inexistente no modelo", então o status é `business_error`, nunca `fail`. Limitação: a razão está na continuação, e templates só leem a primeira linha; por isso uma falha do AEDP-003 com outra razão também contaria como `business_error` (não observada na amostra). Separar em dois templates exigiria casar a continuação, o que o formato de template não faz.
 
 Registros cobertos por `_common` nesta amostra (contagens): GEN-STA-01/02 (988 cada), GEN-STA-03 (2.964), GEN-CFG-05 (20), os códigos de startup da `_common` (56 registros no total), GEN-CON-01/02/03 (17), GEN-CFG-01 (5), GEN-CFG-07 (1), GEN-POOL-01 (1).
 
@@ -42,7 +42,7 @@ Registros cobertos por `_common` nesta amostra (contagens): GEN-STA-01/02 (988 c
 ## 4. O que continua sem documentação
 
 - Texto da razão da falha amostrada (dispositivo inexistente no modelo do ADMS): **não consta** entre os erros do vault (que documentam `DeviceNotExistInList` e `EntityNotFound`). Essa falha vem de uma exceção não tratada do processador, não de um código da planilha de erros; mapear essa falha a um código `Error.code` exige o log do lado do cliente ou o payload.
-- **Esclarecido pelo Jefferson (2026-10-10):** o erro é devolvido por outro serviço do ADMS: o processo não encontrou o elemento no modelo da rede elétrica. O adapter troca o dispositivo de um incidente (INC do ADMS) e a falha ocorre quando o código do dispositivo recebido na interface não existe no modelo da rede. Tratamento no analisador: erro de negócio da operação `ReceiveIncidentDevice`, sem código `Error.code` no log (hint em `hints.toml`; a 4.8 classifica como `business_error` quando a razão tem esse formato).
+- **Esclarecido pelo Jefferson (2026-10-10):** o erro é devolvido por outro serviço do ADMS: o processo não encontrou o elemento no modelo da rede elétrica. O adapter troca o dispositivo de um incidente (INC do ADMS) e a falha ocorre quando o código do dispositivo recebido na interface não existe no modelo da rede. Tratamento no analisador: erro de negócio da operação `ReceiveIncidentDevice`, sem código `Error.code` no log (hint em `hints.toml`; a 4.8 classifica o AEDP-003 como `business_error`).
 - Divergência de códigos entre o design document e a planilha de configuração (1.2 × 2.7 etc.): não resolvível pelo log, que não imprime o código.
 - Formatos de log de `InvalidMessage`, `InvalidHeaderNoun`/`Verb`, `OperationNotAllowed`, `MissingIncidentId`, `MissingDeviceId`: **não observados** na amostra; se aparecerem como outra forma de mensagem, cairão em registros desconhecidos.
 - Auditoria (`AuditingType` aparece como `None` na configuração da amostra): as mensagens de auditoria da `_common` não ocorrem.

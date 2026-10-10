@@ -27,6 +27,8 @@ def test_config_for_product(client, demo):  # noqa: F811
     assert body["log_level"] == {"value": "Info", "source": "observed"}
     ops = {o["operation"]: o["payload_expected"] for o in body["operations"]}
     assert ops == {"CreatedThing": True, "ChangedThing": False, "QuietThing": False, "OddThing": None}
+    for op in body["operations"]:  # no level change logged in this case: no windows
+        assert op["payload_expected_windows"] == [] and op["payload_windows_dropped"] == 0
 
 
 def test_config_uses_the_canonical_case_id(client, demo):  # noqa: F811

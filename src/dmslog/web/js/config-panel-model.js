@@ -1,6 +1,9 @@
 // Pure helpers of the "Effective configuration" panel (no DOM): rows for the key table and the
 // operation table from the GET /api/config answer. Values come from the ERS (untrusted text).
 import { S, format } from "./strings.js";
+import { formatTs } from "./time.js";
+
+const MAX_WINDOWS_SHOWN = 5;
 
 // Same order as the server (store/config.py): DebugLog < Warning < Info < Verbose.
 const LEVEL_ORDER = { debuglog: 3, warning: 4, info: 5, verbose: 6 };
@@ -152,6 +155,30 @@ export function payloadReason(messageLevel, logLevel, expected) {
   return format(expected ? S.cfgReasonEnough : S.cfgReasonTooLow, { log: have, message: messageLevel });
 }
 
+// "Payload expected in N window(s)": windows are [start, end, expected] (end null = open); the
+// list names the expected windows only (at most MAX_WINDOWS_SHOWN, then "+N more"). Empty text when
+// the operation has no windows (counts are over the windows returned; omitted ones are reported apart) (no level change was logged, the single answer applies).
+export function windowsText(windows, dropped) {
+  const list = Array.isArray(windows) ? windows.filter((w) => Array.isArray(w) && w.length >= 3) : [];
+  if (list.length === 0) {
+    return "";
+  }
+  const expected = list.filter((w) => w[2] === true);
+  const omitted = Number(dropped) || 0;
+  let head = format(S.cfgWindowsLine, { n: expected.length, total: list.length });
+  if (omitted > 0) {
+    head += " " + format(S.cfgWindowsOmitted, { n: omitted });
+  }
+  if (expected.length === 0) {
+    return head;
+  }
+  const spans = expected.slice(0, MAX_WINDOWS_SHOWN).map((w) =>
+    formatTs(w[0]) + " - " + (w[1] === null || w[1] === undefined ? S.cfgWindowOpen : formatTs(w[1])));
+  const more = expected.length > MAX_WINDOWS_SHOWN
+    ? " " + format(S.cfgWindowsMore, { n: expected.length - MAX_WINDOWS_SHOWN }) : "";
+  return head + ": " + spans.join("; ") + more;
+}
+
 // Rows of the operation table: expected is "yes" / "no" / "unknown".
 export function buildOperationRows(config) {
   const operations = config && Array.isArray(config.operations) ? config.operations : [];
@@ -164,6 +191,7 @@ export function buildOperationRows(config) {
       expected,
       expectedLabel: expected === "yes" ? S.cfgPayloadYes : expected === "no" ? S.cfgPayloadNo : S.cfgPayloadUnknown,
       reason: payloadReason(op.message_log_level, logLevel, op.payload_expected),
+      windowsText: windowsText(op.payload_expected_windows, op.payload_windows_dropped),
       source: [baseName(op.source_file), op.layer_label].filter(Boolean).join(", "),
     };
   });

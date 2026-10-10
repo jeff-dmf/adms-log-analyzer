@@ -11,7 +11,13 @@ Assumptions (documented because the architecture leaves them open):
   value (``Error``, ``Off``, a typo) gives ``payload_expected = None`` (unknown) instead of a guess.
 * The level in force is the value the process logged at startup (``LogLevel`` in
   ``config_observed``) when present, otherwise the effective Registry value.
-  Time windows from ``Debug level changed`` lines (``level_window``) are not considered here.
+  ``payload_expected`` is that single answer; the time windows from ``Debug level changed`` lines
+  (stored ``level_window`` events of the adapter's streams) are reported per operation in
+  ``payload_expected_windows``: ``[start, end, expected]`` (ms; ``end`` is None for a window still
+  open at the end of the stream). A window is expected when its level (``detail.level_name``,
+  else ``level_num`` with the numbers printed by the adapters: DebugLog 3, Warning 4, Info 5,
+  Verbose 6) is at least the operation's MessageLogLevel, Info when that is not a known level;
+  ``MessageLogLevel = None`` is never expected. A window of unknown level is left out.
 * Observed vs resolved: names are compared normalized (no ``_``, case-insensitive) plus the alias
   table below (the one in the header of ``adapters/_common.toml``); path values are compared after
   ``%OASINSTALLDATADIR%``/drive/duplicate separators are normalized, case-insensitively.
@@ -19,6 +25,7 @@ Assumptions (documented because the architecture leaves them open):
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from typing import TYPE_CHECKING, Any
@@ -41,6 +48,8 @@ NAME_ALIASES = {
 LEVEL_ORDER = {"debuglog": 3, "warning": 4, "info": 5, "verbose": 6}  # ARQUITETURA 6.6
 _LEVEL_SYNONYMS = {"debug": "debuglog", "information": "info"}
 _NEVER = "none"
+INFO_LEVEL_NUM = 5  # same value as web/js/payload-model.js
+MAX_WINDOWS = 500  # per operation; the rest is counted in ``payload_windows_dropped``
 
 
 def normalize_name(name: str) -> str:
@@ -153,6 +162,64 @@ def payload_expected(log_level: str | None, message_log_level: str | None) -> bo
     return have >= need
 
 
+def _window_rank(detail: Any) -> int | None:
+    """Level number of a ``level_window`` event: by ``level_name`` first, ``level_num`` as fallback."""
+    if not isinstance(detail, dict):
+        return None
+    name = detail.get("level_name")
+    if isinstance(name, str):
+        rank = _level_rank(name)
+        if rank is not None:
+            return rank
+    num = detail.get("level_num")
+    return num if isinstance(num, int) and not isinstance(num, bool) else None
+
+
+def _streams_of(conn: sqlite3.Connection, group: int, product: str) -> list[int]:
+    return [
+        sid
+        for sid, process in conn.execute(
+            "SELECT id, process FROM stream WHERE collection_group = ? AND sensitive = 0 ORDER BY id",
+            (group,),
+        )
+        if product_for_process(process, {product}) == product
+    ]
+
+
+def level_windows(conn: sqlite3.Connection, group: int, product: str) -> list[tuple[int, int | None, int]]:
+    """``(ts_start, ts_end, level_num)`` of the stored ``level_window`` events of the product's streams."""
+    streams = _streams_of(conn, group, product)
+    if not streams:
+        return []
+    marks = ",".join("?" * len(streams))
+    out: list[tuple[int, int | None, int]] = []
+    for ts_start, ts_end, status, raw in conn.execute(
+        f"SELECT ts_start, ts_end, status, detail FROM event"
+        f" WHERE kind = 'level_window' AND stream_id IN ({marks}) ORDER BY ts_start, id",
+        streams,
+    ):
+        try:
+            detail = json.loads(raw) if raw else None
+        except ValueError:
+            detail = None
+        rank = _window_rank(detail)
+        if rank is not None:
+            # A window still open at the end of the stream has no end (its ts_end is the last entry seen).
+            out.append((ts_start, None if status == "open" else ts_end, rank))
+    return out
+
+
+def expected_windows(
+    windows: list[tuple[int, int | None, int]], message_log_level: str | None
+) -> list[list[Any]]:
+    """``[start, end, expected]`` per window for one operation (see the module docstring)."""
+    if message_log_level is None:
+        return []
+    never = message_log_level.strip().casefold() == _NEVER
+    need = _level_rank(message_log_level) or INFO_LEVEL_NUM
+    return [[start, end, (not never) and rank >= need] for start, end, rank in windows]
+
+
 def _default_group(conn: sqlite3.Connection, product: str) -> int | None:
     row = conn.execute(
         "SELECT collection_group FROM config_param WHERE product = ? ORDER BY collection_group LIMIT 1",
@@ -173,12 +240,7 @@ def config_products(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def _observed(conn: sqlite3.Connection, group: int, product: str) -> dict[str, dict[str, Any]]:
     """Last observed value per normalized logged name, over the streams of ``product``."""
-    streams = []
-    for sid, process in conn.execute(
-        "SELECT id, process FROM stream WHERE collection_group = ? AND sensitive = 0", (group,)
-    ):
-        if product_for_process(process, {product}) == product:
-            streams.append(sid)
+    streams = _streams_of(conn, group, product)
     out: dict[str, dict[str, Any]] = {}
     if not streams:
         return out
@@ -208,7 +270,8 @@ def config_for(conn: sqlite3.Connection, product: str, group: int | None = None)
 
         {"product", "group", "keys": [{"scope", "key_path", "name", "layers": [...], "effective",
          "effective_layer", "status", "observed", "diverges"}], "log_level": {"value", "source"},
-         "operations": [{"operation", "message_log_level", "payload_expected", "settings"}]}
+         "operations": [{"operation", "message_log_level", "payload_expected",
+         "payload_expected_windows", "payload_windows_dropped", "settings"}]}
 
     ``diverges`` is true only when both an effective and an observed value exist and differ.
     """
@@ -263,12 +326,16 @@ def config_for(conn: sqlite3.Connection, product: str, group: int | None = None)
     elif level_entry is not None and level_entry["effective"] is not None:
         log_level = {"value": level_entry["effective"], "source": "registry"}
     operations = []
+    windows = level_windows(conn, group, product)
     for op_name in sorted(ops):
         info = ops[op_name]
         message_level = info["settings"].get("MessageLogLevel")
+        op_windows = expected_windows(windows, message_level)
         operations.append(
             {"operation": op_name, "message_log_level": message_level,
              "payload_expected": payload_expected(log_level["value"], message_level),
+             "payload_expected_windows": op_windows[:MAX_WINDOWS],
+             "payload_windows_dropped": max(0, len(op_windows) - MAX_WINDOWS),
              "settings": info["settings"], "source_file": info["source_file"], "layer": info["layer"],
              "layer_label": info["layer_label"] or ""}
         )  # fmt: skip

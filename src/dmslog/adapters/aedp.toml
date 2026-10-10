@@ -67,6 +67,10 @@ counter_examples = [
 [[operation]]
 name = "ReceiveIncidentDevice"
 start = ["AEDP-001"]
-end = ["AEDP-002"]
-fail = ["AEDP-003"]
+# AEDP-003 closes the operation at the failure entry (so it has a duration) and is the business error:
+# the only reason seen is "no device with ID <n> in the ADMS model" (the device code received does not
+# exist in the network model, reported by another ADMS service). The reason sits in the continuation,
+# which templates do not match, so every AEDP-003 counts as business_error (not `fail`).
+end_ok = ["AEDP-002", "AEDP-003"]
+business_error = ["AEDP-003"]
 pair_by = ["tid"]

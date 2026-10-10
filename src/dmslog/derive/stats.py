@@ -58,6 +58,14 @@ _Counters = tuple[int, int, int]  # calls, req_bytes, resp_bytes
 _NAMES = ("calls", "req_bytes", "resp_bytes")
 
 
+def _side_of(entry: StoredEntry, text_side: str) -> str:
+    """``client`` / ``service``: the template's ``side`` field first, the matched text as the fallback."""
+    value = entry.field("side")
+    if isinstance(value, str) and value.lower() in ("client", "service"):
+        return value.lower()
+    return text_side.lower()
+
+
 class _Block:
     __slots__ = (
         "chan",
@@ -73,6 +81,7 @@ class _Block:
         "methods",
         "sections",
         "dropped",
+        "rows_cut",
     )
 
     def __init__(self, chan: int, side: str, entry: StoredEntry) -> None:
@@ -89,6 +98,7 @@ class _Block:
         self.methods: dict[str, _Counters] = {}
         self.sections = 0
         self.dropped = 0  # methods over the cap
+        self.rows_cut = 0  # sections whose rows the parser could not read in full (continuation cap)
 
 
 class StatsDeriver:
@@ -210,14 +220,14 @@ class StatsDeriver:
                 self.skipped += 1
                 self.skipped_total += 1
                 return
-            self._open[chan] = _Block(chan, h.group(2).lower(), entry)
+            self._open[chan] = _Block(chan, _side_of(entry, h.group(2)), entry)
             self._refresh()
             return
         block = self._open.get(chan)
         if (
             t is not None
             and block is not None
-            and (block.totals is not None or t.group(2).lower() != block.side)
+            and (block.totals is not None or _side_of(entry, t.group(2)) != block.side)
         ):
             # Second totals line, or totals of the other side without its header: new (headerless) block.
             self._close(chan, out)
@@ -245,15 +255,18 @@ class StatsDeriver:
     @staticmethod
     def _read_rows(block: _Block, entry: StoredEntry) -> None:
         rows: list[Any] = []
-        if entry.cont:
+        fields = entry.fields
+        if isinstance(fields.get("rows"), list):
+            # The template's parser read the whole continuation (up to its 256 KiB cap); the continuation
+            # handed to the derivers is shorter (64 KiB), so the fields come first.
+            rows = [r for r in fields["rows"] if isinstance(r, (list, tuple)) and len(r) == 4]
+            if fields.get("rows_cut"):
+                block.rows_cut += 1
+        elif entry.cont:
             for line in entry.cont.split("\n"):
                 m = _ROW.fullmatch(line.strip())
                 if m:
                     rows.append((m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4))))
-        else:
-            rows = [
-                r for r in (entry.fields.get("rows") or []) if isinstance(r, (list, tuple)) and len(r) == 4
-            ]
         for name, calls, req, resp in rows:
             if name == TOTAL:
                 continue
@@ -355,6 +368,8 @@ class StatsDeriver:
             detail["duplicate_samples"] = dup_samples
         if block.dropped:
             detail["methods_dropped"] = block.dropped
+        if block.rows_cut:
+            detail["sections_rows_cut"] = block.rows_cut
         if restart:
             detail["restart"] = True
         end_ts = block.last_ts if block.last_ts is not None else ts

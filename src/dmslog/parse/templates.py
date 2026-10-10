@@ -348,14 +348,24 @@ def _p_codes_per_line(cont: str, opts: Mapping[str, Any], spec: ContSpec) -> dic
 def _p_stats_csv(cont: str, opts: Mapping[str, Any], spec: ContSpec) -> dict[str, Any]:
     rows = []
     n = 0
-    limit = int(opts.get("max_rows", 64))
-    for line in _cont_lines(cont, limit + 8):
+    lines = _cont_lines(cont, min(int(opts.get("max_rows", MAX_CONT_CHARS)), MAX_CONT_CHARS) + 8)
+    # No row cap by default: the 256 KiB continuation cap bounds the work and the rows kept (a line is
+    # at least 2 characters, so MAX_CONT_CHARS also bounds the number of lines).
+    limit = int(opts.get("max_rows", MAX_CONT_CHARS))
+    for line in lines:
         m = _CSV_ROW.fullmatch(line.strip())
         if m:
             n += 1
             if len(rows) < limit:
                 rows.append([m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4))])
-    return {"rows": rows, "n_rows": n} if n else {}
+    if not n:
+        if len(cont) > MAX_CONT_CHARS:  # no row read before the cap (a line above it, maybe after a header)
+            return {"rows": [], "n_rows": 0, "rows_cut": True}
+        return {}
+    out: dict[str, Any] = {"rows": rows, "n_rows": n}
+    if len(cont) > MAX_CONT_CHARS or n > len(rows):
+        out["rows_cut"] = True  # the continuation cap or ``max_rows`` left rows out: never silent
+    return out
 
 
 def _p_dotnet_stack(cont: str, opts: Mapping[str, Any], spec: ContSpec) -> dict[str, Any]:
@@ -442,7 +452,7 @@ CONT_PARSERS: Mapping[str, _ContParser] = MappingProxyType(
         "codes_per_line": _ContParser(
             _p_codes_per_line, {"max_items": int, "max_lines": int}, frozenset({"codes"})
         ),
-        "stats_csv": _ContParser(_p_stats_csv, {"max_rows": int}, frozenset({"rows", "n_rows"})),
+        "stats_csv": _ContParser(_p_stats_csv, {"max_rows": int}, frozenset({"rows", "n_rows", "rows_cut"})),
         "dotnet_stack": _ContParser(
             _p_dotnet_stack,
             {"max_lines": int},
@@ -454,7 +464,12 @@ CONT_PARSERS: Mapping[str, _ContParser] = MappingProxyType(
         "line_regex": _ContParser(_p_line_regex, {"regex": str, "line": int}, frozenset()),
     }
 )
-_OPTION_RANGES = {"max_items": (1, 256), "max_lines": (1, 5000), "max_rows": (1, 256), "line": (1, 20)}
+_OPTION_RANGES = {
+    "max_items": (1, 256),
+    "max_lines": (1, 5000),
+    "max_rows": (1, MAX_CONT_CHARS),
+    "line": (1, 20),
+}
 
 
 # --------------------------------------------------------------------------- regex analysis

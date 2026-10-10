@@ -197,7 +197,11 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
       const payload = element("td");
       payload.appendChild(badge(row.expectedLabel, row.expected === "yes" ? "ok" : row.expected === "no" ? "muted" : "warn"));
       tr.appendChild(payload);
-      tr.appendChild(element("td", "", row.reason));
+      const reason = element("td", "", row.reason);
+      if (row.windowsText !== "") {
+        reason.appendChild(element("div", "cfg-muted", row.windowsText));
+      }
+      tr.appendChild(reason);
       tr.appendChild(element("td", "cfg-muted", row.source));
       tbody.appendChild(tr);
     }
@@ -223,7 +227,6 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
     } else {
       body.appendChild(element("div", "cfg-muted", S.cfgOpsEmpty));
     }
-    body.appendChild(element("p", "cfg-note", S.cfgWindowNote));
   }
 
   let shownProducts = null;

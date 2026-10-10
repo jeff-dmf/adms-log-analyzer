@@ -57,6 +57,9 @@ from dmslog.derive.base import Event, RowEntry, StatSample
 CHUNK = 5000  # entries read per query
 WRITE_EVERY = 4000  # events buffered before a batch write
 MAX_SNAPSHOTS = 64
+FLAG_ELEVATED_LEVEL = 16  # entry.flags bit: the entry lies inside a level_window of level Info or above
+INFO_LEVEL_NUM = 5  # the numbers the adapters print: DebugLog 3, Warning 4, Info 5, Verbose 6
+_LEVEL_NUM_BY_NAME = {"debug": 3, "debuglog": 3, "warning": 4, "info": 5, "information": 5, "verbose": 6}
 CONT_CHARS = 65536  # continuation text handed to the derivers (same limit as the FTS)
 
 _FIRST = itemgetter(0)
@@ -309,6 +312,58 @@ def _runs(event_id: int, entry_ids: list[int], out: list[tuple[int, int, int]]) 
         out.append((event_id, first, last))  # type: ignore[arg-type]
 
 
+def _elevated_detail(detail: dict[str, Any]) -> bool:
+    """True when a ``level_window`` detail names a level of at least Info (name first, else number)."""
+    name, num = detail.get("level_name"), detail.get("level_num")
+    rank = _LEVEL_NUM_BY_NAME.get(name.strip().casefold()) if isinstance(name, str) else None
+    if rank is None and isinstance(num, int) and not isinstance(num, bool):
+        rank = num
+    return rank is not None and rank >= INFO_LEVEL_NUM
+
+
+def _elevated(ev: Event) -> bool:
+    return (
+        ev.kind == "level_window"
+        and ev.start_entry_id is not None
+        and ev.end_entry_id is not None
+        and _elevated_detail(ev.detail)
+    )
+
+
+def _mark_window(
+    conn: sqlite3.Connection, ranges: list[tuple[int, int, int]], first: int, last: int, min_id: int = 0
+) -> None:
+    """Set flag 16 on the entries of a window, in CHAIN order: ``first`` and ``last`` are entry ids.
+
+    The window covers ``first`` to the end of its source, the whole sources between, and the start of
+    the source of ``last`` up to ``last`` (one source: ``first`` to ``last``). Ids across sources need not
+    grow in chain order, so there is no ``BETWEEN first AND last`` across sources. Only the sources of
+    ``ranges`` (the chain) are touched. ``min_id`` leaves out the entries below it (the ones a pass does
+    not reprocess). ``+source_id`` keeps the planner on the primary key range.
+    """
+    pos = {}
+    for entry_id in (first, last):
+        row = conn.execute("SELECT source_id FROM entry WHERE id = ?", (entry_id,)).fetchone()
+        if row is None:
+            return  # the entry is gone (re-index): the window is derived again
+        pos[entry_id] = next((i for i, r in enumerate(ranges) if r[0] == row[0]), None)
+        if pos[entry_id] is None:
+            return
+    i, j = pos[first], pos[last]
+    if i > j:
+        return
+    spans = []
+    for k in range(i, j + 1):
+        sid, lo, hi = ranges[k]
+        a, b = max(first if k == i else lo, min_id), last if k == j else hi
+        if a <= b:
+            spans.append((sid, a, b))
+    conn.executemany(
+        f"UPDATE entry SET flags = flags | {FLAG_ELEVATED_LEVEL} WHERE id BETWEEN ? AND ? AND +source_id = ?",  # noqa: S608
+        [(a, b, sid) for sid, a, b in spans],
+    )
+
+
 class _Writer:
     """Batches event, entry.event_id and stat_sample writes (explicit event ids, no per-row round trips)."""
 
@@ -318,6 +373,7 @@ class _Writer:
         self.next_id = conn.execute("SELECT coalesce(max(id), 0) FROM event").fetchone()[0] + 1
         self.events = 0
         self.samples = 0
+        self.ranges: list[tuple[int, int, int]] = []  # ``(source_id, min_id, max_id)`` of the chain, in order
 
     def events_batch(self, events: list[Event]) -> None:
         if not events:
@@ -325,7 +381,10 @@ class _Writer:
         events.sort(key=lambda e: (e.start_entry_id is None, e.start_entry_id or 0, e.kind, e.name or ""))
         rows = []
         links = []
+        elevated = []
         for ev in events:
+            if _elevated(ev):
+                elevated.append((ev.start_entry_id, ev.end_entry_id))
             eid = self.next_id
             self.next_id += 1
             n = ev.n_entries if ev.n_entries is not None else (len(ev.entry_ids) or None)
@@ -343,6 +402,8 @@ class _Writer:
         )
         if links:
             self.conn.executemany("UPDATE entry SET event_id = ? WHERE id BETWEEN ? AND ?", links)
+        for a, b in elevated:  # idempotent; bounded by the window's entries in this chain
+            _mark_window(self.conn, self.ranges, a, b)
         self.events += len(rows)
 
     def samples_batch(self, samples: list[StatSample]) -> None:
@@ -531,6 +592,7 @@ def _derive_chain(
     stream_id = writer.stream_id
     derivers = build_derivers(family, rules, truncated=truncated)
     ranges, monotone = _id_ranges(conn, sources)
+    writer.ranges = ranges
     stateful = [d for d in derivers if hasattr(d, "export_state") and hasattr(d, "import_state")]
     cp = 0
     if (
@@ -568,6 +630,25 @@ def _derive_chain(
             [*source_ids, cp],
         ).fetchone()[0]
     _reset(conn, stream_id, chain, cp, ts_cut, multi)
+    if source_ids:  # the flag is set again by the windows the derivers produce from the checkpoint on
+        marks = ",".join("?" for _ in source_ids)
+        conn.execute(
+            f"UPDATE entry SET flags = flags & ~{FLAG_ELEVATED_LEVEL}"  # noqa: S608
+            f" WHERE (flags & {FLAG_ELEVATED_LEVEL}) <> 0 AND id >= ? AND source_id IN ({marks})",
+            [cp, *source_ids],
+        )
+        # A kept window that began before the checkpoint but reaches past it is not derived again: put its
+        # flag back (the windows that were deleted by the reset are produced again by the derivers).
+        # (only the part at or after the checkpoint: the rest was not cleared). The chain is monotone when
+        # the checkpoint is above 0, so a window reaches past it exactly when its end id does.
+        where, params = "stream_id = ? AND kind = 'level_window' AND end_entry_id >= ?", [stream_id, cp]
+        if multi:
+            where += " AND json_extract(detail, '$.chain') = ?"
+            params.append(chain)
+        sql = f"SELECT start_entry_id, end_entry_id, detail FROM event WHERE {where}"  # noqa: S608
+        for a, b, raw in conn.execute(sql, params).fetchall():
+            if a is not None and b is not None and _elevated_detail(json.loads(raw) if raw else {}):
+                _mark_window(conn, ranges, a, b, cp)
     seen: dict[int, int] = {}
     pending: list[Event] = []
     pending_samples: list[StatSample] = []

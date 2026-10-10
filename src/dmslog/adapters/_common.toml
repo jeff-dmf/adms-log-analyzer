@@ -49,7 +49,7 @@ class = "statistics"
 title = "Statistics block header"
 sev = 5
 regex = '''^\[Communication(?P<chan>\d+)\] - (?P<side>Client|Service)-side statistics:$'''
-fields = { chan = "int" }
+fields = { chan = "int", side = "str" }
 examples = [
     { msg = "[Communication2] - Client-side statistics:", fields = { chan = 2, side = "Client" } },
     "[Communication2] - Service-side statistics:",
@@ -63,7 +63,7 @@ class = "statistics"
 title = "Statistics totals"
 sev = 5
 regex = '''^\[Communication(?P<chan>\d+)\] - \[TOTAL\]\[(?P<side>Client|Service)\] Call count: (?P<calls>\d+), Request bytes: (?P<req_bytes>\d+) \(avg\. (?P<req_avg>[\d.]+)\), Response bytes: (?P<resp_bytes>\d+) \(avg\. (?P<resp_avg>[\d.]+)\)\. Total operations: (?P<ops>\d+)$'''
-fields = { chan = "int", calls = "int", req_bytes = "int", resp_bytes = "int", req_avg = "float", resp_avg = "float", ops = "int" }
+fields = { chan = "int", side = "str", calls = "int", req_bytes = "int", resp_bytes = "int", req_avg = "float", resp_avg = "float", ops = "int" }
 examples = [
     { msg = "[Communication2] - [TOTAL][Client] Call count: 3, Request bytes: 294 (avg. 98), Response bytes: 28553 (avg. 9517.667). Total operations: 3", fields = { side = "Client", calls = 3, req_bytes = 294, resp_bytes = 28553, req_avg = 98.0, resp_avg = 9517.667, ops = 3 } },
 ]

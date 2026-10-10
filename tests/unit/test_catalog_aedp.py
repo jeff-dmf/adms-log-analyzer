@@ -57,4 +57,10 @@ def test_operation_rule_in_default_catalog() -> None:
     fam = load_catalog().families["AEDP"]
     ops = [o for o in fam.operations if o.get("name") == "ReceiveIncidentDevice"]
     assert len(ops) == 1
-    assert (ops[0]["start"], ops[0]["end"], ops[0]["fail"]) == (["AEDP-001"], ["AEDP-002"], ["AEDP-003"])
+    # AEDP-003 closes the operation and is its business error (device not in the ADMS model), never `fail`
+    assert (ops[0]["start"], ops[0]["end_ok"], ops[0]["business_error"]) == (
+        ["AEDP-001"],
+        ["AEDP-002", "AEDP-003"],
+        ["AEDP-003"],
+    )
+    assert "fail" not in ops[0] and "end" not in ops[0]

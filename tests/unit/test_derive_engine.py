@@ -296,7 +296,7 @@ def snapshot(conn):
     ).fetchall()
     ev = [(*r[:-1], _without_ids(r[-1])) for r in ev]
     owner = conn.execute(
-        "SELECT x.byte_off, o.byte_off FROM entry x LEFT JOIN event v ON v.id = x.event_id"
+        "SELECT x.byte_off, o.byte_off, x.flags & 16 FROM entry x LEFT JOIN event v ON v.id = x.event_id"
         " LEFT JOIN entry o ON o.id = v.start_entry_id ORDER BY x.byte_off"
     ).fetchall()
     return ev, owner
@@ -619,3 +619,289 @@ def test_failing_commit_surfaces_the_original_error_and_leaves_nothing_applied(t
         db.execute("SELECT key, value FROM meta ORDER BY key").fetchall(),
     )
     assert after == before
+
+
+AEDP = f"{tp.LOGDIR}/CustomAdapterChangeIncidentDevice_300.log"
+
+
+def test_aedp_device_not_in_model_is_a_business_error_with_duration(tmp_path, db):
+    from dmslog.parse.templates import load_catalog
+
+    prefix = "[ReceiveIncidentDeviceService] - Processing message with Id"
+    ids = [mf.synth_guid(n) for n in (11, 12, 13)]
+    cont = (
+        "Reason: 'There is no device with ID: 7 in the ADMS model.'. \n"
+        "Full exception: 'System.Exception: There is no device with ID: 7 in the ADMS model.\n"
+        "   at Example.Adapter.Process()"
+    )
+    lines = [
+        line(0, f"{prefix} '{ids[0]}' started.", 1),
+        line(40, f"{prefix} '{ids[0]}' successfully finished.", 1),
+        line(100, f"{prefix} '{ids[1]}' started.", 2),
+        mf.header(160, "DEBUGLOG", f"{prefix} '{ids[1]}' failed. ", tid=2) + "\n" + cont,
+        line(200, f"{prefix} '{ids[2]}' started.", 3),
+        line(260, f"{prefix} '{ids[2]}' successfully finished.", 3),
+    ]
+    root = tp.write_folder(tmp_path / "Log", {AEDP: render(lines)})
+    run_ingest(db, root, IngestOptions(catalog=load_catalog()))
+    rows = db.execute(
+        "SELECT name, status, duration_ms, end_entry_id IS NOT NULL FROM event"
+        " WHERE kind = 'operation' ORDER BY ts_start"
+    ).fetchall()
+    assert rows == [
+        ("ReceiveIncidentDevice", "ok", 40, 1),
+        ("ReceiveIncidentDevice", "business_error", 60, 1),
+        ("ReceiveIncidentDevice", "ok", 60, 1),
+    ]
+
+
+def _elevated_msgs(conn):
+    return [r[0] for r in conn.execute("SELECT msg FROM entry WHERE flags & 16 ORDER BY id")]
+
+
+def test_entries_inside_info_or_higher_windows_get_flag_16(tmp_path, db):
+    lines = [
+        line(0, "[Op] work 1"),  # before the first change: the window of the level before it (Info)
+        line(10, "[Op] work 2"),
+        line(20, "Debug level changed from Info (5) to DebugLog (3)."),  # DebugLog window: no flag
+        line(30, "[Op] work 3"),
+        line(40, "Debug level changed from DebugLog (3) to Verbose (6)."),
+        line(50, "[Op] work 4"),
+        line(60, "[Op] work 5"),
+    ]
+    root = tp.write_folder(tmp_path / "Log", {WFM: render(lines)})
+    ingest(db, root)
+    flagged = _elevated_msgs(db)
+    assert "[Op] work 1" in flagged and "[Op] work 2" in flagged  # first window = level before the change
+    assert "[Op] work 3" not in flagged
+    assert "[Op] work 4" in flagged and "[Op] work 5" in flagged  # Verbose >= Info (window open at EOF)
+    before = (db.execute("SELECT id, flags FROM entry ORDER BY id").fetchall(), events(db))
+    (stream_id,) = db.execute("SELECT id FROM stream").fetchone()
+    derive_stream(db, stream_id, catalog(), force=True)  # idempotent: same flags, same events
+    assert (db.execute("SELECT id, flags FROM entry ORDER BY id").fetchall(), events(db)) == before
+
+
+def test_flag_16_is_reset_from_the_checkpoint_and_set_again(tmp_path, db):
+    lines = [
+        line(0, "[Op] work 1"),
+        line(10, "Debug level changed from Info (5) to DebugLog (3)."),
+        line(20, "[Op] work 2"),
+        line(30, "Debug level changed from DebugLog (3) to Info (5)."),
+        line(40, "[Op] work 3"),
+    ]
+    root = tp.write_folder(tmp_path / "Log", {WFM: render(lines[:3])})
+    ingest(db, root)
+    assert "[Op] work 2" not in _elevated_msgs(db)
+    (root / WFM).write_bytes(render(lines))
+    ingest(db, root)
+    other = tp.fresh_db(tmp_path, "whole")
+    try:
+        ingest(other, tp.write_folder(tmp_path / "W", {WFM: render(lines)}))
+        assert snapshot(db) == snapshot(other)
+        assert _elevated_msgs(db) == _elevated_msgs(other)
+    finally:
+        other.close()
+    flagged = _elevated_msgs(db)
+    assert "[Op] work 2" not in flagged and "[Op] work 3" in flagged and "[Op] work 1" in flagged
+
+
+def test_stale_flag_16_is_cleared_by_a_full_pass(tmp_path, db):
+    lines = [
+        line(0, "[Op] work 1"),
+        line(10, "Debug level changed from Info (5) to DebugLog (3)."),
+        line(20, "[Op] work 2"),
+        line(30, "[Op] work 3"),
+    ]
+    root = tp.write_folder(tmp_path / "Log", {WFM: render(lines)})
+    ingest(db, root)
+    assert "[Op] work 2" not in _elevated_msgs(db)
+    db.execute("UPDATE entry SET flags = flags | 16 WHERE msg = '[Op] work 2'")  # stale mark
+    db.commit()
+    (stream_id,) = db.execute("SELECT id FROM stream").fetchone()
+    derive_stream(db, stream_id, catalog(), force=True)
+    flagged = _elevated_msgs(db)
+    assert "[Op] work 2" not in flagged and "[Op] work 1" in flagged
+
+
+def _two_sources(tmp_path, db):
+    """Ingest a rotated pair (``X.log.0`` older, ``X.log``); returns ``[(source_id, min_id, max_id)]``."""
+    first = [line(i * 10, f"[Op] old {i}") for i in range(5)]
+    second = [line(100 + i * 10, f"[Op] new {i}") for i in range(5)]
+    root = tp.write_folder(tmp_path / "Log", {WFM_ROTATED: render(first), WFM: render(second)})
+    ingest(db, root)
+    rows = db.execute(
+        "SELECT source_id, min(id), max(id) FROM entry GROUP BY source_id ORDER BY min(id)"
+    ).fetchall()
+    assert len(rows) == 2
+    return [tuple(r) for r in rows]
+
+
+def _flag16(conn):
+    return [m for (m,) in conn.execute("SELECT msg FROM entry WHERE flags & 16 ORDER BY msg")]
+
+
+def test_mark_window_follows_chain_order_when_ids_are_out_of_rotation_order(tmp_path, db):
+    from dmslog.derive.engine import _mark_window
+
+    by_id, other = _two_sources(tmp_path, db)
+    db.execute("UPDATE entry SET flags = flags & ~16")
+    chain = [other, by_id]  # chain order: the source with the HIGHER ids comes first
+    start = other[1] + 3
+    end = by_id[1] + 1  # an id LOWER than start
+    assert end < start
+    _mark_window(db, chain, start, end)
+    got = db.execute("SELECT id FROM entry WHERE flags & 16 ORDER BY id").fetchall()
+    assert [r[0] for r in got] == [by_id[1], by_id[1] + 1, other[1] + 3, other[1] + 4]
+
+
+def test_mark_window_never_touches_sources_outside_the_chain(tmp_path, db):
+    from dmslog.derive.engine import _mark_window
+
+    first, second = _two_sources(tmp_path, db)
+    db.execute("UPDATE entry SET flags = flags & ~16")
+    _mark_window(db, [first], first[1], second[2])  # the end entry belongs to another chain: nothing
+    assert _flag16(db) == []
+    _mark_window(db, [first], first[1], first[1] + 1)
+    assert len(_flag16(db)) == 2
+
+
+def test_mark_window_uses_the_primary_key_range(tmp_path, db):
+    first, _ = _two_sources(tmp_path, db)
+    plan = db.execute(
+        "EXPLAIN QUERY PLAN UPDATE entry SET flags = flags | 16 WHERE id BETWEEN ? AND ? AND +source_id = ?",
+        (first[1], first[2], first[0]),
+    ).fetchall()
+    text = " ".join(str(r[-1]) for r in plan)
+    assert "PRIMARY KEY" in text and "ix_entry" not in text
+    import inspect
+
+    from dmslog.derive import engine
+
+    assert "+source_id = ?" in inspect.getsource(engine._mark_window)  # the statement the engine runs
+
+
+def test_other_chains_do_not_get_flag_16_from_a_window(tmp_path, db):
+    lines = [line(i * 10, f"[Op] c{i}") for i in range(3)]
+    lines.insert(2, line(15, "Debug level changed from DebugLog (3) to Info (5)."))
+    root = tp.write_folder(
+        tmp_path / "Log",
+        {
+            "BLTHost.Arbitration.log": render([line(5 + i * 10, f"[Op] a{i}") for i in range(4)]),
+            "BLTHost.Common.log.0": render(lines),
+            "BLTHost.Common.log": render([line(1000 + i, f"[Op] n{i}") for i in range(3)]),
+        },
+    )
+    ingest_blt(db, root)
+    assert db.execute("SELECT count(*) FROM event WHERE kind = 'level_window'").fetchone()[0] > 0
+    flagged = _flag16(db)
+    assert flagged and not [m for m in flagged if m.startswith("[Op] a")]
+    assert {"[Op] n0", "[Op] n1", "[Op] n2"} <= set(flagged)
+
+
+def _stats_file(n_methods):
+    rows = "".join(f"Example.Contract.IQuery.Method{i:05d},{i + 1},2,3\n" for i in range(n_methods))
+    msg = "[Communication2] - By call count: "
+    body = f"{msg}\n[methodname, call count, request total size, response total size]\n{rows}"
+    return [
+        line(0, "[Communication2] - Client-side statistics:"),
+        line(
+            0,
+            "[Communication2] - [TOTAL][Client] Call count: 1, Request bytes: 2 (avg. 1.0), "
+            "Response bytes: 3 (avg. 1.5). Total operations: 1",
+        ),
+        line(0, body.rstrip("\n")),
+        line(5, "Something else happened"),
+    ]
+
+
+def test_statistics_sections_over_64_kib_keep_every_method(tmp_path, db):
+    from dmslog.parse.templates import load_catalog
+
+    n = 3000
+    root = tp.write_folder(tmp_path / "Log", {WFM: render(_stats_file(n))})
+    run_ingest(db, root, IngestOptions(catalog=load_catalog()))
+    (cont_len,) = db.execute("SELECT max(length(cont)) FROM entry_body").fetchone()
+    assert cont_len > 65536  # more than the continuation handed to the derivers
+    detail = json.loads(db.execute("SELECT detail FROM event WHERE kind = 'stats_block'").fetchone()[0])
+    assert detail["n_methods"] == n
+    assert "sections_rows_cut" not in detail and "methods_dropped" not in detail
+
+
+def test_statistics_rows_cut_by_the_continuation_cap_are_counted(tmp_path, db):
+    from dmslog.parse.templates import MAX_CONT_CHARS, load_catalog
+
+    n = MAX_CONT_CHARS // 40  # about 5 characters per row more than the cap holds
+    root = tp.write_folder(tmp_path / "Log", {WFM: render(_stats_file(n))})
+    run_ingest(db, root, IngestOptions(catalog=load_catalog()))
+    detail = json.loads(db.execute("SELECT detail FROM event WHERE kind = 'stats_block'").fetchone()[0])
+    assert detail["sections_rows_cut"] == 1
+    assert 0 < detail["n_methods"] < n
+
+
+def test_incremental_pass_marks_only_the_stretch_it_reprocesses(tmp_path, db):
+    n_windows = 200
+    lines = []
+    for i in range(n_windows):
+        level = "Info (5) to DebugLog (3)" if i % 2 == 0 else "DebugLog (3) to Info (5)"
+        lines += [line(i * 30, f"[Op] work {i}"), line(i * 30 + 10, f"Debug level changed from {level}.")]
+    tail = [line(10_000 + i, f"[Op] tail {i}") for i in range(3)]
+    root = tp.write_folder(tmp_path / "Log", {WFM: render(lines)})
+    marks: list[str] = []
+    db.set_trace_callback(
+        lambda sql: marks.append(sql) if sql.startswith("UPDATE entry SET flags = flags | 16") else None
+    )
+    ingest(db, root)
+    full = len(marks)
+    assert full >= n_windows // 2
+    marks.clear()
+    (root / WFM).write_bytes(render(lines + tail))
+    ingest(db, root)
+    db.set_trace_callback(None)
+    assert 0 < len(marks) <= 4  # the open window (and at most its neighbours), not the 200 old ones
+    other = tp.fresh_db(tmp_path, "whole")
+    try:
+        ingest(other, tp.write_folder(tmp_path / "W", {WFM: render(lines + tail)}))
+        assert snapshot(db) == snapshot(other)
+    finally:
+        other.close()
+
+
+def snapshot_by_file(conn):
+    ev = conn.execute(
+        "SELECT e.kind, e.name, s.byte_off, so.member, e.ts_start, e.ts_end, e.status, e.n_entries"
+        " FROM event e LEFT JOIN entry s ON s.id = e.start_entry_id"
+        " LEFT JOIN source so ON so.id = s.source_id"
+    ).fetchall()
+    owner = conn.execute(
+        "SELECT so.member, x.byte_off, x.flags & 16, o.byte_off FROM entry x"
+        " JOIN source so ON so.id = x.source_id"
+        " LEFT JOIN event v ON v.id = x.event_id LEFT JOIN entry o ON o.id = v.start_entry_id"
+    ).fetchall()
+    return sorted(ev, key=repr), sorted(owner, key=repr)
+
+
+@settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@example(
+    actions=[(1, "begin"), (1, "level"), (1, "work"), (1, "end"), (1, "work"), (1, "level"), (1, "work")], k=3
+)
+@given(actions=ACTIONS, k=st.integers(0, 40))
+def test_rotated_chain_with_out_of_order_ids_equals_one_shot(tmp_path_factory, actions, k):
+    """The older file (``.log.0``) is indexed AFTER the newer one: its ids are higher than the chain order."""
+    lines = build_lines(actions)
+    cut = min(k, len(lines))
+    old, new = lines[:cut], lines[cut:]
+    if not old or not new:
+        return
+    base = tmp_path_factory.mktemp("rot")
+    whole = tp.fresh_db(base, "whole")
+    steps = tp.fresh_db(base, "steps")
+    try:
+        ingest(whole, tp.write_folder(base / "w", {WFM_ROTATED: render(old), WFM: render(new)}))
+        root = tp.write_folder(base / "s", {WFM: render(new)})
+        ingest(steps, root)
+        (root / WFM_ROTATED).write_bytes(render(old))
+        ingest(steps, root)
+        assert snapshot_by_file(steps) == snapshot_by_file(whole)
+    finally:
+        whole.close()
+        steps.close()

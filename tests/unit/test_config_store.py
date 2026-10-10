@@ -13,8 +13,10 @@ import pytest
 from dmslog.ingest.pipeline import run_ingest
 from dmslog.store import create_case_db
 from dmslog.store.config import (
+    _window_rank,
     config_for,
     config_products,
+    expected_windows,
     logged_name,
     normalize_name,
     payload_expected,
@@ -163,6 +165,48 @@ def test_payload_expected_uses_observed_level(case):
     assert ops["QuietThing"]["payload_expected"] is False  # None = never
     assert ops["OddThing"]["payload_expected"] is None  # unknown level
     assert ops["CreatedThing"]["settings"]["RetryTimeout"] == "00:00:10"
+
+
+def test_payload_expected_windows_follow_the_level_windows(tmp_path):
+    lines = startup_lines() + [
+        mf.header(1000, "INFO", "Debug level changed from Info (5) to DebugLog (3)."),
+        mf.header(2000, "INFO", "Debug level changed from DebugLog (3) to Verbose (6)."),
+        mf.header(3000, "INFO", "Something else happened."),
+    ]
+    conn = create_case_db(tmp_path / "case.sqlite")
+    run_ingest(conn, build_folder(tmp_path / "coll", lines=lines))
+    ops = {o["operation"]: o for o in config_for(conn, "AdapterWfm")["operations"]}
+    sql = "SELECT ts_start FROM event WHERE kind = 'level_window' ORDER BY ts_start"
+    ts = [r[0] for r in conn.execute(sql)]
+    assert len(ts) == 3
+    t1, t2 = ts[1], ts[2]  # the windows after the first and the second change
+    # Info (<= 1 s), DebugLog (1-2 s), Verbose (open: no end)
+    created = ops["CreatedThing"]["payload_expected_windows"]
+    assert created == [[ts[0], t1, True], [t1, t2, False], [t2, None, True]]
+    # MessageLogLevel Verbose: only the Verbose window
+    assert [w[2] for w in ops["ChangedThing"]["payload_expected_windows"]] == [False, False, True]
+    quiet = ops["QuietThing"]["payload_expected_windows"]
+    assert [w[2] for w in quiet] == [False, False, False]  # None = never
+    assert [w[2] for w in ops["OddThing"]["payload_expected_windows"]] == [True, False, True]  # unknown: Info
+    assert all(o["payload_windows_dropped"] == 0 for o in ops.values())
+    conn.close()
+
+
+def test_expected_windows_helper_rules():
+    wins = [(0, 10, 5), (10, None, 3), (20, 30, 6)]
+    assert expected_windows(wins, None) == []
+    assert expected_windows(wins, "Info") == [[0, 10, True], [10, None, False], [20, 30, True]]
+    assert expected_windows(wins, "Verbose") == [[0, 10, False], [10, None, False], [20, 30, True]]
+    assert [w[2] for w in expected_windows(wins, "none")] == [False] * 3
+    assert [w[2] for w in expected_windows(wins, "Bogus")] == [True, False, True]
+
+
+def test_window_rank_name_first_then_number():
+    assert _window_rank({"level_name": "Info", "level_num": 3}) == 5
+    assert _window_rank({"level_name": "Strange", "level_num": 6}) == 6
+    assert _window_rank({"level_name": "Strange"}) is None
+    assert _window_rank({"level_num": True}) is None
+    assert _window_rank(None) is None
 
 
 def test_registry_level_is_used_without_observation(tmp_path):

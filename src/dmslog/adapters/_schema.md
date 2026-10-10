@@ -159,7 +159,7 @@ Regex fields win over continuation fields with the same name. Parsers read at mo
 | Parser | Options | Fields | Use |
 |---|---|---|---|
 | `codes_per_line` | `max_items` (32), `max_lines` (64) | `codes` (list) | `Detected errors:` + one code per line |
-| `stats_csv` | `max_rows` (64) | `rows` (`[method, calls, req_bytes, resp_bytes]`), `n_rows` | `[Communication2] - By call count:` sections |
+| `stats_csv` | `max_rows` (default: the 256 KiB continuation cap) | `rows` (`[method, calls, req_bytes, resp_bytes]`), `n_rows`, `rows_cut` | `[Communication2] - By call count:` sections |
 | `dotnet_stack` | `max_lines` (400) | `exc_type`, `exc_msg`, `frame`, `build`, `inner_type` | .NET stack traces, `Reason:` / `Stack trace:` blocks |
 | `kv_tab` | none | `items` | map dumps (`\t<key> - <value>`): counts, never keeps the pairs |
 | `kv_colon` | `max_items` (32) | `kv` (table), `n_items` | `Key: value` lines; stops at the first line starting with `<` |

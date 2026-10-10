@@ -326,7 +326,10 @@ export const S = {
   cfgReasonBadLogLevel: "Log level {value} is not a known level (DebugLog < Warning < Info < Verbose).",
   cfgReasonEnough: "Log level {log} is at least MessageLogLevel {message}.",
   cfgReasonTooLow: "Log level {log} is below MessageLogLevel {message}.",
-  cfgWindowNote: "Window-based expectation (Debug level changed windows) arrives with milestone M4.",
+  cfgWindowsLine: "Payload expected in {n} of {total} window(s)",
+  cfgWindowsOmitted: "({n} more window(s) omitted)",
+  cfgWindowsMore: "(+{n} more)",
+  cfgWindowOpen: "open",
 
   // Operations panel (derived events)
   toolbarEvents: "Operations",

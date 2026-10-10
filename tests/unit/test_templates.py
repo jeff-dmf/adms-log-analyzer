@@ -1321,3 +1321,52 @@ def test_catalog_regexes_stay_fast_on_their_own_attack_inputs():
     last = (done.stdout.strip().splitlines() or ["(none)"])[-1]
     assert done.returncode == 0 and last.startswith("done "), (last, done.stderr[-2000:])
     assert int(last.split()[1]) >= 290
+
+
+def _csv_template(options=""):
+    cont = f'{{ parser = "stats_csv"{options} }}'
+    return tiny(tpl(regex=r"^By count:$", extra=f"cont = {cont}\n"))
+
+
+def test_stats_csv_keeps_every_row_up_to_the_continuation_cap():
+    n = 1000
+    body = "[h]\n" + "".join(f"M{i},{i},1,2\n" for i in range(n))
+    got = _csv_template().for_family("X", sensitive=False).classify_text("By count:", body)
+    assert got is not None and got.fields["n_rows"] == n and len(got.fields["rows"]) == n
+    # the continuation cap still bounds it: a line the cap cuts is dropped, nothing past it is read
+    big = "[h]\n" + "".join(f"Method{i},{i},1,2\n" for i in range(T.MAX_CONT_CHARS // 8))
+    assert len(big) > T.MAX_CONT_CHARS
+    got = _csv_template().for_family("X", sensitive=False).classify_text("By count:", big)
+    assert got is not None and 0 < got.fields["n_rows"] < T.MAX_CONT_CHARS // 8
+
+
+def test_stats_csv_max_rows_option_still_caps_the_rows_kept():
+    body = "".join(f"M{i},{i},1,2\n" for i in range(50))
+    got = _csv_template(", max_rows = 10").for_family("X", sensitive=False).classify_text("By count:", body)
+    assert got is not None and got.fields["n_rows"] > 10 and len(got.fields["rows"]) == 10
+
+
+def test_stats_csv_flags_rows_left_out():
+    tset = _csv_template(", max_rows = 5").for_family("X", sensitive=False)
+    cut = tset.classify_text("By count:", "".join(f"M{i},1,1,1\n" for i in range(9)))
+    assert cut is not None and cut.fields["rows_cut"] is True and len(cut.fields["rows"]) == 5
+    whole = _csv_template().for_family("X", sensitive=False).classify_text("By count:", "M1,1,1,1\n")
+    assert whole is not None and "rows_cut" not in whole.fields
+    big = "".join(f"Method{i},{i},1,2\n" for i in range(T.MAX_CONT_CHARS // 8))
+    over = _csv_template().for_family("X", sensitive=False).classify_text("By count:", big)
+    assert over is not None and over.fields["rows_cut"] is True
+
+
+def test_stats_csv_single_line_above_the_cap_is_reported_cut():
+    one_line = "M," + "9" * (T.MAX_CONT_CHARS + 10)
+    got = _csv_template().for_family("X", sensitive=False).classify_text("By count:", one_line)
+    assert got is not None
+    assert got.fields["rows"] == [] and got.fields["n_rows"] == 0 and got.fields["rows_cut"] is True
+
+
+@pytest.mark.parametrize("prefix", ["\n", "[methodname, call count, request total size, response total size]\n", "\n\n"])
+def test_stats_csv_cut_is_reported_after_an_empty_line_or_header(prefix):
+    cont = prefix + "M" * (T.MAX_CONT_CHARS + 10) + ",1,2,3\n"
+    got = _csv_template().for_family("X", sensitive=False).classify_text("By count:", cont)
+    assert got is not None
+    assert got.fields["rows"] == [] and got.fields["n_rows"] == 0 and got.fields["rows_cut"] is True
