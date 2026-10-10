@@ -45,7 +45,9 @@ Known limits (what no rule can know; these must fail CLOSED where a hint exists)
 
 from __future__ import annotations
 
+import html
 import importlib.util
+import os
 import re
 import sys
 import uuid
@@ -56,7 +58,7 @@ from urllib.parse import quote
 from xml.etree import ElementTree
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, seed, settings
 from hypothesis import strategies as st
 
 from dmslog.report import export
@@ -66,6 +68,35 @@ from dmslog.report.redact import CATEGORIES, Profile, Redactor
 from dmslog.store.db import connect
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# One settings profile for every generative test here, so that CI cannot flake them: no deadline, no
+# health checks, derandomized and WITHOUT an example database (a run draws the same examples on every
+# machine, fresh clone or not). Derandomization seeds from the test's source, so editing a test (or
+# renaming a word in it) draws other examples: before relying on a change, explore with
+# DMSLOG_HYPOTHESIS_SEED=<n> (random seed n instead) and DMSLOG_HYPOTHESIS_SCALE=<k> (k times the
+# examples), with several seeds; every counterexample found goes below as an @example.
+settings.register_profile(
+    "dmslog-redact",
+    deadline=None,
+    derandomize=True,
+    database=None,
+    suppress_health_check=list(HealthCheck),
+)
+_PROFILE = settings.get_profile("dmslog-redact")
+_SEED = os.environ.get("DMSLOG_HYPOTHESIS_SEED")
+_SCALE = max(1, int(os.environ.get("DMSLOG_HYPOTHESIS_SCALE", "1")))
+
+
+def _generative(max_examples: int):
+    """The shared profile with ``max_examples`` (times the scale), on the seed asked for if any."""
+
+    def wrap(test):
+        configured = settings(_PROFILE, max_examples=max_examples * _SCALE, derandomize=_SEED is None)(test)
+        return seed(int(_SEED))(configured) if _SEED is not None else configured
+
+    return wrap
+
+
 _spec = importlib.util.spec_from_file_location(
     "export_case_leaks", ROOT / "tests/fixtures/export/build_case.py"
 )
@@ -322,7 +353,29 @@ def test_the_table_is_big_enough():
 PADDING = st.text(alphabet="abc XYZ,.;:-_/\n\t\"'()[]{}<>=&%", max_size=24)
 
 
-@settings(max_examples=600, deadline=None, derandomize=True, suppress_health_check=list(HealthCheck))
+@_generative(600)
+# declared limit (standard mode): a shape or a label glued to a letter or digit is another token
+@example(
+    case=next(c for c in CASES if c[0] == "guid/3f2a9c1e-7b4/plain/text"),
+    before="",
+    after="a",
+    glue="",
+    mode="standard",
+)
+@example(
+    case=next(c for c in CASES if c[0] == "mrid/CREWQ7788Z/plain/mRID: {s}"),
+    before="X",
+    after="",
+    glue="",
+    mode="standard",
+)
+@example(
+    case=next(c for c in CASES if c[0] == "user/Ana  SecretS/plain/user: {s}"),
+    before="a",
+    after="",
+    glue="",
+    mode="standard",
+)
 @given(
     case=st.sampled_from(CASES),
     before=PADDING,
@@ -335,6 +388,11 @@ def test_no_plant_survives_in_any_position(case, before, after, glue, mode):
     # the padding may open a quote or a tag: the plant must be hidden anyway, unless the padding
     # itself changes what the wrapper means (then only the plant's own recognizable shapes count)
     out = redact(before + glue + text + glue + after, PROFILES[mode])
+    glued = (re.match(r"\w", after) and re.search(r"\w\Z", text)) or (
+        re.search(r"\w\Z", before) and re.match(r"\w", text)
+    )
+    if mode == "standard" and not glue and glued:
+        return  # declared limit (standard): a shape or label glued to a letter or digit is another token
     flat = squeeze(out)
     surviving = [f for f in fragments(plant.value) if f in flat]
     if surviving and plant.standalone and text.strip() == text and not _breaks_context(before, glue):
@@ -796,30 +854,133 @@ def _planted(draw) -> str:
     return doc
 
 
-def _only_validated_names(doc: str, out: str) -> bool:
-    """Every surviving PUBLIC_LOOKING stands as a tag or attribute name, and the input has a region,
-    starting at a '<' outside any quote and after no stray '<'/'>', that an independent XML parser
-    (expat) accepts and that names it."""
-    for match in re.finditer(PUBLIC_LOOKING, out):
-        before = out[match.start() - 1 : match.start()]
-        after = out[match.end() : match.end() + 1]
-        if before not in ("<", "/", " ") or after not in (">", "/", "=", " "):
-            return False
+def _quoted_spans(doc: str) -> list[tuple[int, int]]:
+    """The strings of ``doc`` read left to right, '...' and "..." alike, as the redactor documents them
+    (backslash escapes; an apostrophe between two word characters is no quote; never closed, a string
+    runs to the end)."""
+    spans: list[tuple[int, int]] = []
+    index = 0
+
+    def wordy(at: int) -> bool:
+        return 0 <= at < len(doc) and (doc[at].isalnum() or doc[at] == "_")
+
+    while index < len(doc):
+        quote = doc[index]
+        if quote not in "\"'" or (quote == "'" and wordy(index - 1) and wordy(index + 1)):
+            index += 1
+            continue
+        end = index + 1
+        while end < len(doc):
+            if doc[end] == "\\":
+                end += 2
+                continue
+            if doc[end] == quote and not (quote == "'" and wordy(end - 1) and wordy(end + 1)):
+                break
+            end += 1
+        spans.append((index, min(end + 1, len(doc))))
+        index = end + 1
+    return spans
+
+
+def _structural_starts(doc: str) -> set[int]:
+    """The '<' of ``doc`` that start markup in at least one plausible reading: outside every double
+    quote counted over the raw text (round 9), or outside every string read by :func:`_quoted_spans`
+    (nested quotes of one kind pair left to right: the redactor cannot tell them apart); and never
+    after a stray '<'/'>' outside the strings of that reading."""
+    starts: set[int] = set()
+    spans = _quoted_spans(doc)
+    blanked = list(doc)
+    for a, b in spans:
+        blanked[a:b] = " " * (b - a)
+    outside = "".join(blanked)
     for start in (m.start() for m in re.finditer("<", doc)):
         before = doc[:start]
         unescaped_quotes = len(re.findall(r'(?<!\\)"', before))  # a backslash-escaped quote is no quote
-        if unescaped_quotes % 2 or re.search(r"[<>]", re.sub(r"<[^<>]*>", "", before)):
-            continue  # inside a string or quoted text, or after a stray '<'/'>': never structural
-        for end in (m.end() for m in re.finditer(">", doc[start:])):
-            region = doc[start : start + end]
-            if PUBLIC_LOOKING not in region:
-                continue
-            try:
-                ElementTree.fromstring(region)
-            except ElementTree.ParseError:
-                continue
-            return True
+        if not (unescaped_quotes % 2 or re.search(r"[<>]", re.sub(r"<[^<>]*>", "", before))):
+            starts.add(start)
+        elif outside[start] == "<" and not re.search(r"[<>]", re.sub(r"<[^<>]*>", "", outside[:start])):
+            starts.add(start)
+    return starts
+
+
+def _only_validated_names(doc: str, out: str) -> bool:
+    """Every surviving PUBLIC_LOOKING stands as a tag or attribute name, and the input has a region,
+    starting at a '<' that starts markup in a plausible reading (:func:`_structural_starts`), that an
+    independent XML parser (expat) accepts and in which it is EXACTLY an element or attribute name.
+    Markup written escaped (``&lt;Name&gt;``, also escaped again) is read on the decoded text, as the
+    redactor documents it; the delimiters around the name are then the ends of entities (``;``
+    before, ``&`` after)."""
+    for match in re.finditer(PUBLIC_LOOKING, out):
+        before = out[match.start() - 1 : match.start()]
+        after = out[match.end() : match.end() + 1]
+        blank_before = before.isspace() or (before != "" and before in "".join(BLANKS))
+        blank_after = after.isspace() or (after != "" and after in "".join(BLANKS))
+        if not (blank_before or before in ("<", "/", ";")) or not (
+            blank_after or after in (">", "/", "=", "&")
+        ):
+            return False
+    readings = [doc]
+    while "&" in readings[-1] and len(readings) < 4:  # escaped once, twice (&amp;#65;)...
+        decoded = html.unescape(readings[-1])
+        if decoded == readings[-1]:
+            break
+        readings.append(decoded)
+    for text in readings:
+        for start in sorted(_structural_starts(text)):
+            for end in (m.end() for m in re.finditer(">", text[start:])):
+                region = text[start : start + end]
+                if PUBLIC_LOOKING not in region:
+                    continue
+                try:
+                    root = ElementTree.fromstring(region)
+                except (ElementTree.ParseError, UnicodeEncodeError):  # a lone surrogate: no XML either
+                    continue
+                if any(node.tag == PUBLIC_LOOKING or PUBLIC_LOOKING in node.attrib for node in root.iter()):
+                    return True
     return False
+
+
+def _free_words(doc: str) -> int:
+    """How many times PUBLIC_LOOKING stands in ``doc`` as a FREE-TEXT word, which the free-text allowlist
+    keeps by design (declared limit: free text keeps catalog words). Read independently and
+    conservatively: blank-bounded (ASCII space or the ends), outside double-quoted strings paired left to
+    right, and with nothing before it, outside the strings, that could open a region or make the quoting
+    ambiguous: no ``< > { } [ ] ' & \\`` outside strings (a backslash inside one escapes the next
+    character, as the redactor reads it), no quote glued to a word."""
+    count = 0
+    clean = True
+    in_string = False
+    index = 0
+    size = len(PUBLIC_LOOKING)
+    while index < len(doc):
+        char = doc[index]
+        if in_string:
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+                if index + 1 < len(doc) and (doc[index + 1].isalnum() or doc[index + 1] == "_"):
+                    clean = False  # closed right against a word
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            if index and (doc[index - 1].isalnum() or doc[index - 1] == "_"):
+                clean = False  # opened right after a word
+        elif char in "<>{}[]'&\\":
+            clean = False
+        elif (
+            clean
+            and doc.startswith(PUBLIC_LOOKING, index)
+            and (index == 0 or doc[index - 1] == " ")
+            and (index + size == len(doc) or doc[index + size] == " ")
+        ):
+            count += 1
+            index += size
+            continue
+        index += 1
+    return count
 
 
 def _secret_fragments(text: str) -> list[str]:
@@ -832,8 +993,29 @@ def _secret_fragments(text: str) -> list[str]:
     return found
 
 
-@settings(max_examples=3000, deadline=None, derandomize=True, suppress_health_check=list(HealthCheck))
+@_generative(3000)
 @given(doc=_planted())
+# found in a fresh clone (no example database): the planted value stands between three strings that
+# pair left to right, i.e. as free text, where the allowlist keeps catalog words (declared limit)
+@example(doc='value "<Header Header=x" MonitorReady " Header=x" MonitorReady ">Zq7Kx9WvZq7Kx9Wv" end')
+# the same with escaped quotes: a backslash inside a string escapes the next character
+@example(doc='"value \\"<Header Header=x" MonitorReady " Header=x" MonitorReady ">Zq7Kx9WvZq7Kx9Wv\\""')
+# nested single quotes pair left to right: the element stands outside every string (a name kept)
+@example(doc="value '<<Header>Zq7Kx9Wvvalue '<MonitorReady/>' end' end")
+# the oracle's XML parser refuses a lone surrogate (it cannot even be encoded)
+@example(doc="value '<Header><Header>Zq7Kx9Wv\ud800value '<MonitorReady/>' end' end")
+# escaped markup is read on the decoded text: a valid element named by a catalog word keeps its name
+@example(doc='&lt;MonitorReady Header="Zq7Kx9Wv"&gt;Zq7Kx9Wv[0, "Zq7Kx9Wv"]&lt;/MonitorReady&gt;')
+@example(
+    doc='&lt;MonitorReady MonitorReady&amp;#65;="Zq7Kx9Wv"&gt;Zq7Kx9Wv[0, "Zq7Kx9Wv"]&lt;/MonitorReady&gt;'
+)
+# a REAL leak (fixed in redact.py): a quote opened right after a word may close a string holding it
+# an attribute name may be followed by any XML blank before its '='
+@example(doc='&lt;Header MonitorReady\n=\n"Zq7Kx9Wv"&gt;Zq7Kx9Wv{"status":"Zq7Kx9Wv"}&lt;/Header&gt;')
+@example(doc='value "<?xml <?Zq7Kx9Wv version=" MonitorReady"?>" end')
+# a REAL leak (fixed in redact.py): escaped markup in a PAYLOAD skipped the decoded gate, so JSON in
+# an escaped text node that is not exactly valid JSON kept its keys
+@example(doc='&lt;Zq7Kx9Wv&gt;sent {"MonitorReady": 1} ok&lt;/Zq7Kx9Wv&gt;')
 def test_no_secret_survives_any_structured_position_in_strict_mode(doc):
     redactor = Redactor(Profile(payload_names=()))
     # a payload; and the same text inside a record when it holds markup or JSON (free text without any
@@ -844,14 +1026,16 @@ def test_no_secret_survives_any_structured_position_in_strict_mode(doc):
         out.encode("utf-8")  # round 14: a lone surrogate never reaches the output
         leaked_fragments = [f for f in _secret_fragments(doc) if f in out]
         assert leaked_fragments == [], (payload, doc, out)
-        if PUBLIC_LOOKING in out:  # round 9: only as a NAME of a region an XML parser accepts
-            assert _only_validated_names(doc, out), (payload, doc, out)
+        if PUBLIC_LOOKING in out:  # round 9: only as a NAME of a region an XML parser accepts, or (record
+            # text) as a free-text word outside every string and region, which the allowlist keeps
+            free = 0 if payload else _free_words(doc)
+            assert out.count(PUBLIC_LOOKING) <= free or _only_validated_names(doc, out), (payload, doc, out)
 
 
 # -- review round 15: any split of a record into first line + continuation is never weaker --------------
 
 
-@settings(max_examples=1500, deadline=None, derandomize=True, suppress_health_check=list(HealthCheck))
+@_generative(1500)
 @given(doc=_planted(), data=st.data())
 def test_a_record_split_anywhere_is_never_less_redacted_than_the_whole_text(doc, data):
     split = data.draw(st.integers(0, len(doc)))
@@ -890,7 +1074,7 @@ def _secret_like(token: str) -> bool:
     return bool(re.search(r"[A-Za-z]", token) and re.search(r"[0-9]", token)) or "Ready" in token
 
 
-@settings(max_examples=300, deadline=None, derandomize=True, suppress_health_check=list(HealthCheck))
+@_generative(300)
 @given(doc=_planted(), data=st.data())
 def test_no_piece_of_an_exported_record_is_less_redacted_than_the_whole_record(
     doc, data, tmp_path_factory, monkeypatch
