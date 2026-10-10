@@ -639,3 +639,71 @@ def test_cli_output_for_invalid_zip_and_failed_source_is_normalized(tmp_path, ca
     out = capsys.readouterr()
     text = out.out + out.err
     assert "Acme" not in text and "Other" not in text
+
+
+# ----------------------------------------------------------------------------- review round 5
+
+
+def test_separator_and_case_variants_conflict_through_the_matcher():
+    body = (
+        'version = 1\n[[alias]]\npublic = "A"\nreal = "Acme\\\\Widget"\n'
+        '[[alias]]\npublic = "B"\nreal = "ACME/WIDGET"\n'
+    )
+    assert al.parse(body).error
+    assert al.same_spelling("Acme\\Widget", "ACME/WIDGET")
+    same = body.replace('public = "B"', 'public = "A"')
+    parsed = al.parse(same)
+    assert parsed.error is None
+    assert parsed.apply_name("x/acme/widget/y") == "x/A/y"
+
+
+def test_control_characters_in_components_cannot_inject_lines():
+    from dmslog.diagnostics import describe_error, escape_text
+    from dmslog.ingest.discover import UnsafeArchiveError
+
+    a = al.Aliases.from_pairs([("AcmeWidget", "Custom")])
+    exc = UnsafeArchiveError("control character in member name", "x\r\nAcmeWidget  \x85\ty\x00")
+    text = describe_error(exc, a)
+    assert "\r" not in text and "\n" not in text and " " not in text and "\x85" not in text
+    assert "\t" not in text and "\x00" not in text
+    assert "Custom" in text and "Acme" not in text  # normalized first, then escaped
+    assert escape_text("plain text 1") == "plain text 1"
+    assert len(text.splitlines()) == 1
+
+
+def test_zip_member_with_newlines_is_one_line_everywhere(tmp_path, capsys):
+    from dmslog.cli import main
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "aliases.toml").write_text(
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "AcmeWidget"\n', encoding="utf-8"
+    )
+    zpath = tmp_path / "ERS.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.writestr("Log/AcmeWidget\r\nFAKE: forged line.log", b"x\r\n")
+    main(["ingest", str(zpath), "--data-dir", str(data)])
+    out = capsys.readouterr()
+    for line in (out.out + out.err).splitlines():
+        assert not line.startswith("FAKE")
+    assert "Acme" not in out.out + out.err
+
+
+def test_internal_exceptions_with_numeric_messages_keep_their_text():
+    from dmslog.diagnostics import describe_error
+    from dmslog.ingest.ers import CollectionConflictError
+    from dmslog.ingest.reader import ReadLimitError
+    from dmslog.ingest.watch import PartialFailureError
+    from dmslog.parse.records import RecordTooLargeError
+    from dmslog.store.db import SchemaVersionError
+
+    a = al.Aliases.from_pairs([("AcmeWidget", "Custom")])
+    assert describe_error(PartialFailureError("3 source(s) failed"), a) == "3 source(s) failed"
+    assert describe_error(ReadLimitError("total_bytes", "run exceeded 5 bytes read"), a) == (
+        "run exceeded 5 bytes read"
+    )
+    assert "exceeds 10 bytes" in describe_error(RecordTooLargeError(1, 20, 10), a)
+    assert describe_error(CollectionConflictError("x", "capture 1 differs"), a) == "capture 1 differs"
+    assert describe_error(SchemaVersionError("database schema version 3 is newer"), a) == (
+        "database schema version 3 is newer"
+    )

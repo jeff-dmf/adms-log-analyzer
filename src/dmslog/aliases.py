@@ -54,10 +54,18 @@ def _compile(reals: list[str], flags: int) -> re.Pattern[str] | None:
     return re.compile("|".join(f"(?P<g{i}>{re.escape(r)})" for i, r in enumerate(reals)), flags)
 
 
+def spellings(real: str) -> tuple[str, ...]:
+    """The spellings the matcher accepts for a real name: as written, with "/" and with "\\"."""
+    return tuple(dict.fromkeys((real, real.replace("\\", "/"), real.replace("/", "\\"))))
+
+
 def same_spelling(a: str, b: str) -> bool:
-    """True when the case-insensitive matcher treats `a` and `b` as the same real name."""
-    return re.fullmatch(re.escape(a), b, re.IGNORECASE) is not None or (
-        re.fullmatch(re.escape(b), a, re.IGNORECASE) is not None
+    """True when the matcher can match the same text with `a` and with `b` (any case, any separator)."""
+    return any(
+        re.fullmatch(re.escape(x), y, re.IGNORECASE) is not None
+        or re.fullmatch(re.escape(y), x, re.IGNORECASE) is not None
+        for x in spellings(a)
+        for y in spellings(b)
     )
 
 
@@ -78,8 +86,8 @@ class Aliases:
         # Logical paths use "/" while Windows tools write "\\": match both spellings of a real name.
         matcher = list(ordered)
         for real, public in ordered:
-            for variant in (real.replace("\\", "/"), real.replace("/", "\\")):
-                if variant != real and all(variant != r for r, _ in matcher):
+            for variant in spellings(real):
+                if all(variant != r for r, _ in matcher):
                     matcher.append((variant, public))
         matcher.sort(key=lambda p: (-len(p[0]), p[0]))
         reals = [r for r, _ in matcher]

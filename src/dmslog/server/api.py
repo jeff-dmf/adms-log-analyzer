@@ -24,7 +24,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from .. import __version__, aliases, messages
-from ..diagnostics import describe_error
+from ..diagnostics import component, describe_error
 from ..ingest import pipeline
 from ..ingest.discover import SourceNotFoundError, UnsafeArchiveError
 from ..ingest.ers import (
@@ -115,6 +115,8 @@ class Request:
 
 class JobCancelledError(Exception):
     """Raised inside the progress callback to stop an ingest when the server shuts down."""
+
+    diag_safe = True  # no message
 
 
 # --------------------------------------------------------------------------- cases on disk
@@ -923,7 +925,7 @@ class Api:
     # -- sources
 
     def _component(self, text: str) -> str:
-        return aliases.get(self.data_dir).apply_name(text)
+        return component(aliases.get(self.data_dir), text)
 
     def _shown(self, error: BaseException) -> str:
         """Safe error text: fixed description plus alias-normalized components."""

@@ -22,7 +22,7 @@ from pathlib import Path
 
 from dmslog import __version__
 from dmslog.aliases import Aliases
-from dmslog.diagnostics import describe_error, error_label
+from dmslog.diagnostics import component, describe_error, error_label
 from dmslog.ingest.discover import SourceInfo, discover, resolve_scope
 from dmslog.ingest.ers import (
     KIND_ERS_ZIP,
@@ -337,9 +337,8 @@ class _Run:
         self.severity = SeverityHook()
 
     def _shown(self, text: str | None) -> str | None:
-        """Text derived from names, as presented or stored (error, progress, warning): public spelling."""
-        aliases = self.opt.aliases
-        return aliases.sanitize(text) if aliases and text else text
+        """A name as presented or stored (progress, results): public spelling, control characters escaped."""
+        return component(self.opt.aliases, text) if text else text
 
     def _exc_text(self, exc: BaseException) -> str:
         """``Class: detail`` of a failure. With local aliases the detail is the class-based fixed text:

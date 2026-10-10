@@ -60,9 +60,13 @@ FileStat = tuple[int, int, tuple[int, ...]]
 class PartialFailureError(Exception):
     """A cycle indexed what it could, but some sources failed."""
 
+    diag_safe = True  # the message holds only a count and fixed words
+
 
 class WatchStopped(Exception):
     """Raised by a progress callback to abandon the running cycle (the next run starts over)."""
+
+    diag_safe = True  # no message
 
 
 @dataclass

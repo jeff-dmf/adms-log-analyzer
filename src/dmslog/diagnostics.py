@@ -21,9 +21,19 @@ import zlib
 from .aliases import Aliases
 
 
+def escape_text(text: str) -> str:
+    """Escape control, format and line/paragraph separator characters so a diagnostic is one line."""
+    if text.isprintable():
+        return text
+    return "".join(ch if ch.isprintable() else ch.encode("unicode_escape").decode("ascii") for ch in text)
+
+
 def component(aliases: Aliases | None, text: str) -> str:
-    """Public spelling of ONE raw component (file, path, tag, name) of a diagnostic."""
-    return aliases.apply_name(text) if aliases else text
+    """Public spelling of ONE raw component (file, path, tag, name) of a diagnostic.
+
+    The name is normalized first and only then escaped, so the matcher sees the original characters.
+    """
+    return escape_text(aliases.apply_name(text) if aliases else text)
 
 
 def _fixed(exc: BaseException) -> str:
@@ -75,7 +85,7 @@ def describe_error(exc: BaseException, aliases: Aliases | None = None, *, with_f
         name = getattr(exc, "diag_component", "")
         return f"{reason}: {component(aliases, name)}" if name else reason
     if getattr(exc, "diag_safe", False):
-        return str(exc)
+        return escape_text(str(exc))
     text = _fixed(exc)
     name = getattr(exc, "filename", None) if with_filename and isinstance(exc, OSError) else None
     if isinstance(name, (str, os.PathLike)) and os.fspath(name):

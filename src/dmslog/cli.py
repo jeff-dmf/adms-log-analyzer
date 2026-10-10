@@ -13,7 +13,7 @@ from . import __version__, messages
 from .aliases import describe as describe_aliases
 from .aliases import get as aliases_get
 from .buildinfo import get_commit
-from .diagnostics import describe_error
+from .diagnostics import component, describe_error
 from .paths import check_sqlite_fts5, resolve_data_dir
 
 # command name -> (help text, milestone that implements it)
@@ -225,7 +225,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     scope_text = messages.INGEST_SCOPE_ALL if args.all_logs else messages.INGEST_SCOPE_DEFAULT
     print(
         messages.INGEST_START.format(
-            path=plan_aliases.apply_name(str(args.path)), case=case, scope=scope_text
+            path=component(plan_aliases, str(args.path)), case=case, scope=scope_text
         )
     )
     interactive = sys.stdout.isatty()
@@ -452,7 +452,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     scope_text = messages.INGEST_SCOPE_ALL if args.all_logs else messages.INGEST_SCOPE_DEFAULT
     print(
         messages.WATCH_START.format(
-            path=aliases_get(data_dir).apply_name(str(args.path)),
+            path=component(aliases_get(data_dir), str(args.path)),
             case=args.case,
             interval=args.interval,
             scope=scope_text,
