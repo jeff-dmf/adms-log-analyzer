@@ -953,6 +953,20 @@ Time shown as logged (local server time, no conversion).
 - O mapa marcador → valor original fica só local (pasta do caso, `exports/<data>.map.json`), nunca no `.txt`, para o Jefferson reverter um marcador se precisar.
 - CLI: `dmslog export <caso> --what events|bookmarks|selection --out x.txt [--no-redact] [--include-payloads]`.
 
+### 10.2 Anonimização: modo strict e invariantes
+
+O padrão é o modo **strict** (`dmslog export --redaction-mode strict`): tudo o que não é provadamente inofensivo é substituído (lista de permissão, "default-deny"). O modo **standard** aplica só as regras de padrões (GUID, IP, e-mail etc.) e é mais legível, porém menos seguro. Código: `report/redact.py`, `report/export.py`; testes: `tests/unit/test_redact*.py`.
+
+**Regiões XML/JSON.** Payloads e textos com marcação ou JSON são cortados em regiões. Uma região só mantém o esqueleto (nomes permitidos) se passar numa validação estrita: XML aceito pelo `xml.parsers.expat` do stdlib (sem DTD, entidades nem referências externas) mais o validador próprio (nomes de token inteiro, atributos separados por espaço, `<?xml` só no início); JSON aceito pelo validador linear próprio e confirmado por `json`. Região inválida, ambígua ou sem fim determinável vira **um único** `<VALUE-n>` até o fim do texto. JSON dentro de texto XML só mantém o esqueleto se aquele trecho for JSON válido.
+
+**Invariante de texto.** Em texto com indício de estrutura, cada caractere cai em exatamente uma categoria: (a) região validada (só esqueleto com nomes permitidos); (b) trecho de candidato JSON que falhou, até o fim do token (substituído); (c) conteúdo de string completa entre regiões (substituído); (d) tudo depois de string ambígua ou sem fechamento, região forte inválida ou `<`/`>` solto (substituído até o fim, por um único caminho `to_end`); (e) texto sem aspas entre regiões, antes de qualquer `<`/`>` solto: só este vai para a lista de permissão de texto livre. Aspa aberta colada a uma palavra conta como ambígua. Valores rotulados (`user: x`, `mRID: x`) são substituídos até o fim do valor documentado; uma palavra que só parece rótulo não toma nem encerra um valor.
+
+**Estado único por registro.** Primeira linha e continuação são lidas como um texto só (`record_spans`); os parsers de continuação só liberam o que o estado do registro inteiro deixa seguro; um registro cortado pelo limite de leitura tem estado desconhecido (continuação e payloads opacos); cada payload recebe os spans do registro inteiro (união com a redação default-deny do próprio payload); pedaços em volta de payloads herdam o que o registro inteiro substitui (`replaced_spans`). A entrada que não codifica em UTF-8 (surrogate isolado) falha fechada (a região vira valor; a saída é sempre UTF-8 estrito). Nenhum ponto do export pode produzir um pedaço menos anonimizado que o registro inteiro; isso é propriedade testada via `build_report`.
+
+**Limites declarados.** No strict, texto livre sem estrutura mantém palavras do catálogo; nomes de elemento e chaves JSON formados só por palavras do catálogo aparecem em regiões validadas; payload truncado ou malformado perde o esqueleto. No standard, um formato ou rótulo colado a letra ou dígito não é reconhecido. Revisar o texto antes de compartilhar continua sendo necessário.
+
+**Testes.** Perfil `dmslog-redact` do hypothesis (determinístico, sem banco de exemplos, sem deadline) para comportar-se igual no CI e local; exploração local com `DMSLOG_HYPOTHESIS_SEED=<n>` e `DMSLOG_HYPOTHESIS_SCALE=<k>`. Os testes de tempo medem linearidade (razão entre tamanhos), não limites absolutos.
+
 ## 11. Viewer: funcionalidades × LogViewPlus, por marco
 
 | Funcionalidade | Conceito LogViewPlus | Marco |
