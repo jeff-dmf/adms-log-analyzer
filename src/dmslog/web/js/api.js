@@ -163,4 +163,9 @@ export const api = {
   keyRecords: (caseId, type, value, params, signal) =>
     request("GET", "/api/keys/" + segment(type) + "/" + segment(value) +
       query({ ...params, case: caseId }), undefined, signal),
+  // Redaction profile (kept in the data directory) and the .txt report built from the server.
+  redaction: (signal) => request("GET", "/api/redaction", undefined, signal),
+  saveRedaction: (profile, signal) => request("PUT", "/api/redaction", profile, signal),
+  exportReport: (caseId, selection, options, signal) =>
+    request("POST", "/api/export", { case: caseId, selection, options }, signal),
 };

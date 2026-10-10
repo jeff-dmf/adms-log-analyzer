@@ -1,0 +1,72 @@
+dmslog report - <TERM-1> <TERM-2> <VALUE-1>
+Generated: 2030-10-15 11:00:00 - dmslog 0.0.0-test - pack <VALUE-2>
+Source: ERS 2030-10-15 09:59:00 (<HOST-1>) - Enterprise+Sensitive
+Redaction: ON (profile "default", strict mode)
+Time shown as logged (local server time, no conversion).
+
+== Summary ==
+6 selected records, 1 events, 2 payloads, window 2030-10-15 10:00:00.000 .. 2030-10-15 10:00:00.125
+AWFM SendWorks  count=1  fail=1  business_error=0  p90=90ms
+
+== Events ==
+[1] 2030-10-15 10:00:00.000 .. 2030-10-15 10:00:00.090  AWFM SendWorks  status=fail  duration=90ms  key=<GUID-1>
+    stream: WfmAdapter (normal)
+    error codes: WFM-081
+    exception: System.TimeoutException: timeout calling <URL-1> for user: <USER-1> <TICKET-1>
+    --- log excerpt (WfmAdapter_4001.log, lines 10-24) ---
+  > 2030-10-15 10:00:00.000 [PID=4001][TID=0x44c4] INFO - Start SendWorks incident <TICKET-1> msgId <GUID-1>
+  > 2030-10-15 10:00:00.020 [PID=4001][TID=0x44c4] DEBUGLOG - Connecting to <URL-1> host: <HOST-2> ip <IP-1>
+  > 2030-10-15 10:00:00.040 [PID=4001][TID=0x44c4] DEBUGLOG - Request by user: <USER-1> account <USER-2> contact <EMAIL-1> phone <PHONE-1> and <PHONE-2>
+  >    at <TERM-1><VALUE-3>()
+  >    at System.Net.Http.HttpClient.Send()
+  > 2030-10-15 10:00:00.060 [PID=4001][TID=0x44c4] DEBUGLOG - Crew mRID: <MRID-1> GID: <GID-1> vehicle <PLATE-1> and <PLATE-2> problem <TICKET-2> log <PATH-1>
+  > 2030-10-15 10:00:00.090 [PID=4001][TID=0x44c4] ERROR - <VALUE-4> <TERM-1> <TERM-2> <VALUE-5> <PATH-2>
+    note: <TERM-1> called about <TICKET-1>
+    2030-10-15 10:00:00.120 [PID=4001][TID=0x44c5] INFO - Content being sent to CRS
+    [payload P1: payload, 250 characters - see Payloads]
+
+== Records ==
+[R1] 2030-10-15 10:00:00.125  WfmAdapter_4001.sensitive.log  line 3
+    --- log excerpt (WfmAdapter_4001.sensitive.log, lines 3-11) ---
+    2030-10-15 10:00:00.125 [PID=4001][TID=0x44c5] INFO - Request received
+    [payload P2: request, 250 characters - see Payloads]
+
+== Payloads ==
+[P1] 2030-10-15 10:00:00.120  WfmAdapter_4001.log line 17  payload - - -  (text, 250 characters)
+    <SendWorksRequest>
+      <Header><MessageID><GUID-2></MessageID></Header>
+      <Customer>
+        <Name><PERSON-1></Name>
+        <Address><PERSON-2></Address>
+        <Phone><PHONE-2></Phone>
+      </Customer>
+    </SendWorksRequest>
+
+[P2] 2030-10-15 10:00:00.125  WfmAdapter_4001.sensitive.log line 3  request in WFM SendWorks  (xml, 250 characters)
+    <SendWorksRequest>
+      <Header><MessageID><GUID-2></MessageID></Header>
+      <Customer>
+        <Name><PERSON-1></Name>
+        <Address><PERSON-2></Address>
+        <Phone><PHONE-2></Phone>
+      </Customer>
+    </SendWorksRequest>
+
+== Redaction legend ==
+Values were replaced by stable markers: the same value always gets the same marker.
+GUIDs: 2 distinct values, 4 replacements (markers <GUID-n>)
+GIDs (DMS global ids): 1 distinct values, 1 replacements (markers <GID-n>)
+INC / PROB / PRB / CHG / RITM numbers: 2 distinct values, 4 replacements (markers <TICKET-n>)
+mRIDs: 1 distinct values, 1 replacements (markers <MRID-n>)
+Vehicle plates: 2 distinct values, 2 replacements (markers <PLATE-n>)
+Host and server names: 2 distinct values, 2 replacements (markers <HOST-n>)
+IP addresses: 1 distinct values, 1 replacements (markers <IP-n>)
+User and account names: 2 distinct values, 3 replacements (markers <USER-n>)
+URLs: 1 distinct values, 2 replacements (markers <URL-n>)
+File and folder paths: 2 distinct values, 2 replacements (markers <PATH-n>)
+E-mail addresses: 1 distinct values, 1 replacements (markers <EMAIL-n>)
+Phone numbers: 2 distinct values, 4 replacements (markers <PHONE-n>)
+Person names and addresses (labels and payload elements): 2 distinct values, 4 replacements (markers <PERSON-n>)
+User terms: 2 distinct values, 6 replacements (markers <TERM-n>)
+Other values (strict mode: template fields, labelled values, unknown words): 5 distinct values, 5 replacements (markers <VALUE-n>)
+Automatic anonymization is best effort: review the text before sharing it.

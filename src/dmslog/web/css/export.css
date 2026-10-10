@@ -1,0 +1,112 @@
+/* Export panel and redaction settings. */
+.export-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.export-title {
+  margin: 0;
+  font-size: 1em;
+}
+
+.export-form,
+.redact-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 48em;
+}
+
+.export-selection,
+.redact-categories {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.export-field,
+.redact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.export-label {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.export-radio {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.export-warning,
+.export-summary.is-warning {
+  background: var(--error-bg);
+  color: var(--error-text);
+  padding: 4px 8px;
+  border-radius: 3px;
+}
+
+.export-status {
+  color: var(--muted);
+  font-size: 0.9em;
+  margin: 6px 0;
+}
+
+.export-status.is-error {
+  color: var(--error-text);
+}
+
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+}
+
+.export-copy-status,
+.export-hint,
+.export-notes,
+.export-legend {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.export-preview {
+  max-height: 45vh;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  white-space: pre;
+}
+
+.export-legend {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.export-legend-title {
+  list-style: none;
+  margin-left: -18px;
+  font-weight: 600;
+}
+
+.export-offscreen {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  opacity: 0;
+}

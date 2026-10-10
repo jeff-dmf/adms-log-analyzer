@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import platform
 import sys
 from collections.abc import Callable, Sequence
@@ -14,7 +15,6 @@ from .paths import check_sqlite_fts5, resolve_data_dir
 
 # command name -> (help text, milestone that implements it)
 STUB_COMMANDS: dict[str, tuple[str, str]] = {
-    "export": (messages.HELP_EXPORT, "M7"),
     "templates": (messages.HELP_TEMPLATES, "M2"),
     "kb": (messages.HELP_KB, "M3"),
 }
@@ -87,11 +87,51 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--all-logs", action="store_true", help=messages.HELP_WATCH_ALL)
 
     sub.add_parser("info", help=messages.HELP_INFO, description=messages.HELP_INFO, parents=[data_dir_parent])
+    _add_export_parser(sub, data_dir_parent)
 
     for name, (help_text, _milestone) in STUB_COMMANDS.items():
         stub = sub.add_parser(name, help=help_text, description=help_text, parents=[data_dir_parent])
         stub.add_argument("args", nargs=argparse.REMAINDER, help=messages.HELP_STUB_ARGS)
     return parser
+
+
+def _add_export_parser(sub: argparse._SubParsersAction, data_dir_parent: argparse.ArgumentParser) -> None:
+    from .report.export import DEFAULT_MAX_BYTES
+
+    export = sub.add_parser(
+        "export",
+        help=messages.HELP_EXPORT_CMD,
+        description=messages.HELP_EXPORT_CMD,
+        parents=[data_dir_parent],
+    )
+    export.add_argument("--case", required=True, metavar="NAME", help=messages.HELP_EXPORT_CASE)
+    export.add_argument("--ids", metavar="ID[,ID...]", default=None, help=messages.HELP_EXPORT_IDS)
+    export.add_argument("--event", metavar="ID[,ID...]", default=None, help=messages.HELP_EXPORT_EVENT)
+    export.add_argument("--filter-json", metavar="JSON|@FILE", default=None, help=messages.HELP_EXPORT_FILTER)
+    mode = export.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--anonymize", dest="anonymize", action="store_true", help=messages.HELP_EXPORT_ANONYMIZE
+    )
+    mode.add_argument(
+        "--no-anonymize", dest="anonymize", action="store_false", help=messages.HELP_EXPORT_NO_ANONYMIZE
+    )
+    export.set_defaults(anonymize=None)
+    export.add_argument("--include-payloads", action="store_true", help=messages.HELP_EXPORT_PAYLOADS)
+    export.add_argument("--context", type=int, default=0, metavar="N", help=messages.HELP_EXPORT_CONTEXT)
+    export.add_argument(
+        "--max-bytes",
+        type=int,
+        default=DEFAULT_MAX_BYTES,
+        metavar="N",
+        help=messages.HELP_EXPORT_MAX_BYTES.format(default=DEFAULT_MAX_BYTES),
+    )
+    export.add_argument("--out", metavar="FILE", default=None, help=messages.HELP_EXPORT_OUT)
+    export.add_argument(
+        "--redaction-mode",
+        choices=("strict", "standard"),
+        default=None,
+        help=messages.HELP_EXPORT_REDACTION_MODE,
+    )
 
 
 def cmd_info(args: argparse.Namespace) -> int:
@@ -233,6 +273,111 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print(messages.INGEST_WARNING.format(message=warning))
     print(messages.INGEST_CASE_DB.format(path=db_path))
     return EXIT_FAILED if result.sources_failed else 0
+
+
+def _id_list_option(raw: str | None, option: str) -> list[int] | None:
+    if raw is None:
+        return None
+    try:
+        values = [int(part) for part in raw.split(",")]
+    except ValueError:
+        values = []
+    if not values or any(v < 1 for v in values):
+        raise ValueError(messages.EXPORT_CLI_BAD_LIST.format(option=option))
+    return values
+
+
+def _filter_option(raw: str | None) -> dict | None:
+    import json
+
+    if raw is None:
+        return None
+    try:
+        text = Path(raw[1:]).read_text(encoding="utf-8-sig") if raw.startswith("@") else raw
+        value = json.loads(text)
+        if not isinstance(value, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError) as exc:
+        raise ValueError(messages.EXPORT_CLI_BAD_FILTER.format(error=type(exc).__name__)) from None
+    return value
+
+
+def _part_path(out: Path, name_index: int, total: int) -> Path:
+    if total == 1:
+        return out
+    return out.with_name(f"{out.stem}-part{name_index}of{total}{out.suffix}")
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    from .ingest.pipeline import case_db_path
+    from .report import export, redact
+    from .store.db import connect
+    from .store.filters import QueryInputError
+    from .store.query import QueryTimeout
+
+    data_dir = resolve_data_dir(getattr(args, "data_dir", None))
+    try:
+        ids = _id_list_option(args.ids, "--ids")
+        events = _id_list_option(args.event, "--event")
+        flt = _filter_option(args.filter_json)
+        if ids is None and events is None and flt is None:
+            raise ValueError(messages.EXPORT_CLI_NEED_SELECTION)
+        selection = export.parse_selection({"ids": ids, "events": events, "filter": flt})
+        profile = redact.load_profile(data_dir) if args.anonymize else None
+        if profile is not None and getattr(args, "redaction_mode", None):
+            profile = dataclasses.replace(profile, mode=args.redaction_mode)
+        options = export.parse_options(
+            {
+                "anonymize": args.anonymize,
+                "include_payloads": args.include_payloads,
+                "context": args.context,
+                "max_bytes": args.max_bytes,
+            },
+            profile,
+        )
+        db_path = case_db_path(data_dir, args.case)
+        if not db_path.is_file():
+            raise ValueError(messages.EXPORT_CASE_NOT_FOUND_DB.format(case=args.case, data_dir=data_dir))
+        conn = connect(db_path, readonly=True)
+        try:
+            result = export.build_report(conn, selection, options)
+        finally:
+            conn.close()
+    except (ValueError, QueryInputError, QueryTimeout, OSError) as exc:
+        message = exc.message if isinstance(exc, export.ExportError) else str(exc)
+        if isinstance(exc, redact.ProfileError):
+            message = messages.REDACT_BAD_PROFILE.format(
+                problem=messages.REDACT_PROFILE_PROBLEMS.get(exc.problem, exc.problem), field=exc.field
+            )
+        print(messages.EXPORT_CLI_FAILED.format(error=message), file=sys.stderr)
+        return EXIT_FAILED
+
+    for warning in result.warnings:
+        print(messages.EXPORT_CLI_WARNING.format(message=warning), file=sys.stderr)
+    if args.out:
+        out = Path(args.out).expanduser()
+        total = len(result.parts)
+        try:
+            for index, part in enumerate(result.parts, 1):
+                target = _part_path(out, index, total)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(part.text.encode("utf-8"))  # CRLF already inside the text
+                print(messages.EXPORT_CLI_WROTE.format(path=target, size=len(part.text.encode("utf-8"))))
+        except OSError as exc:
+            print(messages.EXPORT_CLI_FAILED.format(error=exc), file=sys.stderr)
+            return EXIT_FAILED
+    else:
+        for part in result.parts:
+            sys.stdout.buffer.write(part.text.encode("utf-8"))
+        sys.stdout.buffer.flush()
+    if result.redactor is not None:
+        try:
+            saved = redact.write_value_map(data_dir, args.case, result.redactor)
+        except OSError:
+            saved = None
+        if saved is not None:
+            print(messages.EXPORT_CLI_MAP.format(path=saved), file=sys.stderr)
+    return 0
 
 
 def _stop_signals() -> list:
@@ -397,6 +542,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "serve": cmd_serve,
         "info": cmd_info,
         "ingest": cmd_ingest,
+        "export": cmd_export,
         "watch": cmd_watch,
         **{name: _stub_handler(name, milestone) for name, (_h, milestone) in STUB_COMMANDS.items()},
     }

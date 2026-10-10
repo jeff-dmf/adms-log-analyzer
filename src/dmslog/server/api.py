@@ -18,7 +18,7 @@ import uuid
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -40,6 +40,8 @@ from ..ingest.watch import MAX_BACKOFF_S, CycleReport, Watcher, backoff_delay
 from ..knowledge.installation import read_installation
 from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
+from ..report import export as report_export
+from ..report import redact
 from ..store import bookmarks, db, events, keys, payloads, query, views
 from ..store import config as config_store
 from ..store.filters import QueryInputError, compile_filter
@@ -806,6 +808,9 @@ class Api:
             ("GET", re.compile(r"/api/payloads/(?P<id>[^/]+)\Z"), self.get_payload),
             ("GET", re.compile(r"/api/keys/types\Z"), self.key_types),
             ("GET", re.compile(r"/api/keys/(?P<type>[^/]+)/(?P<value>[^/]+)\Z"), self.key_records),
+            ("GET", re.compile(r"/api/redaction\Z"), self.get_redaction),
+            ("PUT", re.compile(r"/api/redaction\Z"), self.put_redaction),
+            ("POST", re.compile(r"/api/export\Z"), self.export_report),
         ]
 
     def shutdown(self) -> None:
@@ -1385,6 +1390,88 @@ class Api:
             fmt_name = result["payload"]["fmt"]
             result["formatted"] = _pretty(result["text"], fmt_name, result["truncated_display"])
         return Response(200, result)
+    # -- redaction profile and the .txt export (report/redact.py, report/export.py)
+
+    @staticmethod
+    def _profile_error(exc: redact.ProfileError) -> str:
+        problem = messages.REDACT_PROFILE_PROBLEMS.get(exc.problem, exc.problem)
+        return messages.REDACT_BAD_PROFILE.format(problem=problem, field=exc.field)
+
+    def get_redaction(self, request: Request) -> Response:
+        """The stored profile (defaults when there is none). Terms never leave the data directory
+        except in this answer to the local viewer."""
+        invalid = None
+        try:
+            profile = redact.load_profile(self.data_dir)
+        except redact.ProfileError as exc:
+            profile, invalid = redact.default_profile(), exc
+        body: dict[str, Any] = {
+            "profile": profile.to_dict(),
+            "defaults": redact.default_profile().to_dict(),
+            "categories": [
+                {"id": category, "label": messages.REDACT_CATEGORY_TEXT[category]}
+                for category in redact.CATEGORIES
+            ],
+            "invalid": invalid is not None,
+        }
+        if invalid is not None:
+            problem = messages.REDACT_PROFILE_PROBLEMS.get(invalid.problem, invalid.problem)
+            body["message"] = messages.REDACT_PROFILE_INVALID_FILE.format(problem=problem)
+        return Response(200, body)
+
+    def put_redaction(self, request: Request) -> Response:
+        body = request.read_body()
+        raw = body.get("profile") if isinstance(body.get("profile"), dict) else body
+        try:
+            profile = redact.profile_from_dict(raw)
+        except redact.ProfileError as exc:
+            raise ApiError(400, "invalid_profile", self._profile_error(exc)) from None
+        try:
+            redact.save_profile(self.data_dir, profile)
+        except OSError as exc:
+            raise ApiError(
+                500, "profile_save_failed", messages.REDACT_SAVE_FAILED.format(error=type(exc).__name__)
+            ) from None
+        return Response(200, {"profile": profile.to_dict(), "invalid": False})
+
+    def export_report(self, request: Request) -> Response:
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        try:
+            selection = report_export.parse_selection(body.get("selection"))
+            options = report_export.parse_options(body.get("options"))
+        except report_export.ExportError as exc:
+            raise ApiError(400, exc.code, exc.message) from None
+        if selection.filter:
+            _check_scan_filter(selection.filter)
+        if options.anonymize:
+            try:
+                options = replace(options, profile=redact.load_profile(self.data_dir))
+            except redact.ProfileError as exc:  # fail closed: never export with weaker settings
+                raise ApiError(409, "redaction_profile_invalid", self._profile_error(exc)) from None
+        try:
+            with self.store.reader(cid) as conn:
+                result = report_export.build_report(conn, selection, options)
+        except report_export.ExportError as exc:
+            status = 404 if exc.code == "nothing" else 400
+            raise ApiError(status, exc.code, exc.message) from None
+        map_saved = False
+        if result.redactor is not None:
+            try:
+                map_saved = redact.write_value_map(self.data_dir, cid, result.redactor) is not None
+            except OSError:
+                map_saved = False
+        return Response(
+            200,
+            {
+                "parts": [{"name": part.name, "text": part.text} for part in result.parts],
+                "legend": result.legend,
+                "anonymized": result.anonymized,
+                "warnings": result.warnings,
+                "counts": result.counts,
+                "map_saved": map_saved,
+            },
+        )
 
     # -- saved filters (per case, table saved_view)
 

@@ -178,6 +178,7 @@ function start() {
   let payloadSection = null;
   let payloadList = null;
   let openOperation = () => {};
+  let exportPanel = null;
   let sourceFamilies = new Map();
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
@@ -367,6 +368,9 @@ function start() {
       knowledge.reset();
       if (keyPanel) {
         keyPanel.reset();
+      }
+      if (exportPanel) {
+        exportPanel.reset();
       }
       if (sideBySide) {
         sideBySide.reset();
@@ -848,6 +852,50 @@ function start() {
       }
       eventsPanel.open(eventId);
     };
+  }).catch(() => {
+    // Module missing or failing: the button stays hidden.
+  });
+
+  // Export report and redaction settings: optional modules, the app works without them.
+  const exportHost = byId("export-panel-host");
+  const redactionHost = byId("redaction-panel-host");
+  const exportButton = byId("export-button");
+  const exportContext = () => {
+    const selected = grid.selectedRow();
+    const entry = detail.entry;
+    const sameEntry = Boolean(selected && entry && entry.id === selected.id);
+    return {
+      caseId,
+      filter: currentFilter,
+      recordId: selected ? selected.id : null,
+      eventId: sameEntry && entry.event ? entry.event.id : null,
+    };
+  };
+  Promise.all([import("./export-panel.js"), import("./redaction-panel.js")]).then(([exporting, redacting]) => {
+    let redactionPanel = null;
+    const openRedaction = () => {
+      redactionHost.hidden = false;
+      if (!redactionPanel) {
+        redactionPanel = redacting.initRedactionPanel(redactionHost);
+      }
+      redactionPanel.refresh();
+    };
+    exportButton.hidden = false;
+    exportButton.addEventListener("click", () => {
+      exportHost.hidden = !exportHost.hidden;
+      exportButton.setAttribute("aria-expanded", exportHost.hidden ? "false" : "true");
+      if (exportHost.hidden) {
+        redactionHost.hidden = true;
+        return;
+      }
+      if (!exportPanel) {
+        exportPanel = exporting.initExportPanel(exportHost, {
+          getContext: exportContext,
+          onOpenRedaction: openRedaction,
+        });
+      }
+      exportPanel.refresh();
+    });
   }).catch(() => {
     // Module missing or failing: the button stays hidden.
   });

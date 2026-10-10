@@ -24,6 +24,7 @@ EXPECTED_MODULES = {
     "strings.js", "theme.js", "time.js", "timeline-model.js", "timeline.js", "unknown-panel-model.js",
     "unknown-panel.js", "key-panel-model.js", "key-panel.js", "links-model.js", "links.js", "side-by-side.js",
     "payload-model.js", "payload.js", "payload-list-model.js", "payload-list.js",
+    "export-model.js", "export-panel.js", "redaction-panel.js",
     "bookmarks-model.js", "bookmarks-panel.js", "compare-model.js", "compare.js", "saved-views-model.js",
     "follow-tail-model.js", "follow-tail.js",
 }
@@ -256,6 +257,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         "/css/grid-extras.css", "/css/filter-tree.css", "/css/config-panel.css", "/css/knowledge.css",
         "/css/events.css", "/css/dashboard.css", "/css/links.css", "/css/key-panel.css",
         "/css/payload.css", "/css/payload-list.css",
+        "/css/export.css",
         "/css/bookmarks.css",
         "/vendor/uplot/uPlot.esm.js", "/vendor/uplot/uPlot.min.css",
         *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),

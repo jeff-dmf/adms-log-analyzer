@@ -149,6 +149,138 @@ API_BAD_PAYLOAD_FORMAT = "format must be 'raw' or 'pretty'"
 API_BAD_PAYLOAD_LIST = "{field} must be a comma-separated list of 1 to {limit} values of at most 128 chars"
 API_BAD_ORPHAN = "orphan must be 0 or 1"
 API_BAD_PAYLOAD_QUERY = "q must be 1 to 128 printable characters"
+# --- Redaction and export (src/dmslog/report, `dmslog export`, /api/redaction, /api/export) -------
+REDACT_CATEGORY_TEXT = {
+    "guid": "GUIDs",
+    "gid": "GIDs (DMS global ids)",
+    "ticket": "INC / PROB / PRB / CHG / RITM numbers",
+    "mrid": "mRIDs",
+    "plate": "Vehicle plates",
+    "host": "Host and server names",
+    "ip": "IP addresses",
+    "user": "User and account names",
+    "url": "URLs",
+    "path": "File and folder paths",
+    "email": "E-mail addresses",
+    "phone": "Phone numbers",
+    "person": "Person names and addresses (labels and payload elements)",
+}
+REDACT_TERM_TEXT = "User terms"
+REDACT_PROFILE_PROBLEMS = {
+    "not_object": "the profile must be an object",
+    "bad_name": "the profile name must be 1 to 64 letters, digits, spaces, '.', '_' or '-'",
+    "bad_section": "this section has the wrong type",
+    "unknown_category": "unknown category",
+    "bad_flag": "category flags must be true or false",
+    "bad_list": "this field must be a list of strings",
+    "too_many": "too many entries",
+    "bad_entry": "an entry is empty, too short, too long or has control characters",
+    "bad_element_name": "payload names must be 1 to 64 letters, digits, '_', '.', ':' or '-'",
+    "invalid_toml": "the profile file is not valid TOML",
+    "unreadable": "the profile file could not be read",
+    "bad_version": "the profile file was written by a newer dmslog",
+}
+REDACT_BAD_PROFILE = "Invalid redaction profile: {problem} ({field})"
+REDACT_SAVE_FAILED = "The redaction profile could not be saved: {error}"
+REDACT_PROFILE_INVALID_FILE = (
+    "The stored redaction profile is invalid ({problem}); save a new one to replace it"
+)
+
+EXPORT_BAD_SELECTION = "selection must be an object with a 'filter', 'ids' or 'event'/'events'"
+EXPORT_BAD_IDS = "selection.ids must be a list of 1 to {limit} positive integers"
+EXPORT_BAD_EVENTS = "selection.events must be a list of 1 to {limit} positive integers"
+EXPORT_BAD_OPTIONS = "options must be an object"
+EXPORT_ANONYMIZE_REQUIRED = "options.anonymize must be set to true or false on every export"
+EXPORT_BAD_OPTION = "Invalid option {field!r}: {problem}"
+EXPORT_BAD_FILTER = "selection.filter must be a filter object"
+EXPORT_NOTHING = "The selection matched no records"
+EXPORT_CASE_NOT_FOUND_DB = "Case {case!r} has no database in {data_dir}"
+
+EXPORT_TITLE = "dmslog report - {label}"
+EXPORT_TITLE_PART = "dmslog report - {label} - part {part}/{total}"
+EXPORT_CONTINUES = "(continued from the previous part)"
+EXPORT_GENERATED = "Generated: {when} - dmslog {version} - pack {pack}"
+EXPORT_SOURCE = "Source: ERS {ers_ts} ({machine}) - {variant}"
+EXPORT_SOURCE_PLAIN = "Source: {kind} ({machine})"
+EXPORT_SOURCE_UNKNOWN = "Source: unknown"
+EXPORT_REDACTION_ON = 'Redaction: ON (profile "{profile}")'
+EXPORT_REDACTION_OFF = "Redaction: OFF (explicit; this report is NOT anonymized)"
+EXPORT_TIME_NOTE = "Time shown as logged (local server time, no conversion)."
+EXPORT_UNKNOWN_VALUE = "unknown"
+EXPORT_SECTION_SUMMARY = "== Summary =="
+EXPORT_SECTION_EVENTS = "== Events =="
+EXPORT_SECTION_RECORDS = "== Records =="
+EXPORT_SECTION_PAYLOADS = "== Payloads =="
+EXPORT_SECTION_LEGEND = "== Redaction legend =="
+EXPORT_SUMMARY_COUNTS = (
+    "{records} selected records, {events} events, {payloads} payloads, window {start} .. {end}"
+)
+EXPORT_SUMMARY_GROUP = "{family} {name}  count={count}  fail={fail}  business_error={business}  p90={p90}"
+EXPORT_SUMMARY_MORE = "... and {count} more operation groups"
+EXPORT_EVENT_HEAD = "[{n}] {start} .. {end}  {family} {name}  status={status}  duration={duration}  key={key}"
+EXPORT_EVENT_CODES = "error codes: {codes}"
+EXPORT_EVENT_EXCEPTION = "exception: {exception}"
+EXPORT_EVENT_STREAM = "stream: {process} ({kind})"
+EXPORT_EVENT_NOTE = "note: {note}"
+EXPORT_RECORD_HEAD = "[R{n}] {when}  {source}  line {line}{event}"
+EXPORT_RECORD_EVENT = "  event: {name} status={status}"
+EXPORT_EXCERPT_HEAD = "--- log excerpt ({file}, lines {first}-{last}) ---"
+EXPORT_EXCERPT_CUT = "[... {count} more characters of this record omitted]"
+EXPORT_PAYLOAD_OMITTED = "[payload P{n}: {role}, {length} characters - omitted (payloads not included)]"
+EXPORT_PAYLOAD_SEE = "[payload P{n}: {role}, {length} characters - see Payloads]"
+EXPORT_PAYLOAD_HEAD = (
+    "[P{n}] {when}  {file} line {line}  {role} {direction} {peer} {operation}  ({fmt}, {length} characters)"
+)
+EXPORT_PAYLOAD_CUT = "[... {count} more characters of this payload omitted]"
+EXPORT_LEGEND_NOTE = "Values were replaced by stable markers: the same value always gets the same marker."
+EXPORT_LEGEND_NOTE_2 = "Automatic anonymization is best effort: review the text before sharing it."
+EXPORT_LEGEND_LINE = "{text}: {distinct} distinct values, {replaced} replacements (markers <{label}-n>)"
+EXPORT_LEGEND_NONE = "No value was replaced."
+EXPORT_LEGEND_OFF = "Anonymization was turned off for this export: nothing was replaced."
+EXPORT_LEGEND_OVERFLOW = "{count} replacements used the generic marker because the marker table is full."
+EXPORT_TRUNCATED_NOTICE = (
+    "[... {count} more lines not shown: the report exceeds {limit} bytes; export in numbered parts]"
+)
+EXPORT_LINE_CUT = "...[line cut]"
+EXPORT_WARN_RECORD_LIMIT = "Only the first {limit} selected records were exported."
+EXPORT_WARN_ENTRY_LIMIT = "The export stopped after {limit} log records (the text limit of one report)."
+EXPORT_WARN_TEXT_LIMIT = "The export stopped after {limit} characters of log text."
+EXPORT_WARN_EVENT_LIMIT = "Only the first {limit} entries of event {event} were exported."
+EXPORT_WARN_MISSING = "{count} selected ids do not exist in this case."
+
+HELP_EXPORT_CMD = "Export a plain-text report (.txt) of a selection, for a support ticket."
+HELP_EXPORT_CASE = "Case name (as listed by `dmslog info`)."
+HELP_EXPORT_IDS = "Comma-separated record ids to export."
+HELP_EXPORT_EVENT = "Comma-separated event ids to export."
+HELP_EXPORT_FILTER = "Filter tree as JSON (text) or @FILE with the JSON, as the viewer builds it."
+HELP_EXPORT_ANONYMIZE = "Replace sensitive values using the redaction profile (<data dir>/redaction.toml)."
+HELP_EXPORT_NO_ANONYMIZE = "Export WITHOUT anonymization (must be said explicitly on every export)."
+HELP_EXPORT_PAYLOADS = "Include request/response payloads (anonymized per XML/JSON element)."
+HELP_EXPORT_CONTEXT = "Records of context before and after each selected record or event (default 0)."
+HELP_EXPORT_MAX_BYTES = (
+    "Size limit of one part in bytes (default {default}); larger reports are split in numbered parts."
+)
+HELP_EXPORT_OUT = (
+    "Write the report to this file (numbered parts get -part1of3 before the extension); default: stdout."
+)
+EXPORT_CLI_NEED_ANONYMIZE = "dmslog export: say --anonymize or --no-anonymize explicitly"
+EXPORT_CLI_NEED_SELECTION = "dmslog export: give --ids, --event or --filter-json"
+EXPORT_CLI_BAD_LIST = "dmslog export: {option} must be a comma-separated list of positive integers"
+EXPORT_CLI_BAD_FILTER = "dmslog export: --filter-json is not valid JSON or not an object ({error})"
+EXPORT_CLI_FAILED = "dmslog export: {error}"
+EXPORT_CLI_WROTE = "Wrote {path} ({size} bytes)"
+EXPORT_CLI_MAP = "Value map saved to {path} (local only, never share it)"
+EXPORT_CLI_WARNING = "warning: {message}"
+EXPORT_RECORD_MORE = "  (+{count} more selected records in this excerpt)"
+EXPORT_EVENT_NO_RECORDS = "(no log records are attached to this event)"
+# --- Strict redaction mode (src/dmslog/report/redact.py, template_shape.py) -------------------------
+REDACT_CATEGORY_TEXT["value"] = "Other values (strict mode: template fields, labelled values, unknown words)"
+REDACT_PROFILE_PROBLEMS["bad_mode"] = "mode must be 'strict' or 'standard'"
+EXPORT_REDACTION_ON_MODE = 'Redaction: ON (profile "{profile}", {mode} mode)'
+HELP_EXPORT_REDACTION_MODE = (
+    "Override the mode of the redaction profile for this export: 'strict' (default; template-aware, "
+    "replaces every value it cannot prove harmless) or 'standard' (pattern rules only, more readable)."
+)
 API_BAD_BOOKMARK_ID = "Invalid bookmark id"
 
 HELP_WATCH = "Keep a case up to date while the adapters write: index a Log folder every few seconds."
