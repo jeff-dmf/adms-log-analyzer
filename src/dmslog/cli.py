@@ -154,6 +154,11 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def _shown(error: object, data_dir: Path) -> str:
+    """Error text with real names replaced by their public spelling (local aliases)."""
+    return aliases_get(data_dir).sanitize(str(error))
+
+
 def _describe_cases(data_dir: Path) -> str:
     """One line per case found under <data-dir>/cases, or "none"."""
     from .ingest.pipeline import CASE_DB_FILENAME
@@ -206,10 +211,10 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         case = args.case if args.case is not None else default_case_name(plan)
         db_path = case_db_path(data_dir, case)
     except (SourceNotFoundError, OSError) as exc:
-        print(messages.INGEST_NOT_FOUND.format(error=exc), file=sys.stderr)
+        print(messages.INGEST_NOT_FOUND.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
     except UnsafeArchiveError as exc:
-        print(messages.INGEST_UNSAFE.format(error=exc), file=sys.stderr)
+        print(messages.INGEST_UNSAFE.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
     except ValueError as exc:
         print(messages.INGEST_INVALID_CASE.format(error=exc), file=sys.stderr)
@@ -241,10 +246,10 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         options = IngestOptions(scope=scope, case_name=case, limits=limits, aliases=plan_aliases)
         result = run_ingest(conn, args.path, options, progress)
     except CollectionConflictError as exc:
-        print(messages.INGEST_CONFLICT.format(case=case, error=exc), file=sys.stderr)
+        print(messages.INGEST_CONFLICT.format(case=case, error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_CONFLICT
     except (SourceNotFoundError, UnsafeArchiveError, OSError) as exc:
-        print(messages.INGEST_UNSAFE.format(error=exc), file=sys.stderr)
+        print(messages.INGEST_UNSAFE.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
     finally:
         conn.close()
@@ -451,7 +456,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
             print(messages.WATCH_WARNING.format(message=warning), file=sys.stderr, flush=True)
 
     def on_error(exc: Exception, delay: float) -> None:
-        print(messages.WATCH_ERROR.format(error=exc, delay=delay), file=sys.stderr, flush=True)
+        print(
+            messages.WATCH_ERROR.format(error=_shown(exc, data_dir), delay=delay), file=sys.stderr, flush=True
+        )
 
     conn = create_case_db(db_path)
     stop = threading.Event()
@@ -465,10 +472,10 @@ def cmd_watch(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         stop.set()
     except CollectionConflictError as exc:
-        print(messages.WATCH_CONFLICT.format(case=args.case, error=exc), file=sys.stderr)
+        print(messages.WATCH_CONFLICT.format(case=args.case, error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_CONFLICT
     except (SourceNotFoundError, UnsafeArchiveError, OSError) as exc:
-        print(messages.INGEST_UNSAFE.format(error=exc), file=sys.stderr)
+        print(messages.INGEST_UNSAFE.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
     finally:
         restore_signals()
@@ -517,7 +524,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         try:
             case = args.watch_case or default_case_name(build_plan(args.watch, ReadLimits()))
         except OSError as exc:
-            print(messages.INGEST_NOT_FOUND.format(error=exc), file=sys.stderr)
+            print(
+                messages.INGEST_NOT_FOUND.format(
+                    error=_shown(exc, resolve_data_dir(getattr(args, "data_dir", None)))
+                ),
+                file=sys.stderr,
+            )
             return EXIT_FAILED
         watch = {
             "path": Path(args.watch),

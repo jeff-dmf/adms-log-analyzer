@@ -4,6 +4,7 @@ Only synthetic names are used here (``AcmeWidgetAdapter``), never a real one.
 """
 
 import shutil
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -180,3 +181,101 @@ def test_registry_names_in_a_zip_and_web_service_operations(tmp_path):
     product = read_installation(tmp_path, aliases=a).products[0]
     assert product.product == "AdapterCustom"
     assert [op.operation for op in product.operations] == ["CustomOp"]
+
+
+# ----------------------------------------------------------------------------- review follow-ups
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "version = 1\n[AcmeWidget]\n[AcmeWidget]\n",  # duplicated table: the parser names it
+        "version = 1\nAcmeWidget = 1\n",  # unknown top-level key
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "x"\nAcmeWidget = "y"\n',  # unknown key in entry
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "AcmeWidget\n',  # broken string
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "AcmeWidget"\npublic = "Other"\n',
+    ],
+)
+def test_diagnostics_never_contain_file_content(tmp_path, text):
+    (tmp_path / "aliases.toml").write_text(text, encoding="utf-8")
+    loaded = al.load(tmp_path)
+    assert loaded.error and "Acme" not in loaded.error
+    assert "Acme" not in al.describe(loaded)
+
+
+def test_apply_is_a_single_pass_over_the_original_text():
+    a = al.Aliases.from_pairs([("Acme", "Short"), ("AcmeWidget", "Long")])
+    assert a.apply("AcmeWidget") == "Long"
+    assert a.apply_name("acmewidget") == "Long"
+    assert a.apply_name("AcmeWIDGET") == "Long"  # whole configured string, never "ShortWIDGET"
+    chained = al.Aliases.from_pairs([("AcmeWidget", "Custom"), ("Custom", "Other")])
+    assert chained.apply("AcmeWidget_1") == "Custom_1"
+    assert chained.apply_name("ACMEWIDGET_1") == "Custom_1"
+    assert chained.sanitize("AcmeWidget and Custom") == "Custom and Other"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        'version = 1.0\n[[alias]]\npublic = "Custom"\nreal = "a"\n',
+        'version = true\n[[alias]]\npublic = "Custom"\nreal = "a"\n',
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "a\\u0085b"\n',  # C1 control
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "a\\u200bb"\n',  # format char
+        'version = 1\n[[alias]]\npublic = "Cust\\u0085om"\nreal = "a"\n',
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "AcmeWidget"\n'
+        '[[alias]]\npublic = "Other"\nreal = "ACMEWIDGET"\n',  # equal ignoring case, different public
+    ],
+)
+def test_stricter_validation(tmp_path, body):
+    (tmp_path / "aliases.toml").write_text(body, encoding="utf-8")
+    loaded = al.load(tmp_path)
+    assert len(loaded) == 0 and loaded.error
+
+
+def test_identical_duplicates_are_fine():
+    parsed = al.parse(
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "AcmeWidget"\n'
+        '[[alias]]\npublic = "Custom"\nreal = "AcmeWidget"\n'
+        '[[alias]]\npublic = "Custom"\nreal = "ACMEWIDGET"\n'
+    )
+    assert parsed.error is None and len(parsed) == 2
+
+
+def test_registry_diagnostics_use_the_public_name(tmp_path):
+    from dmslog.knowledge.registry import RegistryError, parse_registry_xml
+
+    a = al.Aliases.from_pairs([("AcmeWidget", "Custom")])
+    cases = [
+        b"<OASYSDNARegistry><Product",  # malformed
+        b"<Other/>",  # wrong root
+        b"<OASYSDNARegistry/>",  # no product
+    ]
+    for data in cases:
+        with pytest.raises(RegistryError) as info:
+            parse_registry_xml(data, filename="AdapterOnt_1_AcmeWidget.xml", aliases=a)
+        assert "Acme" not in str(info.value) and "Custom" in str(info.value)
+
+
+def test_failed_source_error_and_warnings_use_the_public_name(tmp_path):
+    payload = b"2026-01-01 00:00:00,000 INFO x\r\n" * 50
+    zpath = tmp_path / "ERS.zip"
+    member = "Log/dnaApp_zone1/SVC/AcmeWidgetAdapterChangeIncidentDevice_9.log"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_STORED) as z:
+        z.writestr(member, payload)
+    raw = bytearray(zpath.read_bytes())
+    at = raw.index(payload[:20])
+    raw[at + 5] ^= 0xFF  # corrupt the stored data: CRC mismatch while reading
+    zpath.write_bytes(bytes(raw))
+    a = al.Aliases.from_pairs([("AcmeWidget", "Custom")])
+    events = []
+    conn = create_case_db(tmp_path / "case.sqlite")
+    result = run_ingest(conn, zpath, IngestOptions(scope="all", aliases=a), events.append)
+    assert result.sources_failed == 1
+    stored = conn.execute("SELECT error FROM source WHERE status = 'error'").fetchone()[0]
+    assert stored and "Acme" not in stored and "Custom" in stored
+    assert all("Acme" not in (d.member + (d.error or "")) for d in result.details)
+    assert all("Acme" not in (e.member or "") for e in events)
+    assert not any("Acme" in w for w in result.warnings)
+    # the DB keeps the real member: it is how the file is reopened
+    assert conn.execute("SELECT member FROM source").fetchone()[0] == member
+    conn.close()

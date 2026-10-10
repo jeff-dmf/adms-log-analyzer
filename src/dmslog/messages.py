@@ -73,8 +73,9 @@ INFO_ALIASES_LOADED = "{count} loaded"
 INFO_ALIASES_IGNORED = "file ignored ({error})"
 
 # Local aliases (<data dir>/aliases.toml); the texts never include alias values.
-ALIASES_ERR_TOML = "aliases.toml is not valid TOML: {error}"
-ALIASES_ERR_UNKNOWN_KEYS = "aliases.toml: unknown keys in {where}: {keys}"
+ALIASES_ERR_TOML = "aliases.toml is not valid TOML"
+ALIASES_ERR_TOML_LINE = "aliases.toml is not valid TOML (line {line})"
+ALIASES_ERR_UNKNOWN_KEYS = "aliases.toml: unknown key in {where}"
 ALIASES_ERR_VERSION = "aliases.toml: 'version' must be the integer {expected}"
 ALIASES_ERR_NOT_TABLES = "aliases.toml: 'alias' must be a list of [[alias]] tables"
 ALIASES_ERR_PUBLIC = "aliases.toml: {where}: 'public' must be 1-64 characters from letters, digits, _ . -"
@@ -83,7 +84,7 @@ ALIASES_ERR_REAL = (
 )
 ALIASES_ERR_CONFLICT = "aliases.toml: {where}: the same 'real' maps to different 'public' values"
 ALIASES_ERR_TOO_LARGE = "aliases.toml is larger than 1 MiB"
-ALIASES_ERR_READ = "aliases.toml cannot be read ({error})"
+ALIASES_ERR_READ = "aliases.toml cannot be read"
 INFO_CASE_LINE = "{name}: {sources} sources, {entries} records ({path})"
 INFO_CASE_UNREADABLE = "{name}: unreadable ({error})"
 

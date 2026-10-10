@@ -155,7 +155,14 @@ def parse_registry_xml(
         file_name = filename or "<bytes>"
     else:
         file_name = filename or source.name
-        data = read_limited(Path(source), max_bytes)
+        try:
+            data = read_limited(Path(source), max_bytes)
+        except RegistryError as exc:
+            if aliases:
+                raise RegistryError(aliases.sanitize(str(exc))) from None
+            raise
+    if aliases:
+        file_name = aliases.apply_name(file_name)  # diagnostics and stored names use the public spelling
     root = load_xml_root(data, source=file_name, max_bytes=max_bytes)
     if root.tag != "OASYSDNARegistry":
         raise RegistryError(f"{file_name}: root element is {root.tag!r}, expected 'OASYSDNARegistry'")
@@ -163,8 +170,6 @@ def parse_registry_xml(
     if len(products) != 1 or not products[0].get("Name"):
         raise RegistryError(f"{file_name}: expected exactly one named <Product> element")
     product = products[0]
-    if aliases:
-        file_name = aliases.apply_name(file_name)
     guess, layer, label = parse_registry_filename(file_name)
     values: dict[tuple[str, str], RegistryValue] = {}
     _collect_values(product, "", values)

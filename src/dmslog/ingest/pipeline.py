@@ -331,12 +331,21 @@ class _Run:
         self.catalog: Catalog = options.catalog if options.catalog is not None else default_catalog()
         self.severity = SeverityHook()
 
+    def _shown(self, text: str | None) -> str | None:
+        """Text derived from names, as presented or stored (error, progress, warning): public spelling."""
+        aliases = self.opt.aliases
+        return aliases.sanitize(text) if aliases and text else text
+
+    def _warn(self, message: str) -> None:
+        self.result.warnings.append(self._shown(message) or message)
+
     def emit(self, phase: str, source_bytes: int = 0, source_total: int = 0, source_records: int = 0) -> None:
         if self.progress is None:
             return
         self.progress(
             ProgressEvent(
-                phase, self.current_member, self.current_action, source_bytes, source_total, source_records,
+                phase, self._shown(self.current_member), self.current_action,
+                source_bytes, source_total, source_records,
                 self.bytes_done,
                 self.bytes_total, self.result.records, self.sources_done, self.sources_total,
             )
@@ -356,12 +365,12 @@ class _Run:
             summary = derive_pending(self.w.conn, self.catalog)
         except Exception as exc:  # e.g. a locked database
             self.result.derive_seconds = time.perf_counter() - started
-            self.result.warnings.append(f"derivation failed: {type(exc).__name__}: {exc}")
+            self._warn(f"derivation failed: {type(exc).__name__}: {exc}")
             return
         self.result.derive_seconds = time.perf_counter() - started
         self.result.events_derived = summary.events
         for stream_id, message in summary.errors:
-            self.result.warnings.append(f"derivation failed for stream {stream_id}: {message}")
+            self._warn(f"derivation failed for stream {stream_id}: {message}")
 
     def correlate(self) -> None:
         """Correlate the groups that changed (after the derivation): normal<->sensitive pairing and, when
@@ -379,20 +388,20 @@ class _Run:
             links = importlib.import_module("dmslog.derive.links")
         except ModuleNotFoundError as exc:
             if exc.name != "dmslog.derive.links":
-                self.result.warnings.append(f"link rules failed: {type(exc).__name__}: {exc}")
+                self._warn(f"link rules failed: {type(exc).__name__}: {exc}")
         except Exception as exc:  # a broken module must not abort the ingestion
-            self.result.warnings.append(f"link rules failed: {type(exc).__name__}: {exc}")
+            self._warn(f"link rules failed: {type(exc).__name__}: {exc}")
         else:
             steps.append(("link rules", links.link_pending))
         for name, step in steps:
             try:
                 summary = step(self.w.conn, self.catalog)
             except Exception as exc:  # e.g. a locked database
-                self.result.warnings.append(f"{name} failed: {type(exc).__name__}: {exc}")
+                self._warn(f"{name} failed: {type(exc).__name__}: {exc}")
                 continue
             self.result.links_created += summary.links
             for group, message in summary.errors:
-                self.result.warnings.append(f"{name} failed for group {group}: {message}")
+                self._warn(f"{name} failed for group {group}: {message}")
         self.result.correlate_seconds = time.perf_counter() - started
 
     def link_payloads(self) -> None:
@@ -409,12 +418,12 @@ class _Run:
             summary = link_payloads(self.w.conn, self.catalog)
         except Exception as exc:  # e.g. a locked database
             self.result.payload_seconds = time.perf_counter() - started
-            self.result.warnings.append(f"payload linking failed: {type(exc).__name__}: {exc}")
+            self._warn(f"payload linking failed: {type(exc).__name__}: {exc}")
             return
         self.result.payload_seconds = time.perf_counter() - started
         self.result.payloads_linked = summary.linked
         for group, message in summary.errors:
-            self.result.warnings.append(f"payload linking failed for group {group}: {message}")
+            self._warn(f"payload linking failed for group {group}: {message}")
 
     # ---- collection
 
@@ -601,7 +610,7 @@ class _Run:
         self.current_action = action.value
         if action is Action.UNCHANGED:
             self.result.sources_unchanged += 1
-            self.result.details.append(SourceResult(info.member, action.value))
+            self.result.details.append(SourceResult(self._shown(info.member), action.value))
             self._finish_source(info, 0)
             return
         self.emit("source_start", 0, info.size)
@@ -624,7 +633,9 @@ class _Run:
         self.result.records += stats.records
         self.result.lines += stats.lines
         self.result.bytes += fed
-        self.result.details.append(SourceResult(info.member, action.value, stats.records, stats.lines, fed))
+        self.result.details.append(
+            SourceResult(self._shown(info.member), action.value, stats.records, stats.lines, fed)
+        )
         self._finish_source(info, fed, stats.records)
 
     def _finish_source(self, info: SourceInfo, fed: int, records: int = 0) -> None:
@@ -633,11 +644,11 @@ class _Run:
         self.emit("source_done", fed, info.size, records)
 
     def _fail(self, row: SourceRow, info: SourceInfo, exc: Exception, reason: str | None = None) -> None:
-        text = f"{reason}: {exc}" if reason else f"{type(exc).__name__}: {exc}"
+        text = self._shown(f"{reason}: {exc}" if reason else f"{type(exc).__name__}: {exc}")
         self.w.update_source(row.id, status="error", error=text[:500])
         self.w.commit()
         self.result.sources_failed += 1
-        self.result.details.append(SourceResult(info.member, "error", error=text))
+        self.result.details.append(SourceResult(self._shown(info.member), "error", error=text))
         self._finish_source(info, 0)
 
     @staticmethod

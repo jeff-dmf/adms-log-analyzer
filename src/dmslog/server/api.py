@@ -347,6 +347,7 @@ class IngestJobs:
         finally:
             if conn is not None:
                 conn.close()
+            done["message"] = aliases.get(self._store.data_dir).sanitize(str(done.get("message", "")))
             hub.finish(done)
             with self._lock:
                 self._threads.discard(threading.current_thread())
@@ -457,6 +458,7 @@ class IngestJobs:
             watcher.conn = None
             if conn is not None:
                 conn.close()
+            done["message"] = aliases.get(self._store.data_dir).sanitize(str(done.get("message", "")))
             hub.finish(done)
         return report
 
@@ -901,9 +903,11 @@ class Api:
             with self.store.reader(cid) as conn:
                 precheck_conflict(conn, path)
         except CollectionConflictError as exc:
-            raise ApiError(409, exc.reason, str(exc)) from exc
+            raise ApiError(409, exc.reason, self._shown(exc)) from exc
         except (OSError, UnsafeArchiveError) as exc:
-            raise ApiError(400, "path_unreadable", messages.JOB_FAILED.format(error=exc)) from exc
+            raise ApiError(
+                400, "path_unreadable", messages.JOB_FAILED.format(error=self._shown(exc))
+            ) from exc
         job_id = self.jobs.start(cid, path, scope)
         return Response(202, {"job_id": job_id})
 
@@ -912,6 +916,10 @@ class Api:
         return Stream(self.jobs.hub(cid))
 
     # -- sources
+
+    def _shown(self, error: object) -> str:
+        """Error text with real names replaced by their public spelling (local aliases)."""
+        return aliases.get(self.data_dir).sanitize(str(error))
 
     def list_sources(self, request: Request) -> Response:
         cid = _case_from_query(self.store, request)

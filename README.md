@@ -93,10 +93,16 @@ public = "Custom"
 real = "<original_underscore_form>"
 ```
 
-At ingestion, `real` is replaced by `public` in names read from the ERS (log file and process
-names, Registry file names, layer labels, product and Web Service operation names), so the stored
-index and the UI show the public token only. Longest `real` wins; file names also match regardless
-of case. Log message text and payloads are not rewritten. A missing file means no aliases; an
+At ingestion, `real` is replaced by `public` in names read from the ERS and in the text derived from
+them: process and family classification, Registry file names, layer labels, product and Web Service
+operation names, and error, progress and warning messages (stored `source.error`, CLI output, API
+job messages). Replacement is one pass over the original text, longest `real` first, case-sensitive;
+names and messages also match a whole `real` in any letter case.
+
+What is **not** normalized: the index keeps the real `source.member` and `source.file_name` (the file is
+reopened through them, and the sources list shows them), Registry parameter values (for example the
+`WebServiceConfiguration` path), log message text and payloads, and the name of the zip or folder you
+ingest. Do not share an index or export made with real names. A missing file means no aliases; an
 invalid file is ignored with a message in `dmslog info`, which also shows how many aliases were loaded
 (never their values). Re-ingest a case after changing the file.
 
