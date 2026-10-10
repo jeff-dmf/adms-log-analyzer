@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import statistics
 import sys
 import tempfile
@@ -27,6 +28,7 @@ from typing import Any
 
 # Detect if we can run
 try:
+    from dmslog import aliases as aliases_mod
     from dmslog.ingest.ers import plan_collection, select_sources
     from dmslog.server.app import DmslogServer
     from dmslog.store import connect
@@ -39,6 +41,19 @@ SAMPLES = ROOT / "local-samples"
 ENTERPRISE = re.compile(r"^ERS_CL_.*_\d{14}_Enterprise_.*\.zip$")
 SENSITIVE = re.compile(r"^ERS_CL_.*_\d{14}_Sensitive_Enterprise_.*\.zip$")
 MIN_REAL_SIZE = 1_000_000  # smaller files are Git LFS pointers or placeholders
+ALIASES_FILE = SAMPLES / "aliases.toml"  # optional, local only
+
+
+def _seed_aliases(data_dir: Path) -> None:
+    """Copy the optional local alias file into a temp data dir (never touches the real one)."""
+    if ALIASES_FILE.is_file():
+        shutil.copyfile(ALIASES_FILE, Path(data_dir) / "aliases.toml")
+
+
+def _plan(path: Path, data_dir: Path):
+    """plan_collection with the aliases that the ingest subprocess will load from `data_dir`."""
+    return plan_collection(path, aliases_mod.get(data_dir))
+
 
 TIME_TARGET_S = 40.0  # indexing only (M1 acceptance); derivation is checked separately
 DERIVE_TARGET_S = 20.0
@@ -165,7 +180,7 @@ def _verify_envelope_coverage(data_dir: Path, enterprise_zip: Path, sensitive_zi
         # Sum nlines and count physical lines in selected sources
         selected_by_path = {}
         for path in [enterprise_zip, sensitive_zip]:
-            plan = plan_collection(path)
+            plan = _plan(path, data_dir)
             selected = select_sources(plan.sources)
             selected_by_path[path] = selected
 
@@ -198,9 +213,10 @@ def _test_all_logs_scope(enterprise_zip: Path) -> tuple[bool, str | None]:
 
     with tf.TemporaryDirectory() as tmp_dir:
         tmp_data_dir = Path(tmp_dir)
+        _seed_aliases(tmp_data_dir)
 
         # First, find which logs are in the default scope
-        plan = plan_collection(enterprise_zip)
+        plan = _plan(enterprise_zip, tmp_data_dir)
         default_selected = select_sources(plan.sources)
         default_names = {Path(info.member).name for info in default_selected}
 
@@ -414,6 +430,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         data_dir = Path(tmp_dir)
+        _seed_aliases(data_dir)
 
         # Phase 1: Ingest default scope
         print("Ingesting default scope...", end=" ", flush=True)

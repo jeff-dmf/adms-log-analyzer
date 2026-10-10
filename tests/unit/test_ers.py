@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from ers_helpers import GUID, OTHER_GUID, ers_name, make_folder, make_pair, make_zip
 
+from dmslog import aliases as aliases_mod
 from dmslog.ingest.discover import discover
 from dmslog.ingest.ers import (
     CollectionConflictError,
@@ -163,6 +164,7 @@ def _real_zips():
 
 
 REAL = _real_zips()
+REAL_ALIASES = aliases_mod.load(REAL_DIR)  # optional local-samples/aliases.toml; empty when absent
 
 
 @pytest.mark.skipif(len(REAL) < 6, reason="real ERS zips not available (missing or LFS pointers)")
@@ -172,7 +174,8 @@ def test_real_ers_zips_every_member_gets_a_family_by_name_only():
     for path in REAL:
         with zipfile.ZipFile(path) as z:
             names = [i.filename for i in z.infolist() if not i.is_dir()]
-        sources = list(discover(path))  # names, sizes and CRC only; nothing is extracted
+        # names, sizes and CRC only; nothing is extracted
+        sources = list(discover(path, aliases=REAL_ALIASES))
         assert [s.member for s in sources] == names
         assert all(s.family for s in sources)
         total += len(sources)
@@ -212,9 +215,15 @@ REAL_COUNTS = {
 @pytest.mark.skipif(len(REAL) < 6, reason="real ERS zips not available (missing or LFS pointers)")
 def test_real_ers_default_scope_counts():
     for path in REAL:
-        plan = plan_collection(path)
+        plan = plan_collection(path, REAL_ALIASES)
         ident = plan.identity
-        assert ident is not None and ident.guid == GUID and plan.system == "mpdmz"
+        expected = parse_ers_name(path.name)  # GUID and timestamp come from the file name
+        assert ident is not None and expected is not None
+        assert (ident.guid, ident.timestamp, ident.variant) == (
+            expected.guid,
+            expected.timestamp,
+            expected.variant,
+        )
         members, default, indexable = REAL_COUNTS[(ident.timestamp, ident.variant)]
         assert (len(plan.sources), len(plan.default_sources), len(plan.indexable_sources)) == (
             members,

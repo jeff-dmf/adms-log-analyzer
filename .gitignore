@@ -16,5 +16,6 @@ src/dmslog/_build_info.py
 .hypothesis/
 
 # Sample ERS captures stay local only (the repository is public): never commit them.
-local-samples/*.zip
+local-samples/*
+!local-samples/README.md
 local-samples/_extracted/

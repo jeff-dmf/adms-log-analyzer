@@ -6,6 +6,7 @@ Run with ``-s`` to see the measurements.
 """
 
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -14,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from dmslog import aliases as aliases_mod
 from dmslog.ingest.ers import plan_collection, select_sources
 from dmslog.store import connect
 
@@ -56,6 +58,9 @@ def _physical_lines(data: bytes) -> int:
 
 def test_default_scope_meets_the_acceptance_targets(tmp_path, capsys):
     assert SAMPLE is not None
+    alias_file = SAMPLES / "aliases.toml"  # optional, local only
+    if alias_file.is_file():
+        shutil.copyfile(alias_file, tmp_path / "aliases.toml")
     cmd = [sys.executable, "-I", "-m", "dmslog", "--data-dir", str(tmp_path), "ingest", str(SAMPLE)]
     started = time.perf_counter()
     proc, rss_mb = _peak_rss_mb_of_child(cmd)
@@ -66,7 +71,7 @@ def test_default_scope_meets_the_acceptance_targets(tmp_path, capsys):
     assert len(dbs) == 1
     conn = connect(dbs[0], readonly=True)
     try:
-        selected = select_sources(plan_collection(SAMPLE).sources)
+        selected = select_sources(plan_collection(SAMPLE, aliases_mod.get(tmp_path)).sources)
         statuses = dict(conn.execute("SELECT status, count(*) FROM source GROUP BY status").fetchall())
         assert statuses.get("ready") == len(selected)
         assert statuses.get("error", 0) == 0
