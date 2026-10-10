@@ -182,7 +182,7 @@ packaging/
 
 ## 5. Modelo de dados (SQLite por caso)
 
-Arquivo: `<dados>/cases/<case_id>/index.sqlite` (seção 12). Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`, `cache_size=-131072`, `temp_store=MEMORY`. Versão do esquema em `PRAGMA user_version`. Caso = **uma coleta** (U5): um `collection_group` (o par Enterprise/Sensitive de um ERS, ou uma pasta de instalação). O esquema continua aceitando várias coletas por caso, mas a 1.0 recusa adicionar uma segunda (seção 10).
+Arquivo: `<dados>/cases/<case_id>/index.sqlite` (seção 12). Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`, `cache_size=-131072`, `temp_store=MEMORY`. Versão do esquema em `PRAGMA user_version` (hoje **3**: v2 = `bucket_sev`; v3 = `payload.reason` e `ix_payload_ref`; migrações aditivas em `store/db.py`). Caso = **uma coleta** (U5): um `collection_group` (o par Enterprise/Sensitive de um ERS, ou uma pasta de instalação). O esquema continua aceitando várias coletas por caso, mas a 1.0 recusa adicionar uma segunda (seção 10).
 
 Tempo (U6): `ts` é **inteiro em ms** do horário local do log, **preservado como está** (sem fuso e sem conversão; o log não informa fuso). Por conveniência de cálculo ele é codificado como se fosse UTC, e por isso o front-end e a exportação formatam sempre com `timeZone: 'UTC'` / `getUTC*` (senão o navegador "converteria" para o fuso do PC). Premissas e efeitos:
 - Todas as fontes de um caso vêm do mesmo servidor e do mesmo relógio; o merge por `ts` é válido sem ajuste.
@@ -328,8 +328,10 @@ CREATE TABLE payload(          -- o texto NÃO é duplicado: offsets dentro de m
   root TEXT,                   -- 1º elemento, com prefixo (ex.: ns0:SwitchingStepsResponseMessage, s:Fault)
   char_off INTEGER NOT NULL, char_len INTEGER NOT NULL,   -- sem o '.' final que o adapter acrescenta
   well_formed INTEGER,         -- 1 ok, 0 malformado, NULL não verificado
-  truncated INTEGER NOT NULL DEFAULT 0);
+  truncated INTEGER NOT NULL DEFAULT 0,
+  reason TEXT);                -- v3: por que não há operação (órfão): no_message_id|no_operation_for_key|ambiguous|scan_limit|too_many_payloads|...
 CREATE INDEX ix_payload_entry ON payload(entry_id);
+CREATE INDEX ix_payload_ref   ON payload(ref_entry_id) WHERE ref_entry_id IS NOT NULL;   -- v3: payloads anunciados por um registro
 CREATE INDEX ix_payload_event ON payload(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX ix_payload_op ON payload(operation, role);
 CREATE INDEX ix_payload_msg ON payload(msg_id) WHERE msg_id IS NOT NULL;
@@ -400,6 +402,7 @@ Como cada requisito fica representado:
 - **Payload**: `payload` aponta trechos do texto do registro (sem duplicar), com papel, direção, outro lado, IDs do header, par request↔response, formato e ligação ao evento (com confiança); registros com payload têm `flags & 64`. Formato descoberto nas amostras Verbose (seção 6.6).
 - **Configuração em camadas**: `config_param` guarda todas as camadas e marca a efetiva; `config_observed` guarda o que o processo registrou no startup, para conferência (seção 7.2).
 - **Demais logs do ERS**: nada no esquema é específico de adapter; família, kinds de evento e chaves são texto aberto, e os campos específicos ficam em `fields` (JSON) (seção 9.1a).
+- **Chaves de `meta`** (controle de idempotência; todas recalculáveis, nunca fonte de verdade): `entries_epoch` (contador que o writer incrementa quando apaga registros; entra nas assinaturas abaixo, porque apagar registros apaga os links e payloads deles); `derive.<stream>.<cadeia>` (checkpoint, estado dos derivadores e assinatura por cadeia de rotação, 6.5); `correlate.<grupo>` (assinatura e estatísticas de pareamento normal↔sensitive), `correlate.links.<grupo>` (assinatura das regras `[[link_rule]]`) e `payloads.<grupo>` (assinatura da ligação de payloads), todas por collection group, seção 8; `payload_extraction_version.<source_id>` (versão da extração de payload com que a fonte foi indexada) e `payload_extraction_version` (marca global: todas as fontes indexadas estão na versão atual), seção 6.6.
 
 Ordem global (merge): `ORDER BY ts, id`. Dentro de uma fonte o `id` respeita a ordem do arquivo; timestamps que voltam no tempo (até 16 ms nos logs normais e até 2,1 s no sensitive em nível elevado, `docs/formato/payloads.md`) recebem `flags & 32` e continuam na posição do arquivo dentro da fonte.
 
@@ -623,7 +626,9 @@ class Deriver(Protocol):
 def derive_stream(db: Store, stream_id: int, rules: TemplateSet, kb: Knowledge) -> None
 ```
 
-`derive_stream` apaga os eventos com `start_entry_id >= stream.derive_checkpoint`, reprocessa os registros do stream a partir dali (em ordem de `id`, unindo `.log.0` e `.log`) e grava o novo checkpoint = menor `low_watermark()` dos derivadores. Assim a indexação incremental refaz só a cauda.
+**Como construído (M4): a unidade de derivação é a cadeia de rotação**, não o stream. Um stream pode reunir arquivos independentes (o BLTHost tem `BLTHost.Common.log`, `BLTHost.Arbitration.log`, ...); a cadeia agrupa as fontes cujo `file_name` é igual depois de remover o `.N` final (`X.log`, `X.log.0`, ...). Cada cadeia tem derivadores novos, checkpoint, assinatura e estado de derivadores com estado (estatísticas) em `meta['derive.<stream>.<cadeia>']`; os eventos mantêm o `stream_id` e ganham `detail.chain` só quando o stream tem mais de uma cadeia. `stream.derive_checkpoint` é o mínimo entre as cadeias (a ingestão o reduz ao apagar registros, e o motor lê isso como reinício).
+
+Dentro da cadeia a ordem é da fonte mais antiga (`.log.N` com maior `N`) até `.log.0` e depois o `.log` atual, e por `entry.id` dentro da fonte; o checkpoint só tem sentido se os ids crescem nessa ordem, a ingestão adiciona as fontes da cadeia na ordem certa e o motor confere (se violada, deriva a cadeia inteira a cada mudança). A derivação incremental, por cadeia, apaga os eventos com `start_entry_id >= checkpoint`, reprocessa os registros dali em diante e grava o novo checkpoint = menor `low_watermark()` dos derivadores (ou último `id` + 1 se nada está aberto), tudo numa transação (SAVEPOINT por stream). Sem mudança nas fontes, regras e definições de template (assinatura igual), nada é escrito. Assim a indexação incremental refaz só a cauda. Ao fim, `derive_pending` roda o pós-passe de `possible_clock_jump` (lacuna de 1 h simultânea em todas as cadeias da coleta).
 
 | Derivador | Regra (vinda do TOML e de `docs/formato/`) | Evento |
 |---|---|---|
@@ -637,7 +642,7 @@ def derive_stream(db: Store, stream_id: int, rules: TemplateSet, kb: Knowledge) 
 | `maps` | `"X" map closed` → `New "X" map content:` (+ itens) → `map is now open`. | `map_reload` |
 | `exceptions` | agrupa exceções pela 1ª linha (tipo + mensagem normalizada), não pelos frames; versão do build sai do caminho `F:\PD\<build>\`. | `exception` (um por ocorrência; agrupamento na consulta) |
 | `service` | `ProcessMonitor` (processo morto/reiniciado), `dnaService` (start/stop do serviço), `arb*` (transições HOT/STANDBY). | `restart`, `service_state` |
-| `payloads` | liga cada `payload` ao anúncio, ao par e à operação pelas regras da seção 6.6 (chave do header, TID dentro da operação aberta, ou fim da operação ±16 ms) e extrai chaves do payload para `entry_key`. Roda depois de `operations` nos dois streams (normal e sensitive) da mesma coleta. | — (preenche `payload.event_id`, `event_conf`, `ref_entry_id`, `pair_id`) |
+| `payloads` | liga cada `payload` ao anúncio, ao par e à operação pelas regras da seção 6.6 (chave do header, TID dentro da operação aberta, ou fim da operação ±16 ms). A extração de chaves do payload para `entry_key` **não foi construída** (fica fora da 0.1.0; as chaves do header já estão em `payload.msg_id`/`corr_id`). Roda depois de `operations` e da correlação, por collection group (seção 6.6, "Como construído"). | — (preenche `payload.event_id`, `event_conf`, `ref_entry_id`, `pair_id`, `reason`) |
 
 ### 6.6 Payloads (request/response)
 
@@ -661,6 +666,15 @@ Desenho:
 - Busca: o payload já está no `cont` e entra no FTS; a view `entry_text` indexa até 65.536 caracteres de `cont` por registro (2 registros acima disso na amostra). Templates com `fts = false` (rastreio `Communication2`, ModeTracker, PSAttach, proxies, filtros: sev 5) ficam fora do FTS; continuam no grid e na busca por `LIKE`/regex com filtro de fonte ou tempo.
 - Configuração: o painel "Effective configuration" mostra, por operação, se o payload **deveria** aparecer pela configuração (`LogLevel` × `MessageLogLevel`, ordem DebugLog < Warning < Info < Verbose; `None` = nunca) e, no tempo, em quais janelas `level_window` ele é esperado. Operação dentro de janela ≥ `MessageLogLevel` sem payload ligado vira aviso; fora dela, a UI explica o motivo.
 - Dados sensíveis: payload é tratado sempre como sensível (nomes, endereços, textos livres, placas, INC/PROB, GIDs). O conteúdo ao CRS/WMS do Wfm está no log **normal**, e o nível Info também expõe no normal chaves de mapa (`entry added to the map`) e URLs/hosts; a anonimização da exportação (seção 12) vale para esses templates também.
+
+**Como construído (M6) e o que difere do desenho acima:**
+- **Candidato único.** A ligação nunca escolhe entre candidatos: a regra 3 (response → request por `corr_id`) só pareia quando há **um** request; vários requests com o mesmo `msg_id` deixam a response sem par (sem escolher por ordem). Nas regras 4 e 5 (por tempo) só um candidato liga; dois ou mais viram órfão `ambiguous`. A busca por candidatos examina no máximo `MAX_SCAN` (256) operações por payload; se a unicidade não pode ser provada dentro desse limite, o payload fica sem evento com motivo **`scan_limit`** (em vez de ligar ao primeiro encontrado).
+- **Motivos de órfão** (`payload.reason`, esquema v3; também contados em `PayloadSummary.orphans`): `no_message_id`, `no_operation_for_key`, `no_request_for_correlation_id`, `no_operation_ending_nearby`, `no_failed_operation_nearby`, `ambiguous`, `not_in_operation`, `scan_limit` e **`too_many_payloads`** (processo com mais de `MAX_PAYLOADS` = 300.000 payloads: o excedente não é ligado, para limitar a memória). Os limites `MAX_OPS` (1.000.000) e `MAX_ANNOUNCERS` (500.000) por processo descartam candidatos (contados em `dropped`).
+- **Execução** como a de `derive/links.py`: uma unidade por collection group, assinatura em `meta['payloads.<grupo>']` (fontes dos streams, eventos, `entries_epoch`, linhas de payload, templates e mapa de anúncios), tudo num SAVEPOINT; grupo inalterado não escreve nada. Os links `normal_sensitive` de anúncio antigos (de payload cujo anúncio mudou) são removidos na recomputação.
+- **Reextração única.** Casos indexados antes do M6 (ou por uma extração mais antiga) têm registros sem linhas de `payload`, e fontes inalteradas não são relidas. A versão da extração (`PAYLOAD_EXTRACTION_VERSION`, hoje 1) é registrada **por fonte** em `meta['payload_extraction_version.<source_id>']`; uma fonte selecionada com marca menor (ou sem marca) é reindexada uma vez, e a marca global `payload_extraction_version` só diz que todas as fontes indexadas estão atuais.
+- **Formatador** (`payload/pretty.py`): tokenizadores lineares e iterativos, com orçamento de saída; `check_xml` com sintaxe estrita de tag (teste diferencial contra o expat). Falha de formatação nunca é erro HTTP: volta `ok=false` com motivo.
+- **Flag 64** (`has_payload`) só quando a linha de `payload` foi de fato extraída.
+- Fora do M6: chaves de payload em `entry_key`, números de linha no viewer, testes de DOM.
 
 ### 6.7 Mineração auxiliar de templates
 
@@ -749,7 +763,11 @@ Precedência: configuração do ERS > pack do vault. Divergências (código no l
 | payload ↔ anúncio, par e operação | anúncio no normal por PID + TID + Δt ≤ 1 s (+ MessageID); request ↔ operação por MessageID; response ↔ request por CorrelationID (Wfm) ou pelo fim da operação ±16 ms (Ont/Smn, sem ID); conteúdo do Wfm pela TID da operação aberta (seção 6.6). | 3 por chave; 2 TID dentro da operação; 1 tempo |
 | callback CRS/IMS (Wfm, só com nível ≥ Info) | GID do pedido (WFM-123/124) = GID do callback (WFM-126, WFM-030). | 3 |
 
-`correlate.py` roda por stream após `derive` e também refaz só a cauda (mesmo checkpoint).
+**Como construído (M5 e M6), onde difere do desenho original:** a correlação **não** roda por stream com o checkpoint da derivação; roda **por collection group** depois de `derive`, em três motores independentes, cada um com assinatura em `meta` e um SAVEPOINT por grupo (grupo com assinatura igual não escreve nada; grupo alterado apaga e recria só os links do próprio tipo, e a recomputação também remove links órfãos do motor):
+- `derive/correlate.py` (`meta['correlate.<grupo>']`): pares normal↔sensitive pelas regras `[[sensitive_pair]]` (`key`, `order` = `after`|`any`, `max_dt_ms`), consumindo cada registro sensitive uma vez, só na interseção das janelas dos dois arquivos; lê candidatos por `ix_entry_tpl_ts`, sem varredura completa, com buffer limitado (`MAX_BUFFER`, `MAX_CANDIDATES_PER_RULE`; o descartado é contado).
+- `derive/links.py` (`meta['correlate.links.<grupo>']`): `callback`, `response` e `retry` pelas regras `[[link_rule]]` (chave de `entry_key` ou campo, `scope` stream|group, `window_only` com confiança 0 só quando há exatamente um `a` aberto); memória limitada (`MAX_OPEN_KEYS`, `MAX_B_PER_A`).
+- `derive/payloads.py` (`meta['payloads.<grupo>']`): anúncio, par e operação dos payloads (seção 6.6). **Regra do candidato único** em toda ligação por tempo ou por chave repetida: se há mais de um candidato (ou a unicidade não foi provada dentro de `MAX_SCAN`), nada é ligado e o motivo fica em `payload.reason` (`ambiguous`, `scan_limit`).
+As assinaturas incluem tamanho, mtime, CRC, hashes e contagens das fontes, as regras, os templates envolvidos e `meta['entries_epoch']`, que o writer incrementa quando apaga registros (isso também apaga os links incidentes). O pareamento Ont/Smn pelo MessageID dentro do XML ficou no motor de payloads (M6), não em `correlate.py`.
 
 ## 9. Ingestão, indexação incremental e desempenho
 
@@ -816,7 +834,7 @@ Medido no ERS de 2026-10-08 14:53 (seção 3; `docs/formato/payloads.md`, seçã
 
 ## 10. API (servidor ↔ viewer)
 
-JSON sobre HTTP em `127.0.0.1`. Todas as rotas exigem o cookie de sessão (seção 12). Cursor = `"<ts>:<id>"`.
+JSON sobre HTTP em `127.0.0.1`. Todas as rotas exigem o cookie de sessão (seção 12). Cursor = `"<ts>:<id>"`. Rotas de um caso recebem `case=<id>` na query (rotas `GET`/`DELETE`) ou `case` no corpo (rotas `POST`); caso desconhecido ou id inválido → erro 4xx com `error` estável. Erros de validação são `400` com código estável (`invalid_field`, `bad_limit`, `bad_scope`, `path_not_absolute` e outros, conforme a rota); recurso inexistente é `404 *_not_found`. O estado abaixo é o da `main` após o M6; o que depende dos PRs do M7 ainda em revisão aparece marcado como previsto.
 
 | Rota | Descrição |
 |---|---|
@@ -828,7 +846,7 @@ JSON sobre HTTP em `127.0.0.1`. Todas as rotas exigem o cookie de sessão (seç�
 | `GET /api/templates?family=` | templates com contagem; `GET /api/unknown?family=` assinaturas sem template |
 | `POST /api/entries/page` `{filter, cursor, dir, limit, columns}` | página do grid; colunas dinâmicas vêm de `fields` |
 | `POST /api/entries/count` `{filter}` | contagem (ou estimativa) |
-| `GET /api/entries/{id}` | registro completo: texto, campos, template, evento, links, conhecimento ligado |
+| `GET /api/entries/{id}` | registro completo: texto, campos, template, evento, links, conhecimento ligado e `payload_count` (quantos payloads o registro contém ou anuncia) |
 | `GET /api/entries/{id}/context?before=50&after=50&same=tid\|source\|merge` | vizinhança |
 | `POST /api/histogram` `{filter, bucket_ms, split: sev\|source\|tpl}` | timeline |
 | `GET /api/events?kind=&name=&status=&stream=&source=&q=&from=&to=&limit=&after=` | eventos (paginação por keyset `(ts_start, id)`; listas separadas por vírgula; `q` = chave exata ou prefixo) |
@@ -839,14 +857,13 @@ JSON sobre HTTP em `127.0.0.1`. Todas as rotas exigem o cookie de sessão (seç�
 | `GET /api/knowledge?template=` · `GET /api/knowledge/error?family=&code=&operation=` | dica, parâmetros e nota do vault; severidade e razão do código (ERS > vault, `out_of_vault`) |
 | `GET /api/keys/types` · `GET /api/keys/{type}/{value}?limit=&after=` | tipos de chave com contagem; todos os registros com a chave em todas as fontes do caso (keyset por `(ts, id)`; valor decodificado como UTF-8 estrito, 1 a 256 caracteres imprimíveis) |
 | `GET /api/entries/{id}/links` · `GET /api/entries/{id}/side-by-side` | links do registro nas duas direções (`kind`, `confidence`, `direction`); melhor contraparte (prefere `normal_sensitive`, maior confiança, mais próxima no tempo) com os dois registros completos; `GET /api/entries/{id}?cont_lines=N` limita as linhas de continuação |
-| `GET /api/knowledge/error/{family}/{code}` · `/param/{product}/{name}` · `/adapter/{family}` | conhecimento (ERS > vault) |
+| `GET /api/knowledge/error/{family}/{code}` · `/param/{product}/{name}` · `/adapter/{family}` | previsto, **não construído**: o M3 entregou só as duas rotas por query de cima (`/api/knowledge?template=` e `/api/knowledge/error?family=&code=&operation=`) |
 | `GET /api/config?group=&product=` | configuração por camada (`config_param`) com efetivo, status e valor observado no log (`config_observed`); por operação, se o payload é esperado (`LogLevel` × `MessageLogLevel`) |
-| `GET /api/entries/{id}/payloads` | payloads do registro (metadados) |
-| `GET /api/payloads/{id}?pretty=1&max_bytes=` | texto do payload, formatado (XML/JSON) ou cru com o motivo; par request↔response e evento ligados |
-| `POST /api/payloads/page` `{operation, role, direction, peer, fmt, filter, cursor}` | lista de payloads (para "todas as respostas de SendWorks na janela") |
-| `GET/POST/DELETE /api/bookmarks` · `GET/POST/DELETE /api/views` | bookmarks com nota; filtros salvos |
-| `GET/PUT /api/redaction` | perfil de anonimização (categorias ligadas, termos do usuário, lista de exceções); fica na pasta de dados do usuário, fora do caso |
-| `POST /api/export` `{what, filter, bookmarks, include_payloads, redact}` | relatório `.txt` (`text/plain; charset=utf-8`, download e cópia para a área de transferência); `redact` = `{profile, overrides}` ou `false` explícito |
+| `GET /api/entries/{id}/payloads?case=` | `{payloads: [meta]}`: payloads contidos no registro (`entry_id`) mais os que ele anuncia (`ref_entry_id`), por id; `404 entry_not_found`. `meta` = `{id, entry_id, event_id, event_conf, ref_entry_id, pair_id, role, direction, peer, operation, msg_id, corr_id, fmt, root, well_formed, truncated, reason, char_len, ts, sensitive, member}` (`ts`, `sensitive` e `member` descrevem o registro que contém o payload) |
+| `GET /api/payloads/{id}?case=&format=pretty\|raw` | `{payload: meta, text, truncated_display, formatted, pair, entry}`. `text` é sempre o trecho cru, cortado em `TEXT_CAP` (2.000.000 caracteres; `truncated_display`); `formatted` só com `format=pretty`: `{text, ok, kind, reason, truncated_display}` (falha de formatação = `ok=false, reason="format_error"`, nunca status de erro); `pair` = payload par; `entry` = `{id, ts, tid, member, sensitive}`; `404 payload_not_found`; `format` inválido → `400` |
+| `GET /api/payloads/page?case=&role=&direction=&peer=&operation=&fmt=&event=&orphan=&q=&limit=&after=` | `{payloads: [meta], next}`; `role`, `direction`, `peer`, `operation`, `fmt` aceitam listas separadas por vírgula; `event` = id de evento; `orphan=1` só os sem operação (o `reason` diz por quê), `orphan=0` só os ligados; `q` = `msg_id` ou `corr_id` exato. Ordem `(ts do registro, id do payload)` (registros sem hora primeiro), keyset (nunca OFFSET), limite padrão 200, máximo 1.000. É `GET` (o desenho original previa `POST`) |
+| `GET/POST /api/views` · `DELETE /api/views/{id}` | filtros salvos do caso (`saved_view`). Os de bookmarks (`/api/bookmarks`), comparar registros e renomear/sobrescrever filtros salvos vêm no PR #70 (M7, em revisão) e não estão na `main` |
+| `GET/PUT /api/redaction` · `POST /api/export` | previstos para o M7 (PR #25, em revisão), ainda não construídos na `main`; o formato do relatório está em 10.1 |
 
 Filtro (árvore JSON, compilada para SQL **parametrizado** em `store/filters.py`; nada do usuário vira SQL literal):
 
@@ -857,9 +874,11 @@ Filtro (árvore JSON, compilada para SQL **parametrizado** em `store/filters.py`
   {"text": {"fts": "timeout"}}, {"key": {"type": "request_id", "eq": "a0b0..."}},
   {"not": {"tpl": ["GEN-STA-01", "GEN-STA-02", "GEN-STA-03"]}},
   {"or": [{"event_status": "fail"}, {"flags": "partial"}]},
-  {"payload": {"role": "response", "operation": "SendSwitchingSteps"}}
+  {"payload": {"roles": ["response", "fault"], "fmt": "xml", "orphan": true}}
 ]}
 ```
+
+Folha `payload`: `{"payload": {<atributo>: str | [str, ...], ..., "orphan": bool}}`, compilada como `entry.id IN (SELECT entry_id FROM payload WHERE ...)` com os atributos em AND. Atributos aceitos: `role` (ou `roles`), `direction`, `peer`, `operation`, `fmt`, `msg_id`, `corr_id`, `root`; `orphan: true` = payload sem operação (`event_id IS NULL`), `false` = com operação. Atributo desconhecido → erro `unknown_operator`; valores sempre parametrizados.
 
 A caixa de busca do viewer aceita a forma curta `sev:<=error tpl:WFM-081 tid:0x44c4 src:Wfm "texto exato" /regex/`, convertida para essa árvore no front-end.
 
@@ -871,7 +890,10 @@ def count(conn, flt: Filter, timeout_s: float = 2.0) -> CountResult          # e
 def histogram(conn, flt: Filter, bucket_ms: int, split: str | None) -> list[Bin]
 def context(conn, entry_id: int, before: int, after: int, same: str) -> list[Row]
 def event_stats(conn, kind: str, name: str | None, flt: Filter | None, group_by: str | None) -> list[Stat]
-def payload_text(conn, payload_id: int, *, pretty: bool, max_bytes: int) -> PayloadView   # formata via payload/pretty.py
+# store/payloads.py (só leitura, sob read_guard); a formatação é feita pela API via payload/pretty.py
+def payloads_of_entry(conn, entry_id: int) -> list[dict]
+def get_payload(conn, payload_id: int) -> dict | None            # meta + texto cru + par + registro
+def list_payloads(conn, flt: PayloadFilter, limit: int, after: Cursor | None) -> tuple[list[dict], str | None]
 ```
 
 ### 10.1 Formato da exportação (`.txt`, U10)
@@ -929,7 +951,7 @@ Time shown as logged (local server time, no conversion).
 ## 12. Segurança e privacidade
 
 - Servidor só em `127.0.0.1`, porta aleatória (ou `--port`). Token aleatório (`secrets.token_urlsafe(32)`) na URL aberta pelo `webbrowser`; trocado por cookie `HttpOnly; SameSite=Strict`. Sem token/cookie válido: 403.
-- Checagem de `Host` (`127.0.0.1:<porta>`/`localhost:<porta>`) contra DNS rebinding; checagem de `Origin` em POST/DELETE.
+- Checagem de `Host` (`127.0.0.1:<porta>`/`localhost:<porta>`) contra DNS rebinding; checagem de `Origin` em toda requisição com método que altera estado (`POST`, `PUT`, `PATCH`, `DELETE`): o cabeçalho `Origin` precisa ser exatamente `http://127.0.0.1:<porta>` ou `http://localhost:<porta>` (comparação sem diferenciar maiúsculas); ausente ou diferente → 403, depois da checagem do cookie. Na `main` a lista do código é `POST`/`DELETE`; `PUT` e `PATCH` entram junto das rotas do M7 (PR #25, em revisão).
 - Cabeçalhos: `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` nas respostas da API.
 - **Conteúdo de log é dado não confiável**: o front-end só usa `textContent`/nós de texto, nunca `innerHTML` com conteúdo de log (XML, stack traces e mensagens podem conter `<script>`). Destaques de busca montados com `Text` + `<mark>` criados por DOM.
 - Nada sai da máquina: sem telemetria, sem verificação de atualização, sem CDN, sem fontes externas. Teste de CI garante que o pacote não abre sockets fora de loopback.
@@ -1012,3 +1034,8 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-10 | M4: contrato dos derivadores em `derive/base.py`; derivação por **cadeia de rotação** (`.log` + `.log.N`; checkpoint, estado e assinatura por cadeia em `meta['derive.<stream>.<cadeia>']`) porque o stream do BLTHost reúne arquivos independentes; recargas de mapa do Wfm logam `closed` duas vezes (duplicata em até 1 s não reinicia a recarga); `fail` visto vence `truncated`; rotas de eventos e de estatísticas como `GET` (seção 10) | Sessão principal (decisões baseadas em medições nas amostras) |
 | 2026-10-10 | M5: correlação por collection group, recalculada quando um stream do grupo muda (assinatura em `meta['correlate.<grupo>']`, SAVEPOINT por grupo, apaga e recria só os links do próprio tipo); `[[sensitive_pair]]` ganha `key`, `order` (`after`\|`any`) e `max_dt_ms`; nova tabela de regras `[[link_rule]]` (`kind`, `a`, `b`, `key`, `scope`, `max_dt_ms`, `window_only`, confiança 0 só por janela); pareamento Ont/Smn pelo MessageID dentro do XML fica no M6 | Sessão principal (especificação já em 8; formato das regras definido antes dos agentes) |
 | 2026-10-10 | Decisão U17: primeira release 0.1.0; "1.0" nos documentos = escopo da 0.1.0; 1.0.0 só com maturidade | Jefferson (decisão), sessão principal (registro) |
+| 2026-10-10 | M6 (esquema v3): `payload.reason` (motivo do órfão) e `ix_payload_ref` (migração aditiva guardada por `PRAGMA table_info`); chaves de `meta` documentadas na seção 5 (`entries_epoch`, `payload_extraction_version[.<source_id>]`, assinaturas `correlate.`/`correlate.links.`/`payloads.` por grupo, `derive.<stream>.<cadeia>`) | Sessão principal (decisões do PR #24) |
+| 2026-10-10 | M6 (ligação de payload como construída): regra do **candidato único** (vários candidatos ou unicidade não provada em `MAX_SCAN` = 256 não ligam; motivos `ambiguous`, `scan_limit`, `too_many_payloads` com `MAX_PAYLOADS` = 300.000 por processo); links de anúncio antigos removidos na recomputação; correlação de payload por collection group com SAVEPOINT e assinatura, depois de `operations` e da correlação (seções 6.5, 6.6, 8) | Sessão principal (achados da revisão cruzada do PR #24) |
+| 2026-10-10 | M6 (extração): reextração única por fonte (`PAYLOAD_EXTRACTION_VERSION` em `meta['payload_extraction_version.<source_id>']`) para casos anteriores ao M6; `flags & 64` só com linha de `payload` extraída; extração de chaves do payload para `entry_key` **adiada** (fora da 0.1.0); `payload/pretty.py` com tokenizadores lineares, orçamento de saída e `check_xml` estrito (seção 6.6) | Sessão principal (achados da revisão cruzada do PR #24) |
+| 2026-10-10 | API de payloads como construída: `GET /api/entries/{id}/payloads`, `GET /api/payloads/{id}?format=pretty\|raw`, `GET /api/payloads/page` (**`GET`**, não `POST`; keyset, `orphan`, `event`, `q`), `payload_count` no registro e folha `{"payload": {roles, fmt, orphan, ...}}` da árvore de filtros; rotas `/api/knowledge/error/{family}/{code}`, `/param` e `/adapter` não construídas (seção 10) | Sessão principal (registro do que a `main` implementa) |
+| 2026-10-10 | Checagem de `Origin` documentada para métodos que alteram estado (`POST`/`DELETE` na `main`; `PUT`/`PATCH` com o PR #25 do M7) e formato do erro de validação das rotas (seções 10 e 12) | Sessão principal (registro do que a `main` implementa) |
