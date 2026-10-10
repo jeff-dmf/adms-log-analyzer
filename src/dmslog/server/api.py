@@ -896,7 +896,7 @@ class Api:
         if not path.is_absolute():
             raise ApiError(400, "path_not_absolute", messages.API_PATH_NOT_ABSOLUTE)
         if not path.exists():
-            raise ApiError(400, "path_not_found", messages.API_PATH_NOT_FOUND.format(path=path))
+            raise ApiError(400, "path_not_found", self._shown(messages.API_PATH_NOT_FOUND.format(path=path)))
         if self.jobs.is_running(cid):
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
         try:

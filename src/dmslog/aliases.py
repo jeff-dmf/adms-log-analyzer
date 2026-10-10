@@ -20,7 +20,6 @@ from __future__ import annotations
 import re
 import threading
 import tomllib
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,24 +32,33 @@ MAX_REAL_LENGTH = 128
 _MAX_FILE_BYTES = 1024 * 1024
 
 
-def _single_pass(rx: re.Pattern[str] | None, text: str, lookup: dict[str, str], fold: bool) -> str:
-    """One pass over the ORIGINAL text; replaced output is never scanned again."""
+def _single_pass(rx: re.Pattern[str] | None, text: str, publics: tuple[str, ...]) -> str:
+    """One pass over the ORIGINAL text; replaced output is never scanned again.
+
+    The public token comes from the alternative that matched (its group), never from a second lookup
+    of the matched text, so the matcher alone defines which spellings are equivalent.
+    """
     if rx is None or not text:
         return text
 
     def repl(match: re.Match[str]) -> str:
-        found = match.group(0)
-        key = found.casefold() if fold else found
-        return lookup.get(key, lookup.get(found.lower(), found))
+        return publics[int(match.lastgroup[1:])]  # type: ignore[index]
 
     return rx.sub(repl, text)
 
 
 def _compile(reals: list[str], flags: int) -> re.Pattern[str] | None:
+    """Alternation in the given (longest first) order; alternative i is the named group ``g<i>``."""
     if not reals:
         return None
-    ordered = sorted(set(reals), key=lambda r: (-len(r), r))  # longest alternative first
-    return re.compile("|".join(re.escape(r) for r in ordered), flags)
+    return re.compile("|".join(f"(?P<g{i}>{re.escape(r)})" for i, r in enumerate(reals)), flags)
+
+
+def same_spelling(a: str, b: str) -> bool:
+    """True when the case-insensitive matcher treats `a` and `b` as the same real name."""
+    return re.fullmatch(re.escape(a), b, re.IGNORECASE) is not None or (
+        re.fullmatch(re.escape(b), a, re.IGNORECASE) is not None
+    )
 
 
 @dataclass(frozen=True)
@@ -60,9 +68,8 @@ class Aliases:
     pairs: tuple[tuple[str, str], ...] = ()  # (real, public), longest real first
     error: str | None = None  # why the file was ignored (None when loaded or absent)
     _exact: re.Pattern[str] | None = field(default=None, repr=False, compare=False)
-    _exact_map: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
     _fold: re.Pattern[str] | None = field(default=None, repr=False, compare=False)
-    _fold_map: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
+    _publics: tuple[str, ...] = field(default=(), repr=False, compare=False)
 
     @classmethod
     def from_pairs(cls, pairs: list[tuple[str, str]] | tuple[tuple[str, str], ...]) -> Aliases:
@@ -72,9 +79,8 @@ class Aliases:
         return cls(
             pairs=ordered,
             _exact=_compile(reals, 0),
-            _exact_map=dict(ordered),
             _fold=_compile(reals, re.IGNORECASE),
-            _fold_map={r.casefold(): p for r, p in ordered},
+            _publics=tuple(p for _, p in ordered),
         )
 
     def __len__(self) -> int:
@@ -85,14 +91,14 @@ class Aliases:
 
     def apply(self, text: str) -> str:
         """Replace each real spelling by its public token: one case-sensitive pass, longest first."""
-        return _single_pass(self._exact, text, self._exact_map, False)
+        return _single_pass(self._exact, text, self._publics)
 
     def apply_name(self, name: str) -> str:
         """Like :meth:`apply` but a whole configured `real` also matches in any letter case.
 
         Only complete configured strings match (no partial-case mixtures) and the text is scanned once.
         """
-        return _single_pass(self._fold, name, self._fold_map, True)
+        return _single_pass(self._fold, name, self._publics)
 
     def apply_path(self, path: str) -> str:
         """:meth:`apply_name` over a whole logical path (``/``-separated)."""
@@ -111,8 +117,9 @@ def _invalid(detail: str) -> Aliases:
 
 
 def _printable(text: str) -> bool:
-    """No control, format, surrogate, private-use or unassigned characters (C0, DEL and C1 included)."""
-    return all(unicodedata.category(ch)[0] != "C" for ch in text)
+    """Only printable characters (space allowed): no control (C0, DEL, C1), format, line/paragraph
+    separator (U+2028/2029), surrogate, private-use or unassigned ones."""
+    return all(ch.isprintable() for ch in text)
 
 
 def parse(text: str) -> Aliases:
@@ -136,7 +143,7 @@ def parse(text: str) -> Aliases:
     if not isinstance(raw, list) or not all(isinstance(x, dict) for x in raw):
         return _invalid(messages.ALIASES_ERR_NOT_TABLES)
     pairs: list[tuple[str, str]] = []
-    seen: dict[str, tuple[str, str]] = {}  # casefolded real -> (real, public)
+    seen: list[tuple[str, str]] = []  # (real, public) already accepted
     for i, entry in enumerate(raw, 1):
         where = f"alias #{i}"
         if set(entry) - {"public", "real"}:
@@ -146,9 +153,10 @@ def parse(text: str) -> Aliases:
             return _invalid(messages.ALIASES_ERR_PUBLIC.format(where=where))
         if not isinstance(real, str) or not 1 <= len(real) <= MAX_REAL_LENGTH or not _printable(real):
             return _invalid(messages.ALIASES_ERR_REAL.format(where=where, limit=MAX_REAL_LENGTH))
-        prior = seen.setdefault(real.casefold(), (real, public))
-        if prior[1] != public:
+        # conflicts are decided by the matcher's own equivalence, not by a second normalization
+        if any(p != public and same_spelling(r, real) for r, p in seen):
             return _invalid(messages.ALIASES_ERR_CONFLICT.format(where=where))
+        seen.append((real, public))
         pairs.append((real, public))
     return Aliases.from_pairs(pairs)
 

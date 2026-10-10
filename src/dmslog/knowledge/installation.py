@@ -228,6 +228,10 @@ def read_installation(
 
 def _read(collection: _Collection, aliases: Aliases | None = None) -> InstallationConfig:
     problems: list[str] = []
+
+    def shown(text: str) -> str:
+        return aliases.sanitize(text) if aliases else text
+
     layers: list[RegistryLayer] = []
     data_root = ""  # prefix (with trailing "/") of the data root inside the collection
     found_root = False
@@ -245,13 +249,16 @@ def _read(collection: _Collection, aliases: Aliases | None = None) -> Installati
             continue  # a second installation inside the same collection: ignore
         file_name = real.replace("\\", "/").rsplit("/", 1)[-1]
         try:
+            data = collection.read(real)
+        except RegistryError as exc:
+            problems.append(shown(str(exc)))  # real member name: normalized here, once
+            continue
+        try:
             layers.append(
-                parse_registry_xml(
-                    collection.read(real), filename=file_name, max_bytes=collection.max_bytes, aliases=aliases
-                )
+                parse_registry_xml(data, filename=file_name, max_bytes=collection.max_bytes, aliases=aliases)
             )
         except RegistryError as exc:
-            problems.append(str(exc))
+            problems.append(str(exc))  # parse_registry_xml already normalized its own diagnostics
 
     by_product: dict[str, list[ConfigParam]] = defaultdict(list)
     for param in resolve_registry(layers):
@@ -276,7 +283,7 @@ def _read(collection: _Collection, aliases: Aliases | None = None) -> Installati
             try:
                 root = load_xml_root(collection.read(member), source=member, max_bytes=collection.max_bytes)
             except RegistryError as exc:
-                problems.append(str(exc))
+                problems.append(shown(str(exc)))  # real member name: normalized here, once
                 continue
             if is_ws:
                 ws_path = aliases.apply_path(member) if aliases else member
@@ -294,6 +301,4 @@ def _read(collection: _Collection, aliases: Aliases | None = None) -> Installati
                 error_configurations=tuple(errors),
             )
         )
-    if aliases:
-        problems = [aliases.apply_name(p) for p in problems]
     return InstallationConfig(products=tuple(products), problems=tuple(problems))

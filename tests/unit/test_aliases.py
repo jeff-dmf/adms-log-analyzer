@@ -279,3 +279,138 @@ def test_failed_source_error_and_warnings_use_the_public_name(tmp_path):
     # the DB keeps the real member: it is how the file is reopened
     assert conn.execute("SELECT member FROM source").fetchone()[0] == member
     conn.close()
+
+
+# ----------------------------------------------------------------------------- review round 2
+
+CHAIN = [("AcmeWidget", "Custom"), ("Custom", "Other")]
+
+
+def test_matched_alternative_decides_the_token_for_unicode_equivalents():
+    import re
+
+    a = al.Aliases.from_pairs([("Acmeİ", "Custom")])  # dotted capital I
+    for text in ("ACMEI", "acmei", "Acmeİ", "acmeİ"):
+        matched = re.fullmatch(re.escape("Acmeİ"), text, re.IGNORECASE) is not None
+        assert (a.sanitize(text) == "Custom") == matched
+    kelvin = al.Aliases.from_pairs([("Kelvin", "Custom")])
+    assert kelvin.sanitize("KELVIN_1") == "Custom_1"  # Kelvin sign: equal under the matcher
+
+
+@pytest.mark.parametrize(
+    "first,second", [("Kelvin", "Kelvin"), ("Acmeİ", "ACMEI"), ("AcmeWidget", "ACMEWIDGET")]
+)
+def test_conflicts_follow_the_matcher_equivalence(first, second):
+    body = (
+        f'version = 1\n[[alias]]\npublic = "A"\nreal = "{first}"\n'
+        f'[[alias]]\npublic = "B"\nreal = "{second}"\n'
+    )
+    parsed = al.parse(body)
+    assert (parsed.error is not None) == al.same_spelling(first, second)
+    if first == "Kelvin":
+        assert al.same_spelling(first, second) and parsed.error
+
+
+@pytest.mark.parametrize("ch", [" ", " ", "​", "\u0085", "\x07", ""])
+def test_non_printable_characters_are_rejected(ch):
+    body = f'version = 1\n[[alias]]\npublic = "Custom"\nreal = "a{ch}b"\n'
+    assert al.parse(body).error
+
+
+def test_space_in_real_is_allowed():
+    assert al.parse('version = 1\n[[alias]]\npublic = "Custom"\nreal = "Acme Widget"\n').error is None
+
+
+def test_registry_diagnostic_is_normalized_once_with_chained_aliases(tmp_path):
+    from dmslog.knowledge.registry import RegistryError, parse_registry_xml
+
+    a = al.Aliases.from_pairs(CHAIN)
+    with pytest.raises(RegistryError) as info:
+        parse_registry_xml(b"<Other/>", filename="AdapterAcmeWidget.xml", aliases=a)
+    assert "AdapterCustom.xml" in str(info.value) and "Other" not in str(info.value).split(":")[0]
+
+    registry = tmp_path / "SchneiderElectricData" / "OASyS" / "Servers" / "config" / "Registry"
+    registry.mkdir(parents=True)
+    (registry / "AdapterAcmeWidget.xml").write_text("<OASYSDNARegistry><Product", encoding="utf-8")
+    (registry / "AdapterGood.xml").write_text(
+        '<OASYSDNARegistry><Product Name="AdapterGood">'
+        '<Value Name="WebServiceConfiguration">%OASINSTALLDATADIR%\\ADMS\\ws_AcmeWidget.xml</Value>'
+        "</Product></OASYSDNARegistry>",
+        encoding="utf-8",
+    )
+    ws = tmp_path / "SchneiderElectricData" / "ADMS" / "ws_AcmeWidget.xml"
+    ws.parent.mkdir(parents=True)
+    ws.write_text("<Config", encoding="utf-8")
+    problems = read_installation(tmp_path, aliases=a).problems
+    text = "\n".join(problems)
+    assert "AdapterCustom.xml" in text and "ws_Custom.xml" in text
+    assert "Other" not in text and "Acme" not in text
+
+    big = read_installation(tmp_path, max_xml_bytes=10, aliases=a).problems  # collection.read errors
+    assert big and all("Other" not in p and "Acme" not in p for p in big)
+
+
+def test_ingest_text_is_normalized_once_with_chained_aliases(tmp_path):
+    payload = b"2026-01-01 00:00:00,000 INFO x\r\n" * 50
+    zpath = tmp_path / "ERS.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_STORED) as z:
+        z.writestr("Log/dnaApp_zone1/SVC/AcmeWidgetAdapterChangeIncidentDevice_9.log", payload)
+    raw = bytearray(zpath.read_bytes())
+    raw[raw.index(payload[:20]) + 5] ^= 0xFF
+    zpath.write_bytes(bytes(raw))
+    events = []
+    conn = create_case_db(tmp_path / "case.sqlite")
+    a = al.Aliases.from_pairs(CHAIN)
+    result = run_ingest(conn, zpath, IngestOptions(scope="all", aliases=a), events.append)
+    stored = conn.execute("SELECT error FROM source WHERE status = 'error'").fetchone()[0]
+    shown = [stored, *(d.member + (d.error or "") for d in result.details), *(e.member or "" for e in events)]
+    assert any("Custom" in t for t in shown)
+    assert all("Other" not in t and "Acme" not in t for t in shown)
+    conn.close()
+
+
+def test_cli_and_api_messages_are_normalized_once_with_chained_aliases(tmp_path, capsys):
+    from dmslog.cli import main
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "aliases.toml").write_text(
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "AcmeWidget"\n'
+        '[[alias]]\npublic = "Other"\nreal = "Custom"\n',
+        encoding="utf-8",
+    )
+    missing = tmp_path / "AcmeWidget_missing.zip"
+    assert main(["ingest", str(missing), "--data-dir", str(data)]) != 0
+    err = capsys.readouterr().err
+    assert "Custom_missing" in err and "Other_missing" not in err and "AcmeWidget" not in err
+
+
+def test_api_error_message_is_normalized_once_with_chained_aliases(tmp_path):
+    import threading
+
+    from test_api import Client
+
+    from dmslog.server.app import DmslogServer
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "aliases.toml").write_text(
+        'version = 1\n[[alias]]\npublic = "Custom"\nreal = "AcmeWidget"\n'
+        '[[alias]]\npublic = "Other"\nreal = "Custom"\n',
+        encoding="utf-8",
+    )
+    srv = DmslogServer(0, data_dir=data)
+    thread = threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread.start()
+    try:
+        client = Client(srv)
+        assert client.post("/api/cases", {"name": "c1"})[0] == 201
+        missing = str(tmp_path / "AcmeWidget_missing.zip")
+        status, body, _ = client.post("/api/cases/c1/collections", {"path": missing, "scope": "default"})
+        assert status == 400
+        assert "Custom_missing" in body["message"] and "Other" not in body["message"]
+        assert "Acme" not in body["message"]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        thread.join(timeout=5)
