@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from .. import __version__, messages
+from .. import __version__, aliases, messages
+from ..diagnostics import component, describe_error
 from ..ingest import pipeline
 from ..ingest.discover import SourceNotFoundError, UnsafeArchiveError
 from ..ingest.ers import (
@@ -115,6 +116,8 @@ class Request:
 class JobCancelledError(Exception):
     """Raised inside the progress callback to stop an ingest when the server shuts down."""
 
+    diag_safe = True  # no message
+
 
 # --------------------------------------------------------------------------- cases on disk
 
@@ -123,7 +126,8 @@ class CaseStore:
     """Cases live in ``<data-dir>/cases/<id>/case.sqlite``; the id is the folder name."""
 
     def __init__(self, data_dir: Path) -> None:
-        self.root = Path(data_dir) / "cases"
+        self.data_dir = Path(data_dir)
+        self.root = self.data_dir / "cases"
         self._create_lock = threading.Lock()
 
     def validate_id(self, value: Any) -> str:
@@ -257,6 +261,10 @@ class IngestJobs:
         self._threads: set[threading.Thread] = set()
         self.stopping = threading.Event()
 
+    def _describe(self, error: BaseException) -> str:
+        """Safe error text (fixed description plus alias-normalized components)."""
+        return describe_error(error, aliases.get(self._store.data_dir))
+
     def hub(self, case_id: str) -> ProgressHub:
         case_id = self._store.canonical_case_id(case_id)
         with self._lock:
@@ -318,7 +326,9 @@ class IngestJobs:
 
         try:
             conn = db.create_case_db(self._store.db_path(case_id))
-            options = pipeline.IngestOptions(scope=scope, case_name=case_id)
+            options = pipeline.IngestOptions(
+                scope=scope, case_name=case_id, aliases=aliases.get(self._store.data_dir)
+            )
             result = pipeline.run_ingest(conn, path, options, progress)
             done["records"] = result.records
             done["failed"] = result.sources_failed
@@ -334,11 +344,11 @@ class IngestJobs:
         except JobCancelledError:
             done.update(code="cancelled", message=messages.JOB_CANCELLED)
         except CollectionConflictError as exc:
-            done.update(code=exc.reason, message=str(exc))
+            done.update(code=exc.reason, message=self._describe(exc))
         except UnsafeArchiveError as exc:
-            done.update(code="unsafe_archive", message=messages.JOB_UNSAFE.format(error=exc))
+            done.update(code="unsafe_archive", message=messages.JOB_UNSAFE.format(error=self._describe(exc)))
         except (SourceNotFoundError, ReadLimitError, OSError, ValueError, sqlite3.Error) as exc:
-            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=exc))
+            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=self._describe(exc)))
         except Exception as exc:  # the thread must always publish a final event
             done.update(code="internal_error", message=messages.JOB_FAILED.format(error=type(exc).__name__))
         finally:
@@ -362,7 +372,11 @@ class IngestJobs:
             if exc.status != 404:
                 raise
             cid = self._store.create(case_id)
-        watcher = Watcher(None, path, pipeline.IngestOptions(scope=scope, case_name=cid))
+        watcher = Watcher(
+            None,
+            path,
+            pipeline.IngestOptions(scope=scope, case_name=cid, aliases=aliases.get(self._store.data_dir)),
+        )
         thread = threading.Thread(
             target=self._watch, args=(cid, watcher, interval), name=f"watch-{cid}", daemon=True
         )
@@ -441,10 +455,10 @@ class IngestJobs:
             done.update(code="cancelled", message=messages.JOB_CANCELLED)
             raise
         except CollectionConflictError as exc:
-            done.update(code=exc.reason, message=str(exc))
+            done.update(code=exc.reason, message=self._describe(exc))
             raise
         except (SourceNotFoundError, ReadLimitError, OSError, ValueError, sqlite3.Error) as exc:
-            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=exc))
+            done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=self._describe(exc)))
             raise
         finally:
             watcher.conn = None
@@ -887,16 +901,20 @@ class Api:
         if not path.is_absolute():
             raise ApiError(400, "path_not_absolute", messages.API_PATH_NOT_ABSOLUTE)
         if not path.exists():
-            raise ApiError(400, "path_not_found", messages.API_PATH_NOT_FOUND.format(path=path))
+            raise ApiError(
+                400, "path_not_found", messages.API_PATH_NOT_FOUND.format(path=self._component(str(path)))
+            )
         if self.jobs.is_running(cid):
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
         try:
             with self.store.reader(cid) as conn:
                 precheck_conflict(conn, path)
         except CollectionConflictError as exc:
-            raise ApiError(409, exc.reason, str(exc)) from exc
+            raise ApiError(409, exc.reason, self._shown(exc)) from exc
         except (OSError, UnsafeArchiveError) as exc:
-            raise ApiError(400, "path_unreadable", messages.JOB_FAILED.format(error=exc)) from exc
+            raise ApiError(
+                400, "path_unreadable", messages.JOB_FAILED.format(error=self._shown(exc))
+            ) from exc
         job_id = self.jobs.start(cid, path, scope)
         return Response(202, {"job_id": job_id})
 
@@ -905,6 +923,13 @@ class Api:
         return Stream(self.jobs.hub(cid))
 
     # -- sources
+
+    def _component(self, text: str) -> str:
+        return component(aliases.get(self.data_dir), text)
+
+    def _shown(self, error: BaseException) -> str:
+        """Safe error text: fixed description plus alias-normalized components."""
+        return describe_error(error, aliases.get(self.data_dir))
 
     def list_sources(self, request: Request) -> Response:
         cid = _case_from_query(self.store, request)
@@ -989,7 +1014,7 @@ class Api:
         installations: dict[int, Any] = {}
         for path in paths:
             try:
-                installation = read_installation(path)
+                installation = read_installation(path, aliases=aliases.get(self.data_dir))
             except (RegistryError, OSError, zipfile.BadZipFile):
                 continue
             if installation.products:
@@ -1390,6 +1415,7 @@ class Api:
             fmt_name = result["payload"]["fmt"]
             result["formatted"] = _pretty(result["text"], fmt_name, result["truncated_display"])
         return Response(200, result)
+
     # -- redaction profile and the .txt export (report/redact.py, report/export.py)
 
     @staticmethod

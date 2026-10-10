@@ -19,6 +19,8 @@ from importlib import resources
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from dmslog.aliases import Aliases
+
 FAMILIES_RESOURCE = "families.toml"
 ENVELOPES = ("adms", "oaserr", "plain")
 SCOPES = ("default", "service", "optional")
@@ -39,11 +41,24 @@ class FamiliesConfigError(ValueError):
 
 
 class UnsafeArchiveError(ValueError):
-    """The zip has an unsafe member name (zip-slip) or exceeds a structural limit."""
+    """The zip has an unsafe member name (zip-slip) or exceeds a structural limit.
+
+    `diag_reason` is fixed text and `diag_component` the raw name involved (see dmslog.diagnostics).
+    """
+
+    def __init__(self, reason: str, component: str = "") -> None:
+        super().__init__(f"{reason}: {component}" if component else reason)
+        self.diag_reason = reason
+        self.diag_component = component
 
 
 class SourceNotFoundError(FileNotFoundError):
     """The path given to discover() does not exist or is not a zip, folder or file."""
+
+    def __init__(self, reason: str, component: str = "") -> None:
+        super().__init__(f"{reason}: {component}" if component else reason)
+        self.diag_reason = reason
+        self.diag_component = component
 
 
 @dataclass(frozen=True)
@@ -250,19 +265,30 @@ def normalize_member_name(name: str) -> str:
     characters (zip-slip). Backslashes count as separators, as Windows tools write them.
     """
     if not name or len(name) > MAX_NAME_LENGTH:
-        raise UnsafeArchiveError(f"invalid member name length: {name[:80]!r}")
+        raise UnsafeArchiveError("invalid member name length", name[:80])
     if any(ord(ch) < 32 for ch in name):
-        raise UnsafeArchiveError(f"control character in member name: {name[:80]!r}")
+        raise UnsafeArchiveError("control character in member name", name[:80])
     unified = name.replace("\\", "/")
     if unified.startswith("/") or re.match(r"^[A-Za-z]:", unified):
-        raise UnsafeArchiveError(f"absolute member name: {name[:80]!r}")
+        raise UnsafeArchiveError("absolute member name", name[:80])
     parts = unified.split("/")
     if ".." in parts:
-        raise UnsafeArchiveError(f"path traversal in member name: {name[:80]!r}")
+        raise UnsafeArchiveError("path traversal in member name", name[:80])
     cleaned = [p for p in parts if p not in ("", ".")]
     if not cleaned:
-        raise UnsafeArchiveError(f"empty member name: {name[:80]!r}")
+        raise UnsafeArchiveError("empty member name", name[:80])
     return "/".join(cleaned)
+
+
+class _AliasedRules:
+    """RuleSet view that classifies the alias-normalized path (real name -> public token)."""
+
+    def __init__(self, rules: RuleSet, aliases: Aliases) -> None:
+        self._rules = rules
+        self._aliases = aliases
+
+    def classify(self, path: str) -> Classification:
+        return self._rules.classify(self._aliases.apply_path(path))
 
 
 # --------------------------------------------------------------------------- discovery
@@ -276,14 +302,20 @@ def discover(
     max_ratio: float = DEFAULT_MAX_RATIO,
     max_members: int = DEFAULT_MAX_MEMBERS,
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+    aliases: Aliases | None = None,
 ) -> Iterator[SourceInfo]:
     """Yield a SourceInfo for every file of an ERS zip, an installation folder or one file.
+
+    With `aliases`, the real spelling of a name in a member path is replaced by its public token
+    before the path is classified, so `process` (and everything derived from it) carries the public
+    name. `member` and `file_name` stay as in the container because the file is read back through them.
 
     The listing is complete before the first item is yielded because the default scope of
     service logs depends on which services host adapters. Nothing is decompressed or read.
     """
     target = Path(path)
     rules = rules or load_rules()
+    rules = _AliasedRules(rules, aliases) if aliases else rules
     if target.is_dir():
         raw = list(_scan_folder(target, rules))
         kind = "folder"
@@ -303,7 +335,7 @@ def discover(
         raw = [_single_file(target, rules)]
         kind = "file"
     else:
-        raise SourceNotFoundError(f"no such zip, folder or file: {target}")
+        raise SourceNotFoundError("no such zip, folder or file", str(target))
     yield from resolve_scope(raw, explicit=kind == "file")
 
 
@@ -373,7 +405,7 @@ def _build(
 
 def _scan_zip(
     path: Path,
-    rules: RuleSet,
+    rules: RuleSet | _AliasedRules,
     *,
     max_member_bytes: int,
     max_ratio: float,
@@ -383,7 +415,7 @@ def _scan_zip(
     try:
         archive = zipfile.ZipFile(path)
     except zipfile.BadZipFile as exc:
-        raise UnsafeArchiveError(f"not a valid zip: {path.name}: {exc}") from exc
+        raise UnsafeArchiveError("not a valid zip", path.name) from exc
     with archive:
         infos = archive.infolist()
         if len(infos) > max_members:
@@ -398,7 +430,7 @@ def _scan_zip(
                 continue
             key = member.lower()
             if key in seen:
-                raise UnsafeArchiveError(f"duplicate member name: {member[:80]!r}")
+                raise UnsafeArchiveError("duplicate member name", member[:80])
             seen.add(key)
             violation = _member_violation(info, max_member_bytes, max_ratio)
             yield _build(
@@ -431,7 +463,7 @@ def _zip_mtime(info: zipfile.ZipInfo) -> float | None:
         return None
 
 
-def _scan_folder(root: Path, rules: RuleSet) -> Iterator[SourceInfo]:
+def _scan_folder(root: Path, rules: RuleSet | _AliasedRules) -> Iterator[SourceInfo]:
     for current, dirs, files in os.walk(root, followlinks=False):
         dirs.sort()
         for name in sorted(files):
@@ -456,7 +488,7 @@ def _scan_folder(root: Path, rules: RuleSet) -> Iterator[SourceInfo]:
             )
 
 
-def _single_file(path: Path, rules: RuleSet) -> SourceInfo:
+def _single_file(path: Path, rules: RuleSet | _AliasedRules) -> SourceInfo:
     st = path.stat()
     member = normalize_member_name(path.name)
     return _build(

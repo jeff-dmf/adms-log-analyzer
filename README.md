@@ -75,6 +75,37 @@ its index):
 - Linux: `${XDG_DATA_HOME:-~/.local/share}/dmslog`
 - Anywhere else: `--data-dir DIR` (for example an encrypted USB drive).
 
+## Local aliases
+
+The repository uses the neutral token `Custom` where a customer-specific adapter name used to be.
+Real logs and configs still carry the original spelling. To make the analyzer recognize it, create
+the optional file `aliases.toml` in the data directory (it is never part of the repository):
+
+```toml
+version = 1
+
+[[alias]]
+public = "Custom"            # token used in the repository: 1-64 chars, letters digits _ . -
+real = "<original text>"     # spelling in real logs and configs: 1-128 chars, no control characters
+
+[[alias]]                    # several entries may share one `public` (one per spelling or form)
+public = "Custom"
+real = "<original_underscore_form>"
+```
+
+At ingestion, `real` is replaced by `public` in names read from the ERS and in the text derived from
+them: process and family classification, Registry file names, layer labels, product and Web Service
+operation names, and error, progress and warning messages (stored `source.error`, CLI output, API
+job messages). Replacement is one pass over the original text, longest `real` first, case-sensitive;
+names and messages also match a whole `real` in any letter case.
+
+What is **not** normalized: the index keeps the real `source.member` and `source.file_name` (the file is
+reopened through them, and the sources list shows them), Registry parameter values (for example the
+`WebServiceConfiguration` path), log message text and payloads, and the name of the zip or folder you
+ingest. Do not share an index or export made with real names. A missing file means no aliases; an
+invalid file is ignored with a message in `dmslog info`, which also shows how many aliases were loaded
+(never their values). Re-ingest a case after changing the file.
+
 ## Privacy and security
 
 - The server listens on `127.0.0.1` only. `serve` prints a URL with a random access token; the
