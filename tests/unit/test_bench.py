@@ -5,7 +5,6 @@ import importlib.util
 import json
 import os
 import sys
-import time
 import zipfile
 from pathlib import Path
 
@@ -337,19 +336,69 @@ def test_symlinked_destinations_are_refused(ers_dir, tmp_path, capsys):
 
 
 # ------------------------------------------------------------- aliases, '~' and path-free messages
-def test_canonical_form_unifies_windows_aliases():
+DEVICE_PATHS = [
+    "\\\\?\\C:\\x\\ers.zip",
+    "\\\\?\\UNC\\srv\\sh\\ers.zip",
+    "\\\\?\\unc\\srv\\sh\\ers.zip",
+    "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\x",
+    "\\\\.\\C:\\x",
+    "\\\\.\\UNC\\srv\\share\\ers.zip",
+    "//?/C:/x",
+    "\\\\?/C:/x",
+    "/\\?\\C:\\x",
+    "//./C:/x",
+    "\\??\\C:\\x",
+    "/??/C:/x",
+]
+PLAIN_PATHS = [
+    "C:\\x\\ers.zip", "\\\\srv\\share\\ers.zip", "c:/x/ers.zip", "rel\\ers.zip", "ers.zip", "/var/ers.zip",
+]  # fmt: skip
+
+
+def test_device_and_extended_paths_are_detected():
+    for path in DEVICE_PATHS:
+        assert bench.is_device_path(path), path
+    for path in PLAIN_PATHS:
+        assert not bench.is_device_path(path), path
+
+
+@pytest.mark.parametrize("flag", ["--out", "--json", "--ers"])
+def test_device_paths_are_refused_for_every_path_argument(flag, tmp_path, capsys):
+    base = {"--out": str(tmp_path / "o"), "--ers": str(tmp_path), "--json": str(tmp_path / "r.json")}
+    for path in DEVICE_PATHS:
+        argv = ["--ers", base["--ers"], "--out", base["--out"], "--json", base["--json"]]
+        argv[argv.index(flag) + 1] = path
+        err = _refused(capsys, *argv)
+        assert err.count(flag) >= 1 and "device or extended-length" in err
+        assert path not in err and str(tmp_path) not in err
+    assert not (tmp_path / "o").exists()
+
+
+def test_the_unc_device_alias_cannot_overwrite_the_ers(tmp_path, capsys):
+    err = _refused(
+        capsys, "--ers", "\\\\srv\\share\\ers.zip", "--out", str(tmp_path / "o"),
+        "--json", "\\\\.\\UNC\\srv\\share\\ers.zip",
+    )
+    assert "--json" in err and "device or extended-length" in err
+
+
+def test_canonical_form_unifies_plain_windows_spellings():
     import ntpath
 
     canon = lambda p: bench.canonical(p, ntpath)  # noqa: E731
     plain = canon("C:\\Review\\ers.zip")
-    assert canon("\\\\?\\C:\\review\\ERS.zip") == plain
     assert canon("c:/review/ers.zip") == plain
-    unc = canon("\\\\?\\UNC\\srv\\share\\ers.zip")
-    assert unc == canon("\\\\SRV\\share\\ers.zip") == "\\\\srv\\share\\ers.zip"
-    assert bench._is_inside("\\\\?\\C:\\review\\ers.zip", "C:\\review\\ers.zip", ntpath)
-    assert bench._is_inside("\\\\?\\UNC\\srv\\share\\ers\\r.json", "\\\\srv\\share\\ers", ntpath)
-    assert not bench._is_inside("\\\\?\\C:\\review\\ers2.zip", "C:\\review\\ers.zip", ntpath)
+    assert canon("\\\\SRV\\share\\ers.zip") == "\\\\srv\\share\\ers.zip"
+    assert bench._is_inside("C:\\review\\ERS.zip", "c:/review/ers.zip", ntpath)
+    assert bench._is_inside("\\\\srv\\share\\ers\\r.json", "\\\\SRV\\share\\ers", ntpath)
+    assert not bench._is_inside("C:\\review\\ers2.zip", "C:\\review\\ers.zip", ntpath)  # siblings
     assert not bench._is_inside("D:\\review\\ers.zip", "C:\\review", ntpath)
+
+
+def test_siblings_and_plain_paths_are_still_accepted(ers_dir, tmp_path):
+    zip_path = tmp_path / "ers.zip"
+    bench.zip_folder(ers_dir, zip_path)
+    bench.check_output_paths(tmp_path / "o", zip_path, tmp_path / "r.json")
 
 
 def test_hard_link_to_the_ers_zip_is_refused(ers_dir, tmp_path, capsys):
@@ -422,32 +471,74 @@ def test_overlap_messages_do_not_leak_paths(ers_dir, tmp_path, capsys):
         assert str(tmp_path) not in err and str(bench.ROOT) not in err and "--" in err
 
 
+_SAMPLER_CHILD = (
+    "import sys; x = bytearray(50_000_000); x[::4096] = b'1' * len(x[::4096]); "
+    "print('ready', flush=True); sys.stdin.readline()"
+)
+
+
+def _start_sampler_child():
+    import subprocess
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _SAMPLER_CHILD], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    assert proc.stdout.readline().strip() == "ready"  # the memory is allocated and touched
+    return proc
+
+
+def _finish(proc):
+    proc.stdin.write("\n")
+    proc.stdin.close()
+    proc.wait(timeout=30)
+    proc.stdout.close()
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="needs the Windows process API")
 def test_windows_sampler_reports_the_peak_of_a_real_process():
-    import subprocess
+    import threading
     import types
 
-    code = "x = bytearray(50_000_000); import time; time.sleep(0.3)"
-    proc = subprocess.Popen([sys.executable, "-c", code])
+    proc = _start_sampler_child()
     sampler = bench.WindowsPeakSampler(proc)
+    first = threading.Event()
+    real_sample = sampler.sample
+
+    def sample_then_signal():
+        value = real_sample()
+        first.set()
+        return value
+
+    sampler.sample = sample_then_signal
+    # the child exits only after the first sample, however slow the machine is
+    releaser = threading.Thread(target=lambda: (first.wait(30), _finish(proc)))
+    releaser.start()
     try:
         peak, warnings = bench.monitor_peak(proc, sampler, interval=0.02)
     finally:
-        proc.wait()
+        releaser.join()
+        sampler.close()
     assert peak is not None and peak > 40_000_000, warnings
 
+    # the final reading: after the process ended, the Popen handle still answers with the peak
+    proc = _start_sampler_child()
+    sampler = bench.WindowsPeakSampler(proc)
+    try:
+        _finish(proc)
+        assert proc.poll() is not None
+        final = sampler.sample()
+    finally:
+        sampler.close()
+    assert final is not None and final > 40_000_000
+
     # the OpenProcess fallback (no Popen handle) also reads the peak, and its handle is closed
-    proc = subprocess.Popen([sys.executable, "-c", code])
+    proc = _start_sampler_child()
     fallback = bench.WindowsPeakSampler(types.SimpleNamespace(pid=proc.pid))
     assert fallback._owned and fallback._handle
     try:
-        deadline = time.time() + 10
-        peak = None
-        while proc.poll() is None and time.time() < deadline:
-            peak = max(peak or 0, fallback.sample() or 0)
-            time.sleep(0.02)
+        peak = fallback.sample()
     finally:
-        proc.wait()
+        _finish(proc)
         fallback.close()
     assert peak is not None and peak > 40_000_000
     assert fallback._handle is None and not fallback._owned

@@ -89,26 +89,23 @@ class BenchError(Exception):
 
 
 # ---------------------------------------------------------------------------------------- generator
-_EXT_UNC = "\\\\?\\UNC\\"
-_EXT_PREFIXES = ("\\\\?\\", "\\\\.\\")
+_DEVICE_PREFIXES = ("\\\\?\\", "\\\\.\\", "\\??\\")  # \\?\  \\.\  \??\ with '/' read as '\\'
 
 
-def _strip_extended(text: str) -> str:
-    """Drop the Windows extended prefix (``?`` form; UNC becomes a plain UNC path)."""
-    if text[:8].upper() == _EXT_UNC:
-        return "\\\\" + text[8:]
-    for prefix in _EXT_PREFIXES:
-        if text.startswith(prefix):
-            return text[len(prefix):]
-    return text
+def is_device_path(path: str | os.PathLike[str]) -> bool:
+    """True for a Windows device or extended-length path (``\\\\?\\``, ``\\\\.\\``, ``\\??\\``).
+
+    Case-insensitive, with ``/`` read as ``\\``. These forms have too many equivalent spellings
+    (``UNC\\``, ``Volume{GUID}\\``, ...) to compare safely, so they are refused (fail closed).
+    """
+    text = os.fspath(path).replace("/", "\\").upper()
+    return text.startswith(_DEVICE_PREFIXES)
 
 
 def canonical(path: str | os.PathLike[str], pathmod=os.path) -> str:
-    """One canonical text form for every path comparison: absolute, symlinks resolved, extended
-    Windows prefix removed, case-folded per platform. ``pathmod`` is ``ntpath`` in tests."""
-    text = _strip_extended(os.fspath(path))
-    text = pathmod.realpath(pathmod.abspath(text))
-    return pathmod.normcase(_strip_extended(text))
+    """One canonical text form for every path comparison: absolute, symlinks resolved, case-folded
+    per platform. ``pathmod`` is ``ntpath`` in tests. Device paths never get here (``is_device_path``)."""
+    return pathmod.normcase(pathmod.realpath(pathmod.abspath(os.fspath(path))))
 
 
 def _textually_inside(child: str, parent: str, pathmod) -> bool:
@@ -137,8 +134,8 @@ def _is_inside(child: Path | str, parent: Path | str, pathmod=os.path) -> bool:
         return True
     if pathmod is not os.path:
         return False
-    current = _strip_extended(os.path.abspath(os.fspath(child)))
-    parent_text = _strip_extended(os.path.abspath(os.fspath(parent)))
+    current = os.path.abspath(os.fspath(child))
+    parent_text = os.path.abspath(os.fspath(parent))
     while True:
         if os.path.exists(current) and _same_file(current, parent_text):
             return True
@@ -739,12 +736,12 @@ def build_parser() -> argparse.ArgumentParser:
             "--ers) and measures wall time, peak RSS, database size and throughput."
         ),
     )
-    ap.add_argument("--out", type=Path, required=True,
+    ap.add_argument("--out", type=str, required=True,
                     help="Work directory (new or empty, outside the repository); removed at the end "
-                    "unless --keep.")  # fmt: skip
-    ap.add_argument("--ers", type=Path, metavar="PATH",
+                    "unless --keep. Windows \\\\?\\ and \\\\.\\ paths are refused.")  # fmt: skip
+    ap.add_argument("--ers", type=str, metavar="PATH",
                     help="Measure an existing ERS zip or Log folder (read only, never copied) instead "
-                    "of generating one.")  # fmt: skip
+                    "of generating one. Windows \\\\?\\ and \\\\.\\ paths are refused.")  # fmt: skip
     ap.add_argument("--size-mb", type=float, default=200.0,
                     help="Target uncompressed size of the synthetic logs in MB (default: 200).")  # fmt: skip
     ap.add_argument("--adapters", type=int, default=MAX_ADAPTERS,
@@ -758,7 +755,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--quick", action="store_true",
                     help=f"Tiny run for tests and CI ({QUICK_SIZE_MB} MB, {QUICK_ADAPTERS} adapters, "
                     "verbose, zipped).")  # fmt: skip
-    ap.add_argument("--json", type=Path, metavar="PATH", help="Also write the result as JSON.")
+    ap.add_argument("--json", type=str, metavar="PATH",
+                    help="Also write the result as JSON. Windows \\\\?\\ and \\\\.\\ paths are "
+                    "refused.")  # fmt: skip
     ap.add_argument("--keep", action="store_true", help="Keep the generated ERS and the data directory.")
     ap.add_argument("--max-rss-mb", type=float, default=DEFAULT_MAX_RSS_MB,
                     help=f"RSS target in MB; 0 disables (default: {DEFAULT_MAX_RSS_MB:g}). Targets "
@@ -781,9 +780,14 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise BenchError(f"--adapters must be between 1 and {MAX_ADAPTERS}")
     if args.size_mb <= 0:
         raise BenchError("--size-mb must be positive")
-    args.out = expand_path(args.out)  # expanded once; these exact paths are used from here on
-    args.ers = None if args.ers is None else expand_path(args.ers)
-    args.json = None if args.json is None else expand_path(args.json)
+    for label, given in (("--out", args.out), ("--ers", args.ers), ("--json", args.json)):
+        if given is not None and is_device_path(given):  # raw text, before Path() or any other normalization
+            raise BenchError(
+                f"{label} must not use a Windows device or extended-length path (\\\\?\\ or \\\\.\\ prefix)"
+            )
+    args.out = expand_path(Path(args.out))  # expanded once; these exact paths are used from here on
+    args.ers = None if args.ers is None else expand_path(Path(args.ers))
+    args.json = None if args.json is None else expand_path(Path(args.json))
     if args.ers is not None and not args.ers.exists():
         raise BenchError("--ers path not found")
     check_output_paths(args.out, args.ers, args.json)
