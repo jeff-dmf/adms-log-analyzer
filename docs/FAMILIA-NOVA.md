@@ -66,7 +66,7 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
 
    Windows: `.venv\Scripts\python tools\make_family_fixtures.py` e `... --check`.
 
-   `_file_name` só trata os layouts `adapter` e `single`; qualquer outro (`blthost`, `service`, `pidlog`) cai em `<processo>.SVC.log` e a fixture é classificada na família errada. Para um layout como `pidlog`, amplie `_file_name` antes de regenerar as fixtures.
+   `_file_name` só trata os layouts `adapter` e `single`; qualquer outro cai em `<processo>.SVC.log`. Para `blthost` e `service` esse nome é aceito pelo layout, mas para `pidlog` não: a fixture é classificada na família errada. Para `pidlog` (ou outro layout que rejeite o nome do fallback), amplie `_file_name` antes de regenerar as fixtures.
 
    Se o `dmslog` instalado no ambiente não for o deste checkout, rode com `PYTHONPATH=src` (Linux) ou `$env:PYTHONPATH="src"; ...` (PowerShell); o gerador usa o catálogo que importar. Sem esse passo, `test_every_template_of_the_catalog_is_hit` falha ("templates without a fixture record"). Adapters com `anchor = true` também precisam de linha em `src/dmslog/knowledge/curated/process_map.toml` (`test_process_map.py`).
 
