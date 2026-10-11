@@ -157,17 +157,78 @@ def test_stalled_body_still_gets_the_error_response(server, monkeypatch):  # noq
         sock.close()
 
 
-def test_client_disconnecting_mid_body_raises_nothing(server, monkeypatch, capsys):  # noqa: F811
+def _track_handler(monkeypatch, app):
+    """Wrap RequestHandler.handle: returns (started, finished) events set when a connection starts / ends."""
+    import threading
+
+    started, finished = threading.Event(), threading.Event()
+    original = app.RequestHandler.handle
+
+    def tracked(self):
+        started.set()
+        try:
+            original(self)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(app.RequestHandler, "handle", tracked)
+    return started, finished
+
+
+def test_trickling_body_cannot_extend_the_total_deadline(server, monkeypatch):  # noqa: F811
+    # A client that keeps sending a byte now and then must not renew the timeout on every read: the
+    # deadline is total. The handler has to finish while the client is still trickling.
+    import socket
+    import threading
     import time
 
     from dmslog.server import app
 
     monkeypatch.setattr(app, "DRAIN_DEADLINE_SECONDS", 0.3)
+    started, finished = _track_handler(monkeypatch, app)
+    stop = threading.Event()
+    sock = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+
+    def trickle():
+        try:
+            while not stop.is_set():
+                sock.sendall(b"x")
+                stop.wait(0.1)
+        except OSError:
+            pass
+
+    feeder = None
+    try:
+        head = (
+            f"POST /api/knowledge HTTP/1.1\r\nHost: 127.0.0.1:{server.port}\r\nContent-Length: 100000\r\n\r\n"
+        ).encode()
+        sock.sendall(head)
+        feeder = threading.Thread(target=trickle, daemon=True)
+        feeder.start()
+        began = time.monotonic()
+        assert started.wait(3)
+        assert finished.wait(1.5), "the drain deadline was renewed by the trickling client"
+        assert time.monotonic() - began <= 1.5
+        assert feeder.is_alive()  # the client was still sending when the handler gave up
+    finally:
+        stop.set()
+        sock.close()
+        if feeder is not None:
+            feeder.join(timeout=3)
+
+
+def test_client_disconnecting_mid_body_raises_nothing(server, monkeypatch, capsys):  # noqa: F811
+    from dmslog.server import app
+
+    monkeypatch.setattr(app, "DRAIN_DEADLINE_SECONDS", 0.3)
     errors = []
     monkeypatch.setattr(server, "handle_error", lambda request, client_address: errors.append(client_address))
+    _, finished = _track_handler(monkeypatch, app)
     sock = _raw_post(server, declared=5000, sent=10)
-    assert sock.recv(4096)  # the response was written; the handler is now draining the stalled body
-    sock.close()
-    time.sleep(0.6)
+    try:
+        assert sock.recv(4096)  # the response was written; the handler is now draining the stalled body
+    finally:
+        sock.close()
+    assert finished.wait(3), "the handler did not finish"
     assert errors == []
     assert "Traceback" not in capsys.readouterr().err
