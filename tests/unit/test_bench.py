@@ -3,7 +3,9 @@
 import hashlib
 import importlib.util
 import json
+import os
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -332,3 +334,120 @@ def test_symlinked_destinations_are_refused(ers_dir, tmp_path, capsys):
         capsys, "--ers", str(zip_path), "--out", str(tmp_path / "o"), "--json", str(link_json)
     )
     assert zipfile.is_zipfile(zip_path)
+
+
+# ------------------------------------------------------------- aliases, '~' and path-free messages
+def test_canonical_form_unifies_windows_aliases():
+    import ntpath
+
+    canon = lambda p: bench.canonical(p, ntpath)  # noqa: E731
+    plain = canon("C:\\Review\\ers.zip")
+    assert canon("\\\\?\\C:\\review\\ERS.zip") == plain
+    assert canon("c:/review/ers.zip") == plain
+    unc = canon("\\\\?\\UNC\\srv\\share\\ers.zip")
+    assert unc == canon("\\\\SRV\\share\\ers.zip") == "\\\\srv\\share\\ers.zip"
+    assert bench._is_inside("\\\\?\\C:\\review\\ers.zip", "C:\\review\\ers.zip", ntpath)
+    assert bench._is_inside("\\\\?\\UNC\\srv\\share\\ers\\r.json", "\\\\srv\\share\\ers", ntpath)
+    assert not bench._is_inside("\\\\?\\C:\\review\\ers2.zip", "C:\\review\\ers.zip", ntpath)
+    assert not bench._is_inside("D:\\review\\ers.zip", "C:\\review", ntpath)
+
+
+def test_hard_link_to_the_ers_zip_is_refused(ers_dir, tmp_path, capsys):
+    zip_path = tmp_path / "ers.zip"
+    bench.zip_folder(ers_dir, zip_path)
+    alias = tmp_path / "alias.json"
+    try:
+        os.link(zip_path, alias)
+    except (OSError, NotImplementedError):
+        pytest.skip("hard links are not available here")
+    before = zip_path.read_bytes()
+    err = _refused(capsys, "--ers", str(zip_path), "--out", str(tmp_path / "o"), "--json", str(alias))
+    assert "--json" in err and zip_path.read_bytes() == before
+
+
+def test_samefile_sees_a_new_file_below_an_aliased_folder(ers_dir, tmp_path):
+    link = tmp_path / "alias_dir"
+    _symlink(link, ers_dir)
+    assert bench._is_inside(link / "new" / "r.json", ers_dir)  # does not exist yet
+    assert not bench._is_inside(tmp_path / "other" / "r.json", ers_dir)
+
+
+def test_samefile_errors_are_treated_as_not_the_same(monkeypatch, tmp_path):
+    def boom(a, b):
+        raise OSError("denied")
+
+    monkeypatch.setattr(bench.os.path, "samefile", boom)
+    assert not bench._is_inside(tmp_path / "a", tmp_path / "b")
+
+
+def test_tilde_out_resolving_into_the_ers_is_refused(ers_dir, tmp_path, monkeypatch, capsys):
+    for var in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(var, str(ers_dir))
+    before = tree_digest(ers_dir)
+    err = _refused(capsys, "--ers", str(ers_dir), "--out", "~/run")
+    assert "overlap" in err
+    assert tree_digest(ers_dir) == before and not (ers_dir / "run").exists()
+
+
+def test_paths_are_expanded_once_and_reused(ers_dir, tmp_path, monkeypatch):
+    calls = []
+    real = Path.expanduser
+
+    def counting(self):
+        calls.append(str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "expanduser", counting)
+    args = bench.build_parser().parse_args(
+        ["--ers", str(ers_dir), "--out", str(tmp_path / "o"), "--json", str(tmp_path / "r.json")]
+    )
+    report = bench.run(args)
+    assert report["status"] == "PASS"
+    assert len(calls) == 3  # --ers, --out and --json, once each; never again after the checks
+    assert args.out == tmp_path / "o" and args.json == tmp_path / "r.json"
+
+
+def test_overlap_messages_do_not_leak_paths(ers_dir, tmp_path, capsys):
+    zip_path = tmp_path / "ers.zip"
+    bench.zip_folder(ers_dir, zip_path)
+    errs = [
+        _refused(capsys, "--ers", str(ers_dir), "--out", str(ers_dir / "bench")),
+        _refused(capsys, "--ers", str(zip_path), "--out", str(tmp_path / "o"), "--json", str(zip_path)),
+        _refused(capsys, "--quick", "--out", str(tmp_path / "o"), "--json", str(tmp_path / "o" / "r.json")),
+        _refused(capsys, "--quick", "--out", str(tmp_path / "o"), "--json", str(bench.ROOT / "r.json")),
+        _refused(capsys, "--quick", "--out", str(bench.ROOT / "x")),
+        _refused(capsys, "--ers", str(tmp_path / "missing"), "--out", str(tmp_path / "o")),
+    ]
+    for err in errs:
+        assert str(tmp_path) not in err and str(bench.ROOT) not in err and "--" in err
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="needs the Windows process API")
+def test_windows_sampler_reports_the_peak_of_a_real_process():
+    import subprocess
+    import types
+
+    code = "x = bytearray(50_000_000); import time; time.sleep(0.3)"
+    proc = subprocess.Popen([sys.executable, "-c", code])
+    sampler = bench.WindowsPeakSampler(proc)
+    try:
+        peak, warnings = bench.monitor_peak(proc, sampler, interval=0.02)
+    finally:
+        proc.wait()
+    assert peak is not None and peak > 40_000_000, warnings
+
+    # the OpenProcess fallback (no Popen handle) also reads the peak, and its handle is closed
+    proc = subprocess.Popen([sys.executable, "-c", code])
+    fallback = bench.WindowsPeakSampler(types.SimpleNamespace(pid=proc.pid))
+    assert fallback._owned and fallback._handle
+    try:
+        deadline = time.time() + 10
+        peak = None
+        while proc.poll() is None and time.time() < deadline:
+            peak = max(peak or 0, fallback.sample() or 0)
+            time.sleep(0.02)
+    finally:
+        proc.wait()
+        fallback.close()
+    assert peak is not None and peak > 40_000_000
+    assert fallback._handle is None and not fallback._owned

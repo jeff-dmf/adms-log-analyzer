@@ -89,46 +89,105 @@ class BenchError(Exception):
 
 
 # ---------------------------------------------------------------------------------------- generator
-def _is_inside(child: Path, parent: Path) -> bool:
-    """True when ``child`` is ``parent`` or below it (symlinks resolved, case-folded on Windows)."""
+_EXT_UNC = "\\\\?\\UNC\\"
+_EXT_PREFIXES = ("\\\\?\\", "\\\\.\\")
+
+
+def _strip_extended(text: str) -> str:
+    """Drop the Windows extended prefix (``?`` form; UNC becomes a plain UNC path)."""
+    if text[:8].upper() == _EXT_UNC:
+        return "\\\\" + text[8:]
+    for prefix in _EXT_PREFIXES:
+        if text.startswith(prefix):
+            return text[len(prefix):]
+    return text
+
+
+def canonical(path: str | os.PathLike[str], pathmod=os.path) -> str:
+    """One canonical text form for every path comparison: absolute, symlinks resolved, extended
+    Windows prefix removed, case-folded per platform. ``pathmod`` is ``ntpath`` in tests."""
+    text = _strip_extended(os.fspath(path))
+    text = pathmod.realpath(pathmod.abspath(text))
+    return pathmod.normcase(_strip_extended(text))
+
+
+def _textually_inside(child: str, parent: str, pathmod) -> bool:
     try:
-        Path(os.path.normcase(child.resolve())).relative_to(Path(os.path.normcase(parent.resolve())))
-    except ValueError:
+        return pathmod.commonpath([child, parent]) == parent
+    except ValueError:  # different drives, or mixed absolute and relative
         return False
-    return True
+
+
+def _same_file(a: str, b: str) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
+
+
+def _is_inside(child: Path | str, parent: Path | str, pathmod=os.path) -> bool:
+    """True when ``child`` is ``parent`` or below it.
+
+    Text is compared in canonical form. On top of that, ``child`` and each of its existing ancestors
+    are checked with ``os.path.samefile``, which also sees hard links, junctions and aliases that the
+    text comparison cannot (a destination that does not exist yet is covered by its nearest existing
+    ancestor).
+    """
+    if _textually_inside(canonical(child, pathmod), canonical(parent, pathmod), pathmod):
+        return True
+    if pathmod is not os.path:
+        return False
+    current = _strip_extended(os.path.abspath(os.fspath(child)))
+    parent_text = _strip_extended(os.path.abspath(os.fspath(parent)))
+    while True:
+        if os.path.exists(current) and _same_file(current, parent_text):
+            return True
+        up = os.path.dirname(current)
+        if up == current:
+            return False
+        current = up
+
+
+def expand_path(path: Path) -> Path:
+    """Expand ``~`` and make the path absolute (symlinks are kept). Called ONCE per input path."""
+    try:
+        return Path(os.path.abspath(path.expanduser()))
+    except RuntimeError as exc:  # no home directory could be determined
+        raise BenchError(f"cannot expand '~' in a path argument: {exc}") from None
 
 
 def check_output_paths(out: Path, ers: Path | None, json_path: Path | None) -> None:
     """Refuse output locations that overlap the input or each other, before anything is written.
 
-    Rules (all paths resolved, symlinks included): ``--out`` must not be, contain or lie inside the ERS;
-    ``--json`` must not be the ERS, lie inside an ERS folder, lie inside ``--out`` (cleanup would delete
-    it) or inside the repository; ``--out`` and ``--json`` themselves must not be symbolic links.
+    The paths must already be expanded (``expand_path``); nothing is expanded again here. Rules:
+    ``--out`` must not be, contain or lie inside the ERS; ``--json`` must not be the ERS, lie inside an
+    ERS folder, lie inside ``--out`` (cleanup would delete it) or inside the repository; ``--out`` and
+    ``--json`` themselves must not be symbolic links. Messages carry no paths on purpose.
     """
     for label, path in (("--out", out), ("--json", json_path)):
-        if path is not None and os.path.islink(path.expanduser()):
-            raise BenchError(f"{label} must not be a symbolic link: {path}")
+        if path is not None and os.path.islink(path):
+            raise BenchError(f"{label} must not be a symbolic link")
     if ers is not None and (_is_inside(out, ers) or _is_inside(ers, out)):
-        raise BenchError(f"--out must not overlap the --ers input: {out}")
+        raise BenchError("--out must not overlap the --ers input")
     if json_path is None:
         return
-    if json_path.expanduser().is_dir():
-        raise BenchError(f"--json must be a file path, not a directory: {json_path}")
+    if json_path.is_dir():
+        raise BenchError("--json must be a file path, not a directory")
     if ers is not None and _is_inside(json_path, ers):  # the ERS zip itself, or inside an ERS folder
-        raise BenchError(f"--json must not overwrite or be inside the --ers input: {json_path}")
+        raise BenchError("--json must not overwrite or be inside the --ers input")
     if _is_inside(json_path, out):
-        raise BenchError(f"--json must be outside --out (the cleanup would delete it): {json_path}")
+        raise BenchError("--json must be outside --out (the cleanup would delete it)")
     if _is_inside(json_path, ROOT):
-        raise BenchError(f"--json must be outside the repository ({ROOT}): {json_path}")
+        raise BenchError("--json must be outside the repository")
 
 
 def check_out_dir(out: Path) -> Path:
-    """Validate ``--out``: outside the repository, and either new or empty."""
-    out = out.expanduser().resolve()
+    """Validate ``--out`` (already expanded): outside the repository, and either new or empty."""
+    out = out.resolve()
     if _is_inside(out, ROOT):
-        raise BenchError(f"--out must be outside the repository ({ROOT}): {out}")
+        raise BenchError("--out must be outside the repository")
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
-        raise BenchError(f"--out must be a new or empty directory: {out}")
+        raise BenchError("--out must be a new or empty directory")
     return out
 
 
@@ -722,9 +781,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise BenchError(f"--adapters must be between 1 and {MAX_ADAPTERS}")
     if args.size_mb <= 0:
         raise BenchError("--size-mb must be positive")
+    args.out = expand_path(args.out)  # expanded once; these exact paths are used from here on
+    args.ers = None if args.ers is None else expand_path(args.ers)
+    args.json = None if args.json is None else expand_path(args.json)
     if args.ers is not None and not args.ers.exists():
-        raise BenchError(f"--ers path not found: {args.ers}")
-    check_output_paths(args.out, args.ers.expanduser() if args.ers is not None else None, args.json)
+        raise BenchError("--ers path not found")
+    check_output_paths(args.out, args.ers, args.json)
     out = check_out_dir(args.out)
     created = not out.exists()
     out.mkdir(parents=True, exist_ok=True)
@@ -740,7 +802,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     try:
         generate_seconds = None
         if args.ers is not None:
-            target = args.ers.expanduser().resolve()
+            target = args.ers.resolve()
             mode, params = "ers", {"all_logs": args.all_logs}
             disk = target.stat().st_size if target.is_file() else None
             unc = zip_uncompressed_bytes(target) if target.is_file() else None
