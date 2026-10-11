@@ -85,6 +85,8 @@ def test_reingest_after_editing_a_folder_xml_returns_the_new_value(client, serve
 def test_unread_request_body_is_drained_before_closing(client, monkeypatch):  # noqa: F811
     # A 405 (or 403) is answered without reading the body. Closing a socket that still holds unread data makes
     # the OS reset the connection (Windows: WinError 10053 on the client), so the server must drain it first.
+    import time
+
     from dmslog.server.app import RequestHandler
 
     drained = []
@@ -98,6 +100,10 @@ def test_unread_request_body_is_drained_before_closing(client, monkeypatch):  # 
     payload = b"x" * 5000
     assert client.request("POST", "/api/knowledge", raw=payload)[0] == 405
     assert client.request("POST", "/nope.html", raw=payload)[0] == 405
+    # The response is written before the drain runs, so wait for the handler threads to record it.
+    end = time.monotonic() + 5
+    while len(drained) < 2 and time.monotonic() < end:
+        time.sleep(0.01)
     assert drained == [5000, 5000]
     assert client.request("POST", "/api/cases", {"name": "ok"})[0] == 201
     assert drained == [5000, 5000]  # a body the handler reads is not drained again
@@ -157,27 +163,39 @@ def test_stalled_body_still_gets_the_error_response(server, monkeypatch):  # noq
         sock.close()
 
 
-def _track_handler(monkeypatch, app):
-    """Wrap RequestHandler.handle: returns (started, finished) events set when a connection starts / ends."""
+def _track_handler(monkeypatch, app, srv):
+    """Track one connection: returns (started, finished).
+
+    `started` is set when RequestHandler.handle begins. `finished` is set only when the request thread
+    has returned, i.e. after handle(), finish(), handle_error() and the socket shutdown, so error and stderr
+    checks made after `finished.wait()` cannot race with the server.
+    """
     import threading
 
     started, finished = threading.Event(), threading.Event()
-    original = app.RequestHandler.handle
+    original_handle = app.RequestHandler.handle
+    original_thread = srv.process_request_thread
 
-    def tracked(self):
+    def tracked_handle(self):
         started.set()
+        original_handle(self)
+
+    def tracked_thread(request, client_address):
         try:
-            original(self)
+            original_thread(request, client_address)
         finally:
             finished.set()
 
-    monkeypatch.setattr(app.RequestHandler, "handle", tracked)
+    monkeypatch.setattr(app.RequestHandler, "handle", tracked_handle)
+    monkeypatch.setattr(srv, "process_request_thread", tracked_thread)
     return started, finished
 
 
 def test_trickling_body_cannot_extend_the_total_deadline(server, monkeypatch):  # noqa: F811
     # A client that keeps sending a byte now and then must not renew the timeout on every read: the
-    # deadline is total. The handler has to finish while the client is still trickling.
+    # deadline is total. The handler has to finish while the client is still trickling. The budget is measured
+    # only from the moment the handler started, and is generous: it tells a total deadline (0.3 s) from a
+    # renewed one (as long as the client trickles, ~4 s), not how fast the runner is.
     import socket
     import threading
     import time
@@ -185,15 +203,23 @@ def test_trickling_body_cannot_extend_the_total_deadline(server, monkeypatch):  
     from dmslog.server import app
 
     monkeypatch.setattr(app, "DRAIN_DEADLINE_SECONDS", 0.3)
-    started, finished = _track_handler(monkeypatch, app)
+    started, finished = _track_handler(monkeypatch, app, server)
     stop = threading.Event()
+    natural_end = threading.Event()  # the feeder ran its whole planned stream
+    lock = threading.Lock()
+    sent = [0]
+    planned = 40  # one byte every 0.1 s: ~4 s in total
     sock = socket.create_connection(("127.0.0.1", server.port), timeout=5)
 
     def trickle():
         try:
-            while not stop.is_set():
+            while sent[0] < planned and not stop.is_set():
                 sock.sendall(b"x")
+                with lock:
+                    sent[0] += 1
                 stop.wait(0.1)
+            if sent[0] >= planned:
+                natural_end.set()
         except OSError:
             pass
 
@@ -205,11 +231,15 @@ def test_trickling_body_cannot_extend_the_total_deadline(server, monkeypatch):  
         sock.sendall(head)
         feeder = threading.Thread(target=trickle, daemon=True)
         feeder.start()
-        began = time.monotonic()
-        assert started.wait(3)
+        assert started.wait(10)
+        began = time.monotonic()  # the budget starts here, after the handler began
         assert finished.wait(1.5), "the drain deadline was renewed by the trickling client"
         assert time.monotonic() - began <= 1.5
-        assert feeder.is_alive()  # the client was still sending when the handler gave up
+        with lock:
+            sent_at_finish = sent[0]
+        # The client was trickling during the drain and its planned stream had not ended by itself.
+        assert sent_at_finish >= 2
+        assert not natural_end.is_set()
     finally:
         stop.set()
         sock.close()
@@ -223,7 +253,7 @@ def test_client_disconnecting_mid_body_raises_nothing(server, monkeypatch, capsy
     monkeypatch.setattr(app, "DRAIN_DEADLINE_SECONDS", 0.3)
     errors = []
     monkeypatch.setattr(server, "handle_error", lambda request, client_address: errors.append(client_address))
-    _, finished = _track_handler(monkeypatch, app)
+    _, finished = _track_handler(monkeypatch, app, server)
     sock = _raw_post(server, declared=5000, sent=10)
     try:
         assert sock.recv(4096)  # the response was written; the handler is now draining the stalled body
