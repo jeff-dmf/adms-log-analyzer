@@ -879,13 +879,29 @@ Consequências: reindexação do mesmo conteúdo (versão da extração de paylo
 
 Modo `watch`: polling a cada 2 s (configurável) com `os.stat`; novidades viram eventos SSE para a UI ("+342 registros em WfmAdapter"). Exclusões do FTS de conteúdo externo usam o comando `'delete'` com o texto antigo, lido antes de apagar.
 
+**Custo do ciclo incremental (medido no 8.1, `docs/notas/medicao-8-1.md`).** Ciclo sem mudança: 0,00 s (só `stat`). Com 5 MB a mais num arquivo: 6,4–6,6 s num caso de 5,2 milhões de registros e 20,5 s num de 16,9 milhões, quase tudo fora da indexação. Crescer um arquivo reprocessa o último registro, o writer incrementa `meta['entries_epoch']`, e essa época global entra na assinatura de todos os grupos de `derive/payloads.py`, `derive/correlate.py` e `derive/links.py`: cada ciclo recalcula todos os processos do caso. Proposta em aberto (decisão do Jefferson): época por stream, recálculo por processo nos payloads e por par na correlação.
+
 ### 9.3a Volume com nível elevado (Info/Verbose)
 
 Medido no ERS de 2026-10-08 14:53 (seção 3; `docs/formato/payloads.md`, seção 8):
 - Uma janela Info/Verbose multiplica a escrita do log normal por 27–120× (≈ 30–37 MB/h por adapter em Verbose; 5 MB/h só em Info). O sensitive cresce 2–4 MB/h, quase tudo payload.
 - O rastreio `Communication2` (GEN-C2T/C2O/C2M) é 46–62% das linhas Info/Verbose e 56% dos bytes dos logs normais na amostra: vai para `entry`/`entry_body` (grid e contagens), mas fora do FTS (`template.fts = 0`), e entra no `bucket` como sev 5 (oculto por padrão).
-- A rotação limita cada processo a `.log` + `.log.0` no ERS (`.log.0` de 59–81 MB), então o pior caso é limitado pelo número de adapters em Verbose, não pelo tempo de elevação: ≈ 2,6 GB de logs no escopo padrão com os 14 adapters elevados (projeção). Lotes por bytes (9.2) já cobrem registros grandes (payload de até 164 mil caracteres).
-- Metas: M6 (ERS Verbose real, 1.041 MiB no escopo padrão) ≤ 60 s e banco ≤ 1,7 GB; M8 (pior caso projetado) no ROADMAP.
+- A rotação limita cada processo a `.log` + `.log.0` no ERS (`.log.0` de 59–81 MB), então o pior caso é limitado pelo número de adapters em Verbose, não pelo tempo de elevação: ≈ 2,6 GB de logs no escopo padrão com os 14 adapters elevados. Lotes por bytes (9.2) cobrem registros grandes (payload de até 164 mil caracteres).
+- Metas: M6 (ERS Verbose real, 1.041 MiB no escopo padrão) ≤ 60 s e banco ≤ 1,7 GB; M8 no ROADMAP.
+
+**Medido no 8.1** (Linux, 20 núcleos, Python 3.14.7, SQLite 3.53.4; medianas de 3 ou mais rodadas; detalhes, faixas e método em `docs/notas/medicao-8-1.md`):
+
+| Cenário | Tempo total | Pico de RSS | Banco | Registros | Resultado |
+|---|---|---|---|---|---|
+| ERS real Verbose, Enterprise + Sensitive, escopo padrão (785 MB) | 73,3 s (só indexação: 51,8 s) | 394 MB | 1.776 MB | 3,73 milhões | RSS dentro do M6; banco 1,78 GB (decimais) > 1,7 GB: **FAIL por 4,5 %** (1,65 GiB só se a meta for lida em GiB, decisão em aberto); tempo: depende de a meta contar a derivação (decisão em aberto) |
+| ERS real, escopo completo (`--all-logs`; 2,2 GB descomprimidos, 1,23 GB indexados) | 170 s | 471 MB | 2.764 MB | 6,19 milhões | sem erro, RSS < 1 GB |
+| Sintético Info, 2.000 MB, 14 adapters | 316 s | 395 MB | 5.600 MB | 14,4 milhões | sem erro, RSS < 1 GB |
+| Sintético Verbose, 2.600 MB, 14 adapters (pior caso) | 346 s (derivação 83 s) | 445 MB | 6.949 MB | 16,9 milhões | sem erro, RSS < 1 GB |
+| Reabrir o mesmo ERS | 0,7 s | 58 MB | igual | igual (sem duplicar) | |
+
+- A projeção de banco (× 1,59 do log, 4,1 GB para 2,6 GB) subestimava: o banco fica em 2,3–2,7× o log indexado (o sintético tem mais registros curtos por MB, e há eventos, chaves, payloads e `bucket`). A vazão por registro é estável de 300 MB a 2,6 GB (46–49 mil registros/s; o custo é linear) e o RSS não passa de 0,45 GB na CLI nem de 0,58 GB com servidor e ingestão no mesmo processo.
+- Responsividade durante a indexação (servidor real, consultas a cada 0,5 s): p95 da primeira página do grid 112–193 ms, do detalhe de um registro 3–140 ms, da busca FTS 259–889 ms sem carga externa (**1.030–1.052 ms, meta p95 < 1 s não atingida, nas rodadas † com um jogo rodando na máquina**); meta definida: p95 < 1 s. A FTS depende da frequência do termo (materializa e ordena todos os `rowid` que casam): 0,3–0,5 s parada para termos com 500–700 mil ocorrências, milissegundos para IDs e códigos.
+- Sem ponto quente único: SQLite ≈ 60 % da indexação, Python por registro o resto, derivação ≈ 25 % do total. Pragmas, lotes e índices dão no máximo ≈ 6 %; ganhos de 2× pedem paralelismo (decisão em aberto, nota do 8.1).
 
 ### 9.4 Consultas e UI
 
@@ -1124,3 +1140,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-11 | Bookmarks (ROADMAP 7.1, esquema v4): `bookmark.source_id` (linhagem; gatilho `bookmark_source_gone` desliga os bookmarks de um `source` apagado), `bookmark.fp` (impressão do conteúdo completo, `f:`, ou do início de um último registro aberto, `p<n>:`), índices parciais de órfãos e de impressões abertas, índice único de `entry_id`; o writer mantém o cache na mesma transação dos registros (órfão antes de apagar; religa só na mesma linhagem e com impressão que casa, sem nunca desligar um bookmark ligado; rotação move só a linhagem); migrações em transação `BEGIN IMMEDIATE` por passo com `user_version` no mesmo commit; leituras da v3 mantêm a resolução por localizador; exportação v2 (`fp`, `orphan`, `detached`) com importação por identidade, v1 ainda aceita (seções 5 e 9.3). Revisto após a revisão cruzada do PR #76 | Opus |
 | 2026-10-11 | Bookmarks, 3ª rodada da revisão cruzada do PR #76: impressões só ficam mais fortes (completa nunca vira prefixo, nem na religação nem na importação); `bookmark.uid` (identidade estável, índice único, exportado) e importação deduplicada por ele, com multiplicidade preservada para itens sem `uid`; importação liga primeiro os itens que estavam ligados; `bookmark.orphan_seq` desempata órfãos que casam com o mesmo registro (achado pelo teste de propriedade: bookmark ligado a um registro aberto perdia o registro, ao crescer, para um órfão mais antigo de prefixo aberto mais longo); `migrate` não comita nem desfaz a transação do chamador (retorna sem tocá-la quando não há passo; `MigrationError` se há passo e transação aberta); teste de propriedade com estados sobre o fluxo real (seções 5 e 9.3) | Opus |
 | 2026-10-11 | Bookmarks, 4ª rodada da revisão cruzada do PR #76: importação em duas passadas (os `uid` do arquivo reservam seus bookmarks antes do casamento por identidade dos itens sem `uid`; corrigia perda de nota em arquivo misto); teste de propriedade prevê o vencedor entre órfãos por um relógio próprio do modelo (seção 9.3) | Opus |
+| 2026-10-11 | Medição do pior caso (ROADMAP 8.1, `docs/notas/medicao-8-1.md`): números medidos substituem as projeções em 9.3a (banco 2,3–2,7× o log, não 1,59×; RSS ≤ 0,58 GB; custo linear); meta de responsividade p95 < 1 s; custo do ciclo incremental registrado em 9.3 (época global recalcula todos os grupos). Sem mudança de esquema nem de código do app | Opus |

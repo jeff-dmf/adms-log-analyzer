@@ -141,6 +141,21 @@ def test_target_status_fail_and_na():
     assert "MB/s" in bench.format_table(rep)
 
 
+def test_throughput_uses_the_indexed_bytes_not_the_whole_zip():
+    run = {
+        "wall_seconds": 10.0, "peak_rss_mb": 100.0, "rss_method": "x", "db_bytes": 1_000_000,
+        "returncode": 0, "warnings": [],
+        "parsed": {"records": 10, "data_mb": 50.0, "sources_failed": 0},
+    }  # fmt: skip
+    cfg = {"max_rss_mb": 1024.0}
+    rep = bench.build_report("ers", {}, {"path": "p", "uncompressed_mb": 2000.0}, run, cfg, None)
+    assert rep["result"]["data_mb"] == 50.0 and rep["result"]["mb_per_s"] == 5.0
+    assert rep["input"]["uncompressed_mb"] == 2000.0
+    run["parsed"]["data_mb"] = None  # ingest output without the data line: fall back to the input size
+    rep = bench.build_report("ers", {}, {"path": "p", "uncompressed_mb": 2000.0}, run, cfg, None)
+    assert rep["result"]["mb_per_s"] == 200.0
+
+
 def test_quick_end_to_end_json_and_cleanup(tmp_path, capsys):
     out = tmp_path / "work"
     json_path = tmp_path / "result.json"
@@ -477,20 +492,47 @@ _SAMPLER_CHILD = (
 )
 
 
+SAMPLER_CHILD_TIMEOUT = 30.0  # seconds; a stuck child fails the test instead of hanging it
+
+
+def _kill(proc):
+    """Kill and reap the child (idempotent), closing its pipes."""
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait(timeout=SAMPLER_CHILD_TIMEOUT)
+    for pipe in (proc.stdin, proc.stdout):
+        if pipe is not None and not pipe.closed:
+            pipe.close()
+
+
 def _start_sampler_child():
     import subprocess
+    import threading
 
     proc = subprocess.Popen(
         [sys.executable, "-c", _SAMPLER_CHILD], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     )
-    assert proc.stdout.readline().strip() == "ready"  # the memory is allocated and touched
-    return proc
+    line: list[str] = []
+    reader = threading.Thread(target=lambda: line.append(proc.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(SAMPLER_CHILD_TIMEOUT)  # readline() has no timeout of its own
+    if reader.is_alive() or not line or line[0].strip() != "ready":
+        _kill(proc)  # also unblocks the reader thread (EOF)
+        pytest.fail("the sampler child did not report 'ready' in time")
+    return proc  # the memory is allocated and touched
 
 
 def _finish(proc):
-    proc.stdin.write("\n")
-    proc.stdin.close()
-    proc.wait(timeout=30)
+    """Let the child exit; kill and reap it if it does not within the deadline."""
+    import subprocess
+
+    try:
+        proc.stdin.write("\n")
+        proc.stdin.close()
+        proc.wait(timeout=SAMPLER_CHILD_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError):
+        _kill(proc)
+        raise
     proc.stdout.close()
 
 
