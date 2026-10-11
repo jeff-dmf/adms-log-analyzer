@@ -61,11 +61,26 @@ def _migrate_to_3(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_4(conn: sqlite3.Connection) -> None:
+    """Add ``bookmark.fp`` (record fingerprint) and rebuild every bookmark cache once.
+
+    Before v4 the writer did not keep ``bookmark.entry_id``; the full pass links each bookmark to the
+    record at its locator and stores that record's fingerprint (docs/ARQUITETURA.md 9.3).
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(bookmark)")}
+    if "fp" not in columns:
+        conn.execute("ALTER TABLE bookmark ADD COLUMN fp TEXT")
+    from .bookmarks import relink_all  # bookmarks imports the query layer; keep db.py import-light
+
+    relink_all(conn)
+
+
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_1,
     2: _migrate_to_2,
     3: _migrate_to_3,
+    4: _migrate_to_4,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

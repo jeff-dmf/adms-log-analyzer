@@ -194,6 +194,7 @@ CREATE TABLE error_config(
 CREATE TABLE bookmark(
   id INTEGER PRIMARY KEY,
   collection_id INTEGER NOT NULL, member TEXT NOT NULL, line_no INTEGER NOT NULL,  -- stable locator
-  entry_id INTEGER,                                                                -- cache, rebuilt on reindex
-  color TEXT, note TEXT, created_at TEXT NOT NULL);
+  entry_id INTEGER,                                                                -- cache kept by the writer; NULL = orphan
+  color TEXT, note TEXT, created_at TEXT NOT NULL,
+  fp TEXT);                                                                        -- record fingerprint (store/bookmarks.py)
 CREATE TABLE saved_view(id INTEGER PRIMARY KEY, name TEXT NOT NULL, filter TEXT NOT NULL, columns TEXT, created_at TEXT NOT NULL);

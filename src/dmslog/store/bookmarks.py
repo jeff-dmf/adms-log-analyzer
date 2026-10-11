@@ -1,11 +1,15 @@
 """Bookmarks of a case (table ``bookmark``; user data that survives reindexing) and record compare.
 
 A bookmark is a record plus a color and a note. It is located by ``(collection_id, member, line_no)``
-(the stable locator of ARQUITETURA 5), not by entry id: ``entry_id`` is only a cache. Reads resolve
-the locator lazily, so a bookmark keeps pointing at the right record after the entry rows were
-rebuilt; :func:`reassociate` rewrites the cache after a reindex (the writer calls it; ROADMAP 7.1).
-A bookmark whose record no longer exists is an *orphan*: it stays listed (``orphan: true``) and is
-re-linked by the next :func:`reassociate` if the line comes back.
+(the stable locator of ARQUITETURA 5) plus ``fp``, a fingerprint of the record (byte offset, timestamp
+and the start of the message), because after a truncation another record can sit at the same line.
+``entry_id`` is a cache that the writer keeps right in the same transaction that changes the records
+(ARQUITETURA 9.3): :func:`detach_entries` before records are deleted, :func:`attach_entries` after
+records are inserted and :func:`move_members` when a rotation renames a source. A bookmark whose
+record no longer exists is an *orphan* (``entry_id`` NULL, listed with ``orphan: true``); it is
+re-linked when a record with the same locator and fingerprint is indexed again. :func:`reassociate`
+rebuilds every cache from the locators (schema migration 4, or after rows were changed outside the
+writer); reads also re-check a cache that does not hold its locator any more.
 
 Every value reaches SQL as a bound parameter. Notes are untrusted free text: sanitized here
 (NFC, control characters removed except newline and tab) and shown by the UI through
@@ -17,6 +21,7 @@ This module also holds the line-level diff behind ``GET /api/compare`` (:func:`d
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import re
 import sqlite3
@@ -49,6 +54,7 @@ MAX_SEARCH_MSG_CHARS = 65_536  # search horizon per message, same as the full-te
 MAX_SEARCH_BATCH_CHARS = 1_000_000  # message characters held in memory at once by the text filter
 MAX_COMPARE_PAIRS = 20_000  # line pairs the exact diff may examine; beyond it a positional diff is used
 MAX_COMPARE_CHARS = 400_000
+FP_MSG_CHARS = 64  # message characters in the fingerprint (a partial last record may be shorter)
 _IDENT = re.compile(r"[^\x00-\x1f\x7f]{1,128}\Z")
 
 ERROR_MESSAGES = {
@@ -155,6 +161,59 @@ def _locator_of_entry(conn: sqlite3.Connection, entry_id: int) -> tuple[int, str
     return None if row is None else (row[0], row[1], row[2])
 
 
+def fingerprint(byte_off: int, ts: int | None, msg: str, length: int | None = None) -> str | None:
+    """``"<n>:<digest>"`` of a record: byte offset, timestamp and the first ``n`` message characters.
+
+    ``n`` is ``min(len(msg), FP_MSG_CHARS)`` unless given; None when the message is shorter than ``length``.
+    Keeping ``n`` lets a partial last record (cut inside its first line) match the completed record.
+    """
+    n = min(len(msg), FP_MSG_CHARS) if length is None else length
+    if n < 0 or len(msg) < n:
+        return None
+    text = f"{byte_off}\x1f{'' if ts is None else ts}\x1f{msg[:n]}".encode("utf-8", "surrogatepass")
+    return f"{n}:{hashlib.blake2b(text, digest_size=10).hexdigest()}"
+
+
+def fp_matches(fp: str | None, byte_off: int, ts: int | None, msg: str) -> bool:
+    """True when the record has the bookmarked fingerprint (no fingerprint: the locator alone decides)."""
+    if fp is None:
+        return True
+    head, sep, _ = fp.partition(":")
+    if not sep or not head.isdigit() or int(head) > FP_MSG_CHARS:
+        return False
+    return fingerprint(byte_off, ts, msg, int(head)) == fp
+
+
+def has_bookmarks(conn: sqlite3.Connection) -> bool:
+    """One probe; the writer calls it before any bookmark work, so an empty table costs nothing more."""
+    return conn.execute("SELECT 1 FROM bookmark LIMIT 1").fetchone() is not None
+
+
+def _fp_column(conn: sqlite3.Connection) -> str:
+    """``fp`` on a migrated case, ``NULL`` on a case still at schema 3 (read-only connections)."""
+    # Column names from a cursor: PRAGMA is not allowed under read_guard.
+    columns = {d[0] for d in conn.execute("SELECT * FROM bookmark LIMIT 0").description}
+    return "fp" if "fp" in columns else "NULL"
+
+
+_Facts = tuple[int, int | None, str]  # byte_off, ts, start of msg
+
+
+def _entry_facts(conn: sqlite3.Connection, entry_ids: Iterable[int]) -> dict[int, _Facts]:
+    """``entry id -> (byte_off, ts, start of msg)``: what a fingerprint needs."""
+    ids = sorted(set(entry_ids))
+    out: dict[int, _Facts] = {}
+    for start in range(0, len(ids), _CHUNK):
+        chunk = ids[start : start + _CHUNK]
+        marks = ",".join("?" * len(chunk))
+        for eid, byte_off, ts, msg in conn.execute(
+            f"SELECT id, byte_off, ts, substr(msg, 1, {FP_MSG_CHARS}) FROM entry WHERE id IN ({marks})",  # noqa: S608
+            chunk,
+        ):
+            out[eid] = (byte_off, ts, msg)
+    return out
+
+
 def _resolve(
     conn: sqlite3.Connection, locators: Iterable[tuple[int, str, int]]
 ) -> dict[tuple[int, str, int], int]:
@@ -195,11 +254,35 @@ _BM_COLUMNS = "id, collection_id, member, line_no, entry_id, color, note, create
 
 
 def _resolve_rows(conn: sqlite3.Connection, rows: list[tuple[Any, ...]]) -> dict[int, int | None]:
-    """bookmark id -> entry id (None for an orphan), using the cache when it is still right."""
+    """bookmark id -> entry id (None for an orphan).
+
+    A cache that still holds its locator is used as is; NULL is an orphan the writer already
+    detached. A cache pointing elsewhere (rows rebuilt outside the writer, or a case not yet
+    migrated) is resolved by locator and accepted only when the record has the bookmark's fingerprint.
+    """
     valid = _cache_valid(conn, [(r[0], r[1], r[2], r[3], r[4]) for r in rows])
-    stale = [(r[1], r[2], r[3]) for r in rows if r[0] not in valid]
-    found = _resolve(conn, stale) if stale else {}
-    return {r[0]: (r[4] if r[0] in valid else found.get((r[1], r[2], r[3]))) for r in rows}
+    stale = [r for r in rows if r[4] is not None and r[0] not in valid]
+    out: dict[int, int | None] = {r[0]: (r[4] if r[0] in valid else None) for r in rows}
+    if not stale:
+        return out
+    found = _resolve(conn, [(r[1], r[2], r[3]) for r in stale])
+    facts = _entry_facts(conn, found.values())
+    fps = _fingerprints(conn, [r[0] for r in stale])
+    for r in stale:
+        eid = found.get((r[1], r[2], r[3]))
+        if eid is not None and eid in facts and fp_matches(fps.get(r[0]), *facts[eid]):
+            out[r[0]] = eid
+    return out
+
+
+def _fingerprints(conn: sqlite3.Connection, bookmark_ids: list[int]) -> dict[int, str | None]:
+    column = _fp_column(conn)
+    out: dict[int, str | None] = {}
+    for start in range(0, len(bookmark_ids), _CHUNK):
+        chunk = bookmark_ids[start : start + _CHUNK]
+        marks = ",".join("?" * len(chunk))
+        out.update(conn.execute(f"SELECT id, {column} FROM bookmark WHERE id IN ({marks})", chunk))  # noqa: S608
+    return out
 
 
 def _summaries(conn: sqlite3.Connection, entry_ids: list[int]) -> dict[int, tuple[Any, ...]]:
@@ -346,7 +429,9 @@ def get_bookmark(conn: sqlite3.Connection, bookmark_id: int) -> dict[str, Any]:
 def for_entries(conn: sqlite3.Connection, entry_ids: list[int]) -> dict[int, dict[str, Any]]:
     """Bookmarks of the given records (the grid's marker column): ``entry_id -> {id, color, note}``.
 
-    Matches by locator, so it is right even before :func:`reassociate` ran after a reindex.
+    A bookmark marks a record when its cache points at it, or, for a cache that is stale (rows
+    rebuilt outside the writer), when the record has the bookmark's locator and fingerprint. An
+    orphan (cache NULL) marks nothing, even when another record now sits at its line.
     """
     if (
         not isinstance(entry_ids, list)
@@ -355,10 +440,12 @@ def for_entries(conn: sqlite3.Connection, entry_ids: list[int]) -> dict[int, dic
     ):
         raise BookmarkError("bad_ids", limit=MAX_LOOKUP_IDS)
     with read_guard(conn, PAGE_TIMEOUT_S):
-        marks = {
-            (r[1], r[2], r[3]): r
-            for r in conn.execute(f"SELECT {_BM_COLUMNS} FROM bookmark")  # noqa: S608
-        }
+        marks: dict[tuple[int, str, int], list[tuple[Any, ...]]] = {}
+        for r in conn.execute(
+            f"SELECT id, collection_id, member, line_no, entry_id, color, note, {_fp_column(conn)}"  # noqa: S608
+            " FROM bookmark WHERE entry_id IS NOT NULL ORDER BY id"
+        ):
+            marks.setdefault((r[1], r[2], r[3]), []).append(r)
         if not marks:
             return {}
         out: dict[int, dict[str, Any]] = {}
@@ -366,15 +453,25 @@ def for_entries(conn: sqlite3.Connection, entry_ids: list[int]) -> dict[int, dic
         for start in range(0, len(unique), _CHUNK):
             chunk = unique[start : start + _CHUNK]
             qs = ",".join("?" * len(chunk))
-            for eid, collection_id, member, line_no in conn.execute(
-                "SELECT e.id, s.collection_id, s.member, e.line_no FROM entry e"  # noqa: S608
+            for eid, collection_id, member, line_no, byte_off, ts, msg in conn.execute(
+                "SELECT e.id, s.collection_id, s.member, e.line_no, e.byte_off, e.ts,"  # noqa: S608
+                f" substr(e.msg, 1, {FP_MSG_CHARS}) FROM entry e"
                 f" JOIN source s ON s.id = e.source_id WHERE e.id IN ({qs})",
                 chunk,
             ):
-                row = marks.get((collection_id, member, line_no))
+                candidates = marks.get((collection_id, member, line_no), [])
+                row = next((c for c in candidates if c[4] == eid), None)
+                if row is None:
+                    stale = (c for c in candidates if not _cache_holds(conn, c))
+                    row = next((c for c in stale if fp_matches(c[7], byte_off, ts, msg)), None)
                 if row is not None:
                     out[eid] = {"id": row[0], "color": row[5], "has_note": bool(row[6])}
         return out
+
+
+def _cache_holds(conn: sqlite3.Connection, row: tuple[Any, ...]) -> bool:
+    """True when the cached entry of a bookmark row still sits at the bookmark's locator."""
+    return bool(_cache_valid(conn, [(row[0], row[1], row[2], row[3], row[4])]))
 
 
 # --------------------------------------------------------------------------- writes
@@ -388,24 +485,43 @@ def create_bookmark(
     clean = clean_note(note)
     if not is_sql_int(entry_id):
         raise BookmarkError("entry_not_found", entry_id=str(entry_id)[:20])
+    _ensure_schema(conn)
     with _Tx(conn):
         loc = _locator_of_entry(conn, entry_id)
         if loc is None:
             raise BookmarkError("entry_not_found", entry_id=entry_id)
-        existing = conn.execute(
-            "SELECT id FROM bookmark WHERE collection_id = ? AND member = ? AND line_no = ?", loc
-        ).fetchone()
-        if existing:
-            raise BookmarkError("already_bookmarked", bookmark_id=existing[0])
+        rows = conn.execute(
+            f"SELECT {_BM_COLUMNS} FROM bookmark WHERE collection_id = ? AND member = ? AND line_no = ?"  # noqa: S608
+            " ORDER BY id",
+            loc,
+        ).fetchall()
+        resolved = _resolve_rows(conn, rows) if rows else {}
+        existing = next((r[0] for r in rows if resolved[r[0]] == entry_id), None)
+        if existing is not None:  # orphans at the same line belong to another record: they do not count
+            raise BookmarkError("already_bookmarked", bookmark_id=existing)
         if conn.execute("SELECT count(*) FROM bookmark").fetchone()[0] >= MAX_BOOKMARKS:
             raise BookmarkError("too_many", limit=MAX_BOOKMARKS)
         cur = conn.execute(
-            "INSERT INTO bookmark(collection_id, member, line_no, entry_id, color, note, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (*loc, entry_id, clean_color, clean, _now()),
+            "INSERT INTO bookmark(collection_id, member, line_no, entry_id, color, note, created_at, fp)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (*loc, entry_id, clean_color, clean, _now(), _fp_of_entry(conn, entry_id)),
         )
         new_id = cur.lastrowid
     return get_bookmark(conn, new_id)  # type: ignore[arg-type]
+
+
+def _fp_of_entry(conn: sqlite3.Connection, entry_id: int) -> str | None:
+    facts = _entry_facts(conn, [entry_id]).get(entry_id)
+    return None if facts is None else fingerprint(*facts)
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Bring a case created by an older dmslog to the current schema before writing a bookmark."""
+    from .db import SCHEMA_VERSION, get_user_version, migrate
+
+    if get_user_version(conn) < SCHEMA_VERSION:
+        migrate(conn)
+        conn.commit()
 
 
 _UNSET: Any = object()
@@ -445,23 +561,129 @@ def delete_bookmark(conn: sqlite3.Connection, bookmark_id: int) -> None:
 
 
 def reassociate(conn: sqlite3.Connection) -> dict[str, int]:
-    """Rewrite the ``entry_id`` cache of every bookmark from its locator (after a reindex).
+    """Rebuild the ``entry_id`` cache (and missing fingerprints) of every bookmark from its locator.
 
-    Bookmarks whose record is gone get ``entry_id = NULL`` (orphans stay and can come back).
+    A bookmark is linked to the record at its locator when the record has its fingerprint (a
+    bookmark without one takes the record and gets its fingerprint); otherwise it becomes an orphan
+    (``entry_id = NULL``). One record gets at most one bookmark. Idempotent. The writer keeps the cache
+    right on its own; this full pass is for the schema migration and for rows changed outside it.
     Returns ``{"bookmarks", "relinked", "orphaned"}``; relinked counts caches that changed.
     """
     with _Tx(conn):
-        rows = conn.execute(f"SELECT {_BM_COLUMNS} FROM bookmark").fetchall()  # noqa: S608
-        found = _resolve(conn, [(r[1], r[2], r[3]) for r in rows])
-        relinked = orphaned = 0
-        for r in rows:
-            new = found.get((r[1], r[2], r[3]))
-            if new is None:
-                orphaned += 1
-            if new != r[4]:
-                relinked += 1
-                conn.execute("UPDATE bookmark SET entry_id = ? WHERE id = ?", (new, r[0]))
+        return relink_all(conn)
+
+
+def relink_all(conn: sqlite3.Connection) -> dict[str, int]:
+    """:func:`reassociate` inside the caller's transaction (used by the schema migration)."""
+    rows = conn.execute(
+        "SELECT id, collection_id, member, line_no, entry_id, fp FROM bookmark ORDER BY fp IS NULL, id"
+    ).fetchall()
+    found = _resolve(conn, [(r[1], r[2], r[3]) for r in rows])
+    facts = _entry_facts(conn, found.values())
+    taken: set[int] = set()
+    relinked = orphaned = 0
+    for bid, collection_id, member, line_no, cached, fp in rows:
+        eid = found.get((collection_id, member, line_no))
+        ok = eid is not None and eid not in taken and eid in facts and fp_matches(fp, *facts[eid])
+        new = eid if ok else None
+        new_fp = fingerprint(*facts[eid]) if ok and fp is None else fp  # type: ignore[index]
+        if new is None:
+            orphaned += 1
+        else:
+            taken.add(new)
+        if new != cached:
+            relinked += 1
+        if new != cached or new_fp != fp:
+            conn.execute("UPDATE bookmark SET entry_id = ?, fp = ? WHERE id = ?", (new, new_fp, bid))
     return {"bookmarks": len(rows), "relinked": relinked, "orphaned": orphaned}
+
+
+# --------------------------------------------------------------------------- writer hooks
+# Called by store/writer.py inside its open transaction, so the cache changes atomically with the
+# records (a rollback undoes both). Each starts with one probe and returns at once on an empty table.
+
+_NewRow = tuple[int, int, int, int, int | None, str]  # entry_id, source_id, line_no, byte_off, ts, msg
+
+
+def detach_entries(conn: sqlite3.Connection, source_id: int, from_byte_off: int = 0) -> int:
+    """Before the records of a source at or after ``from_byte_off`` are deleted: orphan their bookmarks.
+
+    The fingerprint of a bookmark that has none yet is taken from the record before it disappears,
+    so a different record indexed later at the same line is not taken for it. Returns the count.
+    """
+    if not has_bookmarks(conn):
+        return 0
+    rows = conn.execute(
+        "SELECT b.id, b.fp, e.byte_off, e.ts, substr(e.msg, 1, ?) FROM bookmark b"
+        " CROSS JOIN entry e ON e.id = b.entry_id"  # bookmarks drive the loop: never a scan of the source
+        " WHERE e.source_id = ? AND e.byte_off >= ? AND e.line_no = b.line_no",
+        (FP_MSG_CHARS, source_id, from_byte_off),
+    ).fetchall()
+    for bid, fp, byte_off, ts, msg in rows:
+        conn.execute(
+            "UPDATE bookmark SET entry_id = NULL, fp = ? WHERE id = ?",
+            (fp if fp is not None else fingerprint(byte_off, ts, msg), bid),
+        )
+    return len(rows)
+
+
+def attach_entries(conn: sqlite3.Connection, rows: Iterable[_NewRow]) -> int:
+    """After records were inserted: link the orphan bookmarks whose record they are.
+
+    ``rows`` holds ``(entry_id, source_id, line_no, byte_off, ts, msg)`` of the inserted records and
+    is only consumed when some orphan bookmark lives in one of their sources. A bookmark with a
+    fingerprint needs a match; one without (older cases) takes the record at its line, unless a
+    bookmark with a matching fingerprint claims it. Returns the number of bookmarks linked.
+    """
+    if not has_bookmarks(conn):
+        return 0
+    wanted: dict[tuple[int, int], list[tuple[int, str | None]]] = {}
+    for bid, sid, line_no, fp in conn.execute(
+        "SELECT b.id, s.id, b.line_no, b.fp FROM bookmark b"
+        " JOIN source s ON s.collection_id = b.collection_id AND s.member = b.member"
+        " WHERE b.entry_id IS NULL ORDER BY b.fp IS NULL, b.id"
+    ):
+        wanted.setdefault((sid, line_no), []).append((bid, fp))
+    if not wanted:
+        return 0
+    sources = {sid for sid, _line in wanted}
+    linked = 0
+    for entry_id, source_id, line_no, byte_off, ts, msg in rows:
+        if source_id not in sources:
+            continue
+        candidates = wanted.get((source_id, line_no))
+        if not candidates:
+            continue
+        for bid, fp in candidates:
+            if fp_matches(fp, byte_off, ts, msg):
+                conn.execute(
+                    "UPDATE bookmark SET entry_id = ?, fp = ? WHERE id = ?",
+                    (entry_id, fp if fp is not None else fingerprint(byte_off, ts, msg), bid),
+                )
+                linked += 1
+                candidates.remove((bid, fp))
+                break  # one bookmark per record
+    return linked
+
+
+def move_members(conn: sqlite3.Connection, renames: Mapping[int, str]) -> None:
+    """Before sources are renamed (rotation, ``{source_id: new member}``): move their bookmarks along.
+
+    In two steps, like the sources, because a rotation can swap names (``.log`` -> ``.log.0`` while
+    ``.log.0`` -> ``.log.1``). Cached entry ids stay right: the records keep their ids.
+    """
+    if not renames or not has_bookmarks(conn):
+        return
+    moves: list[tuple[int, str, str, str]] = []
+    for sid, new_member in renames.items():
+        row = conn.execute("SELECT collection_id, member FROM source WHERE id = ?", (sid,)).fetchone()
+        if row is not None and row[1] != new_member:
+            moves.append((row[0], row[1], f"{row[1]}\x00{sid}", new_member))
+    sql = "UPDATE bookmark SET member = ? WHERE collection_id = ? AND member = ?"
+    for collection_id, old, parked, _new in moves:
+        conn.execute(sql, (parked, collection_id, old))
+    for collection_id, _old, parked, new in moves:
+        conn.execute(sql, (new, collection_id, parked))
 
 
 # --------------------------------------------------------------------------- export / import
@@ -513,6 +735,7 @@ def import_bookmarks(conn: sqlite3.Connection, data: Any) -> dict[str, int]:
     if len(items) > MAX_BOOKMARKS:
         raise BookmarkError("import_too_large", limit=MAX_BOOKMARKS)
     counts = {"imported": 0, "existing": 0, "unmatched": 0, "invalid": 0}
+    _ensure_schema(conn)
     with _Tx(conn):
         total = conn.execute("SELECT count(*) FROM bookmark").fetchone()[0]
         for item in items:
@@ -541,11 +764,18 @@ def import_bookmarks(conn: sqlite3.Connection, data: Any) -> dict[str, int]:
             entry = conn.execute(
                 "SELECT id FROM entry WHERE source_id = ? AND line_no = ?", (src[0], line_no)
             ).fetchone()
+            entry_id = entry[0] if entry else None
+            if (
+                entry_id is not None
+                and conn.execute("SELECT 1 FROM bookmark WHERE entry_id = ?", (entry_id,)).fetchone()
+            ):
+                entry_id = None  # never two bookmarks on one record
             conn.execute(
-                "INSERT INTO bookmark(collection_id, member, line_no, entry_id, color, note, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (collection_id, member, line_no, entry[0] if entry else None, color, note, created),
-            )
+                "INSERT INTO bookmark(collection_id, member, line_no, entry_id, color, note, created_at, fp)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (collection_id, member, line_no, entry_id, color, note, created,
+                 None if entry_id is None else _fp_of_entry(conn, entry_id)),
+            )  # fmt: skip
             total += 1
             counts["imported"] += 1
     return counts

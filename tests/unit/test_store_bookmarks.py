@@ -1,4 +1,4 @@
-"""Bookmarks store: CRUD, lazy locator resolution, reassociation, export/import (synthetic data)."""
+"""Bookmarks store: CRUD, stale caches, fingerprints, reassociation, export/import (synthetic data)."""
 
 from __future__ import annotations
 
@@ -143,18 +143,38 @@ def test_lazy_resolution_and_reassociate_after_reindex(conn):
     assert bm.reassociate(conn) == {"bookmarks": 3, "relinked": 0, "orphaned": 1}  # idempotent
 
 
-def test_orphan_comes_back(conn):
+def test_orphan_comes_back_only_with_its_own_record(conn):
     made = bm.create_bookmark(conn, 4)
+    original = conn.execute("SELECT byte_off, ts, msg FROM entry WHERE id = 4").fetchone()
     reindex(conn, drop={4})
     bm.reassociate(conn)
     assert bm.get_bookmark(conn, made["id"])["orphan"] is True
-    conn.execute(
+    insert = (
         "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, level, sev, tpl_id, msg)"
-        " VALUES (500, 1, 4, 0, 1, 1, 3, 4, 0, 'back')"
+        " VALUES (?, 1, 4, ?, 1, ?, 3, 4, 0, ?)"
     )
+    conn.execute(insert, (500, 0, 1, "another record"))  # same line, different record
+    conn.commit()
+    assert bm.reassociate(conn)["orphaned"] == 1
+    assert bm.for_entries(conn, [500]) == {}
+    conn.execute("DELETE FROM entry WHERE id = 500")
+    conn.execute(insert, (501, *original))  # the bookmarked record itself
     conn.commit()
     assert bm.reassociate(conn)["orphaned"] == 0
-    assert bm.get_bookmark(conn, made["id"])["entry_id"] == 500
+    assert bm.get_bookmark(conn, made["id"])["entry_id"] == 501
+
+
+def test_fingerprint_tolerates_a_completed_first_line_only():
+    fp = bm.fingerprint(10, 5, "partial li")
+    assert bm.fp_matches(fp, 10, 5, "partial line, now complete")
+    assert not bm.fp_matches(fp, 11, 5, "partial line, now complete")
+    assert not bm.fp_matches(fp, 10, 6, "partial line, now complete")
+    assert not bm.fp_matches(fp, 10, 5, "partial")  # shorter than what was bookmarked
+    long_fp = bm.fingerprint(0, None, "x" * 500)
+    assert bm.fp_matches(long_fp, 0, None, "x" * bm.FP_MSG_CHARS + "different tail")
+    assert bm.fp_matches(None, 1, 2, "anything")  # bookmarks from before fingerprints
+    for bad in ("", "x:y", "999:abc", "-1:abc"):
+        assert not bm.fp_matches(bad, 0, None, "x")
 
 
 def test_for_entries_validation_and_empty(conn):

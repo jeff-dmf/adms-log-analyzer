@@ -53,7 +53,7 @@ def test_schema_objects_exist(conn):
     assert names(conn, "table") >= TABLES
     assert INDEXES <= names(conn, "index")
     assert names(conn, "view") == {"entry_text"}
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 4
 
 
 def test_pragmas(conn):
@@ -143,7 +143,7 @@ def test_schema_loaded_from_zipapp(tmp_path):
     out = subprocess.run(
         [sys.executable, "-I", "-c", code, str(pyz), str(db_path)], capture_output=True, text=True, check=True
     )
-    assert out.stdout.strip() == "3"
+    assert out.stdout.strip() == str(SCHEMA_VERSION)
     check = sqlite3.connect(db_path)
     assert "entry_fts" in names(check, "table")
     check.close()
@@ -164,5 +164,27 @@ def test_migration_2_backfills_bucket_sev_from_bucket(tmp_path):
     assert migrate(conn) == SCHEMA_VERSION
     rows = conn.execute("SELECT source_id, minute, sev, n FROM bucket_sev ORDER BY 1, 2, 3").fetchall()
     assert rows == [(1, 10, 2, 7), (1, 10, 4, 5), (2, 11, 2, 1)]
+    assert migrate(conn) == SCHEMA_VERSION
+    conn.close()
+
+
+def test_migration_4_adds_the_fingerprint_and_rebuilds_bookmark_caches(tmp_path):
+    from dmslog.store import bookmarks as bm
+    from dmslog.store.db import MIGRATIONS
+
+    conn = connect(tmp_path / "v3.sqlite")
+    MIGRATIONS[1](conn)
+    conn.execute("ALTER TABLE bookmark DROP COLUMN fp")  # what a version-3 database looks like
+    conn.execute("PRAGMA user_version=3")
+    add_entry(conn, "kept record", entry_id=7)
+    conn.execute(
+        "INSERT INTO bookmark(collection_id, member, line_no, entry_id, created_at) VALUES"
+        " (1, 'a.log', 1, 3, 't'),"  # stale cache from a reindex before v4
+        " (1, 'a.log', 9, 4, 't')"  # its record is gone
+    )
+    conn.commit()
+    assert migrate(conn) == SCHEMA_VERSION
+    rows = conn.execute("SELECT line_no, entry_id, fp FROM bookmark ORDER BY id").fetchall()
+    assert rows == [(1, 7, bm.fingerprint(0, None, "kept record")), (9, None, None)]
     assert migrate(conn) == SCHEMA_VERSION
     conn.close()

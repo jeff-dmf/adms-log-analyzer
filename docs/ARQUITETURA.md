@@ -386,8 +386,9 @@ CREATE TABLE error_config(
 CREATE TABLE bookmark(
   id INTEGER PRIMARY KEY,
   collection_id INTEGER NOT NULL, member TEXT NOT NULL, line_no INTEGER NOT NULL,  -- localizador estável
-  entry_id INTEGER,                                                                -- cache, refeito na reindexação
-  color TEXT, note TEXT, created_at TEXT NOT NULL);
+  entry_id INTEGER,                                                                -- cache mantido pelo writer; NULL = órfão
+  color TEXT, note TEXT, created_at TEXT NOT NULL,
+  fp TEXT);                                                                        -- impressão do registro (9.3)
 CREATE TABLE saved_view(id INTEGER PRIMARY KEY, name TEXT NOT NULL, filter TEXT NOT NULL, columns TEXT, created_at TEXT NOT NULL);
 ```
 
@@ -841,9 +842,16 @@ Estado por `source`: `size`, `mtime`, `zip_crc`, `head_hash` (4 KiB iniciais), `
 |---|---|---|
 | Membro de zip já indexado | mesmo `zip_crc` + `size` | nada |
 | Arquivo cresceu | `size > indexed_bytes` e `tail_hash` confere | apagar o último registro (pode ter ganho continuações), retomar do `byte_off` dele, recontar `bucket`, refazer derivação/correlação a partir do checkpoint do stream |
-| Rotação | `head_hash` do `.log` mudou e um `.log.0` novo tem o `head_hash` antigo | reapontar o `source` antigo para `.log.0` (mantém registros), criar `source` novo para `.log` e indexar do zero |
-| Truncado/reescrito | `size < indexed_bytes` ou `tail_hash` difere sem rotação | reindexar o arquivo (apaga registros dele em `entry`, `entry_body`, FTS, `entry_key`, `bucket`; bookmarks são reassociados por `member` + `line_no`) |
+| Rotação | `head_hash` do `.log` mudou e um `.log.0` novo tem o `head_hash` antigo | reapontar o `source` antigo para `.log.0` (mantém registros), criar `source` novo para `.log` e indexar do zero; bookmarks do `source` movido mudam de `member` junto |
+| Truncado/reescrito | `size < indexed_bytes` ou `tail_hash` difere sem rotação | reindexar o arquivo (apaga registros dele em `entry`, `entry_body`, FTS, `entry_key`, `bucket`); bookmarks seguem as regras abaixo |
 | Arquivo novo (novo PID após restart) | não há `source` | novo `stream`/`source` |
+
+**Bookmarks na reindexação.** O bookmark é localizado por `(collection_id, member, line_no)` mais `fp`, impressão do registro: hash de `byte_off`, `ts` e dos primeiros `n` caracteres de `msg` (`n` = min(64, tamanho), guardado em `fp`, para que o último registro parcial de um arquivo vivo, cortado na 1ª linha, ainda case quando for completado). `entry_id` é cache mantido pelo writer na **mesma transação** que altera os registros (rollback desfaz os dois):
+- antes de apagar registros (`truncate_from`, `delete_source_entries`): os bookmarks desses registros ficam órfãos (`entry_id = NULL`) e recebem a `fp` do registro se ainda não tinham;
+- depois de inserir um lote (`flush`): um bookmark órfão cuja fonte recebeu um registro na mesma linha volta a apontar para ele se a `fp` casar (bookmark sem `fp`, de antes da v4, aceita o registro da linha); no máximo um bookmark por registro;
+- na rotação (`rename_sources`): os bookmarks mudam de `member` com o `source`, em duas etapas como os sources; os `entry_id` continuam válidos. Bookmarks de um `source` descartado (nome tomado por outro `source` movido) ficam órfãos e não se ligam aos registros do `source` que herdou o nome.
+
+Consequências: reindexação do mesmo conteúdo (versão da extração de payload, envelope redetectado sem mudança, membro de zip com outro CRC e mesmo texto) mantém todos os bookmarks; truncamento com conteúdo novo deixa órfão o bookmark cujo registro sumiu, mesmo que outro registro ocupe a linha; se o conteúdo original voltar, o bookmark é religado. Numa reindexação em vários lotes, um bookmark de linha ainda não reprocessada aparece órfão até o lote dela ser gravado. Órfão = `entry_id` NULL; a API o lista com `orphan: true` e sem `msg`; a coluna de marcadores do grid não marca o registro novo da mesma linha, e ele pode receber um bookmark próprio. Com a tabela vazia, cada gancho custa uma consulta `SELECT 1 FROM bookmark LIMIT 1` por lote (nenhum custo por registro). `bookmarks.reassociate` (passe completo) fica para a migração 4, que cria `fp` e refaz todos os caches, e para linhas alteradas fora do writer; as leituras também revalidam um cache que não aponta mais para o localizador (com `fp`).
 
 Modo `watch`: polling a cada 2 s (configurável) com `os.stat`; novidades viram eventos SSE para a UI ("+342 registros em WfmAdapter"). Exclusões do FTS de conteúdo externo usam o comando `'delete'` com o texto antigo, lido antes de apagar.
 
@@ -1089,3 +1097,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-10 | API de payloads como construída: `GET /api/entries/{id}/payloads`, `GET /api/payloads/{id}?format=pretty\|raw`, `GET /api/payloads/page` (**`GET`**, não `POST`; keyset, `orphan`, `event`, `q`), `payload_count` no registro e folha `{"payload": {roles, fmt, orphan, ...}}` da árvore de filtros; rotas `/api/knowledge/error/{family}/{code}`, `/param` e `/adapter` não construídas (seção 10) | Sessão principal (registro do que a `main` implementa) |
 | 2026-10-10 | Checagem de `Origin` documentada para métodos que alteram estado (`POST`/`DELETE` na `main`; `PUT`/`PATCH` com o PR #25 do M7) e formato do erro de validação das rotas (seções 10 e 12) | Sessão principal (registro do que a `main` implementa) |
 | 2026-10-11 | U1/D10 revistas: repositório público; o pack do vault sai do repositório e dos artefatos públicos. Resolução em tempo de execução (`--pack-dir`, `DMSLOG_PACK_DIR`, `<pasta de dados>/knowledge/pack/`, `knowledge/pack/` ao lado do `.pyz`), estados `installed`/`not_installed`/`invalid`, app funcional sem pack (`knowledge_pack` nas respostas de conhecimento, linha em `dmslog info`), `kb_build` escreve fora do repo, `build_portable.py --pack` só para build interno, guarda `packaging/check_no_pack.py` no CI e fixture sintética `tests/fixtures/knowledge/mini_pack/` (seções 1a, 2, 4, 7.1, 12, 14) | Opus |
+| 2026-10-11 | Bookmarks (ROADMAP 7.1): esquema v4 com `bookmark.fp` (impressão do registro) e passe único de `reassociate` na migração; o writer mantém `bookmark.entry_id` na mesma transação dos registros (órfão antes de apagar, religa depois de inserir quando a `fp` casa, move `member` na rotação); órfão = `entry_id` NULL; leituras confiam no cache e revalidam só cache inconsistente (seções 5 e 9.3) | Opus |
