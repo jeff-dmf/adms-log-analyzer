@@ -177,31 +177,33 @@ def test_mode_defaults_to_strict_and_is_validated(tmp_path):
     assert 'mode = "strict"' in dump_profile_toml(Profile())
 
 
-def test_all_categories_off_turns_the_nets_off_too():
-    off = Redactor(
-        Profile(
-            categories=dict.fromkeys(
-                (
-                    "guid",
-                    "gid",
-                    "ticket",
-                    "mrid",
-                    "plate",
-                    "host",
-                    "ip",
-                    "user",
-                    "url",
-                    "path",
-                    "email",
-                    "phone",
-                    "person",
-                ),
-                False,
-            )
-        )
+def test_all_categories_off_keeps_the_strict_nets_and_turns_standard_off():
+    # only the explicit option not to anonymize exports the text untouched; in strict mode switching
+    # every category off still leaves the default-deny net (see test_redact_strict_all_off.py)
+    flags = dict.fromkeys(
+        (
+            "guid",
+            "gid",
+            "ticket",
+            "mrid",
+            "plate",
+            "host",
+            "ip",
+            "user",
+            "url",
+            "path",
+            "email",
+            "phone",
+            "person",
+        ),
+        False,
     )
     text = "user: Ana Quintanilha"
-    assert off.redact(text) is text and not off.strict
+    strict = Redactor(Profile(categories=dict(flags)))
+    out = strict.redact(text)
+    assert strict.strict and strict.active and "Quintanilha" not in out and "<VALUE-" in out
+    standard = Redactor(Profile(categories=dict(flags), mode="standard"))
+    assert standard.redact(text) is text and not standard.strict and not standard.active
 
 
 # -- free text: labels -------------------------------------------------------------------------------
