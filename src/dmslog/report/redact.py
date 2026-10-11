@@ -116,6 +116,8 @@ written for, so the net keeps only what is PROVEN harmless and replaces everythi
 * The strict spans fill the gaps the other rules leave: a GUID inside a labelled value keeps its
   ``<GUID-n>`` marker. A category switched off takes its own marker with it: in standard mode the value
   stays; in strict mode a labelled value or template field of that category becomes ``<VALUE-n>``.
+  Every category switched off does not turn the strict nets off: only the explicit option not to
+  anonymize exports a text untouched. In standard mode, every category off redacts nothing.
 
 Maintenance of :data:`PROVEN_FIELDS`: a new template needs nothing (its variable fields are replaced
 by default). An entry is added only with a validator that proves the value harmless; "*" (any
@@ -1909,8 +1911,9 @@ class Redactor:
         self._distinct: dict[str, int] = {}
         self._replaced: dict[str, int] = {}
         self.overflow = 0
-        # strict nets (the structural safety net; see the module docstring)
-        self.strict = self.profile.mode == "strict" and bool(self._finders or self._fields)
+        # strict nets (the structural safety net; see the module docstring): on in strict mode even when
+        # every category is off; only the explicit option not to anonymize skips the redactor
+        self.strict = self.profile.mode == "strict"
         self._names: frozenset[str] = frozenset()
         self._levels: frozenset[str] = frozenset()
         self._codes: frozenset[str] = frozenset()
@@ -1931,7 +1934,9 @@ class Redactor:
 
     @property
     def active(self) -> bool:
-        return bool(self._finders or self._literal_rules or self._fields)
+        """Whether :meth:`redact` can change a text: always in strict mode (the nets stay on with every
+        category off); in standard mode, only with a pattern, a term or a structured field on."""
+        return self.strict or bool(self._finders or self._literal_rules or self._fields)
 
     @property
     def mode(self) -> str:
