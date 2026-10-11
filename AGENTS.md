@@ -38,7 +38,6 @@ Em dúvida, o mais barato que dê conta; subir de papel se falhar por falta de r
 - Custo da revisão: classifique o PR em T0/T1/T2 e siga o orçamento de contexto e o prompt-modelo de `docs/REVISAO-CRUZADA.md` (sem `cat` de documentos grandes, saída curta, re-revisão só do diff incremental). Revisor padrão `gpt-6.1-sol`; `gpt-6-astra` só em caso extremamente complexo. Se o outro harness estiver indisponível, o Jefferson pode aprovar manualmente (registrar em comentário no PR). Exceção registrada: PR #10.
 - Logs de exemplo são lidos por script (templates, contagens), nunca por leitura integral.
 - `~/Projects/adms-v3.9` é só leitura.
-- Pendências e decisões abertas do Jefferson vivem na issue GitHub #18 (checklist): ler no início da sessão (`gh issue view 18 --comments`), tratar o que estiver marcado ou comentado como decisão, registrar em `docs/ARQUITETURA.md` seção 1a e não repetir as perguntas na conversa.
 - Não commitar credenciais nem dados de clientes.
 - ai-memory via MCP aqui é cliente **estático**: passe `workspace = "adms-log-analyzer"` e `project = "adms-log-analyzer"` em toda chamada de escopo de projeto (ver `.ai-memory.toml`).
 

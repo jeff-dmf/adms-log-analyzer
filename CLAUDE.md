@@ -51,7 +51,6 @@ Regras:
 - Viewer = web local (`http.server` + HTML/JS vendorizado, sem framework nem build). Conteúdo de log é dado não confiável: na UI só `textContent`, nunca `innerHTML`.
 - Logs vivos: abrir, ler e fechar a cada ciclo; nunca manter handle aberto (no Windows impede a rotação `.log` → `.log.0`).
 - Arquitetura, esquema e interfaces: `docs/ARQUITETURA.md`; marcos e modelo por tarefa: `docs/ROADMAP.md`.
-- **Pendências e decisões abertas do Jefferson vivem na issue GitHub #18** (checklist): ler no início da sessão (`gh issue view 18 --comments`), tratar o que estiver marcado ou comentado como decisão, registrar em `docs/ARQUITETURA.md` seção 1a e não repetir as perguntas na conversa.
 - Decisões do usuário (escopo da 1.0, um ERS por caso, payload, horário local, precedência do Registry, exportação `.txt`, repo privado): `docs/ARQUITETURA.md`, seção 1a.
 - Dados sensíveis ficam locais: servidor só em `127.0.0.1`, índice/cache em pasta do usuário, nada de telemetria.
 
