@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -245,10 +246,23 @@ def pack_candidates(
 
 
 def _present(directory: Path) -> bool:
+    """True when ``directory`` holds entries; False when it is absent or empty.
+
+    A location that exists but is not a usable folder (a file in its place, an access error while
+    listing) raises :class:`PackError`: it is invalid, never silently absent.
+    """
     try:
-        return directory.is_dir() and any(directory.iterdir())
-    except OSError:
+        info = directory.stat()
+    except FileNotFoundError:
         return False
+    except OSError as exc:
+        raise PackError(f"{directory}: cannot be accessed ({exc})") from exc
+    if not stat.S_ISDIR(info.st_mode):
+        raise PackError(f"{directory}: exists but is not a directory")
+    try:
+        return any(directory.iterdir())
+    except OSError as exc:
+        raise PackError(f"{directory}: cannot be listed ({exc})") from exc
 
 
 def locate_pack(candidates: list[tuple[str, Path]]) -> tuple[PackStatus, Pack | None]:
@@ -256,9 +270,9 @@ def locate_pack(candidates: list[tuple[str, Path]]) -> tuple[PackStatus, Pack | 
     searched = tuple(candidates)
     explicit = len(candidates) == 1 and candidates[0][0] in (SOURCE_OPTION, SOURCE_ENV)
     for source, directory in candidates:
-        if not explicit and not _present(directory):
-            continue
         try:
+            if not explicit and not _present(directory):
+                continue
             pack = load_pack_from(directory)
         except (PackError, OSError, ValueError, TypeError, KeyError) as exc:
             return PackStatus(STATE_INVALID, source, directory, searched, None, str(exc)), None

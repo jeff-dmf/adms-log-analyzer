@@ -192,3 +192,47 @@ def test_nothing_found(tmp_path):
 def test_the_package_ships_no_pack():
     package = ROOT / "src" / "dmslog" / "knowledge"
     assert not list(package.glob("pack/*.json")), "the knowledge pack must not live in the package"
+
+
+def test_a_file_in_place_of_an_implicit_candidate_is_invalid_without_fallback(tmp_path, mini_pack_dir):
+    data_dir, app = tmp_path / "data", tmp_path / "app"
+    copy_pack(mini_pack_dir, app / "knowledge" / "pack")
+    (data_dir / "knowledge").mkdir(parents=True)
+    (data_dir / "knowledge" / "pack").write_text("not a folder", encoding="utf-8")
+    status, pack = locate_pack(pack_candidates(None, data_dir, {}, app))
+    assert (status.state, status.source, pack) == (STATE_INVALID, SOURCE_DATA_DIR, None)
+    assert str(data_dir / "knowledge" / "pack") in status.error and "not a directory" in status.error
+
+
+def test_an_unlistable_implicit_candidate_is_invalid_without_fallback(tmp_path, mini_pack_dir, monkeypatch):
+    data_dir, app = tmp_path / "data", tmp_path / "app"
+    copy_pack(mini_pack_dir, app / "knowledge" / "pack")
+    locked = data_dir / "knowledge" / "pack"
+    locked.mkdir(parents=True)
+    real_iterdir = Path.iterdir
+
+    def iterdir(self):
+        if self == locked:
+            raise PermissionError(13, "Permission denied")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    status, pack = locate_pack(pack_candidates(None, data_dir, {}, app))
+    assert (status.state, status.source, pack) == (STATE_INVALID, SOURCE_DATA_DIR, None)
+    assert str(locked) in status.error and "cannot be listed" in status.error
+
+
+def test_an_unreachable_implicit_candidate_is_invalid_without_fallback(tmp_path, mini_pack_dir, monkeypatch):
+    data_dir, app = tmp_path / "data", tmp_path / "app"
+    copy_pack(mini_pack_dir, app / "knowledge" / "pack")
+    locked = data_dir / "knowledge" / "pack"
+    real_stat = Path.stat
+
+    def stat(self, *args, **kwargs):
+        if self == locked:
+            raise PermissionError(13, "Permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    status, _ = locate_pack(pack_candidates(None, data_dir, {}, app))
+    assert status.state == STATE_INVALID and status.source == SOURCE_DATA_DIR

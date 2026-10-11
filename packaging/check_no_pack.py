@@ -1,101 +1,437 @@
 """Guard: the knowledge pack never enters the repository nor a public artifact (ARQUITETURA D10).
 
-The pack is derived from product documentation. This check fails (exit 1) when:
+The pack is derived from product documentation. The pack is recognised by its CONTENT, whatever the
+file name, extension or folder (a renamed manifest does not escape). The check fails (exit 1) when:
 
-* a tracked file lives under ``src/dmslog/knowledge/pack/``, or a tracked ``manifest.json`` looks like a
-  pack manifest, except the synthetic test fixture (whose notice says ``SYNTHETIC TEST FIXTURE``);
-* with ``--artifact PATH ...``: a built ``.pyz``/``.zip``/``.tar.gz`` or folder contains a ``knowledge/pack``
-  entry or a pack manifest.
+* a tracked file lives under ``src/dmslog/knowledge/pack/``;
+* a tracked file (index content, not the filtered checkout) is a pack manifest, a pack data file
+  (``adapters``/``error_codes``/``operations``/``parameters`` shape of ``pack_schema.py``), or a folder
+  holds the four data files together;
+* a tracked file is a Git LFS pointer, or ``.gitattributes`` uses ``filter=lfs`` (the real content could
+  not be inspected);
+* a tracked or built archive (``.zip``/``.pyz``/``.whl``/``.tar*``/``.tgz``/gzip/bzip2/xz, detected by
+  name or magic), including archives nested inside archives, contains any of the above or a
+  ``knowledge/pack`` entry;
+* something cannot be inspected: unreadable or corrupt archive, depth/member/size limit exceeded.
+  Failing is the safe default.
 
-Usage:  python packaging/check_no_pack.py [--artifact PATH ...]
+The only exception is the synthetic test fixture ``tests/fixtures/knowledge/mini_pack/`` (its manifest
+notice starts with ``SYNTHETIC TEST FIXTURE``), tracked in that exact folder.
+
+Usage:  python packaging/check_no_pack.py [--root REPO] [--artifact PATH ...]
 """
 from __future__ import annotations
 
 import argparse
+import bz2
+import gzip
+import io
 import json
+import lzma
 import subprocess
 import sys
 import tarfile
 import zipfile
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 PACK_PATH = "src/dmslog/knowledge/pack/"
-SYNTHETIC_FIXTURE = "tests/fixtures/knowledge/mini_pack/manifest.json"
+SYNTHETIC_DIR = "tests/fixtures/knowledge/mini_pack"
+SYNTHETIC_FIXTURE = SYNTHETIC_DIR + "/manifest.json"
 SYNTHETIC_MARK = "SYNTHETIC TEST FIXTURE"
 MANIFEST_KEYS = {"schema_version", "generator_version", "notice"}
+# Structure of the real manifest: schema/generator versions, the confidentiality notice and the digest
+# map of source notes. Any two of the structural keys plus a "notice" or the full triple is a manifest.
+MANIFEST_SHAPE = {"schema_version", "generator_version", "vault_commit", "files"}
+NOTICE_PHRASES = ("derived from Schneider Electric documentation", "do not publish this pack")
+DATA_FILES = ("adapters.json", "error_codes.json", "operations.json", "parameters.json")
+LFS_HEADER = b"version https://git-lfs.github.com/spec/v1"
+
+# Limits of the archive inspector. Exceeding any of them fails the check (fail-safe).
+MAX_DEPTH = 4
+MAX_MEMBERS = 20_000
+MAX_MEMBER_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_BYTES = 512 * 1024 * 1024
+MAX_FILE_BYTES = MAX_MEMBER_BYTES
+
+ARCHIVE_SUFFIXES = (
+    ".zip", ".pyz", ".pyzw", ".whl", ".jar", ".tar", ".tgz", ".gz", ".bz2", ".xz", ".tbz2", ".txz",
+)
+
+
+class Uninspectable(Exception):
+    """Content that cannot be inspected; reported as a problem (fail-safe)."""
+
+
+def _field_signatures() -> dict[str, set[str]]:
+    sys.path.insert(0, str(ROOT / "src"))
+    try:
+        from dmslog.knowledge import pack_schema as schema
+    finally:
+        sys.path.pop(0)
+    return {
+        "adapters": set(schema._ADAPTER_FIELDS),
+        "error_codes": set(schema._ERROR_FIELDS),
+        "operations": set(schema._OPERATION_FIELDS),
+        "parameters": set(schema._PARAMETER_FIELDS),
+    }
+
+
+_SIGNATURES: dict[str, set[str]] | None = None
+
+
+def _signatures() -> dict[str, set[str]]:
+    global _SIGNATURES
+    if _SIGNATURES is None:
+        _SIGNATURES = _field_signatures()
+    return _SIGNATURES
+
+
+def _json_object(data: bytes) -> dict | None:
+    head = data[:4].lstrip(b"\xef\xbb\xbf \t\r\n")
+    if not head.startswith(b"{"):
+        return None
+    try:
+        value = json.loads(data.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _is_manifest(value: dict) -> bool:
+    keys = set(value)
+    notice = value.get("notice")
+    if isinstance(notice, str) and any(phrase in notice for phrase in NOTICE_PHRASES):
+        return True
+    if MANIFEST_KEYS <= keys:
+        return True
+    return "notice" in keys and len(MANIFEST_SHAPE & keys) >= 2
+
+
+def _is_data_file(value: dict) -> bool:
+    for key, fields in _signatures().items():
+        rows = value.get(key)
+        if not isinstance(rows, list):
+            continue
+        if not rows:
+            if key == "adapters" and isinstance(value.get("process_map"), dict):
+                return True
+            continue
+        for row in rows[:5]:
+            if isinstance(row, dict) and len(fields & set(row)) >= max(3, int(len(fields) * 0.7)):
+                return True
+    return False
+
+
+def pack_content_kind(data: bytes) -> str | None:
+    """What pack content ``data`` is (by structure, not by name), or None."""
+    value = _json_object(data)
+    if value is None:
+        return None
+    if _is_manifest(value):
+        return "knowledge pack manifest"
+    if _is_data_file(value):
+        return "knowledge pack data file"
+    return None
 
 
 def looks_like_pack_manifest(data: bytes) -> bool:
-    try:
-        value = json.loads(data.decode("utf-8-sig"))
-    except (UnicodeDecodeError, ValueError):
-        return False
-    return isinstance(value, dict) and MANIFEST_KEYS <= set(value)
+    return pack_content_kind(data) == "knowledge pack manifest"
 
 
 def is_synthetic(data: bytes) -> bool:
-    try:
-        notice = json.loads(data.decode("utf-8-sig")).get("notice", "")
-    except (UnicodeDecodeError, ValueError, AttributeError):
-        return False
+    value = _json_object(data)
+    notice = value.get("notice", "") if value else ""
     return isinstance(notice, str) and notice.startswith(SYNTHETIC_MARK)
 
 
 def tracked_files(root: Path = ROOT) -> list[str]:
+    """Tracked paths (POSIX), submodule entries excluded (there is nothing of ours to read)."""
     out = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=root, check=True, capture_output=True
+        ["git", "ls-files", "-s", "-z"], cwd=root, check=True, capture_output=True
     ).stdout.decode("utf-8")
-    return [name for name in out.split("\0") if name]
+    names = []
+    for entry in out.split("\0"):
+        if not entry:
+            continue
+        meta, _, name = entry.partition("\t")
+        if meta.split(" ", 1)[0] != "160000":
+            names.append(name)
+    return names
+
+
+@contextmanager
+def git_index_reader(root: Path = ROOT):
+    """``read(name)`` returning the blob staged in the index (the raw content, no smudge filter)."""
+    proc = subprocess.Popen(
+        ["git", "cat-file", "--batch"], cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE
+    )
+
+    def read(name: str) -> bytes:
+        if "\n" in name:
+            raise Uninspectable("path contains a newline")
+        proc.stdin.write(f":{name}\n".encode())
+        proc.stdin.flush()
+        header = proc.stdout.readline().split()
+        if len(header) != 3 or header[1] != b"blob":
+            raise Uninspectable("git cannot read the index entry")
+        size = int(header[2])
+        if size > MAX_FILE_BYTES:
+            remaining = size + 1
+            while remaining:
+                chunk = proc.stdout.read(min(remaining, 1 << 20))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            raise Uninspectable(f"larger than {MAX_FILE_BYTES} bytes, cannot be inspected")
+        data = proc.stdout.read(size)
+        proc.stdout.read(1)
+        return data
+
+    try:
+        yield read
+    finally:
+        proc.stdin.close()
+        proc.wait()
+        proc.stdout.close()
+
+
+class _Budget:
+    def __init__(self) -> None:
+        self.members = 0
+        self.total = 0
+
+    def take(self, size: int) -> None:
+        self.members += 1
+        self.total += size
+        if self.members > MAX_MEMBERS:
+            raise Uninspectable(f"more than {MAX_MEMBERS} members")
+        if self.total > MAX_TOTAL_BYTES:
+            raise Uninspectable(f"more than {MAX_TOTAL_BYTES} bytes once unpacked")
+
+
+def _has_archive_suffix(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith(ARCHIVE_SUFFIXES) or ".tar." in lowered
+
+
+def _bounded(stream, limit: int = MAX_MEMBER_BYTES) -> bytes:
+    data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise Uninspectable(f"a member is larger than {limit} bytes")
+    return data
+
+
+def _iter_archive(name: str, data: bytes, budget: _Budget) -> Iterator[tuple[str, bytes]] | None:
+    """Members of ``data`` when it is an archive (by magic or by name); None when it is not one.
+
+    Raises Uninspectable on corrupt archives and on limits.
+    """
+    named = _has_archive_suffix(name)
+    if len(data) >= 22 and zipfile.is_zipfile(io.BytesIO(data)):
+        return _zip_members(data, budget)
+    compressed = data[:2] == b"\x1f\x8b" or data[:3] == b"BZh" or data[:6] == b"\xfd7zXZ\x00"
+    is_tar = data[257:262] == b"ustar"
+    if compressed or is_tar:
+        return _stream_members(name, data, budget)
+    if named and data:
+        raise Uninspectable("named like an archive but is not a readable one")
+    return None
+
+
+def _zip_members(data: bytes, budget: _Budget) -> Iterator[tuple[str, bytes]]:
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+        infos = [info for info in archive.infolist() if not info.is_dir()]
+    except (zipfile.BadZipFile, OSError, ValueError, RuntimeError, NotImplementedError) as exc:
+        raise Uninspectable(f"unreadable zip ({exc})") from exc
+    for info in infos:
+        budget.take(info.file_size)
+        if info.file_size > MAX_MEMBER_BYTES:
+            raise Uninspectable(f"member {info.filename} is larger than {MAX_MEMBER_BYTES} bytes")
+        try:
+            with archive.open(info) as handle:
+                yield info.filename, _bounded(handle)
+        except Uninspectable:
+            raise
+        except (zipfile.BadZipFile, OSError, ValueError, RuntimeError, NotImplementedError, EOFError) as exc:
+            raise Uninspectable(f"unreadable zip member {info.filename} ({exc})") from exc
+
+
+def _stream_members(name: str, data: bytes, budget: _Budget) -> Iterator[tuple[str, bytes]]:
+    try:
+        tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:*")  # noqa: SIM115
+    except tarfile.TarError:
+        tar = None
+    except (OSError, EOFError, ValueError, lzma.LZMAError) as exc:
+        raise Uninspectable(f"unreadable archive ({exc})") from exc
+    if tar is not None:
+        with tar:
+            try:
+                for member in tar:
+                    if not member.isfile():
+                        continue
+                    budget.take(member.size)
+                    if member.size > MAX_MEMBER_BYTES:
+                        raise Uninspectable(f"member {member.name} is larger than {MAX_MEMBER_BYTES} bytes")
+                    handle = tar.extractfile(member)
+                    yield member.name, (_bounded(handle) if handle else b"")
+            except Uninspectable:
+                raise
+            except (tarfile.TarError, OSError, EOFError, ValueError, lzma.LZMAError) as exc:
+                raise Uninspectable(f"unreadable tar ({exc})") from exc
+        return
+    opener = gzip.open if data[:2] == b"\x1f\x8b" else bz2.open if data[:3] == b"BZh" else lzma.open
+    if data[:2] != b"\x1f\x8b" and data[:3] != b"BZh" and data[:6] != b"\xfd7zXZ\x00":
+        raise Uninspectable("unreadable archive (not a tar nor a compressed stream)")
+    try:
+        with opener(io.BytesIO(data)) as handle:
+            payload = _bounded(handle)
+    except Uninspectable:
+        raise
+    except (OSError, EOFError, ValueError, lzma.LZMAError) as exc:
+        raise Uninspectable(f"unreadable compressed stream ({exc})") from exc
+    budget.take(len(payload))
+    inner = PurePosixPath(name).name
+    for suffix in (".gz", ".bz2", ".xz", ".tgz"):
+        if inner.lower().endswith(suffix):
+            inner = inner[: -len(suffix)]
+    yield inner or "content", payload
+
+
+def _describe(label: str | None, name: str, what: str) -> str:
+    return f"{name}: tracked {what}" if label is None else f"{label}: contains {what} ({name})"
+
+
+def _set_problems(label: str | None, names: Iterable[str], allowed_dirs: set[str] = frozenset()) -> list[str]:
+    """Folders (inside one container) that hold the four pack data files together."""
+    by_dir: dict[str, set[str]] = {}
+    for name in names:
+        path = PurePosixPath(name)
+        by_dir.setdefault(str(path.parent), set()).add(path.name)
+    problems = []
+    for folder, files in sorted(by_dir.items()):
+        if folder in allowed_dirs or not set(DATA_FILES) <= files:
+            continue
+        shown = f"{folder}/" if folder != "." else ""
+        listed = shown + "{" + ",".join(DATA_FILES) + "}"
+        problems.append(_describe(label, listed, "knowledge pack data file set"))
+    return problems
+
+
+def _inspect(
+    label: str | None, name: str, data: bytes, depth: int, budget: _Budget, problems: list[str]
+) -> None:
+    """Content rules for one blob, descending into archives. ``label`` None = tracked, top level."""
+    if data.startswith(LFS_HEADER):
+        problems.append(_describe(label, name, "Git LFS pointer (real content not inspectable)"))
+        return
+    if PurePosixPath(name).name == ".gitattributes" and b"filter=lfs" in data:
+        problems.append(_describe(label, name, "Git LFS filter"))
+    try:
+        members = _iter_archive(name, data, budget)
+        if members is None:
+            kind = pack_content_kind(data)
+            if kind:
+                problems.append(_describe(label, name, kind))
+            return
+        if depth >= MAX_DEPTH:
+            raise Uninspectable(f"archives nested deeper than {MAX_DEPTH} levels")
+        inner_label = name if label is None else f"{label}!{name}"
+        listing: list[str] = []
+        for member_name, member_data in members:
+            listing.append(member_name)
+            parts = PurePosixPath(member_name).parts
+            if any(parts[i : i + 2] == ("knowledge", "pack") for i in range(len(parts) - 1)):
+                problems.append(f"{inner_label}: contains {member_name}")
+                continue
+            _inspect(inner_label, member_name, member_data, depth + 1, budget, problems)
+        problems.extend(_set_problems(inner_label, listing))
+    except Uninspectable as exc:
+        shown = name if label is None else f"{label}!{name}"
+        problems.append(f"{shown}: cannot be inspected ({exc})")
 
 
 def tracked_problems(names: Iterable[str], read: Callable[[str], bytes]) -> list[str]:
     """Problems among tracked ``names`` (POSIX paths); ``read(name)`` returns the file bytes.
 
-    A tracked file missing from the working tree (deleted, deletion not committed yet) is skipped: the
-    check is meant for a checkout, as in CI.
+    A tracked file missing from the working tree (``FileNotFoundError``) is skipped. Any other read
+    failure, and ``Uninspectable``, is a problem.
     """
-    problems = []
-    for name in names:
+    names = list(names)
+    problems: list[str] = []
+    synthetic_dir = False
+    if SYNTHETIC_FIXTURE in names:
         try:
-            data = read(name) if name.startswith(PACK_PATH) or name.endswith("manifest.json") else b""
-        except OSError:
-            continue
+            synthetic_dir = is_synthetic(read(SYNTHETIC_FIXTURE))
+        except (OSError, Uninspectable):
+            synthetic_dir = False
+    for name in names:
         if name.startswith(PACK_PATH):
             problems.append(f"{name}: tracked under {PACK_PATH}")
-        elif PurePosixPath(name).name == "manifest.json":
-            if looks_like_pack_manifest(data) and not (name == SYNTHETIC_FIXTURE and is_synthetic(data)):
-                problems.append(f"{name}: tracked knowledge pack manifest")
+            continue
+        try:
+            data = read(name)
+        except FileNotFoundError:
+            continue
+        except (OSError, Uninspectable) as exc:
+            problems.append(f"{name}: cannot be inspected ({exc})")
+            continue
+        path = PurePosixPath(name)
+        in_fixture = str(path.parent) == SYNTHETIC_DIR and path.name in (*DATA_FILES, "manifest.json")
+        if synthetic_dir and in_fixture:
+            continue  # the synthetic fixture, in its exact folder
+        _inspect(None, name, data, 0, _Budget(), problems)
+    problems.extend(_set_problems(None, names, {SYNTHETIC_DIR} if synthetic_dir else set()))
     return problems
 
 
-def _members(path: Path) -> Iterator[tuple[str, Callable[[], bytes]]]:
+def _artifact_files(path: Path) -> Iterator[tuple[str, Callable[[], bytes]]]:
     if path.is_dir():
         for item in sorted(path.rglob("*")):
             if item.is_file():
-                yield item.relative_to(path).as_posix(), item.read_bytes
-    elif path.name.endswith((".tar.gz", ".tgz", ".tar")):
-        with tarfile.open(path) as tar:
-            for member in tar.getmembers():
-                if member.isfile():
-                    handle = tar.extractfile(member)
-                    data = handle.read() if handle else b""
-                    yield member.name, (lambda data=data: data)
-    else:  # .pyz and .zip
-        with zipfile.ZipFile(path) as archive:
-            for name in archive.namelist():
-                yield name, (lambda name=name: archive.read(name))
+                yield item.relative_to(path).as_posix(), lambda item=item: _read_limited(item)
+    else:
+        yield path.name, lambda: _read_limited(path)
+
+
+def _read_limited(path: Path) -> bytes:
+    if path.stat().st_size > MAX_FILE_BYTES:
+        raise Uninspectable(f"larger than {MAX_FILE_BYTES} bytes, cannot be inspected")
+    return path.read_bytes()
 
 
 def artifact_problems(path: Path) -> list[str]:
-    problems = []
-    for name, read in _members(path):
-        parts = PurePosixPath(name).parts
-        if any(parts[i:i + 2] == ("knowledge", "pack") for i in range(len(parts) - 1)):
-            problems.append(f"{path}: contains {name}")
-        elif parts and parts[-1] == "manifest.json" and looks_like_pack_manifest(read()):
-            problems.append(f"{path}: contains a knowledge pack manifest ({name})")
+    """Problems inside a built artifact (archive or folder), nested archives included."""
+    problems: list[str] = []
+    label = str(path)
+    budget = _Budget()
+    listing: list[str] = []
+    try:
+        for name, read in _artifact_files(path):
+            listing.append(name)
+            parts = PurePosixPath(name).parts
+            if any(parts[i : i + 2] == ("knowledge", "pack") for i in range(len(parts) - 1)):
+                problems.append(f"{label}: contains {name}")
+                continue
+            try:
+                data = read()
+            except (OSError, Uninspectable) as exc:
+                problems.append(f"{label}!{name}: cannot be inspected ({exc})")
+                continue
+            if path.is_dir():
+                _inspect(label, name, data, 0, budget, problems)
+            else:
+                # the artifact itself: report its members as "contained in" the artifact
+                inner: list[str] = []
+                _inspect(None, str(path), data, 0, budget, inner)
+                problems.extend(p.replace(f"{path}: tracked", f"{path}: contains", 1) for p in inner)
+    except OSError as exc:
+        problems.append(f"{label}: cannot be inspected ({exc})")
+    if path.is_dir():
+        problems.extend(_set_problems(label, listing))
     return problems
 
 
@@ -103,8 +439,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fail when the knowledge pack is tracked or shipped.")
     parser.add_argument("--artifact", nargs="*", type=Path, default=[], metavar="PATH",
                         help="built .pyz/.zip/.tar.gz files or folders to inspect as well")
+    parser.add_argument("--root", type=Path, default=ROOT,
+                        help="git repository to inspect (default: this one)")
     args = parser.parse_args(argv)
-    problems = tracked_problems(tracked_files(), lambda name: (ROOT / name).read_bytes())
+    root = args.root.resolve()
+    with git_index_reader(root) as read:
+        problems = tracked_problems(tracked_files(root), read)
     for artifact in args.artifact:
         problems.extend(artifact_problems(artifact))
     for problem in problems:

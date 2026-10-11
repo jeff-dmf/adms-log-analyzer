@@ -160,6 +160,10 @@ def test_guard_inspects_archives_and_folders(check_no_pack, tmp_path):
     assert check_no_pack.artifact_problems(tarball)
 
 
+def test_built_pyz_passes_the_guard(build_pyz, check_no_pack):
+    assert check_no_pack.artifact_problems(build_pyz.build()) == []
+
+
 def test_pyz_build_is_deterministic(build_pyz):
     first = build_pyz.build().read_bytes()
     second = build_pyz.build().read_bytes()
