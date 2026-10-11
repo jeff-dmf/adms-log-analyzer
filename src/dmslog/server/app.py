@@ -161,8 +161,31 @@ class RequestHandler(BaseHTTPRequestHandler):
     # -- dispatch ---------------------------------------------------------
 
     def _handle(self) -> None:
+        self._body_consumed = False
+        try:
+            self._dispatch()
+        finally:
+            if self.command != "GET" and not self._body_consumed:
+                self._drain_unread_body()
+
+    def _drain_unread_body(self) -> None:
+        """Read the body of a request answered without reading it (405, 403, ...).
+
+        Closing a socket that still holds unread request data makes the OS send a reset (Windows reports
+        it to the client as a connection abort), which can destroy the response already sent.
+        """
+        if self.headers.get("Transfer-Encoding"):
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return
+        if length > 0:
+            self._discard(length)
+
+    def _dispatch(self) -> None:
         if self.command != "GET":
-            # Request bodies are never read, so the connection cannot be reused.
+            # Request bodies are not kept alive across requests, so the connection is closed after the answer.
             self.close_connection = True
         if not self._host_ok():
             self._forbid()
@@ -242,6 +265,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             raise ApiError(400, "bad_content_length", messages.API_BAD_LENGTH) from None
         if length < 0:
             raise ApiError(400, "bad_content_length", messages.API_BAD_LENGTH)
+        self._body_consumed = True
         limit = body_limit(urlsplit(self.path).path)
         if length > limit:
             self._discard(length)

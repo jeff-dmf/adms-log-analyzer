@@ -486,9 +486,12 @@ def timed_pairing(n_records):
 
 
 def test_equal_timestamps_do_not_go_quadratic():
-    small, large = timed_pairing(2_500), timed_pairing(20_000)  # 8x the records
+    # Best of several runs filters scheduler noise; the sizes keep the baseline above timer noise.
+    small = min(timed_pairing(10_000) for _ in range(3))
+    large = min(timed_pairing(80_000) for _ in range(3))  # 8x the records
     assert large < 5
-    assert large < max(small, 0.005) * 40  # quadratic growth would be about 64x
+    # linear / n log n growth is about 8-10x, quadratic about 64x: the limit sits in between
+    assert large < max(small, 0.01) * 32
 
 
 def test_key_mismatch_does_not_go_quadratic():

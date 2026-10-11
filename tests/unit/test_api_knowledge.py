@@ -80,3 +80,24 @@ def test_reingest_after_editing_a_folder_xml_returns_the_new_value(client, serve
     conn.close()
     assert folder.stat().st_mtime_ns == root_mtime  # editing an inner file does not touch the root
     assert client.get(url)[1]["reason"] == "Edited reason"
+
+
+def test_unread_request_body_is_drained_before_closing(client, monkeypatch):  # noqa: F811
+    # A 405 (or 403) is answered without reading the body. Closing a socket that still holds unread data makes
+    # the OS reset the connection (Windows: WinError 10053 on the client), so the server must drain it first.
+    from dmslog.server.app import RequestHandler
+
+    drained = []
+    original = RequestHandler._discard
+
+    def spy(self, length):
+        drained.append(length)
+        original(self, length)
+
+    monkeypatch.setattr(RequestHandler, "_discard", spy)
+    payload = b"x" * 5000
+    assert client.request("POST", "/api/knowledge", raw=payload)[0] == 405
+    assert client.request("POST", "/nope.html", raw=payload)[0] == 405
+    assert drained == [5000, 5000]
+    assert client.request("POST", "/api/cases", {"name": "ok"})[0] == 201
+    assert drained == [5000, 5000]  # a body the handler reads is not drained again
