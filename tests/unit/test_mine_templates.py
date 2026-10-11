@@ -204,3 +204,172 @@ def test_toml_helpers_escape_control_characters():
         chr(1) + chr(127) + "q" + chr(34) + chr(92)
     )
     assert tomllib.loads(f"a = {mt.toml_regex(r'^a' + chr(39) * 3 + '$')}")["a"] == "^a'''$"
+
+
+# --- review fixes: no side effects next to the case, hostile text in comments, valid output ----
+
+
+def _wal_case(tmp_path: Path) -> Path:
+    """A copy of a WAL-mode case whose last transaction is still in the -wal file."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "dst").mkdir()
+    db = build_case(tmp_path / "src" / "case.sqlite", {"GIZMO": OTHER})
+    conn = sqlite3.connect(db)
+    assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    conn.execute("PRAGMA wal_autocheckpoint=0")
+    conn.execute("INSERT INTO unknown_sig VALUES ('GIZMO', 'Late <n>', 9, 1)")
+    conn.commit()
+    wal = Path(f"{db}-wal")
+    assert wal.stat().st_size > 0
+    dst = tmp_path / "dst" / "case.sqlite"
+    dst.write_bytes(db.read_bytes())
+    Path(f"{dst}-wal").write_bytes(wal.read_bytes())
+    conn.close()
+    return dst
+
+
+def test_pending_wal_is_refused_without_touching_the_directory(tmp_path, capsys):
+    dst = _wal_case(tmp_path)
+    before = {p.name: p.read_bytes() for p in dst.parent.iterdir()}
+    assert mine("--case-db", str(dst), "--family", "GIZMO") == 1
+    assert "write-ahead log" in capsys.readouterr().err
+    assert {p.name: p.read_bytes() for p in dst.parent.iterdir()} == before  # no -shm, nothing changed
+    assert not Path(f"{dst}-shm").exists()
+
+
+def test_nonempty_shm_alone_is_refused(case_db, capsys):
+    Path(f"{case_db}-shm").write_bytes(b"x" * 32)
+    assert mine("--case-db", str(case_db), "--family", "WIDGET") == 1
+    assert "write-ahead log" in capsys.readouterr().err
+
+
+def test_empty_side_files_do_not_block_and_create_nothing(case_db, capsys):
+    Path(f"{case_db}-wal").write_bytes(b"")
+    before = sorted(p.name for p in case_db.parent.iterdir())
+    assert mine("--case-db", str(case_db), "--family", "WIDGET") == 0
+    capsys.readouterr()
+    assert sorted(p.name for p in case_db.parent.iterdir()) == before
+
+
+HOSTILE = [
+    "\n[evil]\nx=1",
+    "a\x00b",
+    "a\rb\r\n[evil]",
+    "a injected = true #",
+    "esc\x1b[31m red",
+    "\ninjected = true\n#",
+    "quote\" and ' and \\ and \\n and '''",
+    "x" * 6000,
+    "\x7f\x85﻿‮ rtl",
+]
+EXPECTED_TOP = {"schema", "family", "extends", "template"}
+EXPECTED_KEYS = {"code", "class", "sev", "title", "text", "regex", "window", "fields", "examples"}
+
+
+def _assert_clean(out: str, family: str) -> None:
+    doc = tomllib.loads(out)
+    assert set(doc) - {"template"} == EXPECTED_TOP - {"template"} and doc["family"] == family
+    for tpl in doc.get("template", []):
+        assert set(tpl) <= EXPECTED_KEYS
+    assert "injected" not in out.replace("\\n", "").split("# ")[0]
+    mt.load_draft(out, check_examples=True)
+    for line in out.splitlines():
+        assert "\x00" not in line and " " not in line and " " not in line
+
+
+@pytest.mark.parametrize("hostile", HOSTILE)
+def test_hostile_messages_never_inject_toml(tmp_path, capsys, hostile):
+    msgs = [f"Gadget {i} said {hostile} done" for i in range(3)] + [hostile + " tail"] * 2
+    db = build_case(tmp_path / "c.sqlite", {"GADGET": msgs})
+    assert mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1") == 0
+    _assert_clean(capsys.readouterr().out, "GADGET")
+
+
+@pytest.mark.parametrize("hostile", HOSTILE)
+def test_hostile_signature_row_never_injects_toml(tmp_path, capsys, hostile):
+    db = build_case(tmp_path / "c.sqlite", {"GADGET": OTHER})
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE unknown_sig SET signature = ?", (hostile,))
+    conn.commit()
+    conn.close()
+    rc = mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1")
+    out = capsys.readouterr().out
+    assert rc == 0
+    _assert_clean(out, "GADGET")
+
+
+@pytest.mark.parametrize("hostile", HOSTILE)
+def test_hostile_family_and_file_name(tmp_path, capsys, hostile):
+    db = build_case(tmp_path / "c.sqlite", {hostile: OTHER})
+    rc = mine("--case-db", str(db), "--family", hostile, "--min-count", "1")
+    out = capsys.readouterr().out
+    if rc == 0:
+        _assert_clean(out, hostile)
+    else:
+        assert rc == 1 and out == ""  # refused instead of emitting an invalid file
+    named = tmp_path / ("w\n[evil]\nx=1.sqlite" if sys.platform != "win32" else "w.sqlite")
+    named.write_bytes(db.read_bytes())
+    assert mine("--case-db", str(named), "--family", "GADGET") in (0, 1)  # family absent: error only
+    capsys.readouterr()
+
+
+def test_hostile_file_name_stays_in_one_comment(tmp_path, capsys):
+    if sys.platform == "win32":
+        pytest.skip("newline in file names")
+    db = build_case(tmp_path / "tmp.sqlite", {"GIZMO": OTHER})
+    named = tmp_path / "w\n[evil]\nx=1.sqlite"
+    named.write_bytes(db.read_bytes())
+    assert mine("--case-db", str(named), "--family", "GIZMO") == 0
+    out = capsys.readouterr().out
+    assert "[evil]" in out and "evil" not in tomllib.loads(out)
+    _assert_clean(out, "GIZMO")
+
+
+def test_comment_text_is_a_single_clean_line():
+    text = mt.comment_text("a\nb\rc\x00d e\x1bf\ud800g" + "z" * 1000)
+    assert "\n" not in text and "\r" not in text and "\x00" not in text and " " not in text
+    assert "\\n" in text and "\\u0000" in text and "more chars" in text
+
+
+def test_overlapping_templates_are_resolved_not_emitted_invalid(tmp_path, capsys):
+    msgs = ["Value 0x1", "Value 0x1", "Value 0x2", "Value 11", "Value 12"]
+    db = build_case(tmp_path / "c.sqlite", {"OVER": msgs})
+    assert mine("--case-db", str(db), "--family", "OVER", "--min-count", "1") == 0
+    out = capsys.readouterr().out
+    mt.load_draft(out, check_examples=True)  # the whole file loads
+    assert "conflicts with" in out
+    assert "WARNING: the whole file" not in out
+
+
+def test_overlap_skips_the_less_frequent_candidate(tmp_path, capsys):
+    msgs = ["Value 11"] * 5 + ["Value 0x1"] * 2
+    db = build_case(tmp_path / "c.sqlite", {"OVER": msgs})
+    assert mine("--case-db", str(db), "--family", "OVER", "--min-count", "1") == 0
+    out = capsys.readouterr().out
+    catalog = mt.load_draft(out, check_examples=True)
+    kept = catalog.families["OVER"].templates
+    assert len(kept) == 1 and kept[0].examples[0].msg == "Value 11"
+    assert "# SKIPPED OVER-002: conflicts with OVER-001" in out
+
+
+def test_examples_longer_than_the_window_are_skipped_not_emitted(tmp_path, capsys):
+    long_msgs = ["Huge " + "w" * 5000 + f" {i}" for i in range(3)]
+    db = build_case(tmp_path / "c.sqlite", {"HUGE": long_msgs})
+    assert mine("--case-db", str(db), "--family", "HUGE", "--min-count", "1") == 0
+    out = capsys.readouterr().out
+    mt.load_draft(out, check_examples=True)
+    assert "SKIPPED HUGE-001" in out and "window" in out
+
+
+def test_unresolvable_draft_exits_with_an_error(tmp_path, capsys, monkeypatch):
+    db = build_case(tmp_path / "c.sqlite", {"GIZMO": OTHER})
+    real = mt.load_draft
+
+    def broken(text, *, check_examples=False):
+        raise mt.TemplateError("synthetic failure")
+
+    monkeypatch.setattr(mt, "load_draft", broken)
+    out_file = tmp_path / "o.toml"
+    assert mine("--case-db", str(db), "--family", "GIZMO", "--out", str(out_file)) == 1
+    assert "synthetic failure" in capsys.readouterr().err and not out_file.exists()
+    monkeypatch.setattr(mt, "load_draft", real)

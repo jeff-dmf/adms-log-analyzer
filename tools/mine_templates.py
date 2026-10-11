@@ -33,6 +33,7 @@ import importlib.util
 import re
 import sqlite3
 import sys
+import unicodedata
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from importlib import resources
@@ -44,7 +45,7 @@ if importlib.util.find_spec("dmslog") is None:  # run from a checkout without in
 
 from dmslog.ingest.pipeline import case_db_path  # noqa: E402
 from dmslog.parse.signature import MAX_INPUT_CHARS, MAX_SIGNATURE_CHARS, signature  # noqa: E402
-from dmslog.parse.templates import ADAPTERS_PACKAGE, TemplateError, load_texts  # noqa: E402
+from dmslog.parse.templates import ADAPTERS_PACKAGE, MAX_MATCH_CHARS, TemplateError, load_texts  # noqa: E402
 from dmslog.paths import resolve_data_dir  # noqa: E402
 
 DEFAULT_MIN_COUNT = 2
@@ -53,6 +54,7 @@ MAX_EXAMPLES = 3
 MAX_SCAN_ROWS = 500_000  # unknown records read while looking for extra examples
 MAX_GROUPS = 24  # capture groups of one regex (templates.MAX_GROUPS)
 MAX_NAME_CHARS = 24
+MAX_COMMENT_CHARS = 400  # longest value interpolated into one comment line
 COMMON = "_common"
 WINDOWS = (None, 720, 320, 128)  # None = the default window of the loader (4096)
 EXIT_OK = 0
@@ -106,6 +108,10 @@ class Draft:
     examples: list[str] = field(default_factory=list)
 
 
+class MineError(Exception):
+    """The draft cannot be produced; the message says why (the CLI exits with EXIT_FAILED)."""
+
+
 # --- TOML and regex text helpers ---------------------------------------------------------------
 
 
@@ -132,6 +138,30 @@ def toml_str(text: str) -> str:
             out.append(ch)
     out.append('"')
     return "".join(out)
+
+
+def comment_text(text: str, limit: int = MAX_COMMENT_CHARS) -> str:
+    """Make a value safe to put in a ``#`` comment line: always one line, no control characters.
+
+    Line breaks, control, format, surrogate and unassigned characters and U+2028/2029 become
+    visible escapes (``\\n``, ``\\u0000``...), so a value can never end the comment and start TOML.
+    """
+    out: list[str] = []
+    for ch in text:
+        if ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif unicodedata.category(ch)[0] == "C" or unicodedata.category(ch) in ("Zl", "Zp"):
+            out.append(f"\\u{ord(ch):04x}" if ord(ch) <= 0xFFFF else f"\\U{ord(ch):08x}")
+        else:
+            out.append(ch)
+    result = "".join(out)
+    if len(result) > limit:
+        result = f"{result[:limit]}...[{len(result) - limit} more chars]"
+    return result
 
 
 def toml_regex(text: str) -> str:
@@ -242,6 +272,8 @@ def _usable(family: str, body: str, examples: list[str]) -> str:
         return str(exc)
     (template,) = catalog.families[family].templates
     for example in examples:
+        if len(example.strip()) > min(template.window, MAX_MATCH_CHARS):  # the loader skips longer ones
+            return f"example is longer than the match window ({template.window} characters)"
         if template.text is not None:
             hit = template.text == example.strip()
         else:
@@ -286,11 +318,15 @@ def open_case(path: Path) -> sqlite3.Connection:
     """Open a case database read-only; ValueError when it is missing or not a dmslog case."""
     if not path.is_file():
         raise ValueError(f"case database not found: {path}")
-    wal = path.with_name(path.name + "-wal")
-    # Pending WAL pages need a normal read-only open (it creates -shm); otherwise nothing is touched.
-    live = wal.is_file() and wal.stat().st_size > 0
-    mode = "mode=ro" if live else "immutable=1"
-    conn = sqlite3.connect(f"{path.resolve().as_uri()}?{mode}", uri=True)
+    for suffix in ("-wal", "-shm"):
+        side = path.with_name(path.name + suffix)
+        if side.is_file() and side.stat().st_size > 0:
+            raise ValueError(
+                f"the case has a pending write-ahead log ({side.name}); close the viewer/server or run "
+                "dmslog on it first so the log is checkpointed, then retry (this tool never writes "
+                "next to the case)"
+            )
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?immutable=1", uri=True)
     try:
         conn.execute("SELECT family, signature, n, first_entry_id FROM unknown_sig LIMIT 1").fetchall()
     except sqlite3.DatabaseError as exc:
@@ -358,44 +394,101 @@ def make_code(family: str) -> str:
     return prefix if prefix[0].isalpha() else "X" + prefix
 
 
+def _block(d: Draft) -> str:
+    note = f"# {d.group.count} records, first entry id {d.group.first_entry_id}"
+    if d.group.first_has_cont:
+        note += ", has continuation lines"
+    head = f"{note}\n# signature: {comment_text(d.group.signature)}\n"
+    if d.skipped:
+        commented = [f"# SKIPPED {d.code}: {comment_text(d.skipped)}"]
+        commented += [f"# example: {comment_text(toml_str(e))}" for e in d.examples]
+        return head + "\n".join(commented) + "\n"
+    return head + d.body
+
+
+def _assemble(family: str, drafts: list[Draft]) -> str:
+    return _family_file(family, "\n".join(_block(d) for d in drafts))
+
+
 def render(family: str, groups: Iterable[Group], source: str, shown: int, total: int) -> str:
-    """The TOML text: header, one block per signature, skipped ones as comments."""
+    """The TOML text: header, one block per signature, skipped ones as comments.
+
+    The result always loads with ``check_examples=True`` next to ``_common``: templates that
+    conflict with each other are commented out (lowest record count first) until it does;
+    MineError when that is not possible.
+    """
     prefix = make_code(family)
     drafts = [draft_template(f"{prefix}-{i:03d}", g) for i, g in enumerate(groups, 1)]
     out = [
-        f"# DRAFT templates for family {family}, mined from {source}.",
+        f"# DRAFT templates for family {comment_text(family)}, mined from {comment_text(source)}.",
         f"# WARNING: {WARNING}",
         f"# {shown} of {total} signatures, most frequent first. Starting point only: fill class, sev,",
         "# title, field names, keys and counter_examples, then merge into src/dmslog/adapters/.",
         "# Validate with load_catalog(check_examples=True) (docs/FAMILIA-NOVA.md, step 4).",
         "",
     ]
-    body: list[str] = []
-    for d in drafts:
-        note = f"# {d.group.count} records, first entry id {d.group.first_entry_id}"
-        if d.group.first_has_cont:
-            note += ", has continuation lines"
-        head = f"{note}\n# signature: {d.group.signature}\n"
-        if d.skipped:
-            commented = [f"# SKIPPED {d.code}: {d.skipped}"]
-            commented += [f"# example: {toml_str(e)}" for e in d.examples]
-            body.append(head + "\n".join(commented) + "\n")
-        else:
-            body.append(head + d.body)
-    text = _family_file(family, "\n".join(body))
-    problems = _final_problems(text, drafts)
-    notes = [f"# WARNING: {p}" for p in problems]
-    return "\n".join(out[:2] + notes + out[2:]) + "\n" + text
+    while True:
+        text = _assemble(family, drafts)
+        loser = _next_conflict(family, text, drafts)
+        if loser is None:
+            return "\n".join(out) + "\n" + text
+        draft, reason = loser
+        draft.body, draft.skipped = "", reason
 
 
-def _final_problems(text: str, drafts: list[Draft]) -> list[str]:
-    if not any(d.body for d in drafts):
-        return []
+def _next_conflict(family: str, text: str, drafts: list[Draft]) -> tuple[Draft, str] | None:
+    """None when the file passes every catalog check, else the draft to comment out and why."""
     try:
-        load_draft(text, check_examples=True)
+        catalog = load_draft(text)
     except TemplateError as exc:
-        return [f"the whole file does not pass the catalog checks: {str(exc)[:300]}"]
-    return []
+        raise MineError(f"the draft does not load: {comment_text(str(exc), 300)}") from None
+    problems = catalog.check_examples()
+    if not problems:
+        return None
+    index = {d.code: i for i, d in enumerate(drafts) if d.body}
+    candidates: list[tuple[int, int, Draft, str]] = []  # (count, -position): lowest count first
+    for code, other in _conflicts(catalog, family, set(index)):
+        pick = code
+        if other and other in index and drafts[index[other]].group.count < drafts[index[code]].group.count:
+            pick = other
+        elif other and other in index and drafts[index[other]].group.count == drafts[index[code]].group.count:
+            pick = max(code, other, key=index.__getitem__)  # tie: the later (less frequent) one
+        draft = drafts[index[pick]]
+        why = other if pick == code else code
+        reason = f"conflicts with {why}" if why else "the catalog does not classify its example"
+        candidates.append((draft.group.count, -index[pick], draft, reason))
+    if not candidates:
+        raise MineError(f"the draft fails the catalog checks: {comment_text('; '.join(problems), 300)}")
+    _, _, draft, reason = min(candidates, key=lambda c: (c[0], c[1]))
+    return draft, reason
+
+
+def _conflicts(catalog, family: str, codes: set[str]) -> list[tuple[str, str]]:  # noqa: ANN001
+    """``(code, other)`` pairs from the catalog's own example checks, for the given draft codes."""
+    found: list[tuple[str, str]] = []
+    templates = catalog.families[family].templates
+    for t in templates:
+        if t.code not in codes:
+            continue
+        streams = (False, True) if t.stream == "any" else ((t.stream == "sensitive"),)
+        for sensitive in streams:
+            tset = catalog.for_family(family, sensitive=sensitive)
+            for ex in t.examples:
+                tm = tset.classify_text(ex.msg, ex.cont)
+                got = tm.code if tm is not None else ""
+                if got != t.code:
+                    found.append((t.code, got))
+        for ex in t.examples:
+            s = ex.msg.strip()
+            for other in templates:
+                if other is t or {t.stream, other.stream} == {"normal", "sensitive"}:
+                    continue
+                if len(s) > other.window:
+                    continue
+                hit = other.text == s if other.text is not None else other.regex.match(s) is not None
+                if hit:
+                    found.append((t.code, other.code))
+    return list(dict.fromkeys(found))
 
 
 # --- CLI ---------------------------------------------------------------------------------------
@@ -460,7 +553,11 @@ def run(argv: list[str] | None = None) -> int:
     if not groups:
         print(f"error: no signature of {family} reaches --min-count {args.min_count}", file=sys.stderr)
         return EXIT_FAILED
-    text = render(family, groups, Path(db).name, len(groups), known[family][1])
+    try:
+        text = render(family, groups, Path(db).name, len(groups), known[family][1])
+    except MineError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_FAILED
     if args.out is not None:
         args.out.write_text(text, encoding="utf-8", newline="\n")
         print(f"wrote {len(groups)} draft templates to {args.out}", file=sys.stderr)
