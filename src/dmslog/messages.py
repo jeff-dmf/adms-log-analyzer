@@ -44,6 +44,7 @@ INFO_LINES = (
     ("fts5", "{fts5}"),
     ("data directory", "{data_dir}"),
     ("aliases", "{aliases}"),
+    ("knowledge pack", "{knowledge_pack}"),
 )
 
 INGEST_START = "Indexing {path} into case {case} ({scope} scope)..."
@@ -68,6 +69,24 @@ INGEST_CONFLICT = "cannot add this collection to case {case}: {error}"
 INGEST_INVALID_CASE = "{error}"
 
 INFO_CASES_NONE = "none"
+
+# Knowledge pack (ARQUITETURA D10): installed locally, never shipped; the app works without it.
+HELP_PACK_DIR = (
+    "Knowledge pack directory (default: $DMSLOG_PACK_DIR, else <data dir>/knowledge/pack, "
+    "else knowledge/pack next to dmslog.pyz)."
+)
+KNOWLEDGE_PACK_NOT_INSTALLED = (
+    "Knowledge pack not installed: vault descriptions, parameter defaults and error-code texts are "
+    "unavailable. Logs, events and the ERS configuration work as usual."
+)
+KNOWLEDGE_PACK_INVALID = (
+    "Knowledge pack is invalid and was ignored: vault descriptions, parameter defaults and error-code "
+    "texts are unavailable. Run 'dmslog info' for details."
+)
+INFO_PACK_INSTALLED = "installed ({source}: {path}; schema {schema}, generator {generator}, vault {vault})"
+INFO_PACK_NOT_INSTALLED = "not installed (searched: {searched})"
+INFO_PACK_INVALID = "invalid, ignored ({source}): {error}"
+INFO_PACK_SEARCHED_NONE = "nothing"
 INFO_ALIASES_LOADED = "{count} loaded"
 INFO_ALIASES_IGNORED = "file ignored ({error})"
 

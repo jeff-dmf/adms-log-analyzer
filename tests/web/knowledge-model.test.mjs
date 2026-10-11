@@ -82,3 +82,18 @@ test("parameters are ignored when there is no hint", () => {
   ]);
   assert.deepEqual(view.params, []);
 });
+
+test("buildKnowledgeView shows the server notice when the knowledge pack is not installed", () => {
+  const missing = { state: "not_installed", installed: false, message: "Knowledge pack not installed." };
+  const onlyNotice = buildKnowledgeView({ hint: null, params: [], adapter: null, knowledge_pack: missing }, []);
+  assert.equal(onlyNotice.packNotice, "Knowledge pack not installed.");
+  assert.equal(onlyNotice.hint, null);
+  assert.deepEqual(onlyNotice.errors, []);
+  const fromError = buildKnowledgeView(null, [
+    { code: "C", severity: 2, source: "ers", out_of_vault: false, knowledge_pack: missing },
+  ]);
+  assert.equal(fromError.packNotice, "Knowledge pack not installed.");
+  const installed = { state: "installed", installed: true, message: null };
+  const view = buildKnowledgeView({ hint: { text: "h" }, knowledge_pack: installed }, []);
+  assert.equal(view.packNotice, null);
+});

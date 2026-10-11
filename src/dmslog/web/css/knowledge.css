@@ -78,3 +78,9 @@
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
+
+.kn-pack-notice {
+  margin: 6px 0 0;
+  font-style: italic;
+  overflow-wrap: anywhere;
+}

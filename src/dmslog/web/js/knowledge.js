@@ -143,6 +143,9 @@ export class KnowledgeSection {
     if (view.note !== null) {
       host.appendChild(this.noteRow(view.note));
     }
+    if (view.packNotice !== null) {
+      host.appendChild(element("p", "kn-pack-notice", view.packNotice));
+    }
   }
 
   paramsTable(params) {

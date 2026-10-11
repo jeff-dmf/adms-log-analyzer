@@ -1,0 +1,28 @@
+{
+  "operations": [
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "direction": "inbound",
+      "endpoint": "http://example.org/ReceiveExampleItems",
+      "input": "ChangedExampleItems",
+      "operation": "ChangedExampleItems",
+      "output": "ExampleResponseMessage",
+      "service": "ReceiveExampleItems",
+      "soap_action": "http://example.org/ReceiveExampleItems/ChangedExampleItems",
+      "wsdl": "ReceiveExampleItemsService"
+    },
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "direction": "outbound",
+      "endpoint": "http://example.org/SendExampleItems",
+      "input": "CreatedExampleItems",
+      "operation": "CreatedExampleItems",
+      "output": "ExampleResponseMessage",
+      "service": "SendExampleItems",
+      "soap_action": "http://example.org/SendExampleItems/CreatedExampleItems",
+      "wsdl": "SendExampleItemsService"
+    }
+  ]
+}

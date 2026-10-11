@@ -3,6 +3,10 @@
 Precedence: the ERS-effective ``ErrorConfiguration`` wins over the vault pack. A code that the ERS
 defines and the vault does not know is returned with ``out_of_vault=True`` (never ``None``).
 
+The pack is optional (ARQUITETURA D10): without it every vault lookup answers "unknown" (``None``,
+empty), the ERS and curated lookups keep working, ``out_of_vault`` stays False (the vault was not
+consulted) and ``pack_status`` says why.
+
 ``curated/hints.toml`` (optional; absent file = no hints) has one table per hint::
 
     [[hint]]
@@ -21,8 +25,9 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
+from dmslog.knowledge import pack as pack_module
 from dmslog.knowledge.installation import InstallationConfig
-from dmslog.knowledge.pack import AdapterInfo, Pack, VaultError, VaultParam, load_pack
+from dmslog.knowledge.pack import EMPTY_PACK, AdapterInfo, Pack, PackStatus, VaultError, VaultParam
 from dmslog.store.config import product_for_process
 
 _SEVERITY_NUMBERS = {"fatal": 1, "critical": 1, "error": 2, "warning": 3, "warn": 3, "info": 4}
@@ -87,6 +92,7 @@ class Knowledge:
         hints_path: Path | str | None = None,
     ) -> None:
         self._pack = pack
+        self._given_pack = pack is not None
         if isinstance(installations, InstallationConfig):
             installations = {0: installations}
         self._installations: dict[int, InstallationConfig] = dict(installations or {})
@@ -96,9 +102,22 @@ class Knowledge:
 
     @property
     def pack(self) -> Pack:
+        """The vault pack, or ``EMPTY_PACK`` when none is installed (or it is invalid)."""
         if self._pack is None:
-            self._pack = load_pack()
+            self._pack = pack_module.current_pack() or EMPTY_PACK
         return self._pack
+
+    @property
+    def pack_status(self) -> PackStatus:
+        """State of the pack behind this object (a pack handed to the constructor counts as installed)."""
+        if self._given_pack and self._pack is not None:
+            manifest = self._pack.manifest
+            return PackStatus(pack_module.STATE_INSTALLED, pack_module.SOURCE_GIVEN, None, (), manifest)
+        return pack_module.pack_status()
+
+    @property
+    def has_pack(self) -> bool:
+        return self.pack is not EMPTY_PACK
 
     # -- adapters --------------------------------------------------------------------------------
 
@@ -163,7 +182,7 @@ class Knowledge:
                 reason,
                 details,
                 "ers",
-                vault is None,
+                vault is None and self.has_pack,
                 path,
             )
         if vault is None:

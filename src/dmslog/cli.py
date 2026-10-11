@@ -53,6 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     data_dir_parent.add_argument(
         "--data-dir", metavar="DIR", default=argparse.SUPPRESS, help=messages.HELP_DATA_DIR
     )
+    data_dir_parent.add_argument(
+        "--pack-dir", metavar="DIR", default=argparse.SUPPRESS, help=messages.HELP_PACK_DIR
+    )
 
     parser = argparse.ArgumentParser(
         prog="dmslog", description=messages.CLI_DESCRIPTION, parents=[data_dir_parent]
@@ -149,10 +152,30 @@ def cmd_info(args: argparse.Namespace) -> int:
         "data_dir": resolve_data_dir(getattr(args, "data_dir", None)),
     }
     values["aliases"] = describe_aliases(aliases_get(values["data_dir"]))
+    values["knowledge_pack"] = _describe_pack()
     for label, template in messages.INFO_LINES:
         print(f"{label}: {template.format(**values)}")
     print(f"cases: {_describe_cases(values['data_dir'])}")
     return 0
+
+
+def _describe_pack() -> str:
+    from .knowledge.pack import STATE_INSTALLED, STATE_INVALID, pack_status
+
+    status = pack_status()
+    if status.state == STATE_INSTALLED and status.manifest is not None:
+        manifest = status.manifest
+        return messages.INFO_PACK_INSTALLED.format(
+            source=status.source,
+            path=status.path,
+            schema=manifest.schema_version,
+            generator=manifest.generator_version,
+            vault=manifest.vault_commit or "-",
+        )
+    if status.state == STATE_INVALID:
+        return messages.INFO_PACK_INVALID.format(source=status.source, error=status.error)
+    searched = ", ".join(f"{source}: {path}" for source, path in status.searched)
+    return messages.INFO_PACK_NOT_INSTALLED.format(searched=searched or messages.INFO_PACK_SEARCHED_NONE)
 
 
 def _shown(error: BaseException, data_dir: Path) -> str:
@@ -580,6 +603,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+    from .knowledge import pack
+
+    pack.configure(getattr(args, "pack_dir", None), resolve_data_dir(getattr(args, "data_dir", None)))
     return handlers[args.command](args)
 
 

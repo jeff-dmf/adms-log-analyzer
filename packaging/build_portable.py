@@ -1,10 +1,15 @@
 """Build the portable Windows folder/zip (no installer): embeddable Python + dmslog.pyz.
 
-Runs on Linux or Windows:  python packaging/build_portable.py
+Runs on Linux or Windows:  python packaging/build_portable.py [--pack DIR]
 Output: dist/dmslog-portable-win64/  and  dist/dmslog-portable-win64.zip
+
+--pack DIR copies a validated knowledge pack to knowledge/pack/ in the folder and the zip. It is for
+the maintainer's INTERNAL builds only: the pack is derived from product documentation and must never
+be published, so CI never passes it (ARQUITETURA D10).
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import shutil
 import sys
@@ -71,7 +76,21 @@ def fetch_embed() -> Path:
     return dest
 
 
-def build() -> None:
+def copy_pack(source: Path, target: Path) -> None:
+    """Validate ``source`` and copy its pack files to ``target`` (internal builds only)."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from dmslog.knowledge.pack_schema import PACK_FILES, validate_pack
+
+    problems = validate_pack(source)
+    if problems:
+        sys.exit(f"invalid knowledge pack in {source}: {'; '.join(problems[:5])}")
+    target.mkdir(parents=True)
+    for name in PACK_FILES:
+        shutil.copyfile(source / name, target / name)
+    print(f"INTERNAL BUILD: knowledge pack copied from {source}; do not publish this folder or zip")
+
+
+def build(pack: Path | None = None) -> None:
     embed = fetch_embed()
     if OUT.exists():
         shutil.rmtree(OUT)
@@ -84,6 +103,8 @@ def build() -> None:
     shutil.copyfile(build_pyz.build(), OUT / "dmslog.pyz")
     (OUT / "dmslog.bat").write_text(LAUNCHER, encoding="utf-8", newline="")
     (OUT / "LEIA-ME.txt").write_text(README_TXT, encoding="utf-8", newline="")
+    if pack is not None:
+        copy_pack(pack, OUT / "knowledge" / "pack")
 
     zip_path = OUT.with_suffix(".zip")
     if zip_path.exists():
@@ -93,4 +114,7 @@ def build() -> None:
 
 
 if __name__ == "__main__":
-    build()
+    parser = argparse.ArgumentParser(description="Build the portable Windows folder and zip.")
+    parser.add_argument("--pack", type=Path, default=None, metavar="DIR",
+                        help="internal builds only: copy this knowledge pack to knowledge/pack/")
+    build(parser.parse_args().pack)
