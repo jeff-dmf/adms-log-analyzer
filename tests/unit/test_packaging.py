@@ -209,6 +209,29 @@ def test_linux_tarball_layout(build_pyz, tmp_path, monkeypatch):
         assert launcher.startswith(b"#!/bin/sh\n") and b"\r" not in launcher
 
 
+def test_portable_folder_and_zip_include_readme(build_pyz, tmp_path, monkeypatch):
+    module = load_packaging_module("build_portable")
+    fake_embed = tmp_path / "embed.zip"
+    with zipfile.ZipFile(fake_embed, "w") as z:
+        z.writestr("python.exe", b"")
+    monkeypatch.setattr(module, "fetch_embed", lambda: fake_embed)
+    monkeypatch.setattr(module, "OUT", tmp_path / "dmslog-portable-win64")
+    module.build()
+    readme = (module.OUT / "README.txt").read_bytes()
+    assert not (module.OUT / "LEIA-ME.txt").exists()
+    assert b"\r\n" in readme and b"\n" not in readme.replace(b"\r\n", b"")
+    text = readme.decode("utf-8")
+    for needle in ("dmslog.bat", "%LOCALAPPDATA%\\dmslog", "127.0.0.1", "PRIVATE USE ONLY"):
+        assert needle in text
+    with zipfile.ZipFile(module.OUT.with_suffix(".zip")) as z:
+        names = set(z.namelist())
+    assert {
+        "dmslog-portable-win64/README.txt",
+        "dmslog-portable-win64/dmslog.bat",
+        "dmslog-portable-win64/dmslog.pyz",
+    } <= names
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="TZ switching needs POSIX tzset")
 def test_pyz_build_is_identical_across_time_zones(tmp_path):
     driver = (
