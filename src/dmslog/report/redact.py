@@ -114,7 +114,8 @@ written for, so the net keeps only what is PROVEN harmless and replaces everythi
   never protect a labelled value, a payload field, a template field or anything the allowlist
   replaces. User exceptions protect every occurrence of their text.
 * The strict spans fill the gaps the other rules leave: a GUID inside a labelled value keeps its
-  ``<GUID-n>`` marker. A category switched off takes its labels and template fields with it.
+  ``<GUID-n>`` marker. A category switched off takes its own marker with it: in standard mode the value
+  stays; in strict mode a labelled value or template field of that category becomes ``<VALUE-n>``.
 
 Maintenance of :data:`PROVEN_FIELDS`: a new template needs nothing (its variable fields are replaced
 by default). An entry is added only with a validator that proves the value harmless; "*" (any
@@ -2055,9 +2056,9 @@ class Redactor:
     def _free_safe(self, core: str) -> bool:
         """May free text keep this blank-free piece (edge punctuation already removed)? Only when it is
         PROVEN public: no word character at all, a catalog or common word, a catalog name or code, a
-        compound of catalog words (``System.TimeoutException``, ``WFM-081``, ``Communication2``), a
-        date or time of day, or a number glued to a unit (``120ms``). A bare number, a capital letter or
-        any other word is not."""
+        compound of catalog words (``System.TimeoutException``, ``WFM-081``, ``Communication2``; not one with
+        an identifier word glued to digits, ``Crew1234``), a date or time of day, or a number glued to a
+        unit (``120ms``). A bare number, a capital letter or any other word is not."""
         if not _RX["word"].search(core):
             return True
         if ("%" in core or "&#" in core) and _RX["hidden_escape"].search(core):
@@ -2074,6 +2075,8 @@ class Redactor:
         alpha = [p for p in parts if not p.isdigit()]
         if not alpha or not _RX["compound"].fullmatch(core):
             return False
+        if _RX["digit_runs"].search(core) and any(p.casefold() in _FIELD_WORDS for p in alpha):
+            return False  # identifier word + digits (``Crew1234``) is an identifier, not a catalog term
         return all(len(p) > 1 and p.casefold() in self._vocab for p in alpha)
 
     def _free_runs(self, text: str, start: int, end: int) -> Iterator[Span]:
@@ -2119,8 +2122,11 @@ class Redactor:
                         break
                 if found is not None:
                     break
-        if found is None or (found != VALUE and not self.profile.enabled(found)):
-            return None  # a category switched off takes its labels with it
+        if found is None:
+            return None
+        if found != VALUE and not self.profile.enabled(found):
+            # a category switched off takes its marker with it; strict still replaces the value (as VALUE)
+            return VALUE if self.profile.mode == "strict" else None
         return found
 
     def _bare_value_end(self, text: str, start: int, limit: int) -> int:
