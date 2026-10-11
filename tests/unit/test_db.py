@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import subprocess
 import sys
@@ -7,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from dmslog.store import SCHEMA_VERSION, SchemaVersionError, connect, create_case_db, migrate
+from dmslog.store.db import MigrationError
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -53,7 +55,7 @@ def test_schema_objects_exist(conn):
     assert names(conn, "table") >= TABLES
     assert INDEXES <= names(conn, "index")
     assert names(conn, "view") == {"entry_text"}
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 4
 
 
 def test_pragmas(conn):
@@ -143,7 +145,7 @@ def test_schema_loaded_from_zipapp(tmp_path):
     out = subprocess.run(
         [sys.executable, "-I", "-c", code, str(pyz), str(db_path)], capture_output=True, text=True, check=True
     )
-    assert out.stdout.strip() == "3"
+    assert out.stdout.strip() == str(SCHEMA_VERSION)
     check = sqlite3.connect(db_path)
     assert "entry_fts" in names(check, "table")
     check.close()
@@ -161,8 +163,230 @@ def test_migration_2_backfills_bucket_sev_from_bucket(tmp_path):
         "INSERT INTO bucket(source_id, minute, sev, tpl_id, n) VALUES (?,?,?,?,?)",
         [(1, 10, 2, 0, 3), (1, 10, 2, 7, 4), (1, 10, 4, 7, 5), (2, 11, 2, 0, 1)],
     )
+    conn.commit()  # migrate never commits a transaction the caller left open
     assert migrate(conn) == SCHEMA_VERSION
     rows = conn.execute("SELECT source_id, minute, sev, n FROM bucket_sev ORDER BY 1, 2, 3").fetchall()
     assert rows == [(1, 10, 2, 7), (1, 10, 4, 5), (2, 11, 2, 1)]
     assert migrate(conn) == SCHEMA_VERSION
+    conn.close()
+
+
+BOOKMARK_V4_OBJECTS = (
+    "ix_bookmark_source", "ix_bookmark_orphan", "ix_bookmark_open", "ux_bookmark_entry", "ux_bookmark_uid"
+)
+
+
+def make_v3(path):
+    """A version-3 case: the current schema without the bookmark lineage, fingerprint and their objects."""
+    from dmslog.store.db import MIGRATIONS
+
+    conn = connect(path)
+    conn.isolation_level = None
+    MIGRATIONS[1](conn)
+    conn.execute("DROP TRIGGER IF EXISTS bookmark_source_gone")
+    for index in BOOKMARK_V4_OBJECTS:
+        conn.execute(f"DROP INDEX IF EXISTS {index}")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(bookmark)")}
+    for column in ("fp", "source_id", "uid", "orphan_seq"):
+        if column in columns:
+            conn.execute(f"ALTER TABLE bookmark DROP COLUMN {column}")
+    conn.execute("PRAGMA user_version=3")
+    conn.isolation_level = ""
+    add_entry(conn, "kept record", entry_id=7)
+    conn.execute(
+        "INSERT INTO source(id, collection_id, member, file_name, envelope)"
+        " VALUES (2, 1, 'b.log', 'b.log', 'adms')"
+    )
+    conn.execute(
+        "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, sev, tpl_id, msg) VALUES"
+        " (8, 2, 1, 0, 1, 4, 0, 'first of b'), (9, 2, 2, 30, 1, 4, 0, 'second of b')"
+    )
+    conn.execute("INSERT INTO entry_fts(rowid, msg, cont) SELECT rowid, msg, cont FROM entry_text")
+    conn.execute(
+        "INSERT INTO bookmark(collection_id, member, line_no, entry_id, created_at, note) VALUES"
+        " (1, 'a.log', 1, 3, 't', 'stale'),"  # stale cache from a reindex before v4
+        " (1, 'a.log', 9, 4, 't', 'gone'),"  # its record is gone
+        " (1, 'b.log', 1, NULL, 't', 'came back'),"  # cache NULL in v3, the record is there now
+        " (1, 'dropped.log', 2, 5, 't', 'dropped')"  # no source holds this member any more
+    )
+    conn.commit()
+    return conn
+
+
+def snapshot(conn):
+    return (
+        conn.execute("PRAGMA user_version").fetchone()[0],
+        sorted(conn.execute("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")),
+        conn.execute("SELECT * FROM bookmark ORDER BY id").fetchall(),
+        conn.execute("SELECT count(*) FROM entry").fetchone()[0],
+    )
+
+
+def test_migration_4_adds_lineage_and_fingerprint_and_rebuilds_bookmark_caches(tmp_path):
+    from dmslog.store import bookmarks as bm
+
+    conn = make_v3(tmp_path / "v3.sqlite")
+    assert migrate(conn) == SCHEMA_VERSION
+    sql = "SELECT note, entry_id, source_id, fp IS NOT NULL FROM bookmark ORDER BY id"
+    rows = conn.execute(sql).fetchall()
+    assert rows == [
+        ("stale", 7, 1, True),
+        ("gone", None, 1, False),  # no record seen: no identity, it may take the record of its line later
+        ("came back", 8, 2, True),
+        ("dropped", None, None, False),  # detached: its source is gone
+    ]
+    uids = [r[0] for r in conn.execute("SELECT uid FROM bookmark")]
+    assert len(set(uids)) == 4 and all(re.fullmatch(r"[0-9a-f]{32}", u) for u in uids)
+    fps = dict(conn.execute("SELECT note, fp FROM bookmark"))
+    assert fps["stale"] == bm.fingerprint(0, None, "kept record", open_record=True)  # last record of a.log
+    assert fps["came back"] == bm.fingerprint(0, None, "first of b")  # a later record exists: complete
+    assert set(BOOKMARK_V4_OBJECTS) <= names(conn, "index")
+    assert names(conn, "trigger") == {"bookmark_source_gone"}
+    before = snapshot(conn)
+    assert migrate(conn) == SCHEMA_VERSION
+    assert snapshot(conn) == before
+    conn.close()
+
+
+def test_migration_4_failure_rolls_back_to_an_intact_version_3(tmp_path, monkeypatch):
+    from dmslog.store import bookmarks as bm
+
+    conn = make_v3(tmp_path / "v3.sqlite")
+    before = snapshot(conn)
+    original = bm.relink_all
+
+    def fail_after_relink(c):
+        original(c)  # the caches were already rewritten when the failure hits
+        raise RuntimeError("injected failure")
+
+    monkeypatch.setattr(bm, "relink_all", fail_after_relink)
+    with pytest.raises(RuntimeError, match="injected"):
+        migrate(conn)
+    assert not conn.in_transaction
+    assert snapshot(conn) == before  # no column, index, trigger, cache or version left behind
+    other = connect(tmp_path / "v3.sqlite")  # what another process sees
+    assert snapshot(other) == before
+    other.close()
+    monkeypatch.setattr(bm, "relink_all", original)
+    assert migrate(conn) == SCHEMA_VERSION  # a second attempt works
+    assert conn.execute("SELECT entry_id FROM bookmark WHERE note = 'stale'").fetchone()[0] == 7
+    conn.close()
+
+
+def test_migration_4_holds_the_write_lock_against_a_concurrent_reindex(tmp_path):
+    from dmslog.store.writer import IndexWriter
+
+    path = tmp_path / "v3.sqlite"
+    conn = make_v3(path)
+    other = sqlite3.connect(path, timeout=0)  # a second process (the ingest) on the same case
+    attempts: list[str] = []
+
+    def concurrent_reindex(statement: str) -> None:
+        if attempts or not statement.lstrip().upper().startswith("UPDATE BOOKMARK"):
+            return
+        try:  # between the migration's reads and its writes: rewrite the records of a.log
+            other.execute("DELETE FROM entry WHERE id = 7")
+            other.commit()
+            attempts.append("written")
+        except sqlite3.OperationalError as exc:
+            other.rollback()
+            attempts.append(str(exc))
+        try:
+            migrate(other)
+            attempts.append("migrated twice")
+        except sqlite3.OperationalError:
+            other.rollback()
+
+    conn.set_trace_callback(concurrent_reindex)
+    try:
+        assert migrate(conn) == SCHEMA_VERSION
+    finally:
+        conn.set_trace_callback(None)
+    assert attempts == ["database is locked"]  # the migration held the write lock before reading
+    dangling = conn.execute(
+        "SELECT b.id FROM bookmark b LEFT JOIN entry e ON e.id = b.entry_id"
+        " WHERE b.entry_id IS NOT NULL AND e.id IS NULL"
+    ).fetchall()
+    assert dangling == []
+    assert migrate(other) == SCHEMA_VERSION  # already done: nothing is applied twice
+    writer = IndexWriter(other)  # the reindex runs after the migration, through the writer
+    writer.delete_source_entries(1)
+    writer.commit()
+    rows = conn.execute("SELECT note, entry_id FROM bookmark ORDER BY id").fetchall()
+    assert rows[0] == ("stale", None)  # orphaned by the writer, not left pointing at a deleted record
+    other.close()
+    conn.close()
+
+
+def test_a_version_3_case_keeps_the_legacy_reads(tmp_path):
+    from dmslog.store import bookmarks as bm
+
+    path = tmp_path / "v3.sqlite"
+    make_v3(path).close()
+    ro = connect(path, readonly=True)  # the server reads a case that no write has migrated yet
+    items = {i["note"]: i for i in bm.list_bookmarks(ro)[0]}
+    assert items["came back"]["entry_id"] == 8 and not items["came back"]["orphan"]  # NULL cache, record back
+    assert items["stale"]["entry_id"] == 7  # stale cache resolved by locator
+    assert items["gone"]["orphan"] and items["dropped"]["orphan"]
+    came_back = items["came back"]["id"]
+    assert bm.get_bookmark(ro, came_back)["entry_id"] == 8
+    marks = bm.for_entries(ro, [7, 8, 9])
+    assert set(marks) == {7, 8} and marks[8]["id"] == came_back
+    exported = {i["note"]: i for i in bm.export_bookmarks(ro)["bookmarks"]}
+    assert exported["came back"]["fp"] is None and exported["came back"]["orphan"] is False
+    assert exported["dropped"]["detached"] is True and exported["gone"]["detached"] is False
+    ro.close()
+
+
+# --------------------------------------------------------------------------- the caller's transaction
+
+
+def pending_write(conn) -> None:
+    conn.execute("INSERT INTO meta(key, value) VALUES ('caller', 'uncommitted')")
+    assert conn.in_transaction
+
+
+def caller_row(path) -> list:
+    other = sqlite3.connect(path)
+    try:
+        return other.execute("SELECT value FROM meta WHERE key = 'caller'").fetchall()
+    finally:
+        other.close()
+
+
+def test_migrate_on_a_current_case_leaves_the_callers_transaction_open_and_uncommitted(tmp_path):
+    path = tmp_path / "case.sqlite"
+    conn = create_case_db(path)
+    pending_write(conn)
+    assert migrate(conn) == SCHEMA_VERSION
+    assert conn.in_transaction  # nothing committed on the caller's behalf
+    assert caller_row(path) == []
+    conn.rollback()
+    assert conn.execute("SELECT count(*) FROM meta WHERE key = 'caller'").fetchone()[0] == 0
+    conn.close()
+
+
+def test_migrate_refuses_to_run_a_step_inside_the_callers_transaction(tmp_path):
+    path = tmp_path / "v3.sqlite"
+    conn = make_v3(path)
+    before = snapshot(conn)
+    pending_write(conn)
+    with pytest.raises(MigrationError, match="open transaction"):
+        migrate(conn)
+    assert conn.in_transaction and caller_row(path) == []
+    conn.rollback()
+    assert snapshot(conn) == before  # nothing migrated, nothing of the caller's committed
+    assert migrate(conn) == SCHEMA_VERSION  # without the open transaction it runs
+    conn.close()
+
+
+def test_a_future_version_is_rejected_without_committing_the_callers_transaction(tmp_path):
+    path = tmp_path / "future.sqlite"
+    conn = create_case_db(path)
+    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
+    pending_write(conn)
+    with pytest.raises(SchemaVersionError):
+        migrate(conn)
+    assert conn.in_transaction and caller_row(path) == []
+    conn.rollback()
     conn.close()

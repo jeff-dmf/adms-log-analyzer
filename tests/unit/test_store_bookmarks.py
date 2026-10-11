@@ -1,8 +1,10 @@
-"""Bookmarks store: CRUD, lazy locator resolution, reassociation, export/import (synthetic data)."""
+"""Bookmarks store: CRUD, stale caches, fingerprints, reassociation, export/import (synthetic data)."""
 
 from __future__ import annotations
 
 import json
+import re
+import sqlite3
 
 import pytest
 import test_store_keys as tsk
@@ -121,40 +123,101 @@ def reindex(conn, shift=0, drop=()):
     conn.commit()
 
 
-def test_lazy_resolution_and_reassociate_after_reindex(conn):
+def test_rows_rebuilt_outside_the_writer_read_as_orphans_until_reassociate(conn):
+    # Schema 4: the writer keeps the cache. Rows rebuilt behind its back never show a bookmark on another
+    # record: a cache that does not hold its line any more reads as an orphan, and reassociate relinks it.
     keep = bm.create_bookmark(conn, 2, "red", "kept")
     gone = bm.create_bookmark(conn, 4, "blue", "dropped")
     other = bm.create_bookmark(conn, 7, "green")  # another source, untouched
     reindex(conn, drop={4})
-    # reads follow the locator even though the cached entry ids are stale
     items = {i["id"]: i for i in bm.list_bookmarks(conn)[0]}
-    assert items[keep["id"]]["entry_id"] == 102 and not items[keep["id"]]["orphan"]
-    assert items[gone["id"]]["entry_id"] is None and items[gone["id"]]["orphan"]
+    assert items[keep["id"]]["orphan"] and items[gone["id"]]["orphan"]
     assert items[gone["id"]]["msg"] is None and items[other["id"]]["entry_id"] == 7
-    assert bm.for_entries(conn, [102, 103, 7]) == {
-        102: {"id": keep["id"], "color": "red", "has_note": True},
-        7: {"id": other["id"], "color": "green", "has_note": False},
-    }
-    assert conn.execute("SELECT entry_id FROM bookmark WHERE id = ?", (keep["id"],)).fetchone()[0] == 2
+    marks = bm.for_entries(conn, [102, 103, 7])
+    assert marks == {7: {"id": other["id"], "color": "green", "has_note": False}}
     result = bm.reassociate(conn)
     assert result == {"bookmarks": 3, "relinked": 2, "orphaned": 1}
     assert conn.execute("SELECT entry_id FROM bookmark WHERE id = ?", (keep["id"],)).fetchone()[0] == 102
     assert conn.execute("SELECT entry_id FROM bookmark WHERE id = ?", (gone["id"],)).fetchone()[0] is None
+    assert bm.for_entries(conn, [102, 103, 7]) == {
+        102: {"id": keep["id"], "color": "red", "has_note": True},
+        7: {"id": other["id"], "color": "green", "has_note": False},
+    }
     assert bm.reassociate(conn) == {"bookmarks": 3, "relinked": 0, "orphaned": 1}  # idempotent
 
 
-def test_orphan_comes_back(conn):
+def test_orphan_comes_back_only_with_its_own_record(conn):
     made = bm.create_bookmark(conn, 4)
+    original = conn.execute("SELECT byte_off, ts, msg FROM entry WHERE id = 4").fetchone()
     reindex(conn, drop={4})
     bm.reassociate(conn)
     assert bm.get_bookmark(conn, made["id"])["orphan"] is True
-    conn.execute(
+    insert = (
         "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, level, sev, tpl_id, msg)"
-        " VALUES (500, 1, 4, 0, 1, 1, 3, 4, 0, 'back')"
+        " VALUES (?, 1, 4, ?, 1, ?, 3, 4, 0, ?)"
     )
+    impostors = [
+        (500, 0, 1, "another record"),  # same line, different record
+        (501, original[0], original[1], original[2][:64] + "z" * 300),  # same start, different rest
+        (502, original[0], original[1], original[2] + " and more"),  # the old record plus a tail
+    ]
+    for row in impostors:
+        conn.execute(insert, row)
+        conn.commit()
+        assert bm.reassociate(conn)["orphaned"] == 1, row[0]
+        assert bm.for_entries(conn, [row[0]]) == {}
+        conn.execute("DELETE FROM entry WHERE id = ?", (row[0],))
+    conn.execute(insert, (503, *original))  # the bookmarked record itself
     conn.commit()
     assert bm.reassociate(conn)["orphaned"] == 0
-    assert bm.get_bookmark(conn, made["id"])["entry_id"] == 500
+    assert bm.get_bookmark(conn, made["id"])["entry_id"] == 503
+
+
+def test_reassociate_never_hands_a_record_from_its_bookmark_to_an_orphan(conn):
+    made = bm.create_bookmark(conn, 3, "red", "linked")
+    fp = conn.execute("SELECT fp FROM bookmark").fetchone()[0]
+    conn.execute(  # an older orphan of the same lineage with the same identity, lower id
+        "INSERT INTO bookmark(id, collection_id, member, line_no, entry_id, color, note, created_at,"
+        " source_id, fp) VALUES (0, 1, 'Log/a.log', 3, NULL, 'blue', 'orphan', 't', 1, ?)",
+        (fp,),
+    )
+    conn.commit()
+    assert bm.reassociate(conn) == {"bookmarks": 2, "relinked": 0, "orphaned": 1}
+    assert bm.get_bookmark(conn, made["id"])["entry_id"] == 3
+    assert bm.for_entries(conn, [3]) == {3: {"id": made["id"], "color": "red", "has_note": True}}
+    with pytest.raises(sqlite3.IntegrityError):  # one bookmark per record, enforced by the schema
+        conn.execute("UPDATE bookmark SET entry_id = 3 WHERE id = 0")
+    conn.rollback()
+
+
+def test_complete_fingerprint_covers_the_whole_record():
+    head = "x" * 64
+    fp = bm.fingerprint(10, 5, bm.record_text(head + " tail one", "  cont A"))
+    assert fp.startswith("f:")
+    assert bm.fp_matches(fp, 10, 5, bm.record_text(head + " tail one", "  cont A"))
+    assert not bm.fp_matches(fp, 10, 5, bm.record_text(head + " tail two", "  cont A"))  # after the prefix
+    assert not bm.fp_matches(fp, 10, 5, bm.record_text(head + " tail one", "  cont B"))  # continuation
+    assert not bm.fp_matches(fp, 10, 5, bm.record_text(head + " tail one", "  cont A\n  more"))  # grown
+    assert not bm.fp_matches(fp, 10, 5, bm.record_text(head + " tail one", None))
+    assert not bm.fp_matches(fp, 11, 5, bm.record_text(head + " tail one", "  cont A"))
+    assert not bm.fp_matches(fp, 10, 6, bm.record_text(head + " tail one", "  cont A"))
+    assert bm.record_text("a", "") != bm.record_text("a", None)  # an empty continuation line counts
+
+
+def test_open_fingerprint_matches_the_grown_record_only():
+    fp = bm.fingerprint(10, 5, "partial li", open_record=True)
+    assert fp.startswith("p10:")
+    assert bm.fp_matches(fp, 10, 5, "partial line, now complete")
+    assert bm.fp_matches(fp, 10, 5, bm.record_text("partial line", "  with a continuation"))
+    assert not bm.fp_matches(fp, 11, 5, "partial line, now complete")
+    assert not bm.fp_matches(fp, 10, 6, "partial line, now complete")
+    assert not bm.fp_matches(fp, 10, 5, "partial")  # shorter than what was bookmarked
+    assert not bm.fp_matches(fp, 10, 5, "partial lx")
+    cut = bm.fingerprint(0, None, "caf\ufffd", open_record=True)  # a character cut by the end of the data
+    assert cut.startswith("p3:") and bm.fp_matches(cut, 0, None, "caf\u00e9 au lait")
+    assert not bm.fp_matches(None, 1, 2, "anything")  # no identity: never a fingerprint match
+    for bad in ("", "x:y", "f:abc", "p-1:" + "0" * 32, "p01:" + "0" * 32, "F:" + "0" * 32, 5):
+        assert not bm.fp_matches(bad, 0, None, "x")
 
 
 def test_for_entries_validation_and_empty(conn):
@@ -168,7 +231,8 @@ def test_export_import_roundtrip(conn, tmp_path):
     bm.create_bookmark(conn, 2, "red", "one")
     bm.create_bookmark(conn, 7, "blue")
     data = bm.export_bookmarks(conn)
-    assert data["format"] == bm.EXPORT_FORMAT and data["version"] == 1 and len(data["bookmarks"]) == 2
+    assert data["format"] == bm.EXPORT_FORMAT and data["version"] == 2 and len(data["bookmarks"]) == 2
+    assert all(i["fp"].startswith("f:") and not i["orphan"] and not i["detached"] for i in data["bookmarks"])
     other = create_case_db(tmp_path / "o" / "case.sqlite")
     tsk.seed(other)
     counts = bm.import_bookmarks(other, data)
@@ -180,8 +244,87 @@ def test_export_import_roundtrip(conn, tmp_path):
     other.close()
 
 
+def test_import_dedups_by_uid_and_keeps_the_multiplicity_of_items_without_one(conn, tmp_path):
+    bm.create_bookmark(conn, 2, "red", "one")
+    data = bm.export_bookmarks(conn)
+    item = data["bookmarks"][0]
+    assert re.fullmatch(r"[0-9a-f]{32}", item["uid"])
+    assert bm.import_bookmarks(conn, data) == {"imported": 0, "existing": 1, "unmatched": 0, "invalid": 0}
+    twin = {**item, "uid": "0" * 32, "note": "twin"}  # another bookmark with the same locator and record
+    assert bm.import_bookmarks(conn, {**data, "bookmarks": [item, twin]})["imported"] == 1
+    notes = sorted(n for (n,) in conn.execute("SELECT note FROM bookmark"))
+    assert notes == ["one", "twin"]
+    # A hand-made file without uids: each bookmark of the case answers for one item, no more.
+    loose = [{k: v for k, v in i.items() if k != "uid"} for i in bm.export_bookmarks(conn)["bookmarks"]]
+    loose.append({**loose[0], "note": "third"})
+    other = create_case_db(tmp_path / "o" / "case.sqlite")
+    tsk.seed(other)
+    doc = {**data, "bookmarks": loose}
+    assert bm.import_bookmarks(other, doc) == {"imported": 3, "existing": 0, "unmatched": 0, "invalid": 0}
+    assert bm.import_bookmarks(other, doc) == {"imported": 0, "existing": 3, "unmatched": 0, "invalid": 0}
+    assert other.execute("SELECT count(*), count(entry_id) FROM bookmark").fetchone() == (3, 1)
+    other.close()
+    for bad in ("X" * 32, "0" * 31, 7):
+        assert bm.import_bookmarks(conn, {**data, "bookmarks": [{**item, "uid": bad}]})["invalid"] == 1
+    repeated = {**data, "bookmarks": [{**item, "uid": "1" * 32}, {**item, "uid": "1" * 32}]}
+    assert bm.import_bookmarks(conn, repeated) == {"imported": 1, "existing": 0, "unmatched": 0, "invalid": 1}
+
+
+@pytest.mark.parametrize("loose_first", [True, False])
+def test_import_never_lets_an_item_without_uid_take_the_bookmark_a_uid_names(conn, loose_first):
+    # The case holds U; the file holds U and another note with the same locator and identity but no
+    # uid. Whatever the order, U answers for its own item and the other note is imported, not lost.
+    bm.create_bookmark(conn, 2, "red", "one")
+    data = bm.export_bookmarks(conn)
+    item = data["bookmarks"][0]
+    loose = {k: v for k, v in item.items() if k != "uid"} | {"note": "loose"}
+    doc = {**data, "bookmarks": [loose, item] if loose_first else [item, loose]}
+    assert bm.import_bookmarks(conn, doc) == {"imported": 1, "existing": 1, "unmatched": 0, "invalid": 0}
+    rows = conn.execute("SELECT uid, note, entry_id FROM bookmark ORDER BY id").fetchall()
+    assert rows[0] == (item["uid"], "one", 2)
+    assert rows[1][1:] == ("loose", None) and rows[1][0] != item["uid"]  # same record, held by U
+    assert bm.import_bookmarks(conn, doc) == {"imported": 0, "existing": 2, "unmatched": 0, "invalid": 0}
+    assert conn.execute("SELECT count(*) FROM bookmark").fetchone()[0] == 2  # idempotent
+    # Its export round-trips too: both carry uids now.
+    again = bm.export_bookmarks(conn)
+    assert bm.import_bookmarks(conn, again) == {"imported": 0, "existing": 2, "unmatched": 0, "invalid": 0}
+
+
+def test_import_mixed_file_keeps_every_note_and_counts_right(conn):
+    # Two bookmarks in the case at one locator; the file names one by uid, repeats it (invalid), and
+    # brings three items without uid with that identity, around the named one.
+    bm.create_bookmark(conn, 2, "red", "one")
+    data = bm.export_bookmarks(conn)
+    item = data["bookmarks"][0]
+    twin = {**item, "uid": "0" * 32, "note": "twin"}
+    assert bm.import_bookmarks(conn, {**data, "bookmarks": [twin]})["imported"] == 1
+    loose = {k: v for k, v in item.items() if k != "uid"}
+    doc = {**data, "bookmarks": [
+        {**loose, "note": "a"}, item, {**loose, "note": "b"}, {**item, "note": "dup"}, {**loose, "note": "c"},
+    ]}  # fmt: skip
+    # U answers for its item; twin answers for one loose item; the other two are imported.
+    assert bm.import_bookmarks(conn, doc) == {"imported": 2, "existing": 2, "unmatched": 0, "invalid": 1}
+    assert conn.execute("SELECT count(*) FROM bookmark").fetchone()[0] == 4
+    assert bm.import_bookmarks(conn, doc) == {"imported": 0, "existing": 4, "unmatched": 0, "invalid": 1}
+    assert conn.execute("SELECT count(*) FROM bookmark").fetchone()[0] == 4
+
+
+def test_import_gives_a_record_to_the_item_that_was_linked_not_to_an_orphan_listed_first(conn):
+    made = bm.create_bookmark(conn, 2, "red", "linked")
+    item = bm.export_bookmarks(conn)["bookmarks"][0]
+    bm.delete_bookmark(conn, made["id"])
+    doc = {"format": bm.EXPORT_FORMAT, "version": 2, "bookmarks": [
+        {**item, "uid": "1" * 32, "note": "orphan", "orphan": True},  # same identity, listed first
+        {**item, "uid": "2" * 32, "note": "linked", "orphan": False},
+    ]}  # fmt: skip
+    assert bm.import_bookmarks(conn, doc)["imported"] == 2
+    state = {i["note"]: i["entry_id"] for i in bm.list_bookmarks(conn)[0]}
+    assert state == {"orphan": None, "linked": 2}
+
+
 def test_import_rejects_and_counts(conn):
-    for bad in (None, [], {"format": "x"}, {"format": bm.EXPORT_FORMAT, "version": 2, "bookmarks": []},
+    for bad in (None, [], {"format": "x"}, {"format": bm.EXPORT_FORMAT, "version": 3, "bookmarks": []},
+                {"format": bm.EXPORT_FORMAT, "version": True, "bookmarks": []},
                 {"format": bm.EXPORT_FORMAT, "version": 1, "bookmarks": "no"}):  # fmt: skip
         with pytest.raises(bm.BookmarkError) as e:
             bm.import_bookmarks(conn, bad)

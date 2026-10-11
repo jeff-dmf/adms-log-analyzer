@@ -12,6 +12,12 @@ triggers, so this module keeps it in sync by hand:
   the text through Python);
 * delete: the FTS5 ``'delete'`` command with the values the index holds, read from
   ``entry_text`` before the rows disappear.
+
+Bookmarks (``store/bookmarks.py``) are user data located by ``(collection, member, line_no)``, tied to
+the lineage of their source and identified by a record fingerprint; their ``entry_id`` cache is kept
+here, in the same transaction as the records: orphaned before records are deleted, linked again after
+records are inserted (same lineage, matching fingerprint), and moved with a source that a rotation
+renames. Each hook costs one probe when the case has no bookmarks.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 from dmslog.parse.payload import extract_payload
 from dmslog.parse.records import Record
 from dmslog.parse.signature import signature
+from dmslog.store import bookmarks
 
 if TYPE_CHECKING:
     from dmslog.parse.templates import Catalog, TemplateSet
@@ -416,6 +423,7 @@ class IndexWriter:
         if not renames:
             return
         self.begin()
+        bookmarks.move_members(self.conn, {sid: move[0] for sid, move in renames.items()})
         for sid in renames:
             self.conn.execute("UPDATE source SET member = member || char(0) || id WHERE id=?", (sid,))
         for sid, (member, file_name, rotation) in renames.items():
@@ -483,18 +491,20 @@ class IndexWriter:
         if min_id is not None:
             where += " AND id >= ?"
             params.append(min_id)
-        return self._delete_where(where, params, source_id)
+        return self._delete_where(where, params, source_id, byte_off)
 
     def delete_source_entries(self, source_id: int) -> int:
         """Delete every record of the source (full reindex)."""
         self.begin()
-        return self._delete_where("source_id = ?", [source_id], source_id)
+        return self._delete_where("source_id = ?", [source_id], source_id, 0)
 
-    def _delete_where(self, where: str, params: list[Any], source_id: int) -> int:
+    def _delete_where(self, where: str, params: list[Any], source_id: int, from_byte_off: int) -> int:
+        """Delete the records matching ``where``: those of ``source_id`` at or after ``from_byte_off``."""
         conn = self.conn
         first = conn.execute(f"SELECT min(id), count(*) FROM entry WHERE {where}", params).fetchone()
         if not first[1]:
             return 0
+        bookmarks.detach_entries(conn, source_id, from_byte_off)
         # Bucket counts first: subtract what the removed records contributed.
         counts = conn.execute(
             f"SELECT ts / {MINUTE_MS}, sev, tpl_id, count(*) FROM entry WHERE {where} AND ts IS NOT NULL"
@@ -736,6 +746,7 @@ class IndexWriter:
         if self._payloads:
             conn.executemany(_PAYLOAD_SQL, self._payloads)
             self.payloads_written += len(self._payloads)
+        bookmarks.attach_entries(conn, ((r[0], r[1], r[2], r[3], r[5], r[12]) for r in self._rows))
         if self._unknown:
             conn.executemany(_UNKNOWN_SQL, [(f, sg, v[0], v[1]) for (f, sg), v in self._unknown.items()])
         if self._buckets:
