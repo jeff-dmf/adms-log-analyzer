@@ -1,6 +1,7 @@
 """The no-pack guard recognises the pack by content, looks inside archives and fails safe."""
 import importlib.util
 import io
+import json
 import shutil
 import subprocess
 import sys
@@ -297,3 +298,74 @@ def test_legitimate_json_like_files_pass(repo):
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     result = run_guard(repo)
     assert result.returncode == 0, result.stderr
+
+
+# --- every data section on its own, long blank prefixes, constant hygiene ---------------------------
+
+SECTIONS = {
+    "adapters": "_ADAPTER_FIELDS",
+    "error_codes": "_ERROR_FIELDS",
+    "operations": "_OPERATION_FIELDS",
+    "parameters": "_PARAMETER_FIELDS",
+}
+
+
+def section_text(section):
+    """Synthetic data file of one section: two rows carrying every field the schema defines."""
+    from dmslog.knowledge import pack_schema
+
+    fields = getattr(pack_schema, SECTIONS[section])
+    rows = [{field: f"synthetic {n}" for field in fields} for n in range(2)]
+    return json.dumps({section: rows}, indent=2)
+
+
+@pytest.mark.parametrize("section", sorted(SECTIONS))
+@pytest.mark.parametrize("damage", ["intact", "truncated"])
+def test_each_data_file_is_blocked_on_its_own_when_renamed(repo, section, damage):
+    text = section_text(section)
+    track(repo, {"kb/a.dat": text if damage == "intact" else text[: len(text) // 2 + 7]})
+    assert_blocked(run_guard(repo), "kb/a.dat", "knowledge pack data file")
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-32"])
+@pytest.mark.parametrize("count", [256, 1024, 10_000])
+def test_renamed_manifest_behind_a_long_blank_prefix_is_caught(repo, encoding, count):
+    track(repo, {"kb/info.dat": (" " * count + MANIFEST.decode()).encode(encoding)})
+    assert_blocked(run_guard(repo), "kb/info.dat", "knowledge pack manifest")
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-32"])
+def test_data_file_behind_a_long_blank_prefix_is_caught(repo, encoding):
+    text = "\n".join(["  \t"] * 3000) + section_text("operations")
+    track(repo, {"kb/a.dat": text.encode(encoding)})
+    assert_blocked(run_guard(repo), "kb/a.dat", "knowledge pack data file")
+
+
+def test_blank_and_binary_files_do_not_trip_the_guard(repo):
+    shutil.copytree(MINI_PACK, repo / FIXTURE_REL)
+    track(repo, {
+        "pkg/blank.txt": b" " * 100_000,
+        "pkg/blank16.txt": (" " * 100_000).encode("utf-16"),
+        "pkg/big.bin": bytes(range(256)) * 8192,
+        "pkg/legit.json": b" " * 5000 + b'{"name": "x", "version": 1}',
+    })
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    result = run_guard(repo)
+    assert result.returncode == 0, result.stderr
+
+
+def test_guard_constants_are_stored_in_normalised_form():
+    guard = load_packaging_module("check_no_pack")
+    assert guard.unnormalized_constants() == []
+    assert set(guard._signatures()) == {guard._norm(name) for name in SECTIONS}
+    for fields in guard._signatures().values():
+        assert fields
+        assert all(guard._norm(f) == f for f in fields)
+
+
+def test_unnormalised_constants_are_detected(monkeypatch):
+    guard = load_packaging_module("check_no_pack")
+    monkeypatch.setattr(guard, "KEY_PROCESS_MAP", "process_map")
+    monkeypatch.setattr(guard, "_SIGNATURES", {"error_codes": {"adms_severity"}})
+    assert guard.unnormalized_constants() == ["KEY_PROCESS_MAP", "section:error_codes",
+                                              "error_codes.adms_severity"]

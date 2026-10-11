@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import bz2
+import codecs
 import gzip
 import io
 import json
@@ -37,17 +38,26 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
+
+def _norm(key: object) -> str:
+    """Key spelling folded for comparison: case, spaces, hyphens and underscores do not matter."""
+    return re.sub(r"[\s_\-]+", "", str(key)).lower()
+
+
 ROOT = Path(__file__).resolve().parent.parent
 PACK_PATH = "src/dmslog/knowledge/pack/"
 SYNTHETIC_DIR = "tests/fixtures/knowledge/mini_pack"
 SYNTHETIC_FIXTURE = SYNTHETIC_DIR + "/manifest.json"
 SYNTHETIC_MARK = "SYNTHETIC TEST FIXTURE"
-MANIFEST_KEYS = {"schema_version", "generator_version", "notice"}
+MANIFEST_KEYS = {_norm(k) for k in ("schema_version", "generator_version", "notice")}
 # Structure of the real manifest: schema/generator versions, the confidentiality notice and the digest
 # map of source notes. Any two of the structural keys plus a "notice" or the full triple is a manifest.
-MANIFEST_SHAPE = {"schema_version", "generator_version", "vault_commit", "files"}
+MANIFEST_SHAPE = {_norm(k) for k in ("schema_version", "generator_version", "vault_commit", "files")}
 NOTICE_PHRASES = ("derived from Schneider Electric documentation", "do not publish this pack")
 DATA_FILES = ("adapters.json", "error_codes.json", "operations.json", "parameters.json")
+KEY_NOTICE = _norm("notice")
+KEY_ADAPTERS = _norm("adapters")
+KEY_PROCESS_MAP = _norm("process_map")
 LFS_HEADER = b"version https://git-lfs.github.com/spec/v1"
 
 # Limits of the archive inspector. Exceeding any of them fails the check (fail-safe).
@@ -73,14 +83,30 @@ def _field_signatures() -> dict[str, set[str]]:
     finally:
         sys.path.pop(0)
     return {
-        "adapters": set(schema._ADAPTER_FIELDS),
-        "error_codes": set(schema._ERROR_FIELDS),
-        "operations": set(schema._OPERATION_FIELDS),
-        "parameters": set(schema._PARAMETER_FIELDS),
+        _norm("adapters"): {_norm(f) for f in schema._ADAPTER_FIELDS},
+        _norm("error_codes"): {_norm(f) for f in schema._ERROR_FIELDS},
+        _norm("operations"): {_norm(f) for f in schema._OPERATION_FIELDS},
+        _norm("parameters"): {_norm(f) for f in schema._PARAMETER_FIELDS},
     }
 
 
 _SIGNATURES: dict[str, set[str]] | None = None
+
+
+def unnormalized_constants() -> list[str]:
+    """Names of key/section constants that are not stored in normalised form (must be empty).
+
+    Every lookup folds the data with ``_norm`` and compares it with these constants, so one that is
+    not already folded can never match (it silently disables a check).
+    """
+    bad = [name for name, value in (("KEY_NOTICE", KEY_NOTICE), ("KEY_ADAPTERS", KEY_ADAPTERS),
+                                    ("KEY_PROCESS_MAP", KEY_PROCESS_MAP)) if _norm(value) != value]
+    bad += [f"MANIFEST_KEYS:{k}" for k in MANIFEST_KEYS if _norm(k) != k]
+    bad += [f"MANIFEST_SHAPE:{k}" for k in MANIFEST_SHAPE if _norm(k) != k]
+    for section, fields in _signatures().items():
+        bad += [f"section:{section}"] if _norm(section) != section else []
+        bad += [f"{section}.{f}" for f in fields if _norm(f) != f]
+    return bad
 
 
 def _signatures() -> dict[str, set[str]]:
@@ -88,11 +114,6 @@ def _signatures() -> dict[str, set[str]]:
     if _SIGNATURES is None:
         _SIGNATURES = _field_signatures()
     return _SIGNATURES
-
-
-def _norm(key: object) -> str:
-    """Key spelling folded for comparison: case, spaces, hyphens and underscores do not matter."""
-    return re.sub(r"[\s_\-]+", "", str(key)).lower()
 
 
 _BOMS = (
@@ -103,6 +124,7 @@ _BOMS = (
     (b"\xfe\xff", "utf-16-be"),
 )
 _STRIP = "\ufeff \t\r\n\x0b\x0c"
+_BLOCK = 4096
 
 
 def _encoding(data: bytes) -> str:
@@ -124,19 +146,36 @@ def _encoding(data: bytes) -> str:
     return "utf-8"
 
 
+def _first_significant(data: bytes, encoding: str) -> str:
+    """First non-blank character of ``data`` ("" when there is none).
+
+    The blank prefix may be arbitrarily long, so it is walked in blocks until a character shows up;
+    a binary or an ordinary text file stops at the first block.
+    """
+    decoder = codecs.getincrementaldecoder(encoding)(errors="ignore")
+    for start in range(0, len(data), _BLOCK):
+        text = decoder.decode(data[start : start + _BLOCK]).lstrip(_STRIP)
+        if text:
+            return text[0]
+    return ""
+
+
 def _json_like_text(data: bytes) -> str | None:
     """Decoded text of ``data`` when it looks like JSON (first non-blank character ``{`` or ``[``).
 
     Only a small head is decoded to decide, so binaries and unrelated files cost nothing.
     """
     encoding = _encoding(data)
-    probe = data[:256].decode(encoding, errors="ignore").lstrip(_STRIP)
-    if probe[:1] not in ("{", "["):
+    if _first_significant(data, encoding) not in ("{", "["):
         return None
     try:
         return data.decode(encoding).lstrip(_STRIP)
     except UnicodeDecodeError:
         return data.decode(encoding, errors="ignore").lstrip(_STRIP)
+
+
+if unnormalized_constants():  # a programming error, never a data condition
+    raise RuntimeError(f"check_no_pack: constants not normalised: {unnormalized_constants()}")
 
 
 def _norm_keys(obj: dict) -> dict[str, object]:
@@ -157,19 +196,17 @@ def _json_object(data: bytes) -> dict | None:
 
 
 _NOTICE_LOWER = tuple(phrase.lower() for phrase in NOTICE_PHRASES)
-_MANIFEST_NORM = {_norm(key) for key in MANIFEST_KEYS}
-_SHAPE_NORM = {_norm(key) for key in MANIFEST_SHAPE}
 
 
 def _is_manifest(value: dict) -> bool:
     folded = _norm_keys(value)
     keys = set(folded)
-    notice = folded.get("notice")
+    notice = folded.get(KEY_NOTICE)
     if isinstance(notice, str) and any(phrase in notice.lower() for phrase in _NOTICE_LOWER):
         return True
-    if _MANIFEST_NORM <= keys:
+    if MANIFEST_KEYS <= keys:
         return True
-    return "notice" in keys and len(_SHAPE_NORM & keys) >= 2
+    return KEY_NOTICE in keys and len(MANIFEST_SHAPE & keys) >= 2
 
 
 def _threshold(fields: set[str]) -> int:
@@ -182,9 +219,9 @@ def _is_data_file(value: dict) -> bool:
         rows = folded.get(key)
         if not isinstance(rows, list):
             continue
-        wanted = {_norm(f) for f in fields}
+        wanted = fields
         if not rows:
-            if key == "adapters" and isinstance(folded.get("processmap"), dict):
+            if key == KEY_ADAPTERS and isinstance(folded.get(KEY_PROCESS_MAP), dict):
                 return True
             continue
         for row in rows[:5]:
@@ -203,10 +240,10 @@ def _text_kind(text: str) -> str | None:
     if any(phrase in lowered for phrase in _NOTICE_LOWER):
         return "knowledge pack manifest"
     keys = _quoted_keys(text)
-    if len(keys & (_MANIFEST_NORM | _SHAPE_NORM)) >= 2:
+    if len(keys & (MANIFEST_KEYS | MANIFEST_SHAPE)) >= 2:
         return "knowledge pack manifest"
     for key, fields in _signatures().items():
-        wanted = {_norm(f) for f in fields}
+        wanted = fields
         if key in keys and len(wanted & keys) >= _threshold(wanted):
             return "knowledge pack data file"
     return None
@@ -236,7 +273,7 @@ def looks_like_pack_manifest(data: bytes) -> bool:
 
 def is_synthetic(data: bytes) -> bool:
     value = _json_object(data)
-    notice = _norm_keys(value).get("notice", "") if value else ""
+    notice = _norm_keys(value).get(KEY_NOTICE, "") if value else ""
     return isinstance(notice, str) and notice.startswith(SYNTHETIC_MARK)
 
 
