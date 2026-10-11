@@ -7,6 +7,7 @@ tests check the stored cache, not only what a read resolves.
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 import test_pipeline as tp
@@ -291,3 +292,252 @@ def test_many_bookmarks_survive_a_reindex_and_full_reassociate_is_idempotent(tmp
     first = bm.reassociate(db)
     assert first["relinked"] == 0 and first["orphaned"] == len(orphans)
     assert bm.reassociate(db) == first
+
+
+# --------------------------------------------------------------------------- record identity (fingerprint)
+
+
+def same_start_log(tail: str, cont: str) -> bytes:
+    """Ten records; the 5th starts with the same 80 characters in every variant and differs after them."""
+    lines = []
+    for i in range(10):
+        if i == 4:
+            lines.append(tp.mf.header(5_000, "INFO", "[Alpha] " + "s" * 80 + tail))
+            lines.append(cont)
+        else:
+            lines.append(tp.mf.header(i * 1_000, "INFO", f"[Alpha] item {i} done"))
+    return tp.mf.render(lines)
+
+
+@pytest.mark.parametrize(
+    ("tail", "cont"),
+    [(" tail two", "  same continuation"), (" tail one", "  diff continuation")],
+    ids=["message-after-the-prefix", "continuation"],
+)
+def test_two_complete_records_with_the_same_start_are_told_apart(tmp_path, db, tail, cont):
+    original = same_start_log(" tail one", "  same continuation")
+    variant = same_start_log(tail, cont)
+    assert len(original) == len(variant)  # same offsets and timestamps: only the content differs
+    root = tp.write_folder(tmp_path / "Log", {WFM: original})
+    ingest(db, root)
+    line = record_lines(db, WFM)[4]
+    mark(db, WFM, line, "fifth")
+    first_msg = entry_at(db, WFM, line)[1]
+    assert db.execute("SELECT fp FROM bookmark").fetchone()[0].startswith("f:")
+    (root / WFM).write_bytes(variant)
+    assert actions(ingest(db, root)) == {WFM: "reindex"}
+    state = view(db)
+    assert_orphan(state["fifth"])  # same line, offset, time and start: still another record
+    assert bm.for_entries(db, [entry_at(db, WFM, line)[0]]) == {}
+    (root / WFM).write_bytes(original)
+    assert actions(ingest(db, root)) == {WFM: "reindex"}
+    assert_linked(view(db)["fifth"], WFM, first_msg)
+
+
+def test_open_last_record_relinks_when_completed_and_is_closed_by_the_next_record(tmp_path, db):
+    head = tp.make_log(30)
+    partial = tp.mf.header(900_000, "INFO", "[Alpha] last one is still being wr").encode()
+    root = tp.write_folder(tmp_path / "Log", {WFM: head + partial})  # no final newline
+    ingest(db, root)
+    last_line = record_lines(db, WFM)[-1]
+    mark(db, WFM, last_line, "open")
+    assert db.execute("SELECT fp FROM bookmark").fetchone()[0].startswith("p")
+    # The record grows (first line completed, then a continuation): still the bookmarked record.
+    grown = head + partial + b"itten\n  with a continuation"
+    (root / WFM).write_bytes(grown)
+    assert actions(ingest(db, root)) == {WFM: "append"}
+    assert_linked(view(db)["open"], WFM, entry_at(db, WFM, last_line)[1])
+    assert db.execute("SELECT fp FROM bookmark").fetchone()[0].startswith("p")  # still the last record
+    # A next record closes it: the fingerprint now covers the whole, final content.
+    (root / WFM).write_bytes(grown + b"\n" + tp.make_log(3, start=2_000))
+    assert actions(ingest(db, root)) == {WFM: "append"}
+    state = view(db)
+    assert_linked(state["open"], WFM, entry_at(db, WFM, last_line)[1])
+    assert state["open"]["msg"].endswith("still being written")
+    assert db.execute("SELECT fp FROM bookmark").fetchone()[0].startswith("f:")
+    # A rewrite that completes the same start differently is another record.
+    rewritten = head + partial + b"ong guess\n  with a continuation\n" + tp.make_log(3, start=2_000)
+    (root / WFM).write_bytes(rewritten)
+    assert actions(ingest(db, root)) == {WFM: "reindex"}
+    assert_orphan(view(db)["open"])
+
+
+# --------------------------------------------------------------------------- lineage (rotation)
+
+
+def twin_log(first: str) -> bytes:
+    """A first record that tells the files apart (same size), then records identical across files."""
+    return tp.mf.render([tp.mf.header(0, "INFO", f"[Alpha] {first}")]) + tp.make_log(40, start=1_000)
+
+
+def rotate_onto_a_twin(tmp_path, db):
+    """``.log.0`` and ``.log`` share their records after the first one; both are bookmarked at one line.
+
+    Then ``.log.0`` disappears and ``.log`` rotates into its name: the bookmark of the dropped file and
+    the one of the moved file end up with the same locator and the same record identity.
+    """
+    root = tp.write_folder(
+        tmp_path / "Log", {WFM_ROTATED: twin_log("origin of file A"), WFM: twin_log("origin of file B")}
+    )
+    ingest(db, root)
+    line = record_lines(db, WFM)[6]
+    assert entry_at(db, WFM, line)[1] == entry_at(db, WFM_ROTATED, line)[1]
+    mark(db, WFM_ROTATED, line, "old rotated")
+    mark(db, WFM, line, "current")
+    (root / WFM_ROTATED).unlink()
+    (root / WFM).rename(root / WFM_ROTATED)
+    (root / WFM).write_bytes(tp.make_log(10, start=70_000))
+    ingest(db, root)
+    return root, line
+
+
+def force_reindex(db, member: str) -> None:
+    sid = db.execute("SELECT id FROM source WHERE member = ?", (member,)).fetchone()[0]
+    db.execute("DELETE FROM meta WHERE key = ?", (f"{PAYLOAD_VERSION_KEY}.{sid}",))
+    db.commit()
+
+
+def test_an_orphan_never_takes_over_a_linked_bookmark_after_a_rotation(tmp_path, db):
+    root, line = rotate_onto_a_twin(tmp_path, db)
+    fps = dict(db.execute("SELECT note, fp FROM bookmark"))
+    assert fps["old rotated"] == fps["current"]  # same identity: only the lineage tells them apart
+    state = view(db)
+    current_msg = state["current"]["msg"]
+    assert_linked(state["current"], WFM_ROTATED, current_msg)
+    assert_orphan(state["old rotated"])
+    lineage = dict(db.execute("SELECT note, source_id FROM bookmark"))
+    assert lineage["old rotated"] is None  # its source was dropped: detached
+    # The tail of the moved file is parsed again: the linked bookmark keeps its record.
+    force_reindex(db, WFM_ROTATED)
+    assert actions(ingest(db, root)) == {WFM_ROTATED: "reindex"}
+    state = view(db)
+    assert_linked(state["current"], WFM_ROTATED, current_msg)
+    assert_orphan(state["old rotated"])
+    entry_id = state["current"]["entry_id"]
+    assert bm.for_entries(db, [entry_id]) == {entry_id: {"id": state["current"]["id"], "color": "red",
+                                                         "has_note": True}}  # fmt: skip
+    # A second rotation moves the live bookmark only; the detached one stays where it was.
+    (root / WFM_ROTATED).rename(root / WFM_OLDER)
+    (root / WFM).rename(root / WFM_ROTATED)
+    (root / WFM).write_bytes(tp.make_log(5, start=90_000))
+    ingest(db, root)
+    state = view(db)
+    assert_linked(state["current"], WFM_OLDER, current_msg)
+    assert_orphan(state["old rotated"])
+    assert state["old rotated"]["member"] == WFM_ROTATED
+    assert bm.for_entries(db, [entry_at(db, WFM_ROTATED, line)[0]]) == {}
+    assert bm.reassociate(db) == {"bookmarks": 2, "relinked": 0, "orphaned": 1}
+
+
+# --------------------------------------------------------------------------- export / import
+
+
+def notes_state(conn) -> dict[str, tuple]:
+    return {
+        i["note"]: (i["member"], i["line_no"], i["orphan"], i["msg"])
+        for i in bm.list_bookmarks(conn, limit=bm.MAX_LIMIT)[0]
+    }
+
+
+def test_export_import_keeps_orphans_and_linked_bookmarks_at_one_locator(tmp_path, db):
+    root, line = rotate_onto_a_twin(tmp_path, db)
+    # The same lineage can also hold an orphan and a linked bookmark at one line (rewritten content).
+    early = record_lines(db, WFM)[3]
+    mark(db, WFM, early, "early")
+    (root / WFM).write_bytes(tp.make_log(10, start=500_000))
+    assert actions(ingest(db, root)) == {WFM: "reindex"}
+    mark(db, WFM, early, "new record")
+    expected = notes_state(db)
+    assert expected["early"][2] is True and expected["new record"][2] is False
+    data = bm.export_bookmarks(db)
+    items = {i["note"]: i for i in data["bookmarks"]}
+    assert data["version"] == 2 and items["old rotated"]["detached"] and items["early"]["orphan"]
+    assert not items["current"]["orphan"] and not items["current"]["detached"]
+    # Into a fresh case of the same files: identities decide, no note is lost or swapped.
+    other = tp.fresh_db(tmp_path, "other")
+    ingest(other, root)
+    assert bm.import_bookmarks(other, data) == {"imported": 4, "existing": 0, "unmatched": 0, "invalid": 0}
+    assert notes_state(other) == expected
+    assert bm.import_bookmarks(other, data) == {"imported": 0, "existing": 4, "unmatched": 0, "invalid": 0}
+    assert notes_state(other) == expected
+    # Back into the case it came from, after the bookmarks were deleted.
+    for (bid,) in db.execute("SELECT id FROM bookmark").fetchall():
+        bm.delete_bookmark(db, bid)
+    assert bm.import_bookmarks(db, data)["imported"] == 4
+    assert notes_state(db) == expected
+    # Detached and orphan items do not take a record later on: only the record they bookmarked.
+    force_reindex(db, WFM_ROTATED)
+    force_reindex(db, WFM)
+    ingest(db, root)
+    assert notes_state(db) == expected
+    other.close()
+
+
+def test_a_version_1_export_still_imports(tmp_path, db):
+    root = tp.write_folder(tmp_path / "Log", {WFM: tp.make_log(20)})
+    ingest(db, root)
+    lines = record_lines(db, WFM)
+    doc = {"format": bm.EXPORT_FORMAT, "version": 1, "bookmarks": [
+        {"member": WFM, "line_no": lines[2], "color": "red", "note": "v1"},
+        {"member": WFM, "line_no": 999, "note": "no record"},
+    ]}  # fmt: skip
+    assert bm.import_bookmarks(db, doc) == {"imported": 2, "existing": 0, "unmatched": 0, "invalid": 0}
+    state = view(db)
+    assert_linked(state["v1"], WFM, entry_at(db, WFM, lines[2])[1])
+    assert db.execute("SELECT fp FROM bookmark WHERE note = 'v1'").fetchone()[0].startswith("f:")
+    assert_orphan(state["no record"])
+    assert bm.import_bookmarks(db, doc)["existing"] == 2
+
+
+# --------------------------------------------------------------------------- cost
+
+
+def bookmark_statements(statements: list[str]) -> list[str]:
+    return [s for s in statements if re.search(r"\b(from|into|update)\s+bookmark\b", s, re.IGNORECASE)]
+
+
+def timed_reindex(conn, root) -> tuple[float, list[str]]:
+    force_reindex(conn, WFM)
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    try:
+        start = time.perf_counter()
+        assert actions(run_ingest(conn, root)) == {WFM: "reindex"}
+        elapsed = time.perf_counter() - start
+    finally:
+        conn.set_trace_callback(None)
+    return elapsed, bookmark_statements(statements)
+
+
+def test_reindex_cost_follows_orphans_and_bookmarked_records_not_the_table(tmp_path, db):
+    root = tp.write_folder(tmp_path / "Log", {WFM: tp.make_log(60_000)})
+    ingest(db, root)
+    assert db.execute("SELECT count(*) FROM entry").fetchone()[0] == 60_000
+    empty, empty_statements = timed_reindex(db, root)
+    assert all(s.strip().upper().startswith("SELECT 1 FROM BOOKMARK") for s in empty_statements)
+    sid = db.execute("SELECT id FROM source").fetchone()[0]
+    rows = db.execute("SELECT id, line_no FROM entry ORDER BY id").fetchall()
+    linked, orphans = rows[0::30][:2000], rows[15::30][:2000]
+    last = rows[-1][0]
+    values = [
+        (1, WFM, line, eid, "red", "linked", "2030-01-01T00:00:00Z", sid,
+         bm.fingerprint(off, ts, text, open_record=eid == last))
+        for eid, (_sid, line, off, ts, text) in bm._contents(db, [eid for eid, _line in linked])
+    ]  # fmt: skip
+    values += [
+        (1, WFM, line, None, "blue", "orphan", "2030-01-01T00:00:00Z", sid, "f:" + "0" * 32)
+        for _eid, line in orphans  # a record sits at every orphan's line, never its own
+    ]
+    db.executemany(bm._INSERT_SQL, values)
+    db.commit()
+    busy, busy_statements = timed_reindex(db, root)
+    counts = db.execute("SELECT note, count(entry_id), count(*) FROM bookmark GROUP BY note ORDER BY note")
+    assert counts.fetchall() == [("linked", 2000, 2000), ("orphan", 0, 2000)]
+    # Per linked bookmark: its detach, the release of a stale holder and the link itself; nothing per
+    # record of the file and nothing per orphan beyond the candidate check of its line.
+    assert len(busy_statements) <= 3 * 2000 + 20 * len(empty_statements) + 20
+    print(
+        f"\nreindex of 60000 records: empty table {empty:.2f}s ({len(empty_statements)} bookmark statements),"
+        f" 2000 linked + 2000 orphans {busy:.2f}s ({len(busy_statements)} bookmark statements)"
+    )
+    assert busy < 2 * empty + 2.0  # generous: CI machines vary; the measured overhead is about 10 %

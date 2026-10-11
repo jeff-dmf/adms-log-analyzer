@@ -13,10 +13,11 @@ triggers, so this module keeps it in sync by hand:
 * delete: the FTS5 ``'delete'`` command with the values the index holds, read from
   ``entry_text`` before the rows disappear.
 
-Bookmarks (``store/bookmarks.py``) are user data located by ``(collection, member, line_no)`` plus a
-record fingerprint; their ``entry_id`` cache is kept here, in the same transaction as the records:
-orphaned before records are deleted, linked again after records are inserted, and moved with a
-source that a rotation renames. Each hook costs one probe when the case has no bookmarks.
+Bookmarks (``store/bookmarks.py``) are user data located by ``(collection, member, line_no)``, tied to
+the lineage of their source and identified by a record fingerprint; their ``entry_id`` cache is kept
+here, in the same transaction as the records: orphaned before records are deleted, linked again after
+records are inserted (same lineage, matching fingerprint), and moved with a source that a rotation
+renames. Each hook costs one probe when the case has no bookmarks.
 """
 
 from __future__ import annotations

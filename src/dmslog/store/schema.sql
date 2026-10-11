@@ -191,10 +191,18 @@ CREATE TABLE error_config(
   PRIMARY KEY(collection_group, adapter, interface, adms_id)) WITHOUT ROWID;
 
 -- User data (survives reindexing) -----------------------------------------------
-CREATE TABLE bookmark(
+CREATE TABLE bookmark(                                         -- store/bookmarks.py; ARQUITETURA 9.3
   id INTEGER PRIMARY KEY,
   collection_id INTEGER NOT NULL, member TEXT NOT NULL, line_no INTEGER NOT NULL,  -- stable locator
-  entry_id INTEGER,                                                                -- cache kept by the writer; NULL = orphan
+  entry_id INTEGER,                                            -- cache kept by the writer; NULL = orphan
   color TEXT, note TEXT, created_at TEXT NOT NULL,
-  fp TEXT);                                                                        -- record fingerprint (store/bookmarks.py)
+  source_id INTEGER,                                           -- lineage (file followed across rotations); NULL = detached
+  fp TEXT);                                                    -- record identity: f:<digest> complete, p<n>:<digest> open
+CREATE INDEX ix_bookmark_source ON bookmark(source_id, line_no);
+CREATE INDEX ix_bookmark_orphan ON bookmark(source_id, line_no) WHERE entry_id IS NULL;
+CREATE INDEX ix_bookmark_open ON bookmark(source_id) WHERE entry_id IS NOT NULL AND substr(fp, 1, 1) = 'p';
+CREATE UNIQUE INDEX ux_bookmark_entry ON bookmark(entry_id) WHERE entry_id IS NOT NULL;  -- one bookmark per record
+CREATE TRIGGER bookmark_source_gone AFTER DELETE ON source BEGIN  -- a dropped source detaches its bookmarks
+  UPDATE bookmark SET source_id = NULL, entry_id = NULL WHERE source_id = OLD.id;
+END;
 CREATE TABLE saved_view(id INTEGER PRIMARY KEY, name TEXT NOT NULL, filter TEXT NOT NULL, columns TEXT, created_at TEXT NOT NULL);

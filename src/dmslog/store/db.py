@@ -28,8 +28,25 @@ def read_schema() -> str:
     return resources.files(__package__).joinpath(SCHEMA_RESOURCE).read_text(encoding="utf-8")
 
 
+def schema_statements(script: str) -> list[str]:
+    """Split a SQL script into complete statements (triggers included), in order."""
+    out: list[str] = []
+    buf: list[str] = []
+    for line in script.splitlines(keepends=True):
+        buf.append(line)
+        text = "".join(buf)
+        if sqlite3.complete_statement(text):
+            out.append(text.strip())
+            buf = []
+    if "".join(buf).strip():
+        raise ValueError("incomplete SQL statement at the end of the schema")
+    return out
+
+
 def _migrate_to_1(conn: sqlite3.Connection) -> None:
-    conn.executescript(read_schema())
+    # Statement by statement, not executescript (which commits): the migration runs in one transaction.
+    for statement in schema_statements(read_schema()):
+        conn.execute(statement)
 
 
 _BUCKET_SEV_DDL = """
@@ -61,18 +78,40 @@ def _migrate_to_3(conn: sqlite3.Connection) -> None:
     )
 
 
-def _migrate_to_4(conn: sqlite3.Connection) -> None:
-    """Add ``bookmark.fp`` (record fingerprint) and rebuild every bookmark cache once.
+_BOOKMARK_V4_DDL = (
+    "CREATE INDEX IF NOT EXISTS ix_bookmark_source ON bookmark(source_id, line_no)",
+    "CREATE INDEX IF NOT EXISTS ix_bookmark_orphan ON bookmark(source_id, line_no) WHERE entry_id IS NULL",
+    "CREATE INDEX IF NOT EXISTS ix_bookmark_open ON bookmark(source_id)"
+    " WHERE entry_id IS NOT NULL AND substr(fp, 1, 1) = 'p'",
+    "CREATE TRIGGER IF NOT EXISTS bookmark_source_gone AFTER DELETE ON source BEGIN"
+    " UPDATE bookmark SET source_id = NULL, entry_id = NULL WHERE source_id = OLD.id; END",
+)
+_BOOKMARK_UNIQUE_DDL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_bookmark_entry ON bookmark(entry_id) WHERE entry_id IS NOT NULL"
+)
 
-    Before v4 the writer did not keep ``bookmark.entry_id``; the full pass links each bookmark to the
-    record at its locator and stores that record's fingerprint (docs/ARQUITETURA.md 9.3).
+
+def _migrate_to_4(conn: sqlite3.Connection) -> None:
+    """Bookmark lineage (``source_id``) and record fingerprint (``fp``); every cache rebuilt once.
+
+    Before v4 the writer did not keep ``bookmark.entry_id``. The lineage of a bookmark is the source
+    that holds its member; the full pass links each bookmark to the record at its line and stores that
+    record's fingerprint (docs/ARQUITETURA.md 9.3). Runs inside the migration transaction, which holds
+    the write lock before the first read, so no reindex can run between the reads and the updates.
     """
     columns = {row[1] for row in conn.execute("PRAGMA table_info(bookmark)")}
+    if "source_id" not in columns:
+        conn.execute("ALTER TABLE bookmark ADD COLUMN source_id INTEGER")
     if "fp" not in columns:
         conn.execute("ALTER TABLE bookmark ADD COLUMN fp TEXT")
-    from .bookmarks import relink_all  # bookmarks imports the query layer; keep db.py import-light
+    for ddl in _BOOKMARK_V4_DDL:
+        conn.execute(ddl)
+    from . import bookmarks  # bookmarks imports the query layer; keep db.py import-light
 
-    relink_all(conn)
+    if "source_id" not in columns:
+        bookmarks.adopt_lineage(conn)
+    bookmarks.relink_all(conn)
+    conn.execute(_BOOKMARK_UNIQUE_DDL)  # after the pass: a version-3 cache may hold one record twice
 
 
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
@@ -92,18 +131,45 @@ def get_user_version(conn: sqlite3.Connection) -> int:
 def migrate(conn: sqlite3.Connection) -> int:
     """Bring the database to SCHEMA_VERSION and return the resulting version.
 
-    Idempotent. Raises SchemaVersionError if the database is newer than this code.
+    Each step runs in its own transaction, opened with ``BEGIN IMMEDIATE`` (the write lock is taken
+    before the step reads anything) and committed together with its ``PRAGMA user_version``; a failure
+    rolls the whole step back, DDL included, and leaves the previous version intact. The version is
+    read again under the lock, so a step that another connection already applied is skipped. A
+    transaction the caller left open is committed first (as ``executescript`` always did). Idempotent.
+    Raises SchemaVersionError if the database is newer than this code.
     """
-    current = get_user_version(conn)
+    if conn.in_transaction:
+        conn.commit()
+    _check_version(get_user_version(conn))
+    previous = conn.isolation_level
+    conn.isolation_level = None  # explicit transactions only
+    try:
+        for version in range(1, SCHEMA_VERSION + 1):
+            if get_user_version(conn) >= version:
+                continue
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                current = get_user_version(conn)
+                _check_version(current)
+                if current < version:
+                    MIGRATIONS[version](conn)
+                    conn.execute(f"PRAGMA user_version={version}")
+                conn.execute("COMMIT")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+    finally:
+        conn.isolation_level = previous
+    return get_user_version(conn)
+
+
+def _check_version(current: int) -> None:
     if current > SCHEMA_VERSION:
         raise SchemaVersionError(
             f"database schema version {current} is newer than the supported version "
             f"{SCHEMA_VERSION}; upgrade dmslog to open this case"
         )
-    for version in range(current + 1, SCHEMA_VERSION + 1):
-        MIGRATIONS[version](conn)
-        conn.execute(f"PRAGMA user_version={version}")
-    return get_user_version(conn)
 
 
 def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
