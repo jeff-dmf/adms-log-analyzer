@@ -58,6 +58,7 @@ Respostas do Jefferson às perguntas em aberto da versão inicial. Valem como re
 | U15 | (2026-10-09) O texto `ResultSet` do `BLT-011` **não é indexado no FTS** (`fts = false`); o registro continua no grid e nas contagens | `blthost.toml` BLT-011 com `fts = false`; reindexar casos antigos | 6.3, 9.3a |
 | U16 | (2026-10-09) Confirmadas as decisões tomadas pela sessão: banco do caso `case.sqlite`; BLTHost no escopo padrão; UTF-16 com BOM transcodificado na leitura; razão máxima de compressão (200x) isenta até 1 GiB descomprimido; mesmo GUID com timestamp diferente = 409 (duas coletas = dois casos); até 4 agentes em paralelo | Registradas aqui para não voltarem a ser perguntadas | 5, 9.2 |
 | U17 | (2026-10-10) A **primeira release será a 0.1.0**; a 1.0.0 só quando tudo estiver muito maduro. Nos documentos e no código, "1.0" ("escopo da 1.0", "release 1.0", "aceite da 1.0") passa a significar o escopo e o aceite da **0.1.0**; o que ficar fora (P1, P2, `.db3`) não bloqueia a 0.1.0, e a 1.0.0 será definida depois | Versão do pacote continua `0.1.0` (`pyproject.toml`, `dmslog.__version__`); M8 entrega a 0.1.0 | 15, ROADMAP M8 |
+| U18 | (2026-10-11) O **app final não anonimiza nem mascara dados**: roda local, na máquina do usuário, sem exposição. A redação/anonimização (`redact.py`, `redaction.toml`, `aliases.toml`) é ferramenta de **desenvolvimento**, por causa do repo público e dos ERS reais. Em desenvolvimento ela segue obrigatória e fail-closed: o strict **deve manter** a rede padrão-nega mesmo com todas as categorias desligadas (correção em implementação em outro PR), e só a opção explícita de não anonimizar entrega texto intacto | A forma de entrega (remover o recurso da release ou entregá-lo desligado) fica para o desenho do M8; a U10 deve ser revista nesse marco | 10.2, ROADMAP M8 |
 
 ## 2. Decisões e alternativas descartadas
 
@@ -170,7 +171,7 @@ src/dmslog/
   report/
     export.py            relatório .txt de uma seleção (eventos, bookmarks, trechos, payloads opcionais)
     redact.py            anonimização configurável na exportação (perfis por categoria + termos do usuário)
-tools/                   só dev, fora do pacote: kb_build.py, make_fixture.py, mine_templates.py, bench.py
+tools/                   só dev, fora do pacote: kb_build.py, make_fixture.py, mine_templates.py (a criar no P1), bench.py
 tests/
   fixtures/              logs sintéticos pequenos (seção 13) e mini-vault para kb_build
   unit/  property/  integration/  perf/  samples/ (smoke opcional com local-samples, pulado no CI)
@@ -680,7 +681,7 @@ Desenho:
 
 `parse/signature.py`: `signature(msg) -> str` normaliza a 1ª linha para agrupar registros sem template (`unknown_sig`, painel de desconhecidos, mineração). Ordem: espaços colapsados; timestamp → `<ts>`, GUID (com ou sem chaves) → `<guid>`, URL → `<url>`, caminho Windows/UNC/POSIX → `<path>`, IP → `<ip>`, `0x…` e hex longo com dígito → `<hex>`, texto entre aspas simples ou duplas → `<s>`, números (inclusive decimais) → `<n>`. Lê no máximo 2.048 caracteres e devolve no máximo 240. Pura, determinística e idempotente (`signature(signature(x)) == signature(x)`, testado por propriedade): nenhum marcador tem dígito, aspas ou barra. ~0,4 µs por registro.
 
-`tools/mine_templates.py` (dev) agrupa registros desconhecidos de um ERS por essa assinatura e propõe esboço de TOML com exemplos. Na 1.0 serve à descoberta Verbose (seção 6.6); depois da 1.0, à inclusão dos demais logs do ERS (seção 9.1a).
+`tools/mine_templates.py` (dev) agruparia registros desconhecidos de um ERS por essa assinatura e proporia esboço de TOML com exemplos. **Ainda não existe** (decisão de 2026-10-11): será criada no P1, para a inclusão dos demais logs do ERS (seção 9.1a); a descoberta Verbose do M6.1 foi feita por scripts descartáveis. Até lá, o fluxo é `dmslog ingest` mais `unknown_sig` / `GET /api/unknown` (ver `docs/FAMILIA-NOVA.md`).
 
 ## 7. Camada de conhecimento
 
