@@ -11,12 +11,11 @@ HELP_VERSION = "Show the version and exit."
 HELP_SERVE = "Start the local web viewer."
 HELP_PORT = "TCP port on 127.0.0.1 (default: a random free port)."
 HELP_NO_BROWSER = "Do not open the default web browser."
-HELP_INFO = "Show version, environment and data directory."
+HELP_INFO = "Show version, environment, data directory and the cases found there."
 HELP_INGEST = "Index the logs of an ERS zip, folder or file into a case (safe to run again)."
 HELP_INGEST_PATH = "ERS zip, Log folder or log file to index."
 HELP_INGEST_CASE = "Case name (default: derived from the ERS GUID and capture time, or from the folder name)."
 HELP_INGEST_ALL = "Index every text log of the collection, not only the default scope."
-HELP_EXPORT = "Export a text report of a selection (not implemented yet)."
 HELP_TEMPLATES = "List message templates and their counts (not implemented yet)."
 HELP_KB = "Build or inspect the knowledge pack (not implemented yet)."
 HELP_STUB_ARGS = "Arguments (ignored until the command is implemented)."
@@ -265,20 +264,30 @@ EXPORT_WARN_TEXT_LIMIT = "The export stopped after {limit} characters of log tex
 EXPORT_WARN_EVENT_LIMIT = "Only the first {limit} entries of event {event} were exported."
 EXPORT_WARN_MISSING = "{count} selected ids do not exist in this case."
 
-HELP_EXPORT_CMD = "Export a plain-text report (.txt) of a selection, for a support ticket."
-HELP_EXPORT_CASE = "Case name (as listed by `dmslog info`)."
+HELP_EXPORT_CMD = (
+    "Export a plain-text report (.txt) of selected records or events, e.g. for a support ticket. "
+    "Choose a selection (--ids, --event or --filter-json) and say --anonymize or --no-anonymize."
+)
+HELP_EXPORT_CASE = "Case to export from (as listed by `dmslog info`)."
 HELP_EXPORT_IDS = "Comma-separated record ids to export."
 HELP_EXPORT_EVENT = "Comma-separated event ids to export."
-HELP_EXPORT_FILTER = "Filter tree as JSON (text) or @FILE with the JSON, as the viewer builds it."
-HELP_EXPORT_ANONYMIZE = "Replace sensitive values using the redaction profile (<data dir>/redaction.toml)."
-HELP_EXPORT_NO_ANONYMIZE = "Export WITHOUT anonymization (must be said explicitly on every export)."
+HELP_EXPORT_FILTER = (
+    "Filter tree as JSON text, or @FILE to read it from a file (same format the viewer sends)."
+)
+HELP_EXPORT_ANONYMIZE = (
+    "Replace sensitive values with stable markers, using the redaction profile (<data dir>/redaction.toml)."
+)
+HELP_EXPORT_NO_ANONYMIZE = "Export WITHOUT anonymization (the choice must be explicit on every export)."
 HELP_EXPORT_PAYLOADS = "Include request/response payloads (anonymized per XML/JSON element)."
-HELP_EXPORT_CONTEXT = "Records of context before and after each selected record or event (default 0)."
+HELP_EXPORT_CONTEXT = (
+    "Log records of context to include before and after each selected record or event (default: 0)."
+)
 HELP_EXPORT_MAX_BYTES = (
-    "Size limit of one part in bytes (default {default}); larger reports are split in numbered parts."
+    "Size limit of one part in bytes (default: {default}); larger reports are split into numbered parts."
 )
 HELP_EXPORT_OUT = (
-    "Write the report to this file (numbered parts get -part1of3 before the extension); default: stdout."
+    "Write the report to this file (numbered parts get a -part1of3 suffix before the extension; "
+    "default: stdout)."
 )
 EXPORT_CLI_NEED_ANONYMIZE = "dmslog export: say --anonymize or --no-anonymize explicitly"
 EXPORT_CLI_NEED_SELECTION = "dmslog export: give --ids, --event or --filter-json"
