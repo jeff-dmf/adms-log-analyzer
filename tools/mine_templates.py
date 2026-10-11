@@ -89,6 +89,23 @@ _N_LOOSE = r"[\d.]+"
 MAX_WARNINGS_SHOWN = 10
 
 
+class Warnings:
+    """Bounded warning collector: an exact total plus a sample of the first distinct messages."""
+
+    def __init__(self, max_sample: int = MAX_WARNINGS_SHOWN) -> None:
+        self.total = 0
+        self.sample: list[str] = []
+        self._max_sample = max_sample
+
+    def add(self, message: str) -> None:
+        self.total += 1
+        if len(self.sample) < self._max_sample and message not in self.sample:
+            self.sample.append(message)
+
+    def __bool__(self) -> bool:
+        return self.total > 0
+
+
 @dataclass
 class Group:
     """One signature of one family, with its examples."""
@@ -370,7 +387,7 @@ def _is_int(value: object) -> bool:
 
 
 def read_groups(
-    conn: sqlite3.Connection, family: str, min_count: int, limit: int, warnings: list[str] | None = None
+    conn: sqlite3.Connection, family: str, min_count: int, limit: int, warnings: Warnings | None = None
 ) -> list[Group]:
     """Up to ``limit`` valid signature groups of a family, most frequent first.
 
@@ -397,7 +414,7 @@ def read_groups(
         ]
         if bad:
             if warnings is not None:
-                warnings.append(f"unknown_sig row rejected: invalid value in column {', '.join(bad)}")
+                warnings.add(f"unknown_sig row rejected: invalid value in column {', '.join(bad)}")
             continue
         if r[2] >= min_count and len(groups) < limit:
             groups.append(Group(r[0], r[1], r[2], r[3]))
@@ -408,7 +425,7 @@ def read_groups(
         bad = [name for name, ok in (("msg", isinstance(row[0], str)), ("flags", _is_int(row[1]))) if not ok]
         if bad:
             if warnings is not None:
-                warnings.append(f"entry row rejected: invalid value in column {', '.join(bad)}")
+                warnings.add(f"entry row rejected: invalid value in column {', '.join(bad)}")
             continue
         group.examples.append(row[0].strip())
         group.first_has_cont = bool(row[1] & 2)
@@ -597,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def summarize(drafts: list[Draft], warnings: list[str]) -> list[str]:
+def summarize(drafts: list[Draft], warnings: Warnings) -> list[str]:
     """Lines for stderr; empty when nothing was skipped or discarded."""
     skipped = [d for d in drafts if not d.body]
     if not skipped and not warnings:
@@ -612,10 +629,10 @@ def summarize(drafts: list[Draft], warnings: list[str]) -> list[str]:
         for d in skipped
     ]
     if warnings:
-        lines.append(f"  {len(warnings)} row(s) ignored because of invalid data:")
-        lines += [f"    {safe_text(w)}" for w in warnings[:MAX_WARNINGS_SHOWN]]
-        if len(warnings) > MAX_WARNINGS_SHOWN:
-            lines.append(f"    ... and {len(warnings) - MAX_WARNINGS_SHOWN} more")
+        lines.append(f"  {warnings.total} row(s) ignored because of invalid data:")
+        lines += [f"    {safe_text(w)}" for w in warnings.sample]
+        if warnings.total > len(warnings.sample):
+            lines.append(f"    ... and {warnings.total - len(warnings.sample)} more")
     return lines
 
 
@@ -646,7 +663,7 @@ def run(argv: list[str] | None = None) -> int:
             which = f" for family {safe_text(family)}" if family else ""
             print(f"error: no unknown records{which}", file=sys.stderr)
             return EXIT_FAILED
-        warnings: list[str] = []
+        warnings = Warnings()
         groups = read_groups(conn, family, args.min_count, args.limit, warnings)
     except sqlite3.Error as exc:
         print(f"error: cannot read the case: {safe_text(exc)}", file=sys.stderr)

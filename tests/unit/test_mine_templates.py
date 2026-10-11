@@ -1,6 +1,7 @@
 """Tests for tools/mine_templates.py (draft templates from unknown signatures). Synthetic data only."""
 
 import importlib.util
+import os
 import re
 import sqlite3
 import sys
@@ -65,6 +66,21 @@ def build_case(path: Path, streams: dict[str, list[str]]) -> Path:
 @pytest.fixture
 def case_db(tmp_path):
     return build_case(tmp_path / "case.sqlite", {"WIDGET": WIDGET})
+
+
+WINDOWS_FORBIDDEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+WINDOWS_RESERVED = re.compile(r"(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$")
+
+
+@pytest.fixture(autouse=True)
+def _portable_file_names(tmp_path):
+    """Convention: no test may create a file or directory whose name is invalid on Windows."""
+    yield
+    for _root, dirs, files in os.walk(tmp_path):
+        for name in (*dirs, *files):
+            assert not WINDOWS_FORBIDDEN.search(name), repr(name)
+            assert not WINDOWS_RESERVED.match(name), repr(name)
+            assert name == name.rstrip(" .") and name, repr(name)
 
 
 def mine(*args: str) -> int:
@@ -300,7 +316,7 @@ def test_hostile_signature_row_never_injects_toml(tmp_path, capsys, hostile):
 
 
 @pytest.mark.parametrize("hostile", HOSTILE)
-def test_hostile_family_and_file_name(tmp_path, capsys, hostile):
+def test_hostile_family(tmp_path, capsys, hostile):
     db = build_case(tmp_path / "c.sqlite", {hostile: OTHER})
     rc = mine("--case-db", str(db), "--family", hostile, "--min-count", "1")
     out = capsys.readouterr().out
@@ -308,22 +324,26 @@ def test_hostile_family_and_file_name(tmp_path, capsys, hostile):
         _assert_clean(out, hostile)
     else:
         assert rc == 1 and out == ""  # refused instead of emitting an invalid file
-    named = tmp_path / ("w\n[evil]\nx=1.sqlite" if sys.platform != "win32" else "w.sqlite")
-    named.write_bytes(db.read_bytes())
-    assert mine("--case-db", str(named), "--family", "GADGET") in (0, 1)  # family absent: error only
-    capsys.readouterr()
 
 
-def test_hostile_file_name_stays_in_one_comment(tmp_path, capsys):
-    if sys.platform == "win32":
-        pytest.skip("newline in file names")
-    db = build_case(tmp_path / "tmp.sqlite", {"GIZMO": OTHER})
-    named = tmp_path / "w\n[evil]\nx=1.sqlite"
-    named.write_bytes(db.read_bytes())
-    assert mine("--case-db", str(named), "--family", "GIZMO") == 0
-    out = capsys.readouterr().out
-    assert "[evil]" in out and "evil" not in tomllib.loads(out)
-    _assert_clean(out, "GIZMO")
+def _groups(db: Path, family: str) -> list:
+    conn = sqlite3.connect(db)
+    try:
+        return mt.read_groups(conn, family, 1, 10)
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("hostile", HOSTILE)
+def test_hostile_source_name_stays_in_one_comment(tmp_path, hostile):
+    """The case file name is only rendered into a comment; a hostile name is passed as plain text
+    (no file with such a name is ever created: control characters are invalid on Windows)."""
+    db = build_case(tmp_path / "c.sqlite", {"GIZMO": OTHER})
+    groups = _groups(db, "GIZMO")
+    text, _ = mt.render_drafts("GIZMO", groups, "w\n[evil]\nx=1\x1b" + hostile, len(groups), 1)
+    doc = tomllib.loads(text)
+    assert "evil" not in doc and set(doc) == EXPECTED_TOP
+    _assert_clean(text, "GIZMO")
 
 
 def test_comment_text_is_a_single_clean_line():
@@ -471,26 +491,62 @@ def test_family_with_escapes_is_sanitized_on_stderr(case_db, capsys):
     assert "RED" in err
 
 
-def test_case_path_and_out_path_with_escapes_are_sanitized(tmp_path, capsys):
+def test_case_path_with_escapes_is_sanitized(tmp_path, capsys, monkeypatch):
+    # The hostile path is never touched on disk (control characters are invalid in Windows names).
     missing = tmp_path / "no\x1b[2Jthere\nforged.sqlite"
+    monkeypatch.setattr(Path, "is_file", lambda self: False)
     assert mine("--case-db", str(missing)) == 1
-    _assert_stderr_clean(capsys.readouterr().err, "\x1b", str(missing))
+    err = capsys.readouterr().err
+    _assert_stderr_clean(err, "\x1b", str(missing))
+    assert "forged" in err
 
 
-def test_out_path_with_escapes_is_sanitized(case_db, tmp_path, capsys):
-    out = tmp_path / "sub\x1b[2J\nforged" / "o.toml"  # parent missing: the write fails
-    assert mine("--case-db", str(case_db), "--family", "WIDGET", "--min-count", "1", "--out", str(out)) == 1
+def test_out_path_with_escapes_is_sanitized(case_db, tmp_path, capsys, monkeypatch):
+    out = tmp_path / "o\x1b[2J\nforged.toml"  # only ever a Path object: the write is simulated
+    args = ("--case-db", str(case_db), "--family", "WIDGET", "--min-count", "1", "--out", str(out))
+
+    def failing_write(self, *a, **k):
+        raise OSError(f"disk full \x1b[2J\nforged {self}")
+
+    monkeypatch.setattr(Path, "write_text", failing_write)
+    assert mine(*args) == 1
     _assert_stderr_clean(capsys.readouterr().err, "\x1b", str(out))
-    ok = tmp_path / "ok\x1b[2J\nforged.toml"
-    assert mine("--case-db", str(case_db), "--family", "WIDGET", "--min-count", "1", "--out", str(ok)) == 0
-    _assert_stderr_clean(capsys.readouterr().err, "\x1b", str(ok))
+
+    monkeypatch.setattr(Path, "write_text", lambda self, *a, **k: 0)
+    assert mine(*args) == 0
+    err = capsys.readouterr().err
+    _assert_stderr_clean(err, "\x1b", str(out))
+    assert "wrote" in err
 
 
-def test_exception_messages_are_sanitized(tmp_path, capsys):
-    bad = tmp_path / "bad\x1b[2J\nforged.sqlite"
+def test_exception_messages_are_sanitized(case_db, capsys, monkeypatch):
+    hostile = "bad \x1b[2J\nforged"
+
+    def failing_connect(*a, **k):
+        raise sqlite3.OperationalError(hostile)
+
+    monkeypatch.setattr(mt.sqlite3, "connect", failing_connect)
+    assert mine("--case-db", str(case_db)) == 1  # opening the case fails
+    err = capsys.readouterr().err
+    _assert_stderr_clean(err, "\x1b", hostile)
+    assert "forged" in err
+    monkeypatch.undo()
+
+    def failing_totals(conn):
+        raise sqlite3.DatabaseError(hostile)
+
+    monkeypatch.setattr(mt, "family_totals", failing_totals)
+    assert mine("--case-db", str(case_db)) == 1  # reading the case fails
+    err = capsys.readouterr().err
+    _assert_stderr_clean(err, "\x1b", hostile)
+    assert "forged" in err
+
+
+def test_not_a_database_is_an_error(tmp_path, capsys):
+    bad = tmp_path / "bad.sqlite"
     bad.write_bytes(b"not a database" * 100)
     assert mine("--case-db", str(bad)) == 1
-    _assert_stderr_clean(capsys.readouterr().err, "\x1b", str(bad))
+    assert "not a dmslog case database" in capsys.readouterr().err
 
 
 def test_usage_errors_do_not_echo_raw_values(case_db, capsys):
@@ -575,3 +631,29 @@ def test_zero_count_row_is_rejected_with_a_warning(tmp_path, capsys):
     cap = capsys.readouterr()
     assert "unknown_sig row rejected: invalid value in column n" in cap.err
     assert len(tomllib.loads(cap.out)["template"]) == 1
+
+
+def test_warnings_are_bounded_but_counted_exactly():
+    warnings = mt.Warnings()
+    for i in range(50_000):
+        warnings.add(f"row rejected: invalid value in column c{i % 25}")
+    assert warnings.total == 50_000 and len(warnings.sample) == mt.MAX_WARNINGS_SHOWN
+    assert len(set(warnings.sample)) == len(warnings.sample)
+    lines = mt.summarize([], warnings)
+    assert "50000 row(s) ignored because of invalid data:" in lines[1]
+    assert lines[-1] == f"    ... and {50_000 - mt.MAX_WARNINGS_SHOWN} more"
+
+
+def test_many_invalid_rows_are_counted_in_the_summary(tmp_path, capsys):
+    db = build_case(tmp_path / "c.sqlite", {"GADGET": OTHER})
+    conn = sqlite3.connect(db)
+    conn.executemany(
+        "INSERT INTO unknown_sig VALUES ('GADGET', ?, 'bad', 1)", [(f"sig {i}",) for i in range(300)]
+    )
+    conn.commit()
+    conn.close()
+    assert mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1") == 0
+    err = capsys.readouterr().err
+    assert "300 row(s) ignored because of invalid data" in err
+    assert err.count("unknown_sig row rejected") == 1  # one distinct message in the sample
+    assert "... and 299 more" in err
