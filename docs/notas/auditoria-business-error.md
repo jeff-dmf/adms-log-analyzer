@@ -1,5 +1,7 @@
 # Auditoria do `business_error` nas regras de operação (issue #68, M4 "ainda abertas")
 
+> **Atualização (2026-10-11):** o Jefferson confirmou a definição do Crm (`Detected errors` mais um evento de sistema, com o fim sempre ok, é erro de negócio) e a regra foi declarada em `acrm.toml` com testes sintéticos de regressão (`tests/unit/test_business_error_rules.py`, que cobre também as demais operações que já declaram `business_error`). Com isso, o Crm passa de SEM DEFINIÇÃO para COERENTE declarado: 10 regras declaram `business_error` e 5 seguem SEM DEFINIÇÃO (Smr, Ami, Clc e BLTHost 2). O texto abaixo é o relatório original, mantido como registro.
+
 Data: 2026-10-11. Escopo: só leitura de `src/dmslog/adapters/*.toml`, `src/dmslog/derive/operations.py`, `docs/formato/*.md`, `src/dmslog/knowledge/curated/hints.toml` e testes/fixtures sintéticos. Nenhuma regra foi alterada e nenhuma amostra real foi consultada. As contagens abaixo são de testes e fixtures; números de `docs/formato/` só aparecem como referência de arquivo:linha.
 
 ## 1. Mecanismo

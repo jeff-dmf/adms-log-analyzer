@@ -298,6 +298,8 @@ Tudo é DEBUGLOG. Marcadores de severidade no texto: `Detected errors:`, `[ERROR
 
 No sensitive, o mesmo cabeçalho (mesmo ts e TID) traz o texto `Details` do ErrorConfiguration, com os placeholders preenchidos.
 
+Definição confirmada pelo mantenedor em 2026-10-11: no Crm (`GetTroubleTickets` e `CreatedTroubleTickets`), `Detected errors` mais o evento de sistema na mesma operação, com o fim sempre ok, é erro de negócio (`business_error`); só códigos Info, sem evento de sistema, permanece `ok`.
+
 ### Ocorrências
 
 | Adapter | Código no normal | Ocorr. | Texto no sensitive | Catálogo |
