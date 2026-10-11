@@ -34,7 +34,7 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
 
    `--all-logs` é necessário quando a regra tem `scope = "optional"` (sem a flag o fonte aparece como "not selected"). Depois chame (com `dmslog serve` no ar) `GET /api/unknown?case=<id>&family=<FAMILIA>&limit=N`. A mesma informação está na tabela `unknown_sig` do `case.sqlite` (`family`, `signature`, `n`, `first_entry_id`), mais frequente primeiro. A assinatura vem de `parse/signature.py` (ARQUITETURA 6.7): números viram `<n>`, texto entre aspas `<s>`, GUID `<guid>`, caminho `<path>`, e assim por diante. Cada assinatura é um candidato a template; `first_entry_id` leva ao registro real para ver a continuação (payload, stack trace). Ordene o trabalho por `n`.
 
-   Não verificado: `tools/mine_templates.py` (citado em ARQUITETURA 6.7 e no ROADMAP 8.3) não existe no repositório nem no histórico git; o fluxo acima é o que existe hoje. Entrada: um ERS indexado. Saída: assinaturas por família, sem esboço de TOML.
+   Para gerar um rascunho de TOML a partir dessas assinaturas (ARQUITETURA 6.7): `python tools/mine_templates.py --case NOME [--data-dir DIR] --family CODIGO --out rascunho.toml` (ou `--case-db caminho/case.sqlite`; `--min-count`, `--limit`). Os exemplos do rascunho são mensagens reais do ERS: anonimize antes de commitar. Edite título, classe e severidade (saem como `TODO`, `other`, 4) e revise cada regex; o que não carregou sai comentado como `SKIPPED`.
 
 3. **Criar o TOML da família.** Copie `src/dmslog/adapters/_example.toml` para `src/dmslog/adapters/<familia em minúsculas>.toml` e ajuste:
 

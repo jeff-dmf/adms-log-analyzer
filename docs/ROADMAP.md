@@ -8,7 +8,7 @@ Regras que valem para todas as tarefas:
 - Fixtures sintéticas e anonimizadas; nada de log real em `tests/`. Fixtures de payload são sempre sintéticas.
 - Os ERS de `local-samples/` servem para conferir formato, nunca para diagnosticar aqueles ambientes; são lidos por script (`python3 -I`), como dado não confiável.
 - Escopo da 1.0 (U4, U5, U8, U11): **um ERS por caso**, de um servidor; adapters Wfm, Ont, AVL, Osr, Smn, SiteSwitch, Crm, Ami, Smr, WDI, ClaimCheck, FileUpload, FileMonitor, `CustomAdapterChangeIncidentDevice` + BLTHost com templates e eventos; todos os demais logs do ERS navegáveis em nível genérico (ARQUITETURA, seção 9.1a). Horário dos logs preservado, sem conversão (U6).
-- Repositório privado (U1): o pack do vault é documentação Schneider; artefatos com o pack não são publicados.
+- Repositório público (U1, revista em 2026-10-11): o pack do vault é documentação Schneider e fica fora do repositório e dos artefatos públicos (só existe localmente; o CI tem uma guarda).
 
 Modelos: **haiku** = varredura mecânica barata; **sonnet** = implementação rotineira seguindo a arquitetura; **opus** = decisão, algoritmo difícil, desenho de regra, revisão final.
 
@@ -47,7 +47,7 @@ M6 e M7 podem andar em paralelo.
 | M8 | não iniciado (8.4: este README em inglês já existe; ajuda da CLI em inglês desde o M0) | |
 | Testes de usuário (UAT) | 43 issues (#7 a #49; #49 é o guia e índice), milestones A a H, rótulos `uat`, `uat:pendente`, prioridade e área; quadro em https://github.com/users/jeff-dmf/projects/3. Todos os testes estão disponíveis na `main`, inclusive bookmarks (G1, G2), exportação (G3 a G6) e o modo ao vivo | issues #7 a #49 |
 | Dependabot | ativo desde o commit `e972f6a`: atualizações **semanais** (segunda, 06:00 America/Sao_Paulo) de GitHub Actions e de ferramentas de dev (pip), com permissões mínimas nos workflows e ações fixadas por SHA; PR #1 (atualização do `upload-artifact`) aberto | commit `e972f6a` |
-| Release 0.1.0 (U17) | `pyproject.toml` já em 0.1.0; a release sai depois de M7, 8.1 a 8.5 e dos UAT; artefatos do CI (`dmslog.pyz`, portátil Windows, tarball Linux) em release privada | M8 |
+| Release 0.1.0 (U17) | `pyproject.toml` já em 0.1.0; a release sai depois de M7, 8.1 a 8.5 e dos UAT; artefatos do CI (`dmslog.pyz`, portátil Windows, tarball Linux) construídos pelo CI sem o pack (o pack só entra em build interno com `--pack`) | M8 |
 
 **M1, medido no ERS de exemplo (escopo padrão):** ingestão de 13,8 s só do Enterprise e 25,5 s com o Sensitive (meta 40 s), pico de 236 a 255 MB (meta 500 MB), reingestão idempotente em 0,3 s, página do grid e busca FTS com p95 de 0,8 ms. Interface verificada no Chrome com ERS sintético (horário igual ao do log com fuso de São Paulo, `<script>` literal no grid e no detalhe).
 
@@ -139,7 +139,7 @@ Aceite:
 |---|---|---|
 | 3.1 | Desenho do esquema do pack (JSON, com `notice` de documentação Schneider/repo privado no `manifest.json`) e de `curated/hints.toml` | opus |
 | 3.2 | `tools/kb_build.py`: parser das tabelas Markdown do vault (pipes escapados), saída determinística, `manifest.json`; teste com mini-vault | sonnet |
-| 3.3 | Gerar o pack a partir do vault real, revisar o diff e commitar (repo privado, U1) | sonnet (geração) + haiku (conferir contagens contra o vault) |
+| 3.3 | Gerar o pack a partir do vault real, revisar o diff e commitar (histórico: o pack saiu do repo em 2026-10-11, U1 revista) | sonnet (geração) + haiku (conferir contagens contra o vault) |
 | 3.4 | `knowledge/installation.py`: Registry em camadas pela regra 7.2.1 (agrupamento por `Product/@Name`, camada por sufixo, precedência só em chave sobreposta, `<Key>` como lista, empate = `ambiguous`), WebServiceConfiguration e ErrorConfiguration efetivos, normalização de `%OASINSTALLDATADIR%` | opus |
 | 3.5 | `config_observed` a partir das linhas `[Configuration] ... Type: [ConfigurationRegistry]` do startup; comparação resolvido × observado por nome normalizado + aliases | sonnet |
 | 3.6 | `knowledge/resolve.py` (ERS > vault, divergências "fora do vault") e uso na severidade por código | sonnet |
@@ -237,8 +237,8 @@ Aceite:
 | 8.1 | Desempenho no pior caso: ERS com escopo completo (≈ 2 GB), ERS com os 14 adapters em Verbose (projeção ≈ 2,6 GB de log, banco ≈ 4,1 GB; ARQUITETURA 9.3a), BLTHost sensitive, Wfm com dumps; ajuste de lotes, despacho de templates, índices e limite do FTS | opus |
 | 8.2 | Revisão de segurança (`/security-review`) e de privacidade (onde ficam os dados, apagar caso, payloads, mapa de anonimização) | opus |
 | 8.3 | Processo documentado para adicionar uma família nova (`families.toml` + TOML + leitura das assinaturas desconhecidas; a ferramenta `mine_templates` é criada no P1), preparando o P1 (doc de uso em inglês) | sonnet |
-| 8.4 | README e ajuda da CLI em inglês (README real em 2026-10-10; `dmslog export` já existe desde o commit `12702ae`; conferir se o README o descreve); LEIA-ME do portátil em inglês (com aviso de uso interno/privado do pack) | sonnet |
-| 8.5 | Release: artefatos do CI (`dmslog.pyz`, portátil Windows, tarball Linux) em release privada, e checklist de teste manual em um PC Windows sem admin e sem internet, no Edge e no Chrome | sonnet + teste manual do Jefferson |
+| 8.4 | README e ajuda da CLI em inglês (README real em 2026-10-10; `dmslog export` já existe desde o commit `12702ae`; README feito, PR #51); README.txt do portátil em inglês (feito, PR #78; o aviso de uso privado vale só para builds que contenham o pack) | sonnet |
+| 8.5 | Release: artefatos do CI (`dmslog.pyz`, portátil Windows, tarball Linux) no GitHub, sem o pack (o pack só entra em build interno com `--pack`), e checklist de teste manual em um PC Windows sem admin e sem internet, no Edge e no Chrome | sonnet + teste manual do Jefferson |
 
 Aceite:
 - ERS completo de 2 GB indexado sem erro, RSS < 1 GB, UI responsiva durante a indexação; ERS Verbose dentro da meta do M6; pior caso Verbose sintético (≈ 2,6 GB) indexado sem erro com RSS < 1 GB.
@@ -251,7 +251,7 @@ Aceite:
 | # | Entrega | Observação |
 |---|---|---|
 | P1 | Templates e eventos para os demais logs do ERS (NMC, PSengine, arbIP, outros processos `UNKNOWN`, ...) | Só dados (`families.toml` + TOML) e derivadores novos; esquema e descoberta já preparados (ARQUITETURA, 9.1a) |
-| P1a | Criar `tools/mine_templates.py` (dev, sonnet): agrupa registros desconhecidos pela `signature` e propõe esboço de TOML com exemplos; vem antes de minerar os demais logs do P1 | Decisão de 2026-10-11. A assinatura (`parse/signature.py`) e a tabela `unknown_sig` já existem; ver ARQUITETURA 6.7 e `docs/FAMILIA-NOVA.md` |
+| P1a | **Feito (PR #77):** criar `tools/mine_templates.py` (dev, sonnet): agrupa registros desconhecidos pela `signature` e propõe esboço de TOML com exemplos; vem antes de minerar os demais logs do P1 | Decisão de 2026-10-11. A assinatura (`parse/signature.py`) e a tabela `unknown_sig` já existem; ver ARQUITETURA 6.7 e `docs/FAMILIA-NOVA.md` |
 | P2 | Vários ERS por caso, correlação entre máquinas, ajuste de relógio (`clock_offset_ms`) | Esquema já comporta (`collection_group`, `clock_offset_ms`); falta UI, regra de 409 e correlação por tempo entre coletas |
 | P3 | **Proposta, aguarda decisão do Jefferson:** bancos `LocalPersistenceStore/*.db3` do ERS (fila/cache de mensagens dos adapters) como fonte opcional: painel de itens pendentes/não enviados e ligação ao evento do log por MessageId | Fora da 1.0. Sensível, nunca indexado por padrão, sem o corpo; desenho na ARQUITETURA, seção 15 (`payloads.md`, seção 10) |
 | — | Adapters do vault sem amostra | Fora do escopo (não existem no ambiente produtivo, U8); entram só se surgirem amostras, pelo mesmo processo do P1 |

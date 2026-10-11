@@ -51,8 +51,9 @@ Regras:
 - Viewer = web local (`http.server` + HTML/JS vendorizado, sem framework nem build). Conteúdo de log é dado não confiável: na UI só `textContent`, nunca `innerHTML`.
 - Logs vivos: abrir, ler e fechar a cada ciclo; nunca manter handle aberto (no Windows impede a rotação `.log` → `.log.0`).
 - Arquitetura, esquema e interfaces: `docs/ARQUITETURA.md`; marcos e modelo por tarefa: `docs/ROADMAP.md`.
-- Decisões do usuário (escopo da 1.0, um ERS por caso, payload, horário local, precedência do Registry, exportação `.txt`, repo privado): `docs/ARQUITETURA.md`, seção 1a.
+- Decisões do usuário (escopo da 1.0, um ERS por caso, payload, horário local, precedência do Registry, exportação `.txt`): `docs/ARQUITETURA.md`, seção 1a.
 - Dados sensíveis ficam locais: servidor só em `127.0.0.1`, índice/cache em pasta do usuário, nada de telemetria.
+- **Repo público (U1 revista em 2026-10-11):** nunca commitar o pack de conhecimento (derivado de documentação Schneider; fica fora do repo, em `<pasta de dados>/knowledge/pack` ou `--pack-dir`; o CI tem a guarda `packaging/check_no_pack.py`). Nada de dados reais em PRs, issues, comentários ou fixtures. A anonimização/redação é ferramenta de desenvolvimento (U18): o app final não anonimiza.
 
 ## Referências
 - Documentação dos adapters: projeto `~/Projects/adms-v3.9` (vault Obsidian em `adms-knowledge-base/Concluído/12 Interfaces online/`). Resumo e mapa em `docs/ADAPTERS.md`.

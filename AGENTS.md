@@ -14,6 +14,7 @@ Analyzer + viewer dos logs dos adapters (online interfaces) do ADMS: o Jefferson
 - Offline, sem admin: stdlib (`sqlite3`, `zipfile`, `http.server`), no máximo wheels puros vendorizados; front-end sem CDN.
 - `pathlib`, encoding explícito (`utf-8-sig`), `newline=''`; não assumir `/`, LF nem POSIX.
 - Dados sensíveis locais: servidor só em `127.0.0.1`, nada de telemetria.
+- Repo público: nunca commitar o pack de conhecimento (derivado de documentação Schneider; fica fora do repo, ver ARQUITETURA U1; guarda no CI: `packaging/check_no_pack.py`) nem dados reais. A redação/anonimização é ferramenta de desenvolvimento (U18).
 
 ## Documentos
 - `CLAUDE.md`: regras completas, divisão de trabalho, portabilidade, referências.
