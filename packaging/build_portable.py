@@ -38,19 +38,7 @@ LAUNCHER = (
     ")\r\n"
 )
 
-README_TXT = (
-    "dmslog portable (Windows x64)\r\n"
-    "No installation and no administrator rights needed.\r\n"
-    "\r\n"
-    "Usage (in a terminal opened in this folder):\r\n"
-    "  dmslog.bat              start the viewer (same as 'serve') and open the browser\r\n"
-    "  dmslog.bat serve        start the viewer and open the default browser\r\n"
-    "  dmslog.bat --help       list all commands\r\n"
-    "Press Ctrl+C in the console window to stop the server.\r\n"
-    "\r\n"
-    "Copy this whole folder wherever you like. Logs are read in place and nothing\r\n"
-    "leaves this PC: the server listens on 127.0.0.1 only.\r\n"
-)
+README_SRC = Path(__file__).resolve().parent / "portable-README.txt"
 
 
 def sha256(path: Path) -> str:
@@ -102,7 +90,8 @@ def build(pack: Path | None = None) -> None:
 
     shutil.copyfile(build_pyz.build(), OUT / "dmslog.pyz")
     (OUT / "dmslog.bat").write_text(LAUNCHER, encoding="utf-8", newline="")
-    (OUT / "LEIA-ME.txt").write_text(README_TXT, encoding="utf-8", newline="")
+    readme = README_SRC.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\n", "\r\n")
+    (OUT / "README.txt").write_text(readme, encoding="utf-8", newline="")
     if pack is not None:
         copy_pack(pack, OUT / "knowledge" / "pack")
 
