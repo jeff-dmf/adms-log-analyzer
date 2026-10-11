@@ -9,6 +9,7 @@ import secrets
 import select
 import socket
 import threading
+import time
 import webbrowser
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -46,6 +47,8 @@ CONTENT_TYPES = {
 
 UNSAFE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 DISCARD_LIMIT = 8 * 1024 * 1024
+# Total time a handler may spend draining a request body it will not use (cuts off slow or stalled clients).
+DRAIN_DEADLINE_SECONDS = 2.0
 
 
 class DmslogServer(ThreadingHTTPServer):
@@ -280,13 +283,35 @@ class RequestHandler(BaseHTTPRequestHandler):
         return data
 
     def _discard(self, length: int) -> None:
-        """Drain a moderately oversized body so the client can read the 413 instead of a reset."""
+        """Drain an unused body (at most DISCARD_LIMIT bytes, within DRAIN_DEADLINE_SECONDS in total).
+
+        Stops silently on deadline, EOF or any socket error: the answer is already decided, and a slow or
+        stalled client must not hold the handler thread.
+        """
         remaining = min(length, DISCARD_LIMIT)
-        while remaining > 0:
-            chunk = self.rfile.read(min(65536, remaining))
-            if not chunk:
-                break
-            remaining -= len(chunk)
+        deadline = time.monotonic() + DRAIN_DEADLINE_SECONDS
+        sock = self.connection
+        try:
+            previous = sock.gettimeout()
+        except OSError:
+            return
+        try:
+            while remaining > 0:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                sock.settimeout(left)
+                chunk = self.rfile.read1(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except (OSError, ValueError):  # includes TimeoutError and ConnectionError
+            pass
+        finally:
+            try:
+                sock.settimeout(previous)
+            except OSError:
+                pass
 
     def _client_gone(self) -> bool:
         """True when the peer closed the connection (a readable socket that returns no data)."""

@@ -101,3 +101,73 @@ def test_unread_request_body_is_drained_before_closing(client, monkeypatch):  # 
     assert drained == [5000, 5000]
     assert client.request("POST", "/api/cases", {"name": "ok"})[0] == 201
     assert drained == [5000, 5000]  # a body the handler reads is not drained again
+
+
+def _raw_post(srv, declared, sent):
+    import socket
+
+    sock = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+    head = (
+        f"POST /api/knowledge HTTP/1.1\r\nHost: 127.0.0.1:{srv.port}\r\nContent-Length: {declared}\r\n\r\n"
+    ).encode()
+    sock.sendall(head + b"x" * sent)
+    return sock
+
+
+def test_stalled_body_does_not_hold_the_handler_thread(server, monkeypatch):  # noqa: F811
+    import threading
+    import time
+
+    from dmslog.server import app
+
+    monkeypatch.setattr(app, "DRAIN_DEADLINE_SECONDS", 0.3)
+    handlers = []
+    original = app.RequestHandler.handle
+
+    def tracked(self):
+        handlers.append(threading.current_thread())
+        original(self)
+
+    monkeypatch.setattr(app.RequestHandler, "handle", tracked)
+    sock = _raw_post(server, declared=5000, sent=10)  # declares 5000 bytes, sends 10, stays open
+    try:
+        end = time.monotonic() + 3
+        while time.monotonic() < end and not handlers:
+            time.sleep(0.01)
+        assert handlers
+        handlers[0].join(timeout=3)  # guard: without the deadline this thread never ends
+        assert not handlers[0].is_alive()
+    finally:
+        sock.close()
+
+
+def test_stalled_body_still_gets_the_error_response(server, monkeypatch):  # noqa: F811
+    from dmslog.server import app
+
+    monkeypatch.setattr(app, "DRAIN_DEADLINE_SECONDS", 0.3)
+    sock = _raw_post(server, declared=5000, sent=10)
+    try:
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = sock.recv(4096)
+            assert chunk
+            data += chunk
+        assert data.split(b"\r\n", 1)[0].split()[1] in (b"403", b"405")
+    finally:
+        sock.close()
+
+
+def test_client_disconnecting_mid_body_raises_nothing(server, monkeypatch, capsys):  # noqa: F811
+    import time
+
+    from dmslog.server import app
+
+    monkeypatch.setattr(app, "DRAIN_DEADLINE_SECONDS", 0.3)
+    errors = []
+    monkeypatch.setattr(server, "handle_error", lambda request, client_address: errors.append(client_address))
+    sock = _raw_post(server, declared=5000, sent=10)
+    assert sock.recv(4096)  # the response was written; the handler is now draining the stalled body
+    sock.close()
+    time.sleep(0.6)
+    assert errors == []
+    assert "Traceback" not in capsys.readouterr().err
