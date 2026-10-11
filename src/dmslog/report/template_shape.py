@@ -372,26 +372,31 @@ def catalog_names() -> frozenset[str]:
     return frozenset(n for n in names if n)
 
 
-@functools.lru_cache(maxsize=1)
-def product_codes() -> frozenset[str]:
-    """Casefolded error codes and acronyms of the knowledge pack (product documentation): a closed set
-    of public names the strict mode may keep wherever they stand alone."""
-    import json
-    from importlib import resources
+_product_codes_cache: tuple[object, frozenset[str]] | None = None
 
-    codes: set[str] = set()
+
+def product_codes() -> frozenset[str]:
+    """Casefolded error codes and acronyms of the installed knowledge pack (product documentation): a
+    closed set of public names the strict mode may keep wherever they stand alone. Empty without a pack
+    (ARQUITETURA D10): strict mode then simply keeps fewer words."""
+    global _product_codes_cache
+    from dmslog.knowledge.pack import current_pack
+
     try:
-        data = json.loads(
-            resources.files("dmslog.knowledge").joinpath("pack/error_codes.json").read_text("utf-8")
-        )
-        for row in data.get("error_codes", []):
-            for key in ("code", "id", "acronym"):
-                value = row.get(key) if isinstance(row, dict) else None
-                if isinstance(value, str) and 2 <= len(value) <= 128:
-                    codes.add(value.casefold())
-    except (OSError, ValueError, AttributeError):
-        pass
-    return frozenset(codes)
+        pack = current_pack()
+    except Exception:  # noqa: BLE001 - a broken pack must not break redaction
+        pack = None
+    cached = _product_codes_cache
+    if cached is not None and cached[0] is pack:
+        return cached[1]
+    codes: set[str] = set()
+    for row in pack.errors if pack is not None else ():
+        for value in (row.code, row.id, row.acronym):
+            if isinstance(value, str) and 2 <= len(value) <= 128:
+                codes.add(value.casefold())
+    result = frozenset(codes)
+    _product_codes_cache = (pack, result)
+    return result
 
 
 def log_levels() -> frozenset[str]:

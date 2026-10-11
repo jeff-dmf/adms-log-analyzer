@@ -166,3 +166,23 @@ def test_vault_is_not_modified(tmp_path):
     before = {p: p.read_bytes() for p in MINI_VAULT.rglob("*") if p.is_file()}
     build(tmp_path)
     assert before == {p: p.read_bytes() for p in MINI_VAULT.rglob("*") if p.is_file()}
+
+
+def test_default_out_is_the_data_dir_pack_where_dmslog_looks(tmp_path):
+    data_dir = tmp_path / "data"
+    args = ["--vault", str(MINI_VAULT), "--data-dir", str(data_dir), "--vault-commit", "none"]
+    assert kb_build.main(args) == 0
+    from dmslog.knowledge.pack import SOURCE_DATA_DIR, STATE_INSTALLED, locate_pack, pack_candidates
+
+    status, pack = locate_pack(pack_candidates(data_dir=data_dir, env={}))
+    assert (status.state, status.source) == (STATE_INSTALLED, SOURCE_DATA_DIR)
+    assert status.path == data_dir / "knowledge" / "pack" and pack.adapters
+
+
+@pytest.mark.parametrize("relative", ["src/dmslog/knowledge/pack", "pack", "tests/fixtures/x"])
+def test_refuses_to_write_inside_the_repository(relative, capsys):
+    out = ROOT / relative
+    existed = out.exists()
+    assert kb_build.main(["--vault", str(MINI_VAULT), "--out", str(out), "--vault-commit", "none"]) == 2
+    assert "inside the repository" in capsys.readouterr().err
+    assert out.exists() == existed

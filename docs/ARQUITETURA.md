@@ -10,7 +10,7 @@ Fatos de formato vêm de `docs/formato/*.md`, a referência de UX vem de `docs/R
  ERS.zip / pasta Log / arquivo                        vault (somente leitura, só em dev)
         │                                                     │ tools/kb_build.py
         ▼                                                     ▼
- ┌──────────────┐  SourceInfo   ┌──────────────┐      knowledge/pack/*.json  (versionado no repo)
+ ┌──────────────┐  SourceInfo   ┌──────────────┐      knowledge/pack/*.json  (local, fora do repo: D10)
  │ ingest       │──────────────▶│ parse        │                 │
  │ descoberta,  │  bytes em     │ 1 envelope   │  Record          │
  │ fingerprint, │  streaming    │ 2 templates  │──────┐           │
@@ -41,7 +41,7 @@ Respostas do Jefferson às perguntas em aberto da versão inicial. Valem como re
 
 | # | Decisão | Consequência na arquitetura | Onde |
 |---|---|---|---|
-| U1 | Repositório **privado**; o pacote de conhecimento derivado do vault pode ser commitado | `src/dmslog/knowledge/pack/` versionado. O conteúdo é documentação Schneider Electric: o repositório (e qualquer fork ou artefato com o pack, inclusive `dmslog.pyz`) deve permanecer privado | D10, 7.1 |
+| U1 | **Revista em 2026-10-11:** repositório **público**; o pacote de conhecimento derivado do vault **sai do repositório** e dos artefatos públicos (antes: repositório privado com o pack commitado) | O pack é documentação Schneider Electric: nunca é commitado nem empacotado pelo CI; fica na máquina do mantenedor/usuário e é achado em tempo de execução. O app funciona sem ele. Remoção do histórico do git: a cargo do mantenedor | D10, 7.1, 12, 14 |
 | U2 | PC Windows de destino tem **Edge e Chrome**; o antivírus não bloqueia o `python.exe` | Front-end mira Chromium (Edge/Chrome atuais) nos dois SOs; Firefox é melhor esforço. A pasta portátil com Python embeddable fica confirmada | D1, D11, 14 |
 | U3 | Índices em `%LOCALAPPDATA%` (Linux: diretório de dados XDG) | `%LOCALAPPDATA%\dmslog\` e `${XDG_DATA_HOME:-~/.local/share}/dmslog/`; `--data-dir` continua opcional | 12 |
 | U4 | A ferramenta deve analisar **todos** os logs do ERS; a meta da 1.0 é cobrir os adapters | Na 1.0, qualquer log de texto do ERS abre, indexa, busca e entra na timeline (envelope + `_common`); templates, eventos e painéis específicos só para os adapters. Esquema e descoberta sem nada específico de adapter, para os demais logs entrarem depois só com dados (TOML) e derivadores novos | 9.1a |
@@ -73,7 +73,7 @@ Respostas do Jefferson às perguntas em aberto da versão inicial. Valem como re
 | D7 | **Severidade inferida do texto**, nunca do nível do envelope: nos adapters, tudo é `DEBUGLOG`, inclusive exceções e erros reais (fato de `docs/formato/`). | Usar o nível do envelope: classificaria 100% como debug. |
 | D8 | **Eventos derivados persistidos** (tabela `event`), recalculados por stream a partir de um checkpoint. | Calcular na consulta: durações e pareamentos de centenas de milhares de operações a cada clique. |
 | D9 | **Histogramas por tabela de buckets por minuto** preenchida na ingestão. | `GROUP BY` sobre `entry`: 300–414 ms em 2,4 M registros; com buckets, 14–18 ms (medido). |
-| D10 | **Conhecimento em pacote JSON versionado no repo**, gerado do vault por ferramenta de dev, mais a configuração efetiva lida dos XMLs do próprio ERS. O pack deriva de documentação Schneider Electric: o repositório é privado e deve continuar privado (U1). | Ler o vault em runtime: o PC Windows não tem o vault. Copiar o vault inteiro: 7 MB de Markdown só no módulo 12, com conteúdo que não serve ao analisador. |
+| D10 | **Conhecimento em pacote JSON local e opcional** (revisto em 2026-10-11, U1), gerado do vault por ferramenta de dev, mais a configuração efetiva lida dos XMLs do próprio ERS. O pack deriva de documentação Schneider Electric: **nunca entra no repositório (público) nem em artefato público**. Resolução em tempo de execução, nesta ordem: `--pack-dir`, `DMSLOG_PACK_DIR`, `<pasta de dados>/knowledge/pack/`, `knowledge/pack/` ao lado do `dmslog.pyz`. Sem pack o app funciona sem conhecimento do vault (estado `not_installed`); pack que não passa em `validate_pack` é ignorado com estado `invalid` (7.1). | Ler o vault em runtime: o PC Windows não tem o vault. Copiar o vault inteiro: 7 MB de Markdown só no módulo 12, com conteúdo que não serve ao analisador. Pack versionado no repo (desenho original): incompatível com o repositório público. Pack cifrado no repo: a chave teria de ir junto com o app; não protege nada. Baixar o pack em runtime: o PC de destino não tem internet. |
 | D11 | **Distribuição como zipapp** (`dmslog.pyz`, um arquivo, roda em Windows e Linux). No Windows, pasta portátil com Python embeddable 3.13 + `dmslog.pyz` + `.bat` (o antivírus do PC de destino não bloqueia o `python.exe`, U2). No Linux, `python3 dmslog.pyz`. | PyInstaller/Nuitka: binário por SO, antivírus corporativo costuma bloquear executável não assinado, e o build fica mais complexo. Pacote instalável (pip): exige internet ou wheelhouse e permissões. Copiar `src/dmslog` solto (rascunho atual): funciona, mas o zipapp é um único arquivo, igual nos dois SOs, e `python -I dmslog.pyz` foi testado. |
 | D12 | **Polling** (os.stat) para logs vivos, abrindo e fechando o arquivo a cada leitura. | inotify/ReadDirectoryChangesW: nativos e diferentes por SO. Manter o handle aberto: no Windows, o `open()` do Python não usa `FILE_SHARE_DELETE`; manter o arquivo aberto **impede o adapter de renomear `.log` → `.log.0` na rotação**. |
 
@@ -148,10 +148,9 @@ src/dmslog/
     payloads.py          liga payload ao evento/operação, direção request/response, chaves do payload
     correlate.py         normal↔sensitive, chaves (msgId, GID, INC…), callbacks, retries
   knowledge/
-    pack/                DADOS gerados: manifest.json, adapters.json, error_codes.json,
-                         operations.json, parameters.json
+    (pack/)              NÃO versionado (D10): o pack fica em <pasta de dados>/knowledge/pack/ ou ao lado do .pyz
     curated/             DADOS escritos à mão: hints.toml (template → explicação, parâmetros ligados)
-    pack.py              carrega o pacote
+    pack.py              localiza (--pack-dir, env, pasta de dados, portátil), valida e carrega o pacote
     installation.py      lê XMLs do ERS/instalação (Registry em camadas, WebServiceConfiguration, ErrorConfiguration)
     resolve.py           código → severidade/detalhe; parâmetro efetivo; nota do vault
   store/
@@ -685,9 +684,9 @@ Desenho:
 
 ## 7. Camada de conhecimento
 
-### 7.1 Do vault (pacote versionado)
+### 7.1 Do vault (pacote local, fora do repositório)
 
-Ferramenta de dev: `python tools/kb_build.py --vault ~/Projects/adms-v3.9/adms-knowledge-base/Concluído --out src/dmslog/knowledge/pack`. Lê só arquivos `.md` (somente leitura), não executa nada, gera JSON ordenado e determinístico (diff legível em PR).
+Ferramenta de dev: `python tools/kb_build.py --vault ~/Projects/adms-v3.9/adms-knowledge-base/Concluído`. Sem `--out`, escreve em `<pasta de dados>/knowledge/pack/` (`%LOCALAPPDATA%\dmslog\knowledge\pack` no Windows, `${XDG_DATA_HOME:-~/.local/share}/dmslog/knowledge/pack` no Linux; `--data-dir` muda a pasta de dados como no `dmslog`), exatamente onde o app procura. `--out DIR` escolhe outro destino; **escrever dentro do repositório é recusado**. Lê só arquivos `.md` (somente leitura), não executa nada, gera JSON ordenado e determinístico.
 
 | Arquivo do pack | Origem no vault | Conteúdo |
 |---|---|---|
@@ -699,9 +698,14 @@ Ferramenta de dev: `python tools/kb_build.py --vault ~/Projects/adms-v3.9/adms-k
 
 `curated/hints.toml` (à mão, revisado): por template, explicação curta, parâmetros relacionados e nota do vault a abrir. Exemplo: `WFM-080` → `WaitForCRSCallback` (default 35 s). Só conhecimento do produto; nada sobre os ambientes das amostras.
 
-Atualização: quando o vault muda, rodar `kb_build`, revisar o diff do pack e commitar. Teste de CI valida o esquema do pack e roda o gerador num mini-vault de fixture.
+Atualização: quando o vault muda, o mantenedor roda `kb_build` na própria máquina (o pack novo substitui o da pasta de dados; `--check --out DIR` compara sem escrever). Os testes nunca usam o pack real nem o vault: o gerador roda no mini-vault de fixture e o carregador usa o pack **sintético** `tests/fixtures/knowledge/mini_pack/` (adapters e códigos fictícios; `notice` começa por `SYNTHETIC TEST FIXTURE`). Os cruzamentos `curated/*.toml` × pack real (`test_hints.py`, `test_process_map.py`) só rodam com `DMSLOG_TEST_REAL_PACK=<dir>` (local; pulados no CI).
 
-O pack é commitado (U1). Ele é derivado de documentação Schneider Electric: o repositório é privado e precisa continuar privado, assim como os artefatos que embutem o pack (`dmslog.pyz`, pasta portátil, tarball). Não publicar release pública nem tornar o repositório público sem remover o pack. `manifest.json` leva o campo `notice` com esse aviso.
+**Pack fora do repositório (D10, U1 revista em 2026-10-11).** O pack é derivado de documentação Schneider Electric e o repositório é público: ele nunca é commitado nem embutido em artefato público. `manifest.json` continua com o campo `notice` ("do not publish").
+
+- **Resolução** (`knowledge/pack.py`, `pack_candidates`/`locate_pack`): (1) `--pack-dir DIR` (opção global da CLI, antes ou depois do subcomando) ou, sem ela, a variável `DMSLOG_PACK_DIR`: local **explícito**, único candidato, sem *fallback* (um caminho errado não carrega outro pack em silêncio); (2) `<pasta de dados>/knowledge/pack/`; (3) `knowledge/pack/` na pasta que contém o `dmslog.pyz` (pasta portátil ou tarball; detectada pelo `__file__` do pacote dentro do zip; rodando do código-fonte não existe). Entre os implícitos vale o primeiro que existe e não está vazio; se ele for inválido, **não** se pula para o próximo (evita usar um pack velho sem perceber). A CLI chama `pack.configure(pack_dir, data_dir)` uma vez; o servidor e a ingestão herdam essa configuração.
+- **Estados** (`PackStatus`): `installed` (com origem `option`/`env`/`data_dir`/`portable`, caminho e versões do manifesto), `not_installed` (nenhum candidato; lista o que foi procurado) e `invalid` (o local escolhido não passa em `validate_pack`, ou o explícito não existe; leva a mensagem de erro). Nenhum estado levanta exceção no app: `current_pack()` devolve `None`, `Knowledge.pack` devolve `EMPTY_PACK`; só `load_pack()` (ferramentas e testes) levanta `PackNotInstalled`/`PackError`.
+- **Sem pack o app funciona**: ingestão, grid, eventos, correlação, exportação e configuração efetiva do ERS seguem iguais. O que depende do pack responde "desconhecido": descrição/default de parâmetro, adapter e nota do vault, texto de código de erro só do vault. Códigos definidos no `ErrorConfiguration` do ERS continuam resolvidos (vínculo família↔processo vem também de `curated/process_map.toml`), com `out_of_vault=false` (o vault não foi consultado). `GET /api/knowledge` e `/api/knowledge/error` levam `knowledge_pack: {state, installed, message}`; o painel de conhecimento mostra `message` (texto central em `messages.py`: `KNOWLEDGE_PACK_NOT_INSTALLED` / `KNOWLEDGE_PACK_INVALID`). O modo strict da anonimização mantém menos palavras (a lista de códigos do produto vem do pack instalado). `dmslog info` mostra a linha `knowledge pack:` com estado, origem, caminho e versões.
+- **Distribuição interna**: `packaging/build_portable.py --pack DIR` valida o pack e o copia para `knowledge/pack/` na pasta e no zip portáteis. Só em build local do mantenedor, para uso interno; o CI nunca passa `--pack`.
 
 ### 7.2 Da instalação (por caso, na ingestão)
 
@@ -1008,7 +1012,7 @@ O padrão é o modo **strict** (`dmslog export --redaction-mode strict`): tudo o
 - Amostras Verbose em `local-samples/` seguem a convenção já usada (Git LFS, repositório privado) e só são lidas por script; fixtures de payload no `tests/` são sempre sintéticas.
 - Nível elevado também põe dado sensível no **log normal**: conteúdo XML enviado ao CRS/WMS (WFM-120), chaves de mapa (GEN-MAP-02), URLs, hosts e IPs (GEN-C2L-02, GEN-PSA-02). Esses templates entram nas categorias de anonimização da exportação como os payloads.
 - Bancos `LocalPersistenceStore/*.db3` do ERS (fila de mensagens dos adapters): sensíveis (corpo das mensagens, conta do processo). Na 1.0 não são lidos nem copiados; se um dia forem lidos (proposta P3), só com opção explícita, abertos somente leitura (`mode=ro&immutable=1`) a partir de cópia temporária na pasta do caso, apagada ao fim, e nunca indexados por padrão.
-- Repositório privado (U1): o pack do vault é documentação Schneider. Nada de índice ou export em git; `.gitignore` cobre `dist/`, `local-samples/_extracted/`, `*.sqlite`.
+- Repositório **público** (U1 revista em 2026-10-11): o pack do vault é documentação Schneider e fica fora do repositório e dos artefatos públicos (D10, 7.1). `.gitignore` cobre `src/dmslog/knowledge/pack/` (caminho antigo) e `/knowledge/pack/`; `packaging/check_no_pack.py` (passo do CI e teste) falha se houver arquivo rastreado sob `src/dmslog/knowledge/pack/` ou um `manifest.json` de pack rastreado (exceto a fixture sintética), e se `dmslog.pyz`, tarball ou pasta/zip portátil contiverem `knowledge/pack`. Nada de índice ou export em git; `.gitignore` cobre `dist/`, `local-samples/`, `*.sqlite`.
 
 ## 12a. Idioma do app (i18n)
 
@@ -1038,10 +1042,10 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 
 ## 14. Empacotamento e distribuição
 
-- **Comum**: `packaging/build_pyz.py` gera `dist/dmslog.pyz` (zipapp de `src/dmslog`, inclusive `web/`, `adapters/`, `knowledge/`; recursos lidos por `importlib.resources`, que funciona dentro do zip).
+- **Comum**: `packaging/build_pyz.py` gera `dist/dmslog.pyz` (zipapp de `src/dmslog`, inclusive `web/`, `adapters/`, `knowledge/curated/`; recursos lidos por `importlib.resources`, que funciona dentro do zip). `knowledge/pack/` é sempre excluído, mesmo que exista uma cópia local em `src/` (D10); `package-data` do `pyproject.toml` também não o inclui. O CI publica `.pyz`, tarball e portátil **sem pack** e confere isso (`check_no_pack.py --artifact`, e `dmslog info` = `knowledge pack: not installed`).
 - **Windows (portátil)**: `packaging/build_portable.py` (o rascunho atual fica, com ajustes): baixa o Python embeddable 3.13.x com SHA-256 fixado, extrai em `python/`, copia `dmslog.pyz`, gera `dmslog.bat` (`"%~dp0python\python.exe" -I "%~dp0dmslog.pyz" serve %*`) e `LEIA-ME.txt`. O `._pth` fica como vem (sem `import site`, isolado); a linha `..\app` sai, porque o `.pyz` entra no `sys.path` sozinho. A janela de console mostra a URL e fecha o servidor com Ctrl+C. Sem instalador, sem admin, sem registro do Windows, sem internet. Tamanho estimado: ~12 MB zipado. O navegador aberto é o padrão do sistema (Edge ou Chrome no PC de destino, U2); teste manual nos dois.
 - **Linux**: `dmslog-linux.tar.gz` com `dmslog.pyz` + `dmslog` (shell: `exec python3 -I "$(dirname "$0")/dmslog.pyz" "$@"`). Requisito: Python ≥ 3.11 com `sqlite3` e FTS5 (verificado na inicialização, com mensagem clara se faltar). No Omarchy, o Python do sistema serve.
-- Versão: `dmslog.__version__` + versão do pack + hash do commit gravados no `.pyz` e em `GET /api/health`.
+- Versão: `dmslog.__version__` + hash do commit gravados no `.pyz`; a versão do pack instalado aparece em `dmslog info` (`GET /api/health` ainda devolve `pack_version: null`).
 - `.github/workflows/ci.yml` (rascunho atual) é mantido e ampliado conforme a seção 13.
 
 ## 15. Registro de mudanças da arquitetura
@@ -1084,3 +1088,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-10 | M6 (extração): reextração única por fonte (`PAYLOAD_EXTRACTION_VERSION` em `meta['payload_extraction_version.<source_id>']`) para casos anteriores ao M6; `flags & 64` só com linha de `payload` extraída; extração de chaves do payload para `entry_key` **adiada** (fora da 0.1.0); `payload/pretty.py` com tokenizadores lineares, orçamento de saída e `check_xml` estrito (seção 6.6) | Sessão principal (achados da revisão cruzada do PR #24) |
 | 2026-10-10 | API de payloads como construída: `GET /api/entries/{id}/payloads`, `GET /api/payloads/{id}?format=pretty\|raw`, `GET /api/payloads/page` (**`GET`**, não `POST`; keyset, `orphan`, `event`, `q`), `payload_count` no registro e folha `{"payload": {roles, fmt, orphan, ...}}` da árvore de filtros; rotas `/api/knowledge/error/{family}/{code}`, `/param` e `/adapter` não construídas (seção 10) | Sessão principal (registro do que a `main` implementa) |
 | 2026-10-10 | Checagem de `Origin` documentada para métodos que alteram estado (`POST`/`DELETE` na `main`; `PUT`/`PATCH` com o PR #25 do M7) e formato do erro de validação das rotas (seções 10 e 12) | Sessão principal (registro do que a `main` implementa) |
+| 2026-10-11 | U1/D10 revistas: repositório público; o pack do vault sai do repositório e dos artefatos públicos. Resolução em tempo de execução (`--pack-dir`, `DMSLOG_PACK_DIR`, `<pasta de dados>/knowledge/pack/`, `knowledge/pack/` ao lado do `.pyz`), estados `installed`/`not_installed`/`invalid`, app funcional sem pack (`knowledge_pack` nas respostas de conhecimento, linha em `dmslog info`), `kb_build` escreve fora do repo, `build_portable.py --pack` só para build interno, guarda `packaging/check_no_pack.py` no CI e fixture sintética `tests/fixtures/knowledge/mini_pack/` (seções 1a, 2, 4, 7.1, 12, 14) | Opus |

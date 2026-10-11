@@ -1,0 +1,43 @@
+{
+  "adapters": [
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "aliases": [
+        "Example Adapter",
+        "Example Alpha Interface"
+      ],
+      "config_note": "12 Interfaces online/Example Alpha Interface/Arquivos/Configuration/AAAA Configuration.md",
+      "document_title": "Example Suite Alpha Interface - Functional Specification",
+      "document_version": "1.0 (January 2020)",
+      "index_note": "12 Interfaces online/Example Alpha Interface/AAAA Index.md",
+      "operations": [
+        "CreatedExampleItems",
+        "SendExampleItems"
+      ],
+      "process_names": [
+        "ExampleAdapter"
+      ],
+      "title": "Example Alpha Interface",
+      "type": "soap",
+      "type_label": "SOAP/WSDL"
+    },
+    {
+      "acronym": "ABBB",
+      "adapter": "Beta Adapter",
+      "aliases": [],
+      "config_note": null,
+      "document_title": "Example Suite Beta Interface - Functional Specification",
+      "document_version": "2.1 (March 2021)",
+      "index_note": "12 Interfaces online/Example Beta Interface/ABBB Index.md",
+      "operations": [],
+      "process_names": [],
+      "title": "Example Beta Interface",
+      "type": "files",
+      "type_label": "Arquivos"
+    }
+  ],
+  "process_map": {
+    "ExampleAdapter": "AAAA"
+  }
+}

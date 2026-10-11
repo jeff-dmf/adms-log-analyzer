@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from pathlib import Path
 
@@ -11,7 +12,11 @@ import pytest
 from dmslog.knowledge.resolve import Knowledge
 from dmslog.parse.templates import load_catalog
 
-PACK = Path(__file__).resolve().parents[2] / "src" / "dmslog" / "knowledge" / "pack"
+# The real pack never lives in the repository (ARQUITETURA D10). These cross-checks against it run only
+# where the maintainer points DMSLOG_TEST_REAL_PACK at a local copy; elsewhere they are skipped.
+REAL_PACK = os.environ.get("DMSLOG_TEST_REAL_PACK")
+PACK = Path(REAL_PACK) if REAL_PACK else None
+needs_real_pack = pytest.mark.skipif(PACK is None, reason="DMSLOG_TEST_REAL_PACK not set (local check)")
 HINTS = Path(__file__).resolve().parents[2] / "src" / "dmslog" / "knowledge" / "curated" / "hints.toml"
 
 
@@ -43,6 +48,7 @@ def test_no_duplicates(rows):
     assert len({r["code"] for r in rows}) == len(rows)
 
 
+@needs_real_pack
 def test_params_exist_in_pack(rows):
     data = json.loads((PACK / "parameters.json").read_text(encoding="utf-8"))
     names = {p["name"] for p in data["parameters"]}
@@ -51,6 +57,7 @@ def test_params_exist_in_pack(rows):
             assert param in names, (row["code"], param)
 
 
+@needs_real_pack
 def test_notes_exist_in_pack(rows):
     adapters = json.loads((PACK / "adapters.json").read_text(encoding="utf-8"))["adapters"]
     notes = {a[k] for a in adapters for k in ("config_note", "index_note") if a.get(k)}

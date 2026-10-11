@@ -53,9 +53,21 @@ function textOrNull(value) {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
+// Server text explaining that the knowledge pack is missing or invalid (null when it is installed).
+// The pack is optional and installed locally; the text comes from the server (messages.py).
+export function packNoticeOf(templateData, errorAnswers) {
+  for (const answer of [templateData, ...(errorAnswers || [])]) {
+    const state = answer && answer.knowledge_pack;
+    if (state && state.installed === false) {
+      return textOrNull(state.message);
+    }
+  }
+  return null;
+}
+
 // Joins the template answer (GET /api/knowledge) and the error answers (GET /api/knowledge/error;
 // null for a code the API does not know) into what the section shows. null = nothing to show:
-// the section needs a hint or at least one resolved error code.
+// the section needs a hint, at least one resolved error code or a knowledge-pack notice.
 export function buildKnowledgeView(templateData, errorAnswers) {
   const hintData = templateData && templateData.hint ? templateData.hint : null;
   const hintText = hintData ? textOrNull(hintData.text) : null;
@@ -73,7 +85,8 @@ export function buildKnowledgeView(templateData, errorAnswers) {
       outOfVault: answer.out_of_vault === true,
     });
   }
-  if (hintText === null && errors.length === 0) {
+  const packNotice = packNoticeOf(templateData, errorAnswers);
+  if (hintText === null && errors.length === 0 && packNotice === null) {
     return null;
   }
   const params = [];
@@ -96,5 +109,6 @@ export function buildKnowledgeView(templateData, errorAnswers) {
     note: templateData ? textOrNull(templateData.vault_note) : null,
     errors,
     outOfVault: errors.some((item) => item.outOfVault),
+    packNotice,
   };
 }

@@ -769,6 +769,17 @@ def _pretty(text: str, fmt: str, truncated_display: bool) -> dict[str, Any]:
 # --------------------------------------------------------------------------- the API object
 
 
+def _pack_state(knowledge: Knowledge) -> dict[str, Any]:
+    """``knowledge_pack`` member of the knowledge answers: state and the text the UI shows (D10)."""
+    status = knowledge.pack_status
+    message = None
+    if status.state == "not_installed":
+        message = messages.KNOWLEDGE_PACK_NOT_INSTALLED
+    elif status.state == "invalid":
+        message = messages.KNOWLEDGE_PACK_INVALID
+    return {"state": status.state, "installed": status.installed, "message": message}
+
+
 class Api:
     """Routes and state (cases on disk, ingest jobs) of one server."""
 
@@ -1066,6 +1077,7 @@ class Api:
                 "document_version": adapter.document_version,
             },
             "vault_note": hint.note if hint and hint.note else knowledge.vault_note(family),
+            "knowledge_pack": _pack_state(knowledge),
         })  # fmt: skip
 
     def get_knowledge_error(self, request: Request) -> Response:
@@ -1097,6 +1109,7 @@ class Api:
             "source": info.source,
             "out_of_vault": info.out_of_vault,
             "config_path": info.config_path,
+            "knowledge_pack": _pack_state(knowledge),
         })  # fmt: skip
 
     # -- entries

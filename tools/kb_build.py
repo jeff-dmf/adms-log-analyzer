@@ -1,11 +1,16 @@
 """Build the knowledge pack (JSON) from the Obsidian vault.
 
 Usage:
-    python tools/kb_build.py --vault <vault dir> --out <pack dir> [--check] [--vault-commit auto|none|<sha>]
+    python tools/kb_build.py --vault <vault dir> [--out <pack dir>] [--check] [--vault-commit auto|none|<sha>]
 
 Reads only ``.md`` files from the vault (read-only, nothing is executed) and writes deterministic JSON
 (sorted keys and rows, indent=2, LF, UTF-8, trailing newline, no timestamps). With ``--check`` nothing is
 written: the pack is built in memory and the command fails when ``--out`` differs from it.
+
+The pack is derived from product documentation, so it never goes into the repository (ARQUITETURA D10).
+``--out`` defaults to ``<data dir>/knowledge/pack`` (``%LOCALAPPDATA%\\dmslog`` on Windows,
+``$XDG_DATA_HOME/dmslog`` elsewhere), exactly where ``dmslog`` looks for it; ``--data-dir`` changes the
+data directory the same way as in ``dmslog``. Writing anywhere inside this repository is refused.
 
 See docs/ARQUITETURA.md section 7.1 and src/dmslog/knowledge/PACK_SCHEMA.md.
 """
@@ -474,13 +479,36 @@ def diff_pack(files: dict[str, str], out: Path) -> list[str]:
     return problems
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def inside_repository(path: Path) -> bool:
+    """True when ``path`` is this repository or below it (the pack must never land there)."""
+    return path.resolve().is_relative_to(REPO_ROOT)
+
+
+def default_out(data_dir: Path | None = None) -> Path:
+    from dmslog.paths import resolve_data_dir
+
+    return resolve_data_dir(data_dir).joinpath("knowledge", "pack")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Build the knowledge pack from the vault (read-only).")
     parser.add_argument("--vault", required=True, type=Path, help="vault root directory")
-    parser.add_argument("--out", required=True, type=Path, help="pack output directory")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="pack output directory (default: <data dir>/knowledge/pack)")
+    parser.add_argument("--data-dir", type=Path, default=None,
+                        help="dmslog data directory used for the default --out")
     parser.add_argument("--check", action="store_true", help="do not write; fail if --out differs")
     parser.add_argument("--vault-commit", default="auto", help="'auto' (read .git), 'none' or a commit id")
     args = parser.parse_args(argv)
+    if args.out is None:
+        args.out = default_out(args.data_dir)
+    if not args.check and inside_repository(args.out):
+        print(f"kb_build: error: refusing to write the pack inside the repository ({args.out}); "
+              "it is derived from product documentation and must stay outside it", file=sys.stderr)
+        return 2
     try:
         files = build_pack(args.vault, args.vault_commit)
     except (BuildError, OSError, UnicodeDecodeError) as exc:

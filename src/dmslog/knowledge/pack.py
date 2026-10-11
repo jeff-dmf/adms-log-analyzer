@@ -1,26 +1,53 @@
-"""Loader for the generated knowledge pack (ARQUITETURA 7.1).
+"""Loader for the knowledge pack (ARQUITETURA 7.1).
 
-The pack lives in ``dmslog/knowledge/pack/*.json`` and is read through ``importlib.resources``, so it
-works from a source tree, an installed package and inside ``dmslog.pyz``. It is loaded lazily, once
-per process, and validated with ``validate_pack`` on first load (an invalid pack raises
-``PackError``). The dataclasses are frozen: the pack is read-only.
+The pack is derived from product documentation, so it is NOT part of the repository nor of the
+public artifacts (ARQUITETURA D10). It is installed locally and found at run time, in this order
+(``pack_candidates``):
+
+1. ``--pack-dir DIR`` (``configure(pack_dir=...)``), then the ``DMSLOG_PACK_DIR`` environment
+   variable. An explicit location is the only candidate: there is no fallback when it is wrong.
+2. ``<data dir>/knowledge/pack/`` (``%LOCALAPPDATA%\\dmslog`` or ``$XDG_DATA_HOME/dmslog``).
+3. ``knowledge/pack/`` next to ``dmslog.pyz`` (portable folder or Linux tarball).
+
+The first implicit candidate that exists and is not empty is used; it is not skipped when invalid.
+Without a pack the app works without vault knowledge: ``pack_status()`` says ``not_installed`` (or
+``invalid``), ``current_pack()`` returns ``None`` and ``load_pack()`` raises ``PackError``. The pack is
+loaded lazily, once per process, and validated with ``validate_pack``. The dataclasses are frozen.
 """
 
 from __future__ import annotations
 
 import json
-import tempfile
+import os
+import stat
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
 from dmslog.knowledge.pack_schema import PACK_FILES, validate_pack
 
+PACK_ENV = "DMSLOG_PACK_DIR"
+PACK_SUBDIR = ("knowledge", "pack")
+
+STATE_INSTALLED = "installed"
+STATE_NOT_INSTALLED = "not_installed"
+STATE_INVALID = "invalid"
+
+SOURCE_OPTION = "option"
+SOURCE_ENV = "env"
+SOURCE_DATA_DIR = "data_dir"
+SOURCE_PORTABLE = "portable"
+SOURCE_GIVEN = "given"  # a Pack object handed in by the caller (tests, tools)
+
 
 class PackError(Exception):
     """The knowledge pack is missing, unreadable or does not match the schema."""
+
+
+class PackNotInstalled(PackError):
+    """No knowledge pack was found in any of the searched locations."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,17 +145,6 @@ def _adapter(row: dict[str, Any]) -> AdapterInfo:
     return AdapterInfo(**row)
 
 
-def _read_json_texts() -> dict[str, str]:
-    root = resources.files("dmslog.knowledge") / "pack"
-    texts: dict[str, str] = {}
-    for name in PACK_FILES:
-        try:
-            texts[name] = (root / name).read_text(encoding="utf-8")
-        except (OSError, FileNotFoundError) as exc:
-            raise PackError(f"knowledge pack: cannot read {name} ({exc})") from exc
-    return texts
-
-
 def load_pack_from(directory: Path | str) -> Pack:
     """Load and validate a pack from a real directory (used by tests and by ``load_pack``)."""
     directory = Path(directory)
@@ -160,27 +176,177 @@ def _build(data: dict[str, Any]) -> Pack:
     )
 
 
+EMPTY_PACK = Pack(
+    manifest=Manifest(schema_version=0, generator_version="", vault_commit=None, notice=""),
+    adapters=(),
+    process_map={},
+    operations=(),
+    errors=(),
+    params=(),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PackStatus:
+    """Where the pack came from and whether it is usable (``dmslog info``, API, UI)."""
+
+    state: str  # STATE_*
+    source: str | None  # SOURCE_* of the selected location, None when nothing was found
+    path: Path | None
+    searched: tuple[tuple[str, Path], ...]
+    manifest: Manifest | None = None
+    error: str | None = None
+
+    @property
+    def installed(self) -> bool:
+        return self.state == STATE_INSTALLED
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "installed": self.installed,
+            "source": self.source,
+            "path": None if self.path is None else str(self.path),
+            "schema_version": self.manifest.schema_version if self.manifest else None,
+            "generator_version": self.manifest.generator_version if self.manifest else None,
+            "vault_commit": self.manifest.vault_commit if self.manifest else None,
+            "error": self.error,
+        }
+
+
+def app_dir() -> Path | None:
+    """Folder that holds ``dmslog.pyz`` when running from the zipapp; None from a source tree."""
+    import dmslog
+
+    here = Path(dmslog.__file__).parent  # .../dmslog.pyz/dmslog inside the zipapp
+    for parent in here.parents:
+        if parent.is_file():  # the archive itself
+            return parent.parent
+    return None
+
+
+def pack_candidates(
+    pack_dir: str | os.PathLike[str] | None = None,
+    data_dir: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    portable_dir: str | os.PathLike[str] | None = None,
+) -> list[tuple[str, Path]]:
+    """Ordered ``(source, directory)`` candidates. An explicit option or variable is the only one."""
+    env = os.environ if env is None else env
+    if pack_dir:
+        return [(SOURCE_OPTION, Path(pack_dir).expanduser())]
+    if env.get(PACK_ENV):
+        return [(SOURCE_ENV, Path(env[PACK_ENV]).expanduser())]
+    candidates: list[tuple[str, Path]] = []
+    if data_dir is not None:
+        candidates.append((SOURCE_DATA_DIR, Path(data_dir).joinpath(*PACK_SUBDIR)))
+    if portable_dir is not None:
+        candidates.append((SOURCE_PORTABLE, Path(portable_dir).joinpath(*PACK_SUBDIR)))
+    return candidates
+
+
+def _present(directory: Path) -> bool:
+    """True when ``directory`` holds entries; False when it is absent or empty.
+
+    A location that exists but is not a usable folder (a file in its place, an access error while
+    listing) raises :class:`PackError`: it is invalid, never silently absent.
+    """
+    try:
+        info = directory.stat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise PackError(f"{directory}: cannot be accessed ({exc})") from exc
+    if not stat.S_ISDIR(info.st_mode):
+        raise PackError(f"{directory}: exists but is not a directory")
+    try:
+        return any(directory.iterdir())
+    except OSError as exc:
+        raise PackError(f"{directory}: cannot be listed ({exc})") from exc
+
+
+def locate_pack(candidates: list[tuple[str, Path]]) -> tuple[PackStatus, Pack | None]:
+    """Pick the location, validate it and load it. Never raises."""
+    searched = tuple(candidates)
+    explicit = len(candidates) == 1 and candidates[0][0] in (SOURCE_OPTION, SOURCE_ENV)
+    for source, directory in candidates:
+        try:
+            if not explicit and not _present(directory):
+                continue
+            pack = load_pack_from(directory)
+        except (PackError, OSError, ValueError, TypeError, KeyError) as exc:
+            return PackStatus(STATE_INVALID, source, directory, searched, None, str(exc)), None
+        return PackStatus(STATE_INSTALLED, source, directory, searched, pack.manifest), pack
+    return PackStatus(STATE_NOT_INSTALLED, None, None, searched), None
+
+
+@dataclass(slots=True)
+class _Settings:
+    pack_dir: str | None = None
+    data_dir: Path | None = None
+    data_dir_set: bool = False
+
+
 _lock = threading.Lock()
-_cached: Pack | None = None
+_settings = _Settings()
+_cached: tuple[PackStatus, Pack | None] | None = None
+
+
+def configure(
+    pack_dir: str | os.PathLike[str] | None = None,
+    data_dir: str | os.PathLike[str] | None = None,
+) -> None:
+    """Set the ``--pack-dir`` option and the data directory of this process (CLI start-up)."""
+    global _settings
+    with _lock:
+        _settings = _Settings(
+            None if not pack_dir else os.fspath(pack_dir),
+            None if data_dir is None else Path(data_dir),
+            data_dir is not None,
+        )
+    clear_cache()
+
+
+def _current() -> tuple[PackStatus, Pack | None]:
+    global _cached
+    cached = _cached
+    if cached is not None:
+        return cached
+    with _lock:
+        if _cached is None:
+            settings = _settings
+            if settings.data_dir_set:
+                data_dir = settings.data_dir
+            else:
+                from dmslog.paths import default_data_dir
+
+                data_dir = default_data_dir()
+            _cached = locate_pack(pack_candidates(settings.pack_dir, data_dir, None, app_dir()))
+        return _cached
+
+
+def pack_status() -> PackStatus:
+    """State of the process pack (loads it on first use)."""
+    return _current()[0]
+
+
+def current_pack() -> Pack | None:
+    """The process pack, or None when it is not installed or invalid."""
+    return _current()[1]
 
 
 def load_pack() -> Pack:
-    """The packaged pack, loaded and validated once per process."""
-    global _cached
-    if _cached is None:
-        with _lock:
-            if _cached is None:
-                # validate_pack needs a real directory; inside the pyz the files are copied to a
-                # temporary one (a few hundred kB, once per process).
-                texts = _read_json_texts()
-                with tempfile.TemporaryDirectory(prefix="dmslog-pack-") as tmp:
-                    for name, text in texts.items():
-                        (Path(tmp) / name).write_text(text, encoding="utf-8", newline="\n")
-                    _cached = load_pack_from(tmp)
-    return _cached
+    """The process pack; raises ``PackNotInstalled`` / ``PackError`` when it is not usable."""
+    status, pack = _current()
+    if pack is None:
+        if status.state == STATE_NOT_INSTALLED:
+            raise PackNotInstalled("knowledge pack not installed")
+        raise PackError(status.error or "invalid knowledge pack")
+    return pack
 
 
 def clear_cache() -> None:
-    """Forget the cached pack (tests)."""
+    """Forget the cached pack (after ``configure`` and in tests)."""
     global _cached
-    _cached = None
+    with _lock:
+        _cached = None

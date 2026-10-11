@@ -6,7 +6,11 @@ trailing newline, and carries no timestamps, so two runs on the same vault are b
 `validate_pack(directory)` in `pack_schema.py` checks everything described here and returns a list of
 error strings (empty = valid).
 
-The pack is derived from Schneider Electric documentation: keep the repository private.
+The pack is derived from product documentation: it is never committed nor shipped in a public
+artifact. `tools/kb_build.py` writes it to `<data dir>/knowledge/pack/`, where `dmslog` finds it at run
+time (also `--pack-dir`, `DMSLOG_PACK_DIR` or `knowledge/pack/` next to `dmslog.pyz`; see
+`docs/ARQUITETURA.md`, D10). Without a pack the app runs without vault knowledge. The tests use the
+synthetic `tests/fixtures/knowledge/mini_pack/`.
 
 All examples below use synthetic values.
 

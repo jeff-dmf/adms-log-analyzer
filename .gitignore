@@ -22,3 +22,8 @@ local-samples/_extracted/
 
 # Per-machine ai-memory scope (the project key is local; never commit it)
 .ai-memory.toml
+
+# Knowledge pack: derived from product documentation, never committed nor shipped (ARQUITETURA D10).
+# It lives in <data dir>/knowledge/pack or next to dmslog.pyz; the old in-package path stays ignored.
+src/dmslog/knowledge/pack/
+/knowledge/pack/

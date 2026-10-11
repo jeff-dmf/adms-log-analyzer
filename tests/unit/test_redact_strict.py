@@ -660,11 +660,12 @@ def test_round5_a_declared_numeric_type_still_proves_a_count():
     assert not r._field_kept(SimpleNamespace(code="X-1", proofs={}, field_types={}), "status", "654321")
 
 
-def test_product_error_codes_of_the_knowledge_pack_stay_in_free_text():
+def test_product_error_codes_of_the_knowledge_pack_stay_in_free_text(use_pack, mini_pack_dir):
+    assert template_shape.product_codes() == frozenset()  # no pack installed: nothing extra is kept
+    use_pack(mini_pack_dir)
     codes = template_shape.product_codes()
-    assert len(codes) > 100
-    code = sorted(c for c in codes if c.isalpha() and len(c) > 12)[0]
-    original = next(w for w in [code, code.upper(), code.title()] if w.casefold() == code)
+    assert {"examplefictitioustimeout", "invalidmessage", "aaaa", "abbb"} <= codes
+    original = "ExampleFictitiousTimeout"
     assert redactor().redact(f"error codes: {original}") == f"error codes: {original}"
     assert original not in redactor().redact(f"user: {original}")  # behind a label it is a value
 

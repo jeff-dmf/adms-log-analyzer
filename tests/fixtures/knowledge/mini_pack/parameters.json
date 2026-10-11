@@ -1,0 +1,64 @@
+{
+  "parameters": [
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "block": "Adapters Config Properties",
+      "default": "|",
+      "description": "Delimiter for IDs.",
+      "domain": "",
+      "log_relevant": false,
+      "name": "ErrorIdsDelimiter",
+      "tab": "Registry Configuration",
+      "value_type": "String"
+    },
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "block": "Adapters Config Properties",
+      "default": "DebugLog",
+      "description": "Log levels: Fatal, Error, Info",
+      "domain": "[Fatal, Error, Info]",
+      "log_relevant": true,
+      "name": "LogLevel",
+      "tab": "Registry Configuration",
+      "value_type": "String"
+    },
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "block": "SendExampleItems",
+      "default": "x",
+      "description": "Not log relevant.",
+      "domain": "",
+      "log_relevant": false,
+      "name": "ExampleOnly",
+      "tab": "WebServiceConfiguration",
+      "value_type": "String"
+    },
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "block": "SendExampleItems",
+      "default": "30",
+      "description": "Timeout in seconds.",
+      "domain": "",
+      "log_relevant": true,
+      "name": "SendTimeout",
+      "tab": "WebServiceConfiguration",
+      "value_type": "Int"
+    },
+    {
+      "acronym": "ABBB",
+      "adapter": "Beta Adapter",
+      "block": "Adapters Config Properties",
+      "default": "Info",
+      "description": "Log levels",
+      "domain": "",
+      "log_relevant": true,
+      "name": "LogLevel",
+      "tab": "Registry Configuration",
+      "value_type": "String"
+    }
+  ]
+}

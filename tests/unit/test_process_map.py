@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 PROCESS_MAP = ROOT / "src" / "dmslog" / "knowledge" / "curated" / "process_map.toml"
-ADAPTERS = ROOT / "src" / "dmslog" / "knowledge" / "pack" / "adapters.json"
+# The real pack never lives in the repository (ARQUITETURA D10): the cross-check below runs only where
+# the maintainer points DMSLOG_TEST_REAL_PACK at a local copy.
+REAL_PACK = os.environ.get("DMSLOG_TEST_REAL_PACK")
+ADAPTERS = Path(REAL_PACK) / "adapters.json" if REAL_PACK else None
 FAMILIES = ROOT / "src" / "dmslog" / "families.toml"
 
 
@@ -38,6 +44,7 @@ def test_process_names_and_acronyms_are_unique():
     assert len(acronyms) == len(set(acronyms))
 
 
+@pytest.mark.skipif(ADAPTERS is None, reason="DMSLOG_TEST_REAL_PACK not set (local check)")
 def test_adapter_acronyms_exist_in_adapters_json():
     # BLTHost is a host log (empty adapter), not an adapter: exempt from this check.
     known = _adapter_acronyms()

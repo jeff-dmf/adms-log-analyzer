@@ -153,10 +153,39 @@ def test_error_of_adapter_wfm_is_not_returned_for_another_family(pack):
     assert k.error("ABBB", "ExampleCodeOne") is None
 
 
-def test_family_codes_translate_to_vault_acronyms():
-    knowledge = Knowledge()
+def test_family_codes_translate_to_vault_acronyms(use_pack, extended_pack):
+    knowledge = Knowledge()  # the translation is curated: it works without a pack
     assert knowledge.acronym_for_family("AEDP") == "ACID"
     assert knowledge.acronym_for_family("AWDI") == "AWMI"
     assert knowledge.acronym_for_family("AWFM") == "AWFM"  # no translation needed
-    assert knowledge.vault_note("AEDP") is not None
+    assert knowledge.vault_note("AEDP") is None
+    adapter = {
+        "acronym": "ACID", "title": "Example Synthetic Interface", "adapter": "Example Synthetic Adapter",
+        "type": "soap", "type_label": "SOAP/WSDL", "operations": [], "config_note": None,
+        "document_title": None, "document_version": None, "aliases": [],
+        "index_note": "Example/Synthetic Index.md", "process_names": [],
+    }  # fmt: skip
+    use_pack(extended_pack(adapters=[adapter]))
+    knowledge = Knowledge()
+    assert knowledge.vault_note("AEDP") == "Example/Synthetic Index.md"
     assert knowledge.adapter_for_process("CustomAdapterChangeIncidentDevice").acronym == "ACID"
+
+
+def test_without_pack_vault_lookups_are_empty_and_ers_still_answers():
+    entry = ErrorEntry("ExampleCodeOne", "FATAL", None, None, None, None)
+    knowledge = Knowledge(installations={3: installation(entry, product_name="AdapterWfm")})
+    assert not knowledge.has_pack and knowledge.pack_status.state == "not_installed"
+    assert knowledge.adapter_for_process("ExampleAdapter") is None
+    assert knowledge.vault_note("AAAA") is None
+    assert knowledge.error("AAAA", "1.8") is None
+    assert knowledge.param(0, "AAAA", "LogLevel", scope="vault") is None
+    value = knowledge.param(3, "AdapterWfm", "LogLevel")  # ERS value, no vault description
+    assert (value.value, value.source, value.description) == ("Error", "registry", None)
+    # the curated process map binds AdapterWfm to AWFM; the vault was not consulted: not "out of vault"
+    info = knowledge.error("AWFM", "ExampleCodeOne")
+    assert (info.source, info.severity, info.out_of_vault) == ("ers", 1, False)
+
+
+def test_a_given_pack_counts_as_installed(pack):
+    status = Knowledge(pack).pack_status
+    assert (status.state, status.source) == ("installed", "given")

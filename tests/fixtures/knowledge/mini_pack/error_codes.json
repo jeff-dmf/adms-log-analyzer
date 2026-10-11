@@ -1,0 +1,60 @@
+{
+  "error_codes": [
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "adms_severity": "WARNING",
+      "block": "Common",
+      "cim_details": "Id element not found.",
+      "cim_reason": "IdMissing",
+      "cim_severity": null,
+      "code": "1.2",
+      "dms_details": "Id is not provided.",
+      "dms_reason": "IdMissing",
+      "id": null,
+      "log": null
+    },
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "adms_severity": "FATAL",
+      "block": "Common",
+      "cim_details": "Invalid message.",
+      "cim_reason": "InvalidMessage",
+      "cim_severity": null,
+      "code": "1.8",
+      "dms_details": "Received message is invalid. Reason: \"#reason\".",
+      "dms_reason": "InvalidMessage",
+      "id": null,
+      "log": null
+    },
+    {
+      "acronym": "ABBB",
+      "adapter": "Beta Adapter",
+      "adms_severity": "Error",
+      "block": "ExampleItems",
+      "cim_details": "Value A | B is not valid.",
+      "cim_reason": "InvalidMessage",
+      "cim_severity": "FATAL",
+      "code": "1.8",
+      "dms_details": null,
+      "dms_reason": null,
+      "id": "InvalidMessage",
+      "log": ""
+    },
+    {
+      "acronym": "AAAA",
+      "adapter": "Example Adapter",
+      "adms_severity": "Error",
+      "block": "Common",
+      "cim_details": null,
+      "cim_reason": null,
+      "cim_severity": null,
+      "code": "ExampleFictitiousTimeout",
+      "dms_details": "Made-up example details.",
+      "dms_reason": "ExampleTimeout",
+      "id": null,
+      "log": null
+    }
+  ]
+}

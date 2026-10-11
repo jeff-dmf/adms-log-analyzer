@@ -4,8 +4,28 @@ import pytest
 from test_api import client, mf, server  # noqa: F401  (fixtures)
 from test_pipeline_knowledge import build
 
+from dmslog import messages
 from dmslog.ingest.pipeline import run_ingest
 from dmslog.store import create_case_db
+
+AWFM_ADAPTER = {
+    "acronym": "AWFM", "title": "Example Synthetic Interface", "adapter": "Example Synthetic Adapter",
+    "type": "soap", "type_label": "SOAP/WSDL", "operations": [], "config_note": None,
+    "document_title": "Synthetic document", "document_version": "0.0", "aliases": [],
+    "index_note": "Example/Synthetic Index.md", "process_names": [],
+}  # fmt: skip
+AWFM_PARAM = {
+    "acronym": "AWFM", "adapter": "Example Synthetic Adapter", "tab": "Registry Configuration",
+    "block": "Adapters Config Properties", "name": "WaitForCRSCallback",
+    "description": "Synthetic description.", "value_type": "Int", "default": "12345", "domain": "",
+    "log_relevant": True,
+}  # fmt: skip
+
+
+@pytest.fixture
+def awfm_pack(use_pack, extended_pack):
+    """Synthetic pack that knows the AWFM family of the demo case."""
+    return use_pack(extended_pack(adapters=[AWFM_ADAPTER], parameters=[AWFM_PARAM]))
 
 
 @pytest.fixture
@@ -18,15 +38,41 @@ def demo(server, tmp_path):  # noqa: F811
     return "Demo"
 
 
-def test_template_knowledge(client, demo):  # noqa: F811
+def test_template_knowledge(awfm_pack, client, demo):  # noqa: F811
     status, body, _ = client.get("/api/knowledge?case=Demo&template=WFM-080")
     assert status == 200 and body["template"] == "WFM-080" and body["family"] == "AWFM"
     assert "WaitForCRSCallback" in body["hint"]["text"]
     assert body["hint"]["params"] == ["WaitForCRSCallback"]
     param = body["params"][0]
-    assert param["name"] == "WaitForCRSCallback" and param["default"] and param["description"]
+    assert (param["name"], param["default"], param["description"]) == (
+        "WaitForCRSCallback", "12345", "Synthetic description."
+    )
     assert body["adapter"]["acronym"] == "AWFM"
     assert body["vault_note"] == body["hint"]["note"]
+    assert body["knowledge_pack"] == {"state": "installed", "installed": True, "message": None}
+
+
+def test_template_knowledge_without_pack(client, demo):  # noqa: F811
+    status, body, _ = client.get("/api/knowledge?case=Demo&template=WFM-080")
+    assert status == 200 and body["hint"]["params"] == ["WaitForCRSCallback"]  # curated hints stay
+    assert body["params"] == [
+        {"name": "WaitForCRSCallback", "default": None, "description": None, "log_relevant": None}
+    ]
+    assert body["adapter"] is None
+    assert body["knowledge_pack"] == {
+        "state": "not_installed", "installed": False, "message": messages.KNOWLEDGE_PACK_NOT_INSTALLED,
+    }  # fmt: skip
+
+
+def test_template_knowledge_with_invalid_pack(client, demo, tmp_path, use_pack):  # noqa: F811
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "manifest.json").write_text("{}", encoding="utf-8")
+    use_pack(broken)
+    status, body, _ = client.get("/api/knowledge?case=Demo&template=WFM-080")
+    assert status == 200 and body["adapter"] is None
+    assert body["knowledge_pack"]["state"] == "invalid"
+    assert body["knowledge_pack"]["message"] == messages.KNOWLEDGE_PACK_INVALID
 
 
 def test_template_without_hint_still_describes_the_adapter(client, demo):  # noqa: F811
@@ -35,11 +81,19 @@ def test_template_without_hint_still_describes_the_adapter(client, demo):  # noq
     assert body["vault_note"] is None or isinstance(body["vault_note"], str)
 
 
-def test_error_defined_by_the_ers(client, demo):  # noqa: F811
+def test_error_defined_by_the_ers(awfm_pack, client, demo):  # noqa: F811
     status, body, _ = client.get("/api/knowledge/error?case=Demo&family=AWFM&code=ExampleCodeOne")
     assert status == 200
     assert body["source"] == "ers" and body["out_of_vault"] is True and body["severity"] == 1
     assert body["reason"] == "Example reason" and body["details"] == "Example details"
+    assert body["knowledge_pack"]["installed"] is True
+
+
+def test_error_defined_by_the_ers_without_pack(client, demo):  # noqa: F811
+    status, body, _ = client.get("/api/knowledge/error?case=Demo&family=AWFM&code=ExampleCodeOne")
+    assert status == 200 and body["source"] == "ers" and body["severity"] == 1
+    assert body["out_of_vault"] is False  # the vault was not consulted
+    assert body["knowledge_pack"]["state"] == "not_installed"
 
 
 def test_error_unknown_and_validation(client, demo):  # noqa: F811

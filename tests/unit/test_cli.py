@@ -67,3 +67,37 @@ def test_serve_rejects_invalid_port(value, capsys):
         main(["serve", "--port", value])
     assert exc.value.code == 2
     assert "invalid port" in capsys.readouterr().err
+
+
+def _pack_line(out):
+    return next(line for line in out.splitlines() if line.startswith("knowledge pack: "))
+
+
+def test_info_without_pack_says_not_installed_and_where_it_looked(capsys, tmp_path):
+    assert main(["info", "--data-dir", str(tmp_path)]) == 0
+    line = _pack_line(capsys.readouterr().out)
+    assert line.startswith("knowledge pack: not installed (searched: data_dir: ")
+    assert str(tmp_path) in line
+
+
+def test_info_with_pack_dir_reports_source_and_version(capsys, tmp_path, mini_pack_dir):
+    assert main(["info", "--data-dir", str(tmp_path), "--pack-dir", str(mini_pack_dir)]) == 0
+    line = _pack_line(capsys.readouterr().out)
+    assert line.startswith("knowledge pack: installed (option: ")
+    assert "schema 1" in line and "vault synthetic-test-fixture" in line
+
+
+def test_info_with_pack_in_the_data_dir(capsys, tmp_path, mini_pack_dir):
+    import shutil
+
+    shutil.copytree(mini_pack_dir, tmp_path / "knowledge" / "pack")
+    assert main(["--pack-dir", "", "--data-dir", str(tmp_path), "info"]) == 0
+    assert _pack_line(capsys.readouterr().out).startswith("knowledge pack: installed (data_dir: ")
+
+
+def test_info_with_invalid_pack(capsys, tmp_path):
+    (tmp_path / "pack").mkdir()
+    (tmp_path / "pack" / "manifest.json").write_text("{}", encoding="utf-8")
+    assert main(["info", "--data-dir", str(tmp_path), "--pack-dir", str(tmp_path / "pack")]) == 0
+    line = _pack_line(capsys.readouterr().out)
+    assert line.startswith("knowledge pack: invalid, ignored (option): ")
