@@ -5,6 +5,7 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
 ## Pré-requisitos
 
 - `.venv` do projeto com `pytest` e `ruff` (extra `dev` do `pyproject.toml`); Python >= 3.11.
+- Comandos: os blocos abaixo usam o Python do venv. Linux: `.venv/bin/python`. Windows (PowerShell): `.venv\Scripts\python` (caminho padrão de `python -m venv`; não executado no Windows). Onde aparece `PYTHONPATH=src comando` (Linux), no PowerShell use `$env:PYTHONPATH="src"; comando`. `ruff` fica em `.venv/bin/ruff` (Linux) e `.venv\Scripts\ruff` (Windows).
 - Um ERS (zip ou pasta) que contenha o log. Ele serve só para descobrir mensagens; nada dele entra no repo (fixtures e exemplos são sintéticos).
 - Referências: `src/dmslog/adapters/_schema.md` (esquema dos templates, segurança de regex, parsers de continuação), `src/dmslog/adapters/_example.toml` (um template por recurso) e ARQUITETURA 6.3 a 6.5 e 9.1a.
 
@@ -29,6 +30,8 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
    .venv/bin/python -m dmslog ingest <ERS.zip|pasta> --case mina --all-logs
    ```
 
+   Windows: `.venv\Scripts\python -m dmslog ingest <ERS.zip|pasta> --case mina --all-logs`.
+
    `--all-logs` é necessário quando a regra tem `scope = "optional"` (sem a flag o fonte aparece como "not selected"). Depois chame (com `dmslog serve` no ar) `GET /api/unknown?case=<id>&family=<FAMILIA>&limit=N`. A mesma informação está na tabela `unknown_sig` do `case.sqlite` (`family`, `signature`, `n`, `first_entry_id`), mais frequente primeiro. A assinatura vem de `parse/signature.py` (ARQUITETURA 6.7): números viram `<n>`, texto entre aspas `<s>`, GUID `<guid>`, caminho `<path>`, e assim por diante. Cada assinatura é um candidato a template; `first_entry_id` leva ao registro real para ver a continuação (payload, stack trace). Ordene o trabalho por `n`.
 
    Não verificado: `tools/mine_templates.py` (citado em ARQUITETURA 6.7 e no ROADMAP 8.3) não existe no repositório nem no histórico git; o fluxo acima é o que existe hoje. Entrada: um ERS indexado. Saída: assinaturas por família, sem esboço de TOML.
@@ -37,7 +40,7 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
 
    - `schema = 1`, `family = "<CODIGO>"` (igual ao `family` da regra), `description`, `extends = ["_common"]` (herda estatísticas, conexões, exceções, mapas e inicialização genéricos; os templates da família têm prioridade).
    - Um `[[template]]` por assinatura, com `code` (`ABC-001`), `class`, `sev`, `title`, `regex` (literal TOML `'''...'''`, capturas nomeadas, texto fixo no início) ou `text` (texto exato, despacho mais rápido), `fields` tipados, `keys`, `examples` e `counter_examples`.
-   - `fields` e `keys` só quando o campo serve de chave de correlação (por exemplo um `msg_id` com `type = "msgid"`).
+   - `fields` tipa as capturas (`str`, `int`, `hex`, `guid`, `float`, `list`; sem tipo, `str`) e vale para qualquer campo, com ou sem correlação; cada nome precisa ser grupo da regex ou saída de `cont`. Somente `keys` define chaves de correlação (copiadas para `entry_key`): nome do campo ou `{ field = "msg_id", type = "msgid" }`.
    - Regras de eventos (`[[operation]]`, `[[sensitive_pair]]`, `[[link_rule]]`) só depois que os templates de início, fim e falha existirem; sem elas a família simplesmente não gera eventos (ARQUITETURA 9.1a).
 
    Todos os arquivos `*.toml` de `src/dmslog/adapters/` (exceto `_example.toml`) são carregados automaticamente por `load_catalog()`; não há lista para atualizar.
@@ -47,6 +50,8 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
    ```
    .venv/bin/python -c "from dmslog.parse.templates import load_catalog; load_catalog(check_examples=True)"
    ```
+
+   Windows: `.venv\Scripts\python -c "from dmslog.parse.templates import load_catalog; load_catalog(check_examples=True)"`.
 
    Falha com `SchemaError`, `DuplicateError`, `InvalidRegexError`, `UnsafeRegexError` ou `ExampleError` citando arquivo e código. `check_examples=True` confere que cada exemplo positivo cai no próprio template (com os campos declarados), que nenhum contra-exemplo casa, e que nenhum exemplo do arquivo casa com outro template do mesmo arquivo.
 
@@ -59,7 +64,11 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
    .venv/bin/python tools/make_family_fixtures.py --check
    ```
 
-   Se o `dmslog` instalado no ambiente não for o deste checkout, rode com `PYTHONPATH=src`; o gerador usa o catálogo que importar. Sem esse passo, `test_every_template_of_the_catalog_is_hit` falha ("templates without a fixture record"). Adapters com `anchor = true` também precisam de linha em `src/dmslog/knowledge/curated/process_map.toml` (`test_process_map.py`).
+   Windows: `.venv\Scripts\python tools\make_family_fixtures.py` e `... --check`.
+
+   `_file_name` só trata os layouts `adapter` e `single`; qualquer outro (`blthost`, `service`, `pidlog`) cai em `<processo>.SVC.log` e a fixture é classificada na família errada. Para um layout como `pidlog`, amplie `_file_name` antes de regenerar as fixtures.
+
+   Se o `dmslog` instalado no ambiente não for o deste checkout, rode com `PYTHONPATH=src` (Linux) ou `$env:PYTHONPATH="src"; ...` (PowerShell); o gerador usa o catálogo que importar. Sem esse passo, `test_every_template_of_the_catalog_is_hit` falha ("templates without a fixture record"). Adapters com `anchor = true` também precisam de linha em `src/dmslog/knowledge/curated/process_map.toml` (`test_process_map.py`).
 
 7. **Testes e lint (o mesmo que o CI roda).**
 
@@ -68,7 +77,9 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
    .venv/bin/python -m pytest -q
    ```
 
-   Para iterar rápido: `.venv/bin/python -m pytest -q tests/unit/test_templates.py tests/unit/test_catalog_common.py tests/unit/test_family_fixtures.py tests/unit/test_discover.py tests/unit/test_process_map.py tests/unit/test_conventions.py`.
+   Windows: `.venv\Scripts\ruff check` e `.venv\Scripts\python -m pytest -q`.
+
+   Para iterar rápido: `.venv/bin/python -m pytest -q tests/unit/test_templates.py tests/unit/test_catalog_common.py tests/unit/test_family_fixtures.py tests/unit/test_discover.py tests/unit/test_process_map.py tests/unit/test_conventions.py`. No Windows, troque `.venv/bin/python` por `.venv\Scripts\python`.
 
 ## Checklist de aceite
 
@@ -83,7 +94,7 @@ Passo a passo para dar templates a um log que hoje cai no nível genérico (ARQU
 ## Armadilhas
 
 - **Ordem em `families.toml`:** a primeira regra que casa vence; uma regra nova depois de `PROCESS` ou `SERVERLOG` nunca é usada.
-- **`scope = "optional"` não indexa por padrão.** Sem `--all-logs` (ou seleção na UI) o fonte fica "not selected" e o teste manual parece não funcionar. `default` e `service` entram sozinhos (ver a tabela no cabeçalho de `families.toml`).
+- **`scope = "optional"` não indexa por padrão.** Sem `--all-logs` (ou seleção na UI) o fonte fica "not selected" e o teste manual parece não funcionar. `default` entra sozinho; `service` entra só quando o serviço da fonte hospeda um adapter âncora (`anchor = true`), e sem nenhuma âncora na fonte cai no escopo padrão (`resolve_scope` em `src/dmslog/ingest/discover.py`; ver o cabeçalho de `families.toml`).
 - **Reindexar o mesmo caso não reaplica templates novos** (fonte "unchanged"). Use outro `--case`.
 - **O carregador não exige que `family` exista em `families.toml`** (verificado com uma família sem regra): um TOML órfão carrega e nunca é usado. A coerência é sua.
 - **O carregador não exige `examples`/`counter_examples`** (verificado), mas os testes por grupo exigem para as famílias já cobertas e a revisão deve exigir para as novas.
