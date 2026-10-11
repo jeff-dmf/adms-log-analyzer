@@ -236,7 +236,7 @@ Aceite:
 |---|---|---|
 | 8.1 | Desempenho no pior caso: ERS com escopo completo (≈ 2 GB), ERS com os 14 adapters em Verbose (projeção ≈ 2,6 GB de log, banco ≈ 4,1 GB; ARQUITETURA 9.3a), BLTHost sensitive, Wfm com dumps; ajuste de lotes, despacho de templates, índices e limite do FTS | opus |
 | 8.2 | Revisão de segurança (`/security-review`) e de privacidade (onde ficam os dados, apagar caso, payloads, mapa de anonimização) | opus |
-| 8.3 | Processo documentado para adicionar uma família nova (`families.toml` + TOML + `mine_templates`), preparando o P1 (doc de uso em inglês) | sonnet |
+| 8.3 | Processo documentado para adicionar uma família nova (`families.toml` + TOML + leitura das assinaturas desconhecidas; a ferramenta `mine_templates` é criada no P1), preparando o P1 (doc de uso em inglês) | sonnet |
 | 8.4 | README e ajuda da CLI em inglês (README real em 2026-10-10; `dmslog export` já existe desde o commit `12702ae`; conferir se o README o descreve); LEIA-ME do portátil em inglês (com aviso de uso interno/privado do pack) | sonnet |
 | 8.5 | Release: artefatos do CI (`dmslog.pyz`, portátil Windows, tarball Linux) em release privada, e checklist de teste manual em um PC Windows sem admin e sem internet, no Edge e no Chrome | sonnet + teste manual do Jefferson |
 
@@ -251,6 +251,7 @@ Aceite:
 | # | Entrega | Observação |
 |---|---|---|
 | P1 | Templates e eventos para os demais logs do ERS (NMC, PSengine, arbIP, outros processos `UNKNOWN`, ...) | Só dados (`families.toml` + TOML) e derivadores novos; esquema e descoberta já preparados (ARQUITETURA, 9.1a) |
+| P1a | Criar `tools/mine_templates.py` (dev, sonnet): agrupa registros desconhecidos pela `signature` e propõe esboço de TOML com exemplos; vem antes de minerar os demais logs do P1 | Decisão de 2026-10-11. A assinatura (`parse/signature.py`) e a tabela `unknown_sig` já existem; ver ARQUITETURA 6.7 e `docs/FAMILIA-NOVA.md` |
 | P2 | Vários ERS por caso, correlação entre máquinas, ajuste de relógio (`clock_offset_ms`) | Esquema já comporta (`collection_group`, `clock_offset_ms`); falta UI, regra de 409 e correlação por tempo entre coletas |
 | P3 | **Proposta, aguarda decisão do Jefferson:** bancos `LocalPersistenceStore/*.db3` do ERS (fila/cache de mensagens dos adapters) como fonte opcional: painel de itens pendentes/não enviados e ligação ao evento do log por MessageId | Fora da 1.0. Sensível, nunca indexado por padrão, sem o corpo; desenho na ARQUITETURA, seção 15 (`payloads.md`, seção 10) |
 | — | Adapters do vault sem amostra | Fora do escopo (não existem no ambiente produtivo, U8); entram só se surgirem amostras, pelo mesmo processo do P1 |
