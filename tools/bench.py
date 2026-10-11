@@ -20,6 +20,10 @@ Peak RSS: POSIX uses ``os.wait4`` (``ru_maxrss`` of exactly the subprocess); Win
 Everything created is removed at the end unless ``--keep`` is given. ``--out`` must be a new or empty
 directory outside this repository. No network, no telemetry, standard library only.
 
+Path overlap checks (``--out``, ``--ers``, ``--json``) compare canonical paths and ``os.path.samefile``
+along the ancestors. Not covered on Windows: NTFS alternate data streams (``file:stream``) and 8.3 short
+names (``PROGRA~1``) that point at a path not yet created; pass plain long paths.
+
 Examples::
 
     python tools/bench.py --quick --out /tmp/bench
@@ -160,6 +164,9 @@ def check_output_paths(out: Path, ers: Path | None, json_path: Path | None) -> N
     ``--out`` must not be, contain or lie inside the ERS; ``--json`` must not be the ERS, lie inside an
     ERS folder, lie inside ``--out`` (cleanup would delete it) or inside the repository; ``--out`` and
     ``--json`` themselves must not be symbolic links. Messages carry no paths on purpose.
+
+    Known gaps (Windows): NTFS alternate data streams (``name:stream``) and 8.3 short names of paths that
+    do not exist yet are not recognized as aliases; the caller is expected to pass plain long paths.
     """
     for label, path in (("--out", out), ("--json", json_path)):
         if path is not None and os.path.islink(path):
@@ -628,9 +635,11 @@ def build_report(
     parsed = run["parsed"]
     assert isinstance(parsed, dict)
     wall = float(run["wall_seconds"])  # type: ignore[arg-type]
-    data_mb = inputs.get("uncompressed_mb")
+    # Throughput counts the bytes ingest actually indexed ("Data: ... MB"): an ERS zip holds far more
+    # than the default scope, so its uncompressed size (kept in "input") would overstate MB/s.
+    data_mb = parsed.get("data_mb")
     if not isinstance(data_mb, (int, float)):
-        data_mb = parsed.get("data_mb")
+        data_mb = inputs.get("uncompressed_mb")
     records = parsed.get("records")
     result = {
         "wall_seconds": round(wall, 3),
@@ -702,7 +711,8 @@ def format_table(report: dict[str, object]) -> str:
         ("Mode", str(report["mode"])),
         ("Input", str(inp.get("path"))),
         ("Input size on disk", fmt(inp.get("disk_mb"), " MB")),
-        ("Uncompressed logs", fmt(res["data_mb"], " MB")),
+        ("Uncompressed input", fmt(inp.get("uncompressed_mb"), " MB")),
+        ("Indexed logs", fmt(res["data_mb"], " MB")),
         ("Wall time (ingest)", fmt(res["wall_seconds"], " s")),
         ("  derivation", fmt(res["derive_seconds"], " s")),
         ("  correlation", fmt(res["correlate_seconds"], " s")),
@@ -734,6 +744,10 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Worst-case performance bench for 'dmslog ingest': generates a synthetic ERS (or uses "
             "--ers) and measures wall time, peak RSS, database size and throughput."
+        ),
+        epilog=(
+            "Path overlap checks do not cover NTFS alternate data streams (file:stream) or 8.3 short "
+            "names (PROGRA~1) of paths that do not exist yet; use plain long paths."
         ),
     )
     ap.add_argument("--out", type=str, required=True,
