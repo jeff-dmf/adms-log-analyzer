@@ -521,11 +521,11 @@ def test_reindex_cost_follows_orphans_and_bookmarked_records_not_the_table(tmp_p
     last = rows[-1][0]
     values = [
         (1, WFM, line, eid, "red", "linked", "2030-01-01T00:00:00Z", sid,
-         bm.fingerprint(off, ts, text, open_record=eid == last))
+         bm.fingerprint(off, ts, text, open_record=eid == last), bm.new_uid())
         for eid, (_sid, line, off, ts, text) in bm._contents(db, [eid for eid, _line in linked])
     ]  # fmt: skip
     values += [
-        (1, WFM, line, None, "blue", "orphan", "2030-01-01T00:00:00Z", sid, "f:" + "0" * 32)
+        (1, WFM, line, None, "blue", "orphan", "2030-01-01T00:00:00Z", sid, "f:" + "0" * 32, bm.new_uid())
         for _eid, line in orphans  # a record sits at every orphan's line, never its own
     ]
     db.executemany(bm._INSERT_SQL, values)
@@ -541,3 +541,116 @@ def test_reindex_cost_follows_orphans_and_bookmarked_records_not_the_table(tmp_p
         f" 2000 linked + 2000 orphans {busy:.2f}s ({len(busy_statements)} bookmark statements)"
     )
     assert busy < 2 * empty + 2.0  # generous: CI machines vary; the measured overhead is about 10 %
+
+
+# --------------------------------------------------------------------------- complete identities never weaken
+
+
+def closed_log(last: str, *, closed: bool) -> bytes:
+    """Three records; the bookmarked one is ``closed A`` (2nd), closed by a 3rd header or left last."""
+    lines = [tp.mf.header(0, "INFO", "[Alpha] first"), tp.mf.header(10, "INFO", f"[Alpha] {last}")]
+    if closed:
+        lines.append(tp.mf.header(20, "INFO", "[Alpha] closes it"))
+    return tp.mf.render(lines)
+
+
+def test_a_complete_fingerprint_survives_a_truncation_that_leaves_its_record_last(tmp_path, db):
+    root = tp.write_folder(tmp_path / "Log", {WFM: closed_log("closed A", closed=True)})
+    ingest(db, root)
+    line = record_lines(db, WFM)[1]
+    mark(db, WFM, line, "closed")
+    full = db.execute("SELECT fp FROM bookmark").fetchone()[0]
+    assert full.startswith("f:")
+    (root / WFM).write_bytes(closed_log("closed A", closed=False))  # the closing header is cut away
+    ingest(db, root)
+    assert_linked(view(db)["closed"], WFM, "[Alpha] closed A")  # same content: still its record
+    assert db.execute("SELECT fp FROM bookmark").fetchone()[0] == full  # never weakened to a prefix
+    # The record now grows into other content: it is not the bookmarked record any more.
+    (root / WFM).write_bytes(closed_log("closed A extended DIFFERENT CONTENT", closed=False))
+    ingest(db, root)
+    assert_orphan(view(db)["closed"])
+    assert db.execute("SELECT fp FROM bookmark").fetchone()[0] == full
+    (root / WFM).write_bytes(closed_log("closed A", closed=True))  # the original content is back
+    ingest(db, root)
+    assert_linked(view(db)["closed"], WFM, "[Alpha] closed A")
+
+
+def test_import_keeps_a_complete_fingerprint_on_a_record_that_is_last(tmp_path, db):
+    root = tp.write_folder(tmp_path / "Log", {WFM: closed_log("closed A", closed=True)})
+    ingest(db, root)
+    mark(db, WFM, record_lines(db, WFM)[1], "closed")
+    data = bm.export_bookmarks(db)
+    full = data["bookmarks"][0]["fp"]
+    assert full.startswith("f:")
+    other_root = tp.write_folder(tmp_path / "Other", {WFM: closed_log("closed A", closed=False)})
+    other = tp.fresh_db(tmp_path, "other")
+    ingest(other, other_root)
+    assert bm.import_bookmarks(other, data)["imported"] == 1
+    assert_linked(view(other)["closed"], WFM, "[Alpha] closed A")
+    assert other.execute("SELECT fp FROM bookmark").fetchone()[0] == full
+    (other_root / WFM).write_bytes(closed_log("closed A extended DIFFERENT CONTENT", closed=False))
+    ingest(other, other_root)
+    assert_orphan(view(other)["closed"])
+    other.close()
+
+
+# --------------------------------------------------------------------------- export identity
+
+
+def test_two_detached_bookmarks_with_one_locator_and_identity_both_round_trip(tmp_path, db):
+    root = tp.write_folder(
+        tmp_path / "Log", {WFM_ROTATED: twin_log("origin of file A"), WFM: twin_log("origin of file B")}
+    )
+    ingest(db, root)
+    line = record_lines(db, WFM)[6]
+    mark(db, WFM_ROTATED, line, "note of A")
+    mark(db, WFM, line, "note of B")
+    for newer in ("origin of file C", "origin of file D"):  # .log.0 dropped twice: both lineages detach
+        (root / WFM_ROTATED).unlink()
+        (root / WFM).rename(root / WFM_ROTATED)
+        (root / WFM).write_bytes(twin_log(newer))
+        ingest(db, root)
+    rows = db.execute("SELECT member, line_no, fp, source_id FROM bookmark ORDER BY id").fetchall()
+    assert rows[0] == rows[1] and rows[0][3] is None  # same locator, same identity, both detached
+    data = bm.export_bookmarks(db)
+    other = tp.fresh_db(tmp_path, "other")
+    ingest(other, root)
+    assert bm.import_bookmarks(other, data) == {"imported": 2, "existing": 0, "unmatched": 0, "invalid": 0}
+    assert len({i["uid"] for i in data["bookmarks"]}) == 2  # the stable identity tells them apart
+    assert sorted(notes_state(other)) == ["note of A", "note of B"]
+    assert bm.import_bookmarks(other, data) == {"imported": 0, "existing": 2, "unmatched": 0, "invalid": 0}
+    for (bid,) in db.execute("SELECT id FROM bookmark").fetchall():
+        bm.delete_bookmark(db, bid)
+    assert bm.import_bookmarks(db, data)["imported"] == 2  # back into the case it came from
+    assert bm.import_bookmarks(db, data)["existing"] == 2
+    assert sorted(notes_state(db)) == ["note of A", "note of B"]
+    other.close()
+
+
+def test_import_after_a_rotation_does_not_duplicate_a_bookmark_that_moved(tmp_path, db):
+    root = tp.write_folder(tmp_path / "Log", {WFM: tp.make_log(30)})
+    ingest(db, root)
+    mark(db, WFM, record_lines(db, WFM)[4], "moved")
+    data = bm.export_bookmarks(db)
+    (root / WFM).rename(root / WFM_ROTATED)
+    (root / WFM).write_bytes(tp.make_log(30, start=40_000))
+    ingest(db, root)
+    assert view(db)["moved"]["member"] == WFM_ROTATED
+    assert bm.import_bookmarks(db, data) == {"imported": 0, "existing": 1, "unmatched": 0, "invalid": 0}
+    assert db.execute("SELECT count(*) FROM bookmark").fetchone()[0] == 1
+
+
+def test_a_regrown_open_record_stays_with_its_bookmark_when_an_older_orphan_also_matches(tmp_path, db):
+    head = tp.mf.header(0, "INFO", "[Alpha] still open")
+    root = tp.write_folder(tmp_path / "Log", {WFM: f"{head}\n\n".encode()})  # an empty continuation line
+    ingest(db, root)
+    mark(db, WFM, 1, "older")  # open identity: the first line plus "\n"
+    (root / WFM).write_bytes(f"{head}\n".encode())  # shorter: parsed again without the empty line
+    ingest(db, root)
+    assert_orphan(view(db)["older"])
+    mark(db, WFM, 1, "newer")  # the record as it is now: a shorter open identity
+    (root / WFM).write_bytes(f"{head}\nx".encode())  # it grows: both identities match the record now
+    assert actions(ingest(db, root)) == {WFM: "append"}
+    state = view(db)
+    assert_linked(state["newer"], WFM, "[Alpha] still open")  # the bookmark it had keeps it
+    assert_orphan(state["older"])

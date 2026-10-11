@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import subprocess
 import sys
@@ -7,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from dmslog.store import SCHEMA_VERSION, SchemaVersionError, connect, create_case_db, migrate
+from dmslog.store.db import MigrationError
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -161,6 +163,7 @@ def test_migration_2_backfills_bucket_sev_from_bucket(tmp_path):
         "INSERT INTO bucket(source_id, minute, sev, tpl_id, n) VALUES (?,?,?,?,?)",
         [(1, 10, 2, 0, 3), (1, 10, 2, 7, 4), (1, 10, 4, 7, 5), (2, 11, 2, 0, 1)],
     )
+    conn.commit()  # migrate never commits a transaction the caller left open
     assert migrate(conn) == SCHEMA_VERSION
     rows = conn.execute("SELECT source_id, minute, sev, n FROM bucket_sev ORDER BY 1, 2, 3").fetchall()
     assert rows == [(1, 10, 2, 7), (1, 10, 4, 5), (2, 11, 2, 1)]
@@ -168,7 +171,9 @@ def test_migration_2_backfills_bucket_sev_from_bucket(tmp_path):
     conn.close()
 
 
-BOOKMARK_V4_OBJECTS = ("ix_bookmark_source", "ix_bookmark_orphan", "ix_bookmark_open", "ux_bookmark_entry")
+BOOKMARK_V4_OBJECTS = (
+    "ix_bookmark_source", "ix_bookmark_orphan", "ix_bookmark_open", "ux_bookmark_entry", "ux_bookmark_uid"
+)
 
 
 def make_v3(path):
@@ -182,7 +187,7 @@ def make_v3(path):
     for index in BOOKMARK_V4_OBJECTS:
         conn.execute(f"DROP INDEX IF EXISTS {index}")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(bookmark)")}
-    for column in ("fp", "source_id"):
+    for column in ("fp", "source_id", "uid", "orphan_seq"):
         if column in columns:
             conn.execute(f"ALTER TABLE bookmark DROP COLUMN {column}")
     conn.execute("PRAGMA user_version=3")
@@ -230,6 +235,8 @@ def test_migration_4_adds_lineage_and_fingerprint_and_rebuilds_bookmark_caches(t
         ("came back", 8, 2, True),
         ("dropped", None, None, False),  # detached: its source is gone
     ]
+    uids = [r[0] for r in conn.execute("SELECT uid FROM bookmark")]
+    assert len(set(uids)) == 4 and all(re.fullmatch(r"[0-9a-f]{32}", u) for u in uids)
     fps = dict(conn.execute("SELECT note, fp FROM bookmark"))
     assert fps["stale"] == bm.fingerprint(0, None, "kept record", open_record=True)  # last record of a.log
     assert fps["came back"] == bm.fingerprint(0, None, "first of b")  # a later record exists: complete
@@ -329,3 +336,57 @@ def test_a_version_3_case_keeps_the_legacy_reads(tmp_path):
     assert exported["came back"]["fp"] is None and exported["came back"]["orphan"] is False
     assert exported["dropped"]["detached"] is True and exported["gone"]["detached"] is False
     ro.close()
+
+
+# --------------------------------------------------------------------------- the caller's transaction
+
+
+def pending_write(conn) -> None:
+    conn.execute("INSERT INTO meta(key, value) VALUES ('caller', 'uncommitted')")
+    assert conn.in_transaction
+
+
+def caller_row(path) -> list:
+    other = sqlite3.connect(path)
+    try:
+        return other.execute("SELECT value FROM meta WHERE key = 'caller'").fetchall()
+    finally:
+        other.close()
+
+
+def test_migrate_on_a_current_case_leaves_the_callers_transaction_open_and_uncommitted(tmp_path):
+    path = tmp_path / "case.sqlite"
+    conn = create_case_db(path)
+    pending_write(conn)
+    assert migrate(conn) == SCHEMA_VERSION
+    assert conn.in_transaction  # nothing committed on the caller's behalf
+    assert caller_row(path) == []
+    conn.rollback()
+    assert conn.execute("SELECT count(*) FROM meta WHERE key = 'caller'").fetchone()[0] == 0
+    conn.close()
+
+
+def test_migrate_refuses_to_run_a_step_inside_the_callers_transaction(tmp_path):
+    path = tmp_path / "v3.sqlite"
+    conn = make_v3(path)
+    before = snapshot(conn)
+    pending_write(conn)
+    with pytest.raises(MigrationError, match="open transaction"):
+        migrate(conn)
+    assert conn.in_transaction and caller_row(path) == []
+    conn.rollback()
+    assert snapshot(conn) == before  # nothing migrated, nothing of the caller's committed
+    assert migrate(conn) == SCHEMA_VERSION  # without the open transaction it runs
+    conn.close()
+
+
+def test_a_future_version_is_rejected_without_committing_the_callers_transaction(tmp_path):
+    path = tmp_path / "future.sqlite"
+    conn = create_case_db(path)
+    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
+    pending_write(conn)
+    with pytest.raises(SchemaVersionError):
+        migrate(conn)
+    assert conn.in_transaction and caller_row(path) == []
+    conn.rollback()
+    conn.close()

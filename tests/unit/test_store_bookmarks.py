@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 
 import pytest
@@ -241,6 +242,45 @@ def test_export_import_roundtrip(conn, tmp_path):
     items = bm.list_bookmarks(other)[0]
     assert [(i["entry_id"], i["color"], i["note"]) for i in items] == [(2, "red", "one"), (7, "blue", None)]
     other.close()
+
+
+def test_import_dedups_by_uid_and_keeps_the_multiplicity_of_items_without_one(conn, tmp_path):
+    bm.create_bookmark(conn, 2, "red", "one")
+    data = bm.export_bookmarks(conn)
+    item = data["bookmarks"][0]
+    assert re.fullmatch(r"[0-9a-f]{32}", item["uid"])
+    assert bm.import_bookmarks(conn, data) == {"imported": 0, "existing": 1, "unmatched": 0, "invalid": 0}
+    twin = {**item, "uid": "0" * 32, "note": "twin"}  # another bookmark with the same locator and record
+    assert bm.import_bookmarks(conn, {**data, "bookmarks": [item, twin]})["imported"] == 1
+    notes = sorted(n for (n,) in conn.execute("SELECT note FROM bookmark"))
+    assert notes == ["one", "twin"]
+    # A hand-made file without uids: each bookmark of the case answers for one item, no more.
+    loose = [{k: v for k, v in i.items() if k != "uid"} for i in bm.export_bookmarks(conn)["bookmarks"]]
+    loose.append({**loose[0], "note": "third"})
+    other = create_case_db(tmp_path / "o" / "case.sqlite")
+    tsk.seed(other)
+    doc = {**data, "bookmarks": loose}
+    assert bm.import_bookmarks(other, doc) == {"imported": 3, "existing": 0, "unmatched": 0, "invalid": 0}
+    assert bm.import_bookmarks(other, doc) == {"imported": 0, "existing": 3, "unmatched": 0, "invalid": 0}
+    assert other.execute("SELECT count(*), count(entry_id) FROM bookmark").fetchone() == (3, 1)
+    other.close()
+    for bad in ("X" * 32, "0" * 31, 7):
+        assert bm.import_bookmarks(conn, {**data, "bookmarks": [{**item, "uid": bad}]})["invalid"] == 1
+    repeated = {**data, "bookmarks": [{**item, "uid": "1" * 32}, {**item, "uid": "1" * 32}]}
+    assert bm.import_bookmarks(conn, repeated) == {"imported": 1, "existing": 0, "unmatched": 0, "invalid": 1}
+
+
+def test_import_gives_a_record_to_the_item_that_was_linked_not_to_an_orphan_listed_first(conn):
+    made = bm.create_bookmark(conn, 2, "red", "linked")
+    item = bm.export_bookmarks(conn)["bookmarks"][0]
+    bm.delete_bookmark(conn, made["id"])
+    doc = {"format": bm.EXPORT_FORMAT, "version": 2, "bookmarks": [
+        {**item, "uid": "1" * 32, "note": "orphan", "orphan": True},  # same identity, listed first
+        {**item, "uid": "2" * 32, "note": "linked", "orphan": False},
+    ]}  # fmt: skip
+    assert bm.import_bookmarks(conn, doc)["imported"] == 2
+    state = {i["note"]: i["entry_id"] for i in bm.list_bookmarks(conn)[0]}
+    assert state == {"orphan": None, "linked": 2}
 
 
 def test_import_rejects_and_counts(conn):

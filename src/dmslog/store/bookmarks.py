@@ -10,7 +10,10 @@ A bookmark is a record plus a color and a note (ARQUITETURA 9.3). Its identity h
 * the fingerprint ``fp`` of the record content (byte offset, timestamp, first line and continuation
   lines). ``f:<digest>`` covers the whole content of a complete record. ``p<n>:<digest>`` covers the
   first ``n`` characters of an *open* record (the last record of its source, which a growing file can
-  still extend) and matches a record whose content starts with them.
+  still extend) and matches a record whose content starts with them. Fingerprints only get stronger
+  (:func:`linked_fp`): a complete one is final, an open one becomes complete or a longer prefix.
+
+A random ``uid`` names the bookmark itself; export carries it and import deduplicates by it.
 
 ``entry_id`` is a cache kept by the writer in the same transaction that changes the records:
 :func:`detach_entries` before records are deleted, :func:`attach_entries` after records are inserted
@@ -37,6 +40,7 @@ import re
 import sqlite3
 import time
 import unicodedata
+import uuid
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
@@ -54,7 +58,7 @@ DEFAULT_LIMIT = 100
 MAX_LIMIT = 500
 MSG_CHARS = 300
 EXPORT_FORMAT = "dmslog-bookmarks"
-EXPORT_VERSION = 2  # 2 adds fp, orphan and detached; version 1 files are still read
+EXPORT_VERSION = 2  # 2 adds uid, fp, orphan and detached; version 1 files are still read
 IMPORT_VERSIONS = (1, 2)
 COMPARE_MAX_LINES = 1500  # per side, message line included
 COMPARE_MAX_LINE_CHARS = 4000
@@ -67,6 +71,7 @@ MAX_COMPARE_PAIRS = 20_000  # line pairs the exact diff may examine; beyond it a
 MAX_COMPARE_CHARS = 400_000
 _IDENT = re.compile(r"[^\x00-\x1f\x7f]{1,128}\Z")
 _FP = re.compile(r"(?:f|p(?:0|[1-9][0-9]{0,11})):[0-9a-f]{32}\Z")
+_UID = re.compile(r"[0-9a-f]{32}\Z")
 
 ERROR_MESSAGES = {
     "bad_color": "color must be one of: {colors}",
@@ -200,6 +205,19 @@ def is_open(fp: str | None) -> bool:
     return fp is not None and fp.startswith("p")
 
 
+def linked_fp(fp: str | None, byte_off: int, ts: int | None, text: str, *, last: bool) -> str:
+    """Fingerprint a bookmark keeps on a record its identity matched (``fp_matches``) or just took.
+
+    Identities only get stronger. A complete fingerprint is final: kept as is, wherever the record sits
+    now (a record that became the last one again, after a truncation, is still compared with its whole
+    known content). An open fingerprint, or none, is taken again from the record: complete once a later
+    record exists, else a prefix at least as long as the one it had.
+    """
+    if fp is not None and not is_open(fp):
+        return fp
+    return fingerprint(byte_off, ts, text, open_record=last)
+
+
 def has_bookmarks(conn: sqlite3.Connection) -> bool:
     """One probe; the writer calls it before any bookmark work, so an empty table costs nothing more."""
     return conn.execute("SELECT 1 FROM bookmark LIMIT 1").fetchone() is not None
@@ -243,9 +261,14 @@ def _fp_of_entry(conn: sqlite3.Connection, entry_id: int, last_id: int | None) -
 
 _BM_COLUMNS = "id, collection_id, member, line_no, entry_id, color, note, created_at"
 _INSERT_SQL = (
-    "INSERT INTO bookmark(collection_id, member, line_no, entry_id, color, note, created_at, source_id, fp)"
-    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO bookmark(collection_id, member, line_no, entry_id, color, note, created_at, source_id, fp,"
+    " uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
+
+
+def new_uid() -> str:
+    """A random stable identity for a new bookmark (32 hex characters)."""
+    return uuid.uuid4().hex
 
 
 def _valid_caches(conn: sqlite3.Connection, bookmark_ids: list[int]) -> set[int]:
@@ -551,7 +574,7 @@ def create_bookmark(
         cur = conn.execute(
             _INSERT_SQL,
             (collection_id, member, line_no, entry_id, clean_color, clean, _now(), source_id,
-             _fp_of_entry(conn, entry_id, _last_id(conn, source_id))),
+             _fp_of_entry(conn, entry_id, _last_id(conn, source_id)), new_uid()),
         )  # fmt: skip
         new_id = cur.lastrowid
     return get_bookmark(conn, new_id)  # type: ignore[arg-type]
@@ -638,11 +661,11 @@ def relink_all(conn: sqlite3.Connection) -> dict[str, int]:
         if eid is not None:
             targets.setdefault(eid, []).append((bid, fp))
     matched: dict[int, bool] = {}  # bookmark id -> its fingerprint matches the record at its line
-    fresh: dict[int, str] = {}  # entry id -> fingerprint of the record now (one record in memory at a time)
+    fresh: dict[int, str] = {}  # bookmark id -> fingerprint it keeps if it takes the record at its line
     for eid, (sid, _line, byte_off, ts, text) in _contents(conn, targets):
-        fresh[eid] = fingerprint(byte_off, ts, text, open_record=eid == last.get(sid))
         for bid, fp in targets[eid]:
             matched[bid] = fp_matches(fp, byte_off, ts, text)
+            fresh[bid] = linked_fp(fp, byte_off, ts, text, last=eid == last.get(sid))
 
     new: dict[int, int | None] = {r[0]: None for r in rows}
     taken: set[int] = set()
@@ -654,16 +677,14 @@ def relink_all(conn: sqlite3.Connection) -> dict[str, int]:
     for accept in phases:
         for bid, _sid, _line, cached, fp in rows:
             eid = candidates.get(bid)
-            if new[bid] is None and eid in fresh and eid not in taken and accept(bid, cached, fp, eid):
+            if new[bid] is None and bid in fresh and eid not in taken and accept(bid, cached, fp, eid):
                 new[bid] = eid
                 taken.add(eid)  # type: ignore[arg-type]
     relinked = orphaned = 0
     updates: list[tuple[int | None, str | None, int]] = []
-    for bid, sid, _line, cached, fp in rows:
+    for bid, _sid, _line, cached, fp in rows:
         eid = new[bid]
-        new_fp = fp
-        if eid is not None and (fp is None or (is_open(fp) and eid != last.get(sid))):
-            new_fp = fresh[eid]
+        new_fp = fp if eid is None else fresh[bid]
         orphaned += eid is None
         relinked += eid != cached
         if eid != cached or new_fp != fp:
@@ -695,8 +716,12 @@ _NewRow = tuple[int, int, int, int, int | None, str]  # entry_id, source_id, lin
 def detach_entries(conn: sqlite3.Connection, source_id: int, from_byte_off: int = 0) -> int:
     """Before the records of a source at or after ``from_byte_off`` are deleted: orphan their bookmarks.
 
-    Each keeps (or gets) the fingerprint of its record, taken before the record disappears: complete
-    when a later record exists in the source, open for the last record (a growing file re-parses it).
+    Each keeps its fingerprint, made stronger (:func:`linked_fp`) from its record before the record
+    disappears: complete when a later record exists in the source, open for the last record (a growing
+    file re-parses it); a complete fingerprint stays as it is.
+    Each also gets a new ``orphan_seq`` (one per call): when several orphans of a line match a record
+    inserted later, the one orphaned last takes it, so a bookmark whose record is parsed again (an
+    open record that grew) keeps it even when an older orphan's identity now matches too.
     Returns the count.
     """
     if not has_bookmarks(conn):
@@ -709,14 +734,15 @@ def detach_entries(conn: sqlite3.Connection, source_id: int, from_byte_off: int 
     if not rows:
         return 0
     last = _last_id(conn, source_id)
-    refresh = {eid for _bid, fp, eid in rows if fp is None or (is_open(fp) and eid != last)}
+    refresh = {eid: fp for _bid, fp, eid in rows if is_open(fp) or fp is None}  # complete ones are final
     fresh = {
-        eid: fingerprint(byte_off, ts, text, open_record=eid == last)
+        eid: linked_fp(refresh[eid], byte_off, ts, text, last=eid == last)
         for eid, (_sid, _line, byte_off, ts, text) in _contents(conn, refresh)
     }
+    seq = (conn.execute("SELECT max(orphan_seq) FROM bookmark").fetchone()[0] or 0) + 1
     conn.executemany(
-        "UPDATE bookmark SET entry_id = NULL, fp = ? WHERE id = ?",
-        [(fresh.get(eid, fp), bid) for bid, fp, eid in rows],
+        "UPDATE bookmark SET entry_id = NULL, fp = ?, orphan_seq = ? WHERE id = ?",
+        [(fresh.get(eid, fp), seq, bid) for bid, fp, eid in rows],
     )
     return len(rows)
 
@@ -731,7 +757,8 @@ def attach_entries(conn: sqlite3.Connection, rows: Iterable[_NewRow]) -> int:
 
     * An orphan links to the inserted record at its line when the fingerprint matches (a bookmark
       without one, from an older case, takes the record if no fingerprint claims it). One bookmark
-      per record; inserted records have no bookmark, so a linked bookmark is never displaced.
+      per record; among matching orphans the one orphaned last wins (``orphan_seq``), so a bookmark
+      whose record is only parsed again keeps it: a linked bookmark is never displaced.
     * A linked bookmark with an open fingerprint gets the complete one as soon as a later record of
       its source exists (its record can no longer grow).
 
@@ -791,7 +818,7 @@ def _link_orphans(conn: sqlite3.Connection, source_id: int, new_rows: list[_NewR
     wanted: dict[int, list[tuple[int, str | None]]] = {}
     for bid, line_no, fp in conn.execute(
         "SELECT id, line_no, fp FROM bookmark WHERE source_id = ? AND entry_id IS NULL"
-        " ORDER BY fp IS NULL, id",
+        " ORDER BY fp IS NULL, orphan_seq DESC, id",
         (source_id,),
     ):
         wanted.setdefault(line_no, []).append((bid, fp))
@@ -807,7 +834,7 @@ def _link_orphans(conn: sqlite3.Connection, source_id: int, new_rows: list[_NewR
             pick = next((c for c in candidates if c[1] is None), None)
         if pick is None:
             continue
-        links.append((entry_id, fingerprint(byte_off, ts, text, open_record=entry_id == newest), pick[0]))
+        links.append((entry_id, linked_fp(pick[1], byte_off, ts, text, last=entry_id == newest), pick[0]))
         candidates.remove(pick)
     if links:
         # A holder of a new id can only be stale (rows changed outside the writer): it lets go first.
@@ -835,17 +862,18 @@ def move_members(conn: sqlite3.Connection, renames: Mapping[int, str]) -> None:
 def export_bookmarks(conn: sqlite3.Connection) -> dict[str, Any]:
     """A shareable JSON document (version 2).
 
-    Each item has the locator, color, note, date and ERS identity of the collection, plus the identity
-    of the record: ``fp`` (null for a bookmark from an older case that never saw its record),
-    ``orphan`` (no record now) and ``detached`` (its source was dropped; it never links on its own).
+    Each item has the locator, color, note, date and ERS identity of the collection, the stable
+    identity of the bookmark (``uid``; null on a case still at schema 3) and the identity of the record:
+    ``fp`` (null for a bookmark from an older case that never saw its record), ``orphan`` (no record
+    now) and ``detached`` (its source was dropped; it never links on its own).
     """
     with read_guard(conn, PAGE_TIMEOUT_S):
         if _schema_v4(conn):
-            extra = "b.fp, b.source_id IS NULL"
-        else:  # schema 3: no fingerprint; detached when no source holds the member any more
+            extra = "b.fp, b.source_id IS NULL, b.uid"
+        else:  # schema 3: no identities; detached when no source holds the member any more
             extra = (
                 "NULL, NOT EXISTS (SELECT 1 FROM source s"
-                " WHERE s.collection_id = b.collection_id AND s.member = b.member)"
+                " WHERE s.collection_id = b.collection_id AND s.member = b.member), NULL"
             )
         rows = conn.execute(
             "SELECT b.id, b.collection_id, b.member, b.line_no, b.entry_id, b.color, b.note, b.created_at,"  # noqa: S608
@@ -859,9 +887,9 @@ def export_bookmarks(conn: sqlite3.Connection) -> dict[str, Any]:
     size = 256
     truncated = False
     for r in rows:
-        item = {"ers_guid": r[8], "ers_ts": r[9], "member": r[2], "line_no": r[3], "color": r[5],
-                "note": r[6], "created_at": r[7], "fp": r[10], "orphan": resolved[r[0]] is None,
-                "detached": bool(r[11])}  # fmt: skip
+        item = {"uid": r[12], "ers_guid": r[8], "ers_ts": r[9], "member": r[2], "line_no": r[3],
+                "color": r[5], "note": r[6], "created_at": r[7], "fp": r[10],
+                "orphan": resolved[r[0]] is None, "detached": bool(r[11])}  # fmt: skip
         size += len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
         if size > MAX_EXPORT_BYTES:
             truncated = True  # never produce a document the import route would refuse
@@ -882,18 +910,26 @@ def _collection_for(conn: sqlite3.Connection, guid: str | None, stamp: str | Non
     return rows[0][0] if len(rows) == 1 else None  # one ERS per case: unambiguous without identity
 
 
-_Parsed = tuple[str, int, str, str | None, str, str | None, str | None, str | None, bool]
+# member, line_no, color, note, created_at, ers_guid, ers_ts, fp, detached, uid, orphan
+_Parsed = tuple[str, int, str, str | None, str, str | None, str | None, str | None, bool, str | None, bool]
 
 
 def import_bookmarks(conn: sqlite3.Connection, data: Any) -> dict[str, int]:
     """Merge an export into the case. Returns the counts per outcome.
 
-    The record identity decides, never the line alone: an item links to the record at its locator
-    only when its fingerprint matches (a version-1 item, which has none, takes the record if it is
-    free) and nobody holds it; otherwise it is kept as an orphan of that source, so no note is lost or
-    moved to another record. An item is ``existing`` when the case already has a bookmark at the
-    locator with the same identity (version 1: any bookmark at the locator). A detached item stays
-    detached. Items with a fingerprint are placed before items without one.
+    Deduplication follows the bookmark, never the record alone: an item with a ``uid`` is ``existing``
+    when the case holds a bookmark with that uid (wherever it is now: a rotation may have moved it),
+    else it is imported keeping its uid, so importing a file twice changes nothing and two distinct
+    bookmarks that share a locator and a record identity both survive. A version-2 item without a uid
+    (a file edited by hand) is ``existing`` when an unclaimed bookmark at its locator has its identity;
+    each bookmark of the case answers for one item at most, so the multiplicity of the file is kept.
+    A version-1 item is ``existing`` when any bookmark sits at its locator.
+
+    The record identity decides the link, never the line alone: an item links to the record at its
+    locator only when its fingerprint matches (a version-1 item, which has none, takes the record if it
+    is free) and nobody holds it; otherwise it is kept as an orphan of that source, so no note is lost
+    or moved to another record. A complete fingerprint stays complete. A detached item stays detached.
+    Items with a fingerprint are placed first, those linked when exported before the orphans.
     """
     if (
         not isinstance(data, dict)
@@ -909,25 +945,39 @@ def import_bookmarks(conn: sqlite3.Connection, data: Any) -> dict[str, int]:
     legacy = data["version"] == 1
     counts = {"imported": 0, "existing": 0, "unmatched": 0, "invalid": 0}
     parsed: list[_Parsed] = []
+    seen_uids: set[str] = set()
     for item in items:
         one = _parse_item(item, legacy)
+        if one is not None and one[9] is not None:
+            if one[9] in seen_uids:  # one bookmark appears once; a repeated uid is a malformed file
+                one = None
+            else:
+                seen_uids.add(one[9])
         if one is None:
             counts["invalid"] += 1
         else:
             parsed.append(one)
-    parsed.sort(key=lambda p: p[7] is None)  # stable: identified items claim their records first
+    # Stable: identified items claim their records first, and among them the ones that were linked
+    # when exported (an orphan with the same identity never takes the record from its holder).
+    parsed.sort(key=lambda p: (p[7] is None, p[10]))
     _ensure_schema(conn)
     with _Tx(conn):
         total = conn.execute("SELECT count(*) FROM bookmark").fetchone()[0]
+        claimed: set[int] = set()  # bookmarks that already answered for an item of this file
         for one in parsed:
-            outcome = _import_one(conn, one, legacy, total)
+            outcome = _import_one(conn, one, legacy, total, claimed)
             counts[outcome] += 1
             total += outcome == "imported"
     return counts
 
 
-def _import_one(conn: sqlite3.Connection, one: _Parsed, legacy: bool, total: int) -> str:
-    member, line_no, color, note, created, guid, stamp, fp, detached = one
+def _import_one(conn: sqlite3.Connection, one: _Parsed, legacy: bool, total: int, claimed: set[int]) -> str:
+    member, line_no, color, note, created, guid, stamp, fp, detached, uid, _orphan = one
+    if uid is not None:
+        row = conn.execute("SELECT id FROM bookmark WHERE uid = ?", (uid,)).fetchone()
+        if row is not None:
+            claimed.add(row[0])
+            return "existing"
     collection_id = _collection_for(conn, guid, stamp)
     if collection_id is None:
         return "unmatched"
@@ -936,13 +986,16 @@ def _import_one(conn: sqlite3.Connection, one: _Parsed, legacy: bool, total: int
     ).fetchone()
     if src is None and not detached:
         return "unmatched"
-    here = conn.execute(
-        "SELECT id, source_id, entry_id, fp FROM bookmark"
-        " WHERE collection_id = ? AND member = ? AND line_no = ?",
-        (collection_id, member, line_no),
-    ).fetchall()
-    if _already_there(conn, here, fp, legacy, detached):
-        return "existing"
+    if uid is None:
+        here = conn.execute(
+            "SELECT id, source_id, entry_id, fp FROM bookmark"
+            " WHERE collection_id = ? AND member = ? AND line_no = ? ORDER BY id",
+            (collection_id, member, line_no),
+        ).fetchall()
+        same = _same_bookmark(conn, [h for h in here if h[0] not in claimed], fp, legacy, detached)
+        if same is not None:
+            claimed.add(same)
+            return "existing"
     if total >= MAX_BOOKMARKS:
         raise BookmarkError("too_many", limit=MAX_BOOKMARKS)
     source_id = None if detached else src[0]
@@ -956,30 +1009,31 @@ def _import_one(conn: sqlite3.Connection, one: _Parsed, legacy: bool, total: int
             _eid, (_s, _l, byte_off, ts, text) = next(_contents(conn, [found[0]]))
             if fp is None or fp_matches(fp, byte_off, ts, text):
                 entry_id = found[0]
-                new_fp = fingerprint(byte_off, ts, text, open_record=entry_id == _last_id(conn, source_id))
-    conn.execute(
+                new_fp = linked_fp(fp, byte_off, ts, text, last=entry_id == _last_id(conn, source_id))
+    cur = conn.execute(
         _INSERT_SQL,
-        (collection_id, member, line_no, entry_id, color, note, created, source_id, new_fp),
+        (collection_id, member, line_no, entry_id, color, note, created, source_id, new_fp, uid or new_uid()),
     )
+    claimed.add(cur.lastrowid)  # type: ignore[arg-type]
     return "imported"
 
 
-def _already_there(
+def _same_bookmark(
     conn: sqlite3.Connection, here: list[tuple[Any, ...]], fp: str | None, legacy: bool, detached: bool
-) -> bool:
-    """True when a bookmark at the locator already is the item (same identity)."""
+) -> int | None:
+    """A bookmark at the locator (not yet claimed) that already is the item (same identity), or None."""
     if legacy:
-        return bool(here)
-    for _bid, source_id, entry_id, bfp in here:
+        return here[0][0] if here else None
+    for bid, source_id, entry_id, bfp in here:
         if (source_id is None) != detached:
             continue
         if bfp == fp:
-            return True
+            return bid
         if fp is not None and entry_id is not None:
             for _eid, (_s, _l, byte_off, ts, text) in _contents(conn, [entry_id]):
                 if fp_matches(fp, byte_off, ts, text):
-                    return True
-    return False
+                    return bid
+    return None
 
 
 def _short(data: Any, key: str) -> str:
@@ -999,12 +1053,15 @@ def _parse_item(item: Any, legacy: bool) -> _Parsed | None:
     for ident in (guid, stamp):  # absent/None, or a bounded printable string; anything else is invalid
         if ident is not None and not (isinstance(ident, str) and _IDENT.match(ident) and encodable(ident)):
             return None
-    fp, detached = None, False
+    fp, detached, uid, orphan = None, False, None, False
     if not legacy:
-        fp, detached = item.get("fp"), item.get("detached", False)
+        fp, detached, uid = item.get("fp"), item.get("detached", False), item.get("uid")
+        orphan = item.get("orphan", False)
         if fp is not None and not (isinstance(fp, str) and _FP.match(fp)):
             return None
-        if not isinstance(detached, bool) or not isinstance(item.get("orphan", False), bool):
+        if uid is not None and not (isinstance(uid, str) and _UID.match(uid)):
+            return None
+        if not isinstance(detached, bool) or not isinstance(orphan, bool):
             return None
     try:
         color = check_color(item.get("color"), DEFAULT_COLOR)
@@ -1020,7 +1077,7 @@ def _parse_item(item: Any, legacy: bool) -> _Parsed | None:
         and created.isascii()
     ):
         created = _now()
-    return member, line_no, color or DEFAULT_COLOR, note, created, guid, stamp, fp, detached
+    return member, line_no, color or DEFAULT_COLOR, note, created, guid, stamp, fp, detached, uid, orphan
 
 
 # --------------------------------------------------------------------------- compare

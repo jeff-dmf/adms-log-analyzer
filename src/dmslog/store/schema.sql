@@ -197,11 +197,14 @@ CREATE TABLE bookmark(                                         -- store/bookmark
   entry_id INTEGER,                                            -- cache kept by the writer; NULL = orphan
   color TEXT, note TEXT, created_at TEXT NOT NULL,
   source_id INTEGER,                                           -- lineage (file followed across rotations); NULL = detached
-  fp TEXT);                                                    -- record identity: f:<digest> complete, p<n>:<digest> open
+  fp TEXT,                                                     -- record identity: f:<digest> complete, p<n>:<digest> open
+  uid TEXT,                                                    -- stable bookmark identity (32 hex), kept by export/import
+  orphan_seq INTEGER);                                         -- when the writer last orphaned it (ties go to the latest)
 CREATE INDEX ix_bookmark_source ON bookmark(source_id, line_no);
 CREATE INDEX ix_bookmark_orphan ON bookmark(source_id, line_no) WHERE entry_id IS NULL;
 CREATE INDEX ix_bookmark_open ON bookmark(source_id) WHERE entry_id IS NOT NULL AND substr(fp, 1, 1) = 'p';
 CREATE UNIQUE INDEX ux_bookmark_entry ON bookmark(entry_id) WHERE entry_id IS NOT NULL;  -- one bookmark per record
+CREATE UNIQUE INDEX ux_bookmark_uid ON bookmark(uid);         -- import deduplicates by it
 CREATE TRIGGER bookmark_source_gone AFTER DELETE ON source BEGIN  -- a dropped source detaches its bookmarks
   UPDATE bookmark SET source_id = NULL, entry_id = NULL WHERE source_id = OLD.id;
 END;

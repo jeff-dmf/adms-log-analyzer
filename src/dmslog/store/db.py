@@ -23,6 +23,12 @@ class SchemaVersionError(RuntimeError):
     diag_safe = True  # the message holds two schema numbers and fixed words
 
 
+class MigrationError(RuntimeError):
+    """A migration was asked for on a connection whose caller left a transaction open."""
+
+    diag_safe = True  # the message holds two schema numbers and fixed words
+
+
 def read_schema() -> str:
     """Return schema.sql, read through importlib.resources (works inside a zipapp)."""
     return resources.files(__package__).joinpath(SCHEMA_RESOURCE).read_text(encoding="utf-8")
@@ -87,23 +93,31 @@ _BOOKMARK_V4_DDL = (
     " UPDATE bookmark SET source_id = NULL, entry_id = NULL WHERE source_id = OLD.id; END",
 )
 _BOOKMARK_UNIQUE_DDL = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS ux_bookmark_entry ON bookmark(entry_id) WHERE entry_id IS NOT NULL"
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_bookmark_entry ON bookmark(entry_id) WHERE entry_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_bookmark_uid ON bookmark(uid)",
 )
 
 
 def _migrate_to_4(conn: sqlite3.Connection) -> None:
-    """Bookmark lineage (``source_id``) and record fingerprint (``fp``); every cache rebuilt once.
+    """Bookmark lineage (``source_id``), record fingerprint (``fp``), stable identity (``uid``) and
+    ``orphan_seq``.
 
     Before v4 the writer did not keep ``bookmark.entry_id``. The lineage of a bookmark is the source
     that holds its member; the full pass links each bookmark to the record at its line and stores that
-    record's fingerprint (docs/ARQUITETURA.md 9.3). Runs inside the migration transaction, which holds
-    the write lock before the first read, so no reindex can run between the reads and the updates.
+    record's fingerprint (docs/ARQUITETURA.md 9.3); every bookmark gets a random ``uid``. Runs inside
+    the migration transaction, which holds the write lock before the first read, so no reindex can run
+    between the reads and the updates.
     """
     columns = {row[1] for row in conn.execute("PRAGMA table_info(bookmark)")}
     if "source_id" not in columns:
         conn.execute("ALTER TABLE bookmark ADD COLUMN source_id INTEGER")
     if "fp" not in columns:
         conn.execute("ALTER TABLE bookmark ADD COLUMN fp TEXT")
+    if "uid" not in columns:
+        conn.execute("ALTER TABLE bookmark ADD COLUMN uid TEXT")
+    if "orphan_seq" not in columns:
+        conn.execute("ALTER TABLE bookmark ADD COLUMN orphan_seq INTEGER")
+    conn.execute("UPDATE bookmark SET uid = lower(hex(randomblob(16))) WHERE uid IS NULL")
     for ddl in _BOOKMARK_V4_DDL:
         conn.execute(ddl)
     from . import bookmarks  # bookmarks imports the query layer; keep db.py import-light
@@ -111,7 +125,8 @@ def _migrate_to_4(conn: sqlite3.Connection) -> None:
     if "source_id" not in columns:
         bookmarks.adopt_lineage(conn)
     bookmarks.relink_all(conn)
-    conn.execute(_BOOKMARK_UNIQUE_DDL)  # after the pass: a version-3 cache may hold one record twice
+    for ddl in _BOOKMARK_UNIQUE_DDL:  # after the pass: a version-3 cache may hold one record twice
+        conn.execute(ddl)
 
 
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
@@ -134,13 +149,23 @@ def migrate(conn: sqlite3.Connection) -> int:
     Each step runs in its own transaction, opened with ``BEGIN IMMEDIATE`` (the write lock is taken
     before the step reads anything) and committed together with its ``PRAGMA user_version``; a failure
     rolls the whole step back, DDL included, and leaves the previous version intact. The version is
-    read again under the lock, so a step that another connection already applied is skipped. A
-    transaction the caller left open is committed first (as ``executescript`` always did). Idempotent.
-    Raises SchemaVersionError if the database is newer than this code.
+    read again under the lock, so a step that another connection already applied is skipped. Idempotent.
+
+    The caller's transaction is never committed nor rolled back here: a database already at the
+    current version returns at once (an open transaction stays open, untouched), and one that needs a
+    step while the caller holds an open transaction raises :class:`MigrationError` before anything is
+    written. Raises SchemaVersionError if the database is newer than this code (also without touching
+    an open transaction).
     """
+    current = get_user_version(conn)
+    _check_version(current)
+    if current >= SCHEMA_VERSION:
+        return current
     if conn.in_transaction:
-        conn.commit()
-    _check_version(get_user_version(conn))
+        raise MigrationError(
+            f"schema migration {current} -> {SCHEMA_VERSION} needs a connection without an open"
+            " transaction; commit or roll it back first"
+        )
     previous = conn.isolation_level
     conn.isolation_level = None  # explicit transactions only
     try:
