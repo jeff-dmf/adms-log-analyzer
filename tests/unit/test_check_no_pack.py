@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -369,3 +370,85 @@ def test_unnormalised_constants_are_detected(monkeypatch):
     monkeypatch.setattr(guard, "_SIGNATURES", {"error_codes": {"adms_severity"}})
     assert guard.unnormalized_constants() == ["KEY_PROCESS_MAP", "section:error_codes",
                                               "error_codes.adms_severity"]
+
+
+# Python embeddable stdlib zip: ``zipimport.pyc`` holds the zip signatures as data constants.
+ZIP_SIGNATURES = b"PK\x03\x04" + b"\x00" * 7 + b"PK\x05\x06" + b"\x01" * 9 + b"PK\x01\x02"
+# a complete end-of-central-directory record whose offsets point nowhere ("Bad offset for central directory")
+BOGUS_END_RECORD = b"PK\x05\x06" + struct.pack("<4H2LH", 0, 0, 1, 1, 100, 3_000_000, 0)
+
+
+@pytest.fixture(params=["interpreter", "lax"])
+def is_zipfile_flavour(request, monkeypatch):
+    """The running interpreter's ``zipfile.is_zipfile``, and a lax one (any end record counts, as seen on
+    the CI's CPython 3.13: the signature in the data of ``zipimport.pyc`` made it report a zip)."""
+    if request.param == "lax":
+        monkeypatch.setattr(zipfile, "is_zipfile", lambda f: b"PK\x05\x06" in f.getvalue())
+    return request.param
+
+
+def embeddable_stdlib_zip(extra=None):
+    members = {
+        "zipimport.pyc": b"\xcb\x0d\x0d\x0a" + b"\x00" * 12 + ZIP_SIGNATURES + b"\xe3" * 300 + ZIP_SIGNATURES
+        + BOGUS_END_RECORD,
+        "truncated.pyc": b"\xcb\x0d\x0d\x0a" + b"\x07" * 40 + b"PK\x05\x06" + b"\x00" * 10,
+        "os.pyc": b"\xcb\x0d\x0d\x0a" + b"\x00" * 200,
+    }
+    members.update(extra or {})
+    return zip_bytes(members)
+
+
+def test_stdlib_zip_with_zip_signatures_as_data_is_not_a_false_positive(tmp_path, is_zipfile_flavour):
+    module = load_packaging_module("check_no_pack")
+    stdlib = embeddable_stdlib_zip()
+    folder = tmp_path / "dmslog-portable-win64"
+    (folder / "python").mkdir(parents=True)
+    (folder / "python" / "python313.zip").write_bytes(stdlib)
+    (folder / "python" / "python313.dll").write_bytes(b"MZ" + ZIP_SIGNATURES * 3)
+    outer = tmp_path / "dmslog-portable-win64.zip"
+    outer.write_bytes(zip_bytes({"dmslog-portable-win64/python/python313.zip": stdlib}))
+    assert module.artifact_problems(folder) == []
+    assert module.artifact_problems(outer) == []
+
+
+def test_binary_members_with_signatures_inside_are_not_treated_as_archives(is_zipfile_flavour):
+    module = load_packaging_module("check_no_pack")
+    for name in ("a.pyc", "b.pyd", "c.dll", "d.exe", "e.bin"):
+        problems = []
+        data = b"\x00" * 50 + ZIP_SIGNATURES + b"\x00" * 30 + BOGUS_END_RECORD
+        module._inspect("x", name, data, 0, module._Budget(), problems)
+        assert problems == [], name
+
+
+def test_stdlib_zip_with_a_pack_member_is_still_blocked(tmp_path, is_zipfile_flavour):
+    module = load_packaging_module("check_no_pack")
+    folder = tmp_path / "dmslog-portable-win64"
+    (folder / "python").mkdir(parents=True)
+    bad = embeddable_stdlib_zip({"knowledge/pack/manifest.json": MANIFEST})
+    (folder / "python" / "python313.zip").write_bytes(bad)
+    problems = module.artifact_problems(folder)
+    assert problems and "knowledge/pack/manifest.json" in problems[0]
+    outer = tmp_path / "out.zip"
+    outer.write_bytes(zip_bytes({"p/python/python313.zip": embeddable_stdlib_zip({"x/m.dat": MANIFEST})}))
+    assert module.artifact_problems(outer)
+
+
+def test_pyz_with_a_shebang_prefix_is_inspected(tmp_path, is_zipfile_flavour):
+    module = load_packaging_module("check_no_pack")
+    clean = tmp_path / "clean.pyz"
+    clean.write_bytes(b"#!/usr/bin/env python3\n" + zip_bytes({"dmslog/__main__.py": "print(1)"}))
+    assert module.artifact_problems(clean) == []
+    bad = tmp_path / "bad.pyz"
+    bad.write_bytes(b"#!/usr/bin/env python3\n" + zip_bytes({"dmslog/knowledge/pack/adapters.json": "{}"}))
+    assert module.artifact_problems(bad)
+    renamed = tmp_path / "bad.bin"  # a prefixed zip that really opens is inspected whatever its name
+    renamed.write_bytes(b"#!/bin/sh\n" + zip_bytes({"x/m.json": MANIFEST}))
+    assert module.artifact_problems(renamed)
+
+
+def test_named_archive_that_does_not_open_still_fails_safe(tmp_path, is_zipfile_flavour):
+    module = load_packaging_module("check_no_pack")
+    broken = tmp_path / "broken.pyz"
+    broken.write_bytes(b"#!/usr/bin/env python3\n" + ZIP_SIGNATURES * 5)
+    problems = module.artifact_problems(broken)
+    assert problems and "cannot be inspected" in problems[0]

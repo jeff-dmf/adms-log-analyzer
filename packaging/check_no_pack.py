@@ -347,6 +347,35 @@ def _has_archive_suffix(name: str) -> bool:
     return lowered.endswith(ARCHIVE_SUFFIXES) or ".tar." in lowered
 
 
+ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+
+
+def _is_zip(data: bytes, named: bool) -> bool:
+    """Whether ``data`` is a zip.
+
+    A zip signature at offset 0 always counts (a corrupt one then fails safe). Otherwise the zip may
+    only be preceded by a prefix (e.g. a ``#!`` line of a ``.pyz``): that is accepted when the name is
+    an archive name (``zipfile`` looks for the end record), or when the whole thing really opens as a
+    zip. A file that merely contains zip signatures as data (``zipimport.pyc``, DLLs) is not an archive.
+    """
+    if data.startswith(ZIP_MAGICS):
+        return True
+    if len(data) < 22:
+        return False
+    try:
+        if not zipfile.is_zipfile(io.BytesIO(data)):
+            return False
+    except (OSError, ValueError, RuntimeError, NotImplementedError):  # signature found, bogus offsets
+        return named
+    if named:
+        return True
+    try:
+        zipfile.ZipFile(io.BytesIO(data)).close()
+    except (zipfile.BadZipFile, OSError, ValueError, RuntimeError, NotImplementedError):
+        return False
+    return True
+
+
 def _bounded(stream, limit: int = MAX_MEMBER_BYTES) -> bytes:
     data = stream.read(limit + 1)
     if len(data) > limit:
@@ -360,7 +389,7 @@ def _iter_archive(name: str, data: bytes, budget: _Budget) -> Iterator[tuple[str
     Raises Uninspectable on corrupt archives and on limits.
     """
     named = _has_archive_suffix(name)
-    if len(data) >= 22 and zipfile.is_zipfile(io.BytesIO(data)):
+    if _is_zip(data, named):
         return _zip_members(data, budget)
     compressed = data[:2] == b"\x1f\x8b" or data[:3] == b"BZh" or data[:6] == b"\xfd7zXZ\x00"
     is_tar = data[257:262] == b"ustar"
