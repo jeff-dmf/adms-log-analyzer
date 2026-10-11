@@ -893,14 +893,14 @@ Medido no ERS de 2026-10-08 14:53 (seção 3; `docs/formato/payloads.md`, seçã
 
 | Cenário | Tempo total | Pico de RSS | Banco | Registros | Resultado |
 |---|---|---|---|---|---|
-| ERS real Verbose, Enterprise + Sensitive, escopo padrão (785 MB) | 73,3 s (só indexação: 51,8 s) | 394 MB | 1.776 MB | 3,73 milhões | RSS e banco dentro do M6; tempo: depende de a meta contar a derivação (decisão em aberto) |
+| ERS real Verbose, Enterprise + Sensitive, escopo padrão (785 MB) | 73,3 s (só indexação: 51,8 s) | 394 MB | 1.776 MB | 3,73 milhões | RSS dentro do M6; banco 1,78 GB (decimais) > 1,7 GB: **FAIL por 4,5 %** (1,65 GiB só se a meta for lida em GiB, decisão em aberto); tempo: depende de a meta contar a derivação (decisão em aberto) |
 | ERS real, escopo completo (`--all-logs`; 2,2 GB descomprimidos, 1,23 GB indexados) | 170 s | 471 MB | 2.764 MB | 6,19 milhões | sem erro, RSS < 1 GB |
 | Sintético Info, 2.000 MB, 14 adapters | 316 s | 395 MB | 5.600 MB | 14,4 milhões | sem erro, RSS < 1 GB |
 | Sintético Verbose, 2.600 MB, 14 adapters (pior caso) | 346 s (derivação 83 s) | 445 MB | 6.949 MB | 16,9 milhões | sem erro, RSS < 1 GB |
 | Reabrir o mesmo ERS | 0,7 s | 58 MB | igual | igual (sem duplicar) | |
 
 - A projeção de banco (× 1,59 do log, 4,1 GB para 2,6 GB) subestimava: o banco fica em 2,3–2,7× o log indexado (o sintético tem mais registros curtos por MB, e há eventos, chaves, payloads e `bucket`). A vazão por registro é estável de 300 MB a 2,6 GB (46–49 mil registros/s; o custo é linear) e o RSS não passa de 0,45 GB na CLI nem de 0,58 GB com servidor e ingestão no mesmo processo.
-- Responsividade durante a indexação (servidor real, consultas a cada 0,5 s): p95 da primeira página do grid 112–193 ms, do detalhe de um registro 3–140 ms, da busca FTS 259–889 ms; meta definida: p95 < 1 s. A FTS depende da frequência do termo (materializa e ordena todos os `rowid` que casam): 0,3–0,5 s parada para termos com 500–700 mil ocorrências, milissegundos para IDs e códigos.
+- Responsividade durante a indexação (servidor real, consultas a cada 0,5 s): p95 da primeira página do grid 112–193 ms, do detalhe de um registro 3–140 ms, da busca FTS 259–889 ms sem carga externa (**1.030–1.052 ms, meta p95 < 1 s não atingida, nas rodadas † com um jogo rodando na máquina**); meta definida: p95 < 1 s. A FTS depende da frequência do termo (materializa e ordena todos os `rowid` que casam): 0,3–0,5 s parada para termos com 500–700 mil ocorrências, milissegundos para IDs e códigos.
 - Sem ponto quente único: SQLite ≈ 60 % da indexação, Python por registro o resto, derivação ≈ 25 % do total. Pragmas, lotes e índices dão no máximo ≈ 6 %; ganhos de 2× pedem paralelismo (decisão em aberto, nota do 8.1).
 
 ### 9.4 Consultas e UI

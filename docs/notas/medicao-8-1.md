@@ -46,7 +46,7 @@ Detalhe das fases no sintético Verbose de 2.600 MB (mediana): indexação 245 s
 | Banco ao fim | | | 1.776 MB (1,65 GiB) |
 
 - O número do M6 (36,7 s) corresponde à indexação do Enterprise sem a derivação (hoje 37,7 s). O código do merge do M6 (`c3e9ea5`), medido na mesma máquina, dá o mesmo resultado (55,6 s + 21,8 s de tempo total): **não há regressão desde o M6**.
-- Contando só a indexação do par, 51,8 s ≤ 60 s: PASS. Contando a ingestão inteira do par (o que o usuário espera), 73,3 s > 60 s: FAIL por 13 s. RSS (394 MB < 600 MB): PASS. Banco: 1,78 GB decimais = 1,65 GiB, no limite de 1,7 GB.
+- Contando só a indexação do par, 51,8 s ≤ 60 s: PASS. Contando a ingestão inteira do par (o que o usuário espera), 73,3 s > 60 s: FAIL por 13 s. RSS (394 MB < 600 MB): PASS. Banco: 1,78 GB decimais > 1,7 GB: FAIL por 4,5 %; só passa se a meta for lida em GiB (1,65 GiB), o que é decisão do Jefferson.
 
 ### Projeção de 14 adapters Verbose com densidade real
 
