@@ -211,3 +211,89 @@ def test_unreadable_tracked_file_is_a_problem():
 
     assert module.tracked_problems(["a/b.txt"], read)
     assert module.tracked_problems(["gone.txt"], lambda _n: (_ for _ in ()).throw(FileNotFoundError())) == []
+
+
+# --- accidental escapes: formatting, encoding, damage, key case -----------------------------------
+
+def _encoded(text, encoding):
+    return text.encode(encoding)
+
+
+RENAMED_VARIANTS = {
+    "eight-spaces": b" " * 8 + MANIFEST,
+    "newlines": b"\n\n\r\n\t  \n" + MANIFEST,
+    "utf8-bom-newline": b"\xef\xbb\xbf\n" + MANIFEST,
+    "utf16-le-bom": b"\xff\xfe" + MANIFEST.decode().encode("utf-16-le"),
+    "utf16-be-bom": b"\xfe\xff" + MANIFEST.decode().encode("utf-16-be"),
+    "utf16-le-nobom": MANIFEST.decode().encode("utf-16-le"),
+    "utf16-be-nobom": MANIFEST.decode().encode("utf-16-be"),
+    "utf16-be-nobom-indented": ("\n    " + MANIFEST.decode()).encode("utf-16-be"),
+    "utf32-le-bom": MANIFEST.decode().encode("utf-32"),
+    "utf32-be-nobom": MANIFEST.decode().encode("utf-32-be"),
+}
+
+
+@pytest.mark.parametrize("variant", sorted(RENAMED_VARIANTS))
+def test_renamed_manifest_survives_formatting_and_encoding(repo, variant):
+    track(repo, {"kb/info.dat": RENAMED_VARIANTS[variant]})
+    assert_blocked(run_guard(repo), "kb/info.dat", "knowledge pack manifest")
+
+
+def test_data_file_in_utf16_is_caught(repo):
+    text = (MINI_PACK / "operations.json").read_text(encoding="utf-8-sig")
+    track(repo, {"kb/a.dat": b"\xff\xfe" + text.encode("utf-16-le")})
+    assert_blocked(run_guard(repo), "kb/a.dat", "data file")
+
+
+def test_truncated_manifest_is_caught(repo):
+    track(repo, {"kb/info.dat": MANIFEST[: MANIFEST.rindex(b"}")]})
+    assert_blocked(run_guard(repo), "kb/info.dat", "knowledge pack manifest")
+
+
+def test_truncated_manifest_without_the_notice_text_is_caught_by_keys(repo):
+    damaged = MANIFEST_NO_NOTICE_TEXT[:-1]
+    track(repo, {"kb/info.dat": b"\n   " + damaged})
+    assert_blocked(run_guard(repo), "kb/info.dat", "knowledge pack manifest")
+
+
+def test_truncated_data_file_is_caught(repo):
+    data = (MINI_PACK / "operations.json").read_bytes().rstrip()
+    track(repo, {"kb/a.dat": data[:-2]})
+    assert_blocked(run_guard(repo), "kb/a.dat", "data file")
+
+
+@pytest.mark.parametrize("spelling", ["Notice", "NOTICE", "NoTice"])
+def test_manifest_key_case_does_not_matter(repo, spelling):
+    track(repo, {"kb/info.dat": MANIFEST.replace(b'"notice"', f'"{spelling}"'.encode())})
+    assert_blocked(run_guard(repo), "kb/info.dat", "knowledge pack manifest")
+
+
+def test_manifest_with_other_key_spellings_is_caught(repo):
+    renamed = (MANIFEST.replace(b'"schema_version"', b'"Schema-Version"')
+               .replace(b'"generator_version"', b'"GENERATOR VERSION"'))
+    track(repo, {"kb/info.dat": renamed.replace(NOTICE.encode(), b"x")})
+    assert_blocked(run_guard(repo), "kb/info.dat", "knowledge pack manifest")
+
+
+def test_data_file_key_case_does_not_matter(repo):
+    text = (MINI_PACK / "operations.json").read_text(encoding="utf-8-sig")
+    text = text.replace('"operations"', '"Operations"').replace('"soap_action"', '"SOAP_Action"')
+    track(repo, {"kb/a.dat": text})
+    assert_blocked(run_guard(repo), "kb/a.dat", "data file")
+
+
+def test_legitimate_json_like_files_pass(repo):
+    shutil.copytree(MINI_PACK, repo / FIXTURE_REL)
+    track(repo, {
+        "package.json": '{"name": "x", "version": "1.0.0", "files": ["dist"], "scripts": {}}',
+        "pkg/broken.json": '{"name": "x", "files": ["a"',
+        "pkg/list.json": '[{"a": 1}, {"b": 2}]',
+        "pkg/spaced.json": b"\n" + b" " * 40 + b'{"version": 1}',
+        "pkg/utf16.json": b"\xff\xfe" + '{"hello": "world"}'.encode("utf-16-le"),
+        "pkg/utf16-text.txt": b"\xff\xfe" + "just some text".encode("utf-16-le"),
+        "pkg/notes.txt": "{ a plain note, not json",
+        "pkg/blob.bin": bytes(range(256)) * 8,
+    })
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    result = run_guard(repo)
+    assert result.returncode == 0, result.stderr

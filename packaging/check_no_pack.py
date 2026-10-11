@@ -28,6 +28,7 @@ import gzip
 import io
 import json
 import lzma
+import re
 import subprocess
 import sys
 import tarfile
@@ -89,46 +90,138 @@ def _signatures() -> dict[str, set[str]]:
     return _SIGNATURES
 
 
-def _json_object(data: bytes) -> dict | None:
-    head = data[:4].lstrip(b"\xef\xbb\xbf \t\r\n")
-    if not head.startswith(b"{"):
+def _norm(key: object) -> str:
+    """Key spelling folded for comparison: case, spaces, hyphens and underscores do not matter."""
+    return re.sub(r"[\s_\-]+", "", str(key)).lower()
+
+
+_BOMS = (
+    (b"\xff\xfe\x00\x00", "utf-32-le"),
+    (b"\x00\x00\xfe\xff", "utf-32-be"),
+    (b"\xef\xbb\xbf", "utf-8"),
+    (b"\xff\xfe", "utf-16-le"),
+    (b"\xfe\xff", "utf-16-be"),
+)
+_STRIP = "\ufeff \t\r\n\x0b\x0c"
+
+
+def _encoding(data: bytes) -> str:
+    """Encoding of JSON-like bytes: BOM first, then the NUL pattern of BOM-less UTF-16/32, else UTF-8."""
+    for bom, name in _BOMS:
+        if data.startswith(bom):
+            return name
+    head = data[:4]
+    if len(head) >= 4:
+        if head[:3] == b"\x00\x00\x00" and head[3]:
+            return "utf-32-be"
+        if head[0] and head[1:] == b"\x00\x00\x00":
+            return "utf-32-le"
+    if len(head) >= 2:
+        if head[0] == 0 and head[1]:
+            return "utf-16-be"
+        if head[0] and head[1] == 0:
+            return "utf-16-le"
+    return "utf-8"
+
+
+def _json_like_text(data: bytes) -> str | None:
+    """Decoded text of ``data`` when it looks like JSON (first non-blank character ``{`` or ``[``).
+
+    Only a small head is decoded to decide, so binaries and unrelated files cost nothing.
+    """
+    encoding = _encoding(data)
+    probe = data[:256].decode(encoding, errors="ignore").lstrip(_STRIP)
+    if probe[:1] not in ("{", "["):
         return None
     try:
-        value = json.loads(data.decode("utf-8-sig"))
-    except (UnicodeDecodeError, ValueError, RecursionError):
+        return data.decode(encoding).lstrip(_STRIP)
+    except UnicodeDecodeError:
+        return data.decode(encoding, errors="ignore").lstrip(_STRIP)
+
+
+def _norm_keys(obj: dict) -> dict[str, object]:
+    return {_norm(key): value for key, value in obj.items()}
+
+
+def _parse_object(text: str) -> dict | None:
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError):
         return None
     return value if isinstance(value, dict) else None
 
 
+def _json_object(data: bytes) -> dict | None:
+    text = _json_like_text(data)
+    return None if text is None else _parse_object(text)
+
+
+_NOTICE_LOWER = tuple(phrase.lower() for phrase in NOTICE_PHRASES)
+_MANIFEST_NORM = {_norm(key) for key in MANIFEST_KEYS}
+_SHAPE_NORM = {_norm(key) for key in MANIFEST_SHAPE}
+
+
 def _is_manifest(value: dict) -> bool:
-    keys = set(value)
-    notice = value.get("notice")
-    if isinstance(notice, str) and any(phrase in notice for phrase in NOTICE_PHRASES):
+    folded = _norm_keys(value)
+    keys = set(folded)
+    notice = folded.get("notice")
+    if isinstance(notice, str) and any(phrase in notice.lower() for phrase in _NOTICE_LOWER):
         return True
-    if MANIFEST_KEYS <= keys:
+    if _MANIFEST_NORM <= keys:
         return True
-    return "notice" in keys and len(MANIFEST_SHAPE & keys) >= 2
+    return "notice" in keys and len(_SHAPE_NORM & keys) >= 2
+
+
+def _threshold(fields: set[str]) -> int:
+    return max(3, int(len(fields) * 0.7))
 
 
 def _is_data_file(value: dict) -> bool:
+    folded = _norm_keys(value)
     for key, fields in _signatures().items():
-        rows = value.get(key)
+        rows = folded.get(key)
         if not isinstance(rows, list):
             continue
+        wanted = {_norm(f) for f in fields}
         if not rows:
-            if key == "adapters" and isinstance(value.get("process_map"), dict):
+            if key == "adapters" and isinstance(folded.get("processmap"), dict):
                 return True
             continue
         for row in rows[:5]:
-            if isinstance(row, dict) and len(fields & set(row)) >= max(3, int(len(fields) * 0.7)):
+            if isinstance(row, dict) and len(wanted & set(_norm_keys(row))) >= _threshold(wanted):
                 return True
     return False
 
 
+def _quoted_keys(text: str) -> set[str]:
+    return {_norm(m) for m in re.findall(r'"((?:[^"\\]|\\.){1,64})"\s*:', text)}
+
+
+def _text_kind(text: str) -> str | None:
+    """Structural check by text for JSON-like content that does not parse (truncated, damaged)."""
+    lowered = text.lower()
+    if any(phrase in lowered for phrase in _NOTICE_LOWER):
+        return "knowledge pack manifest"
+    keys = _quoted_keys(text)
+    if len(keys & (_MANIFEST_NORM | _SHAPE_NORM)) >= 2:
+        return "knowledge pack manifest"
+    for key, fields in _signatures().items():
+        wanted = {_norm(f) for f in fields}
+        if key in keys and len(wanted & keys) >= _threshold(wanted):
+            return "knowledge pack data file"
+    return None
+
+
 def pack_content_kind(data: bytes) -> str | None:
     """What pack content ``data`` is (by structure, not by name), or None."""
-    value = _json_object(data)
-    if value is None:
+    text = _json_like_text(data)
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError):
+        return _text_kind(text)
+    if not isinstance(value, dict):
         return None
     if _is_manifest(value):
         return "knowledge pack manifest"
@@ -143,7 +236,7 @@ def looks_like_pack_manifest(data: bytes) -> bool:
 
 def is_synthetic(data: bytes) -> bool:
     value = _json_object(data)
-    notice = value.get("notice", "") if value else ""
+    notice = _norm_keys(value).get("notice", "") if value else ""
     return isinstance(notice, str) and notice.startswith(SYNTHETIC_MARK)
 
 
