@@ -176,3 +176,159 @@ def test_existing_ers_is_measured_without_modification(tmp_path):
     assert tree_digest(ers) == before
     data = json.loads(json_path.read_text(encoding="utf-8"))
     assert data["mode"] == "ers" and data["result"]["records"] > 0
+
+
+# ----------------------------------------------------------------------------- review fixes
+class FakeProc:
+    """A process that reports 'running' for ``polls`` polls, then ends."""
+
+    def __init__(self, polls: int) -> None:
+        self.polls = polls
+
+    def poll(self):
+        self.polls -= 1
+        return None if self.polls >= 0 else 0
+
+
+class FakeSampler(bench.PeakRssSampler):
+    def __init__(self, values) -> None:
+        self.values = list(values)
+        self.calls = 0
+
+    def sample(self):
+        self.calls += 1
+        return self.values.pop(0) if self.values else None
+
+
+def test_monitor_takes_a_final_reading_after_the_process_ends():
+    # the peak only shows up in the reading taken after the end was detected
+    sampler = FakeSampler([10, 20, 5_000_000])
+    peak, warnings = bench.monitor_peak(FakeProc(2), sampler, interval=0)
+    assert peak == 5_000_000 and warnings == [] and sampler.calls == 3
+
+
+def test_monitor_failed_readings_give_none_and_a_warning_never_zero():
+    peak, warnings = bench.monitor_peak(FakeProc(1), FakeSampler([None, 0]), interval=0)
+    assert peak is None and warnings and "unavailable" in warnings[0]
+    peak, warnings = bench.monitor_peak(FakeProc(0), FakeSampler([None]), interval=0)  # ended at once
+    assert peak is None and warnings
+    peak, warnings = bench.monitor_peak(FakeProc(2), FakeSampler([None, 7, None]), interval=0)
+    assert peak == 7 and warnings == []
+
+
+def test_win32_signatures_are_fully_declared():
+    from unittest.mock import MagicMock
+
+    kernel32, psapi = MagicMock(), MagicMock()
+    bench._declare_win_api(kernel32, psapi)
+    for func in (kernel32.OpenProcess, kernel32.CloseHandle, psapi.GetProcessMemoryInfo):
+        assert isinstance(func.argtypes, list) and func.argtypes
+        assert func.restype is not None
+    assert len(kernel32.OpenProcess.argtypes) == 3 and len(psapi.GetProcessMemoryInfo.argtypes) == 3
+    assert "WinDLL" not in Path(bench.__file__).read_text(encoding="utf-8").split("def _declare_win_api")[0]
+
+
+def _report_with(rss=None, wall=1.0, db_bytes=1_000_000, cfg=None):
+    run = {
+        "wall_seconds": wall, "peak_rss_mb": rss, "rss_method": "x", "db_bytes": db_bytes,
+        "returncode": 0, "warnings": [], "parsed": {"records": 10, "data_mb": 1.0, "sources_failed": 0},
+    }  # fmt: skip
+    cfg = cfg or {"max_rss_mb": 1024.0, "max_seconds": 1.0004, "max_db_mb": None}
+    return bench.build_report("synthetic", {}, {"path": "p"}, run, cfg, None)
+
+
+def test_targets_compare_raw_values_not_rounded_ones():
+    rep = _report_with(rss=1023.99, wall=1.00049)
+    assert rep["targets"]["max_rss_mb"]["status"] == "PASS"  # rounds to 1024.0 but is below the limit
+    assert rep["targets"]["max_seconds"]["status"] == "FAIL"  # rounds to 1.0 but is above the limit
+    assert rep["targets"]["max_rss_mb"]["value_raw"] == 1023.99 and rep["status"] == "FAIL"
+    rep = _report_with(rss=1024.004)  # rounds to 1024.0, above the limit
+    assert rep["targets"]["max_rss_mb"]["status"] == "FAIL"
+
+
+def test_target_at_the_limit_passes():
+    rep = _report_with(rss=1024.0, wall=1.0004)
+    assert rep["targets"]["max_rss_mb"]["status"] == "PASS"
+    assert rep["targets"]["max_seconds"]["status"] == "PASS" and rep["status"] == "PASS"
+
+
+def test_db_target_uses_the_raw_size():
+    cfg = {"max_rss_mb": None, "max_seconds": None, "max_db_mb": 1.0}
+    assert _report_with(db_bytes=1_000_000, cfg=cfg)["targets"]["max_db_mb"]["status"] == "PASS"
+    assert _report_with(db_bytes=1_000_001, cfg=cfg)["targets"]["max_db_mb"]["status"] == "FAIL"
+
+
+def test_invalid_numbers_in_ingest_output_do_not_crash():
+    got = bench.parse_ingest_output("Time: ... s\nRecords: 5  Lines: 6  Data: .. MB\n")
+    assert got["ingest_seconds"] is None and got["records"] is None
+    assert bench.parse_ingest_output("Time: 1.5 s\n")["ingest_seconds"] == 1.5
+
+
+def _symlink(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links are not available here")
+
+
+@pytest.fixture
+def ers_dir(tmp_path):
+    ers = tmp_path / "ers"
+    bench.generate_folder(ers, 100_000, 1, "info", 1)
+    return ers
+
+
+def _refused(capsys, *argv) -> str:
+    assert bench.main(list(argv)) == 2
+    return capsys.readouterr().err
+
+
+def test_out_inside_ers_folder_is_refused(ers_dir, capsys):
+    before = tree_digest(ers_dir)
+    assert "overlap" in _refused(capsys, "--ers", str(ers_dir), "--out", str(ers_dir / "bench"))
+    assert not (ers_dir / "bench").exists() and tree_digest(ers_dir) == before
+
+
+def test_out_equal_or_parent_of_ers_is_refused(ers_dir, tmp_path, capsys):
+    assert "overlap" in _refused(capsys, "--ers", str(ers_dir), "--out", str(ers_dir))
+    assert "overlap" in _refused(capsys, "--ers", str(ers_dir), "--out", str(tmp_path))
+    zip_path = tmp_path / "ers.zip"
+    bench.zip_folder(ers_dir, zip_path)
+    assert "overlap" in _refused(capsys, "--ers", str(zip_path), "--out", str(zip_path))
+
+
+def test_json_over_the_ers_zip_is_refused(ers_dir, tmp_path, capsys):
+    zip_path = tmp_path / "ers.zip"
+    bench.zip_folder(ers_dir, zip_path)
+    before = zip_path.read_bytes()
+    err = _refused(capsys, "--ers", str(zip_path), "--out", str(tmp_path / "o"), "--json", str(zip_path))
+    assert "--json" in err and zip_path.read_bytes() == before and not (tmp_path / "o").exists()
+
+
+def test_json_inside_ers_folder_out_or_repository_is_refused(ers_dir, tmp_path, capsys):
+    out = str(tmp_path / "o")
+    assert "--json" in _refused(
+        capsys, "--ers", str(ers_dir), "--out", out, "--json", str(ers_dir / "r.json")
+    )
+    assert "--json" in _refused(capsys, "--quick", "--out", out, "--json", str(tmp_path / "o" / "r.json"))
+    inside = bench.ROOT / "bench-result-should-not-exist.json"
+    assert "--json" in _refused(capsys, "--quick", "--out", out, "--json", str(inside))
+    assert not inside.exists() and not Path(out).exists()
+    assert "directory" in _refused(capsys, "--quick", "--out", out, "--json", str(tmp_path))
+
+
+def test_symlinked_destinations_are_refused(ers_dir, tmp_path, capsys):
+    link_out = tmp_path / "link_out"
+    _symlink(link_out, tmp_path / "real_out")  # dangling link to a new directory
+    assert "symbolic link" in _refused(capsys, "--quick", "--out", str(link_out))
+    link_ers = tmp_path / "link_ers"
+    _symlink(link_ers, ers_dir)
+    assert "overlap" in _refused(capsys, "--ers", str(ers_dir), "--out", str(link_ers / "bench"))
+    zip_path = tmp_path / "ers.zip"
+    bench.zip_folder(ers_dir, zip_path)
+    link_json = tmp_path / "link.json"
+    _symlink(link_json, zip_path)
+    assert "symbolic link" in _refused(
+        capsys, "--ers", str(zip_path), "--out", str(tmp_path / "o"), "--json", str(link_json)
+    )
+    assert zipfile.is_zipfile(zip_path)

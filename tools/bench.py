@@ -90,11 +90,36 @@ class BenchError(Exception):
 
 # ---------------------------------------------------------------------------------------- generator
 def _is_inside(child: Path, parent: Path) -> bool:
+    """True when ``child`` is ``parent`` or below it (symlinks resolved, case-folded on Windows)."""
     try:
-        child.resolve().relative_to(parent.resolve())
+        Path(os.path.normcase(child.resolve())).relative_to(Path(os.path.normcase(parent.resolve())))
     except ValueError:
         return False
     return True
+
+
+def check_output_paths(out: Path, ers: Path | None, json_path: Path | None) -> None:
+    """Refuse output locations that overlap the input or each other, before anything is written.
+
+    Rules (all paths resolved, symlinks included): ``--out`` must not be, contain or lie inside the ERS;
+    ``--json`` must not be the ERS, lie inside an ERS folder, lie inside ``--out`` (cleanup would delete
+    it) or inside the repository; ``--out`` and ``--json`` themselves must not be symbolic links.
+    """
+    for label, path in (("--out", out), ("--json", json_path)):
+        if path is not None and os.path.islink(path.expanduser()):
+            raise BenchError(f"{label} must not be a symbolic link: {path}")
+    if ers is not None and (_is_inside(out, ers) or _is_inside(ers, out)):
+        raise BenchError(f"--out must not overlap the --ers input: {out}")
+    if json_path is None:
+        return
+    if json_path.expanduser().is_dir():
+        raise BenchError(f"--json must be a file path, not a directory: {json_path}")
+    if ers is not None and _is_inside(json_path, ers):  # the ERS zip itself, or inside an ERS folder
+        raise BenchError(f"--json must not overwrite or be inside the --ers input: {json_path}")
+    if _is_inside(json_path, out):
+        raise BenchError(f"--json must be outside --out (the cleanup would delete it): {json_path}")
+    if _is_inside(json_path, ROOT):
+        raise BenchError(f"--json must be outside the repository ({ROOT}): {json_path}")
 
 
 def check_out_dir(out: Path) -> Path:
@@ -301,71 +326,168 @@ def zip_folder(root: Path, zip_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------------------- measuring
-def _run_posix(cmd: list[str], env: dict[str, str], stdout) -> tuple[int, float | None, str]:
-    proc = subprocess.Popen(cmd, env=env, stdout=stdout, stderr=subprocess.STDOUT)
-    _, status, usage = os.wait4(proc.pid, 0)
-    proc.returncode = os.waitstatus_to_exitcode(status)
-    scale = 1024 if sys.platform != "darwin" else 1  # ru_maxrss: KiB on Linux, bytes on macOS
-    return proc.returncode, usage.ru_maxrss * scale / MB, "wait4/ru_maxrss"
+class PeakRssSampler:
+    """Reads the peak working set (bytes) of a process; ``None`` when the reading failed."""
+
+    def sample(self) -> int | None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        """Release whatever the sampler opened (idempotent)."""
 
 
-def _run_windows(cmd: list[str], env: dict[str, str], stdout) -> tuple[int, float | None, str]:
+def _declare_win_api(kernel32, psapi):
+    """Declare the complete ctypes signatures of the Win32 calls and return the counters type.
+
+    Without ``argtypes``/``restype`` ctypes converts a 64-bit ``HANDLE`` to a C ``int`` and truncates it.
+    """
     import ctypes
     from ctypes import wintypes
 
-    class Counters(ctypes.Structure):
+    class ProcessMemoryCountersEx(ctypes.Structure):
         _fields_ = [
             ("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
             ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
             ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
             ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
             ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
+            ("PrivateUsage", ctypes.c_size_t),
         ]  # fmt: skip
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
-    psapi = ctypes.WinDLL("psapi", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(ProcessMemoryCountersEx), wintypes.DWORD,
+    ]  # fmt: skip
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    return ProcessMemoryCountersEx
+
+
+class WindowsPeakSampler(PeakRssSampler):
+    """``PeakWorkingSetSize`` through ``GetProcessMemoryInfo`` (Windows only, stdlib ``ctypes``).
+
+    Uses the handle ``subprocess.Popen`` already owns (no PID-reuse race, and it stays valid after the
+    process ends, so the final reading is possible); falls back to ``OpenProcess`` otherwise.
+    """
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    PROCESS_VM_READ = 0x0010
+
+    def __init__(self, proc: subprocess.Popen) -> None:
+        import ctypes
+
+        if sys.platform != "win32":
+            raise OSError("WindowsPeakSampler needs Windows")
+        self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        self._psapi = ctypes.WinDLL("psapi", use_last_error=True)  # type: ignore[attr-defined]
+        self._counters_type = _declare_win_api(self._kernel32, self._psapi)
+        self._owned = False
+        popen_handle = getattr(proc, "_handle", None)
+        if popen_handle is not None:
+            self._handle = int(popen_handle)
+        else:
+            self._handle = (
+                self._kernel32.OpenProcess(
+                    self.PROCESS_QUERY_LIMITED_INFORMATION | self.PROCESS_VM_READ, False, proc.pid
+                )
+                or None
+            )
+            self._owned = self._handle is not None
+
+    def sample(self) -> int | None:
+        import ctypes
+
+        if not self._handle:
+            return None
+        counters = self._counters_type()
+        counters.cb = ctypes.sizeof(counters)
+        if not self._psapi.GetProcessMemoryInfo(self._handle, ctypes.byref(counters), counters.cb):
+            return None
+        return int(counters.PeakWorkingSetSize) or None
+
+    def close(self) -> None:
+        if self._owned and self._handle:
+            self._kernel32.CloseHandle(self._handle)
+        self._owned, self._handle = False, None
+
+
+def monitor_peak(proc, sampler: PeakRssSampler, interval: float = 0.05) -> tuple[int | None, list[str]]:
+    """Poll ``sampler`` until ``proc`` ends and return (peak bytes or None, warnings).
+
+    One last reading is taken after the end is detected (the counter is monotonic, and the process
+    handle is still open). If no reading succeeded the peak is ``None`` with a warning, never 0.
+    """
+    peak: int | None = None
+    failures = 0
+    while True:
+        finished = proc.poll() is not None
+        value = sampler.sample()
+        if value:
+            peak = value if peak is None else max(peak, value)
+        else:
+            failures += 1
+        if finished:
+            break
+        time.sleep(interval)
+    warnings: list[str] = []
+    if peak is None:
+        warnings.append(f"peak RSS unavailable: the memory query failed ({failures} attempts)")
+    return peak, warnings
+
+
+def _run_posix(cmd: list[str], env: dict[str, str], stdout) -> tuple[int, float | None, str, list[str]]:
     proc = subprocess.Popen(cmd, env=env, stdout=stdout, stderr=subprocess.STDOUT)
-    handle = kernel32.OpenProcess(0x0400 | 0x0010, False, proc.pid)  # QUERY_INFORMATION | VM_READ
-    peak = 0
-    counters = Counters()
-    counters.cb = ctypes.sizeof(Counters)
-    while proc.poll() is None:
-        if handle and psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
-            peak = max(peak, counters.PeakWorkingSetSize)
-        time.sleep(0.05)
-    if handle:
-        kernel32.CloseHandle(handle)
-    return proc.returncode, (peak / MB if peak else None), "GetProcessMemoryInfo/PeakWorkingSetSize"
+    _, status, usage = os.wait4(proc.pid, 0)
+    proc.returncode = os.waitstatus_to_exitcode(status)
+    scale = 1024 if sys.platform != "darwin" else 1  # ru_maxrss: KiB on Linux, bytes on macOS
+    return proc.returncode, usage.ru_maxrss * scale / MB, "wait4/ru_maxrss", []
+
+
+def _run_windows(cmd: list[str], env: dict[str, str], stdout) -> tuple[int, float | None, str, list[str]]:
+    proc = subprocess.Popen(cmd, env=env, stdout=stdout, stderr=subprocess.STDOUT)
+    method = "GetProcessMemoryInfo/PeakWorkingSetSize"
+    try:
+        sampler = WindowsPeakSampler(proc)
+    except (OSError, AttributeError, ImportError) as exc:
+        proc.wait()
+        return proc.returncode, None, "n/a (ctypes unavailable)", [f"peak RSS unavailable: {exc}"]
+    try:
+        peak, warnings = monitor_peak(proc, sampler)
+    finally:
+        sampler.close()
+    return proc.returncode, (None if peak is None else peak / MB), method, warnings
 
 
 def run_subprocess(
     cmd: list[str], env: dict[str, str], log_path: Path
-) -> tuple[int, float | None, str, float]:
-    """Run ``cmd`` with stdout/stderr in ``log_path``. Returns (code, peak RSS MB or None, method, secs)."""
+) -> tuple[int, float | None, str, float, list[str]]:
+    """Run ``cmd`` with stdout/stderr in ``log_path``.
+
+    Returns (code, peak RSS MB or None, method, secs, warnings).
+    """
     t0 = time.perf_counter()
     with open(log_path, "wb") as log:
         if hasattr(os, "wait4"):
-            code, rss, method = _run_posix(cmd, env, log)
+            code, rss, method, warnings = _run_posix(cmd, env, log)
         elif sys.platform == "win32":
-            try:
-                code, rss, method = _run_windows(cmd, env, log)
-            except (OSError, AttributeError, ImportError):
-                proc = subprocess.run(cmd, env=env, stdout=log, stderr=subprocess.STDOUT, check=False)
-                code, rss, method = proc.returncode, None, "n/a (ctypes unavailable)"
+            code, rss, method, warnings = _run_windows(cmd, env, log)
         else:
             proc = subprocess.run(cmd, env=env, stdout=log, stderr=subprocess.STDOUT, check=False)
-            code, rss, method = proc.returncode, None, "n/a (unsupported platform)"
-    return code, rss, method, time.perf_counter() - t0
+            code, rss, method, warnings = proc.returncode, None, "n/a (unsupported platform)", []
+    return code, rss, method, time.perf_counter() - t0, warnings
 
 
 _PATTERNS = {
     "sources_failed": re.compile(r"\((\d+) indexed, \d+ unchanged, \d+ not selected, (\d+) failed\)"),
-    "records": re.compile(r"Records: (\d+)\s+Lines: (\d+)\s+Data: ([\d.]+) MB"),
-    "ingest_seconds": re.compile(r"^Time: ([\d.]+) s", re.M),
-    "derive": re.compile(r"Derived events: (\d+) \(derivation took ([\d.]+) s\)"),
-    "correlate": re.compile(r"Links: (\d+) \(correlation took ([\d.]+) s\)"),
-    "payloads": re.compile(r"Payloads: (\d+) \((\d+) linked to an operation, linking took ([\d.]+) s\)"),
+    "records": re.compile(r"Records: (\d+)\s+Lines: (\d+)\s+Data: (\d+(?:\.\d+)?) MB"),
+    "ingest_seconds": re.compile(r"^Time: (\d+(?:\.\d+)?) s", re.M),
+    "derive": re.compile(r"Derived events: (\d+) \(derivation took (\d+(?:\.\d+)?) s\)"),
+    "correlate": re.compile(r"Links: (\d+) \(correlation took (\d+(?:\.\d+)?) s\)"),
+    "payloads": re.compile(
+        r"Payloads: (\d+) \((\d+) linked to an operation, linking took (\d+(?:\.\d+)?) s\)"
+    ),
 }
 
 
@@ -378,18 +500,21 @@ def parse_ingest_output(text: str) -> dict[str, float | int | None]:
         ),
         None,
     )  # fmt: skip
-    if m := _PATTERNS["records"].search(text):
-        out["records"], out["lines"], out["data_mb"] = int(m[1]), int(m[2]), float(m[3])
-    if m := _PATTERNS["ingest_seconds"].search(text):
-        out["ingest_seconds"] = float(m[1])
-    if m := _PATTERNS["derive"].search(text):
-        out["events"], out["derive_seconds"] = int(m[1]), float(m[2])
-    if m := _PATTERNS["correlate"].search(text):
-        out["links"], out["correlate_seconds"] = int(m[1]), float(m[2])
-    if m := _PATTERNS["payloads"].search(text):
-        out["payloads"], out["payload_seconds"] = int(m[1]), float(m[3])
-    if m := _PATTERNS["sources_failed"].search(text):
-        out["sources_failed"] = int(m[2])
+
+    def grab(key: str, fields: dict[str, tuple[int, type]]) -> None:
+        if m := _PATTERNS[key].search(text):
+            try:
+                converted = {name: kind(m[group]) for name, (group, kind) in fields.items()}
+            except ValueError:  # malformed number: leave the items None (reported as missing)
+                return
+            out.update(converted)
+
+    grab("records", {"records": (1, int), "lines": (2, int), "data_mb": (3, float)})
+    grab("ingest_seconds", {"ingest_seconds": (1, float)})
+    grab("derive", {"events": (1, int), "derive_seconds": (2, float)})
+    grab("correlate", {"links": (1, int), "correlate_seconds": (2, float)})
+    grab("payloads", {"payloads": (1, int), "payload_seconds": (3, float)})
+    grab("sources_failed", {"sources_failed": (2, int)})
     return out
 
 
@@ -420,10 +545,11 @@ def measure(target: Path, data_dir: Path, work: Path, all_logs: bool) -> dict[st
     env["PYTHONPATH"] = os.pathsep.join(p for p in (package_parent, env.get("PYTHONPATH", "")) if p)
     env["PYTHONIOENCODING"] = "utf-8"
     log_path = work / "ingest.out"
-    code, rss, method, wall = run_subprocess(cmd, env, log_path)
+    code, rss, method, wall, rss_warnings = run_subprocess(cmd, env, log_path)
     text = log_path.read_text(encoding="utf-8", errors="replace")
     parsed = parse_ingest_output(text)
     warnings = [f"missing in ingest output: {k}" for k, v in parsed.items() if v is None and code == 0]
+    warnings.extend(rss_warnings)
     if code != 0:
         warnings.append(f"ingest exited with code {code}: " + " | ".join(text.strip().splitlines()[-3:]))
     return {
@@ -470,18 +596,21 @@ def build_report(
         "db_mb": round(int(run["db_bytes"]) / MB, 1),  # type: ignore[call-overload]
         "returncode": run["returncode"],
     }
-    values = {
-        "max_rss_mb": result["peak_rss_mb"],
-        "max_seconds": result["wall_seconds"],
-        "max_db_mb": result["db_mb"],
+    raw_values = {  # the targets compare the raw measurements; rounding is for display only
+        "max_rss_mb": None if run["peak_rss_mb"] is None else float(run["peak_rss_mb"]),  # type: ignore[arg-type]
+        "max_seconds": wall,
+        "max_db_mb": int(run["db_bytes"]) / MB,  # type: ignore[call-overload]
     }
     targets: dict[str, dict[str, object]] = {}
     for name, limit in targets_cfg.items():
         if limit is None:
             continue
-        value = values[name]
-        status = "N/A" if value is None else ("PASS" if value < limit else "FAIL")
-        targets[name] = {"limit": limit, "value": value, "status": status}
+        raw = raw_values[name]
+        status = "N/A" if raw is None else ("PASS" if raw <= limit else "FAIL")  # at the limit passes
+        targets[name] = {
+            "limit": limit, "value": None if raw is None else round(raw, 3), "value_raw": raw,
+            "status": status,
+        }  # fmt: skip
     failed = run["returncode"] != 0 or bool(parsed.get("sources_failed"))
     overall = "FAIL" if failed or any(t["status"] == "FAIL" for t in targets.values()) else "PASS"
     return {
@@ -533,7 +662,9 @@ def format_table(report: dict[str, object]) -> str:
     if targets:
         lines.append("")
         for name, t in targets.items():
-            lines.append(f"[{t['status']}] {name}: {fmt(t['value'])} (limit {fmt(t['limit'])})")
+            lines.append(
+                f"[{t['status']}] {name}: {fmt(t['value'], digits=2)} (limit {fmt(t['limit'], digits=2)})"
+            )
     for warning in report["warnings"]:  # type: ignore[attr-defined]
         lines.append(f"warning: {warning}")
     lines.append(f"\nOverall: {report['status']}")
@@ -571,7 +702,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--json", type=Path, metavar="PATH", help="Also write the result as JSON.")
     ap.add_argument("--keep", action="store_true", help="Keep the generated ERS and the data directory.")
     ap.add_argument("--max-rss-mb", type=float, default=DEFAULT_MAX_RSS_MB,
-                    help=f"RSS target in MB; 0 disables (default: {DEFAULT_MAX_RSS_MB:g}).")  # fmt: skip
+                    help=f"RSS target in MB; 0 disables (default: {DEFAULT_MAX_RSS_MB:g}). Targets "
+                    "compare the raw measurement and pass when it is <= the limit.")  # fmt: skip
     ap.add_argument("--max-seconds", type=float, default=0.0,
                     help="Wall-time target in seconds; 0 disables (default).")  # fmt: skip
     ap.add_argument("--max-db-mb", type=float, default=0.0,
@@ -592,6 +724,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise BenchError("--size-mb must be positive")
     if args.ers is not None and not args.ers.exists():
         raise BenchError(f"--ers path not found: {args.ers}")
+    check_output_paths(args.out, args.ers.expanduser() if args.ers is not None else None, args.json)
     out = check_out_dir(args.out)
     created = not out.exists()
     out.mkdir(parents=True, exist_ok=True)
