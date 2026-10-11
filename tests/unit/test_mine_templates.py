@@ -1,6 +1,7 @@
 """Tests for tools/mine_templates.py (draft templates from unknown signatures). Synthetic data only."""
 
 import importlib.util
+import re
 import sqlite3
 import sys
 import tomllib
@@ -401,16 +402,16 @@ def test_hostile_numeric_columns_never_reach_the_output(tmp_path, capsys, column
     db = _sig_case(tmp_path, column, value)
     rc = mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1")
     cap = capsys.readouterr()
-    if rc == 0:
-        doc = tomllib.loads(cap.out)
-        assert set(doc) == EXPECTED_TOP and "payload_defaults" not in doc
-        for tpl in doc["template"]:
-            assert set(tpl) <= EXPECTED_KEYS
-        mt.load_draft(cap.out, check_examples=True)
-        for line in cap.out.splitlines():
-            assert "payload_defaults" not in line or line.startswith("#")
-    else:
-        assert rc == 1 and cap.out == ""
+    assert rc == 0  # the other, valid group is still there: never a regression to an error
+    doc = tomllib.loads(cap.out)
+    assert set(doc) == EXPECTED_TOP and "payload_defaults" not in doc
+    for tpl in doc["template"]:
+        assert set(tpl) <= EXPECTED_KEYS
+    mt.load_draft(cap.out, check_examples=True)
+    for line in cap.out.splitlines():
+        assert "payload_defaults" not in line or line.startswith("#")
+    # the valid group stays an ACTIVE template (not commented out)
+    assert any("Other thing" in (t.get("text") or t.get("regex") or "") for t in doc["template"])
 
 
 @pytest.mark.parametrize("column", ["n", "first_entry_id"])
@@ -451,3 +452,126 @@ def test_dropped_candidates_are_summarized_on_stderr(tmp_path, capsys):
 def test_no_summary_when_nothing_was_dropped(case_db, capsys):
     assert mine("--case-db", str(case_db), "--family", "WIDGET", "--min-count", "1") == 0
     assert "summary" not in capsys.readouterr().err
+
+
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+ESCAPED = "\x1b[31mRED\x1b[0m\nFORGED"
+
+
+def _assert_stderr_clean(err: str, *raw: str) -> None:
+    assert not CTRL.search(err), repr(err)
+    for value in raw:
+        assert value not in err
+
+
+def test_family_with_escapes_is_sanitized_on_stderr(case_db, capsys):
+    assert mine("--case-db", str(case_db), "--family", ESCAPED) == 1
+    err = capsys.readouterr().err
+    _assert_stderr_clean(err, ESCAPED, "\x1b")
+    assert "RED" in err
+
+
+def test_case_path_and_out_path_with_escapes_are_sanitized(tmp_path, capsys):
+    missing = tmp_path / "no\x1b[2Jthere\nforged.sqlite"
+    assert mine("--case-db", str(missing)) == 1
+    _assert_stderr_clean(capsys.readouterr().err, "\x1b", str(missing))
+
+
+def test_out_path_with_escapes_is_sanitized(case_db, tmp_path, capsys):
+    out = tmp_path / "sub\x1b[2J\nforged" / "o.toml"  # parent missing: the write fails
+    assert mine("--case-db", str(case_db), "--family", "WIDGET", "--min-count", "1", "--out", str(out)) == 1
+    _assert_stderr_clean(capsys.readouterr().err, "\x1b", str(out))
+    ok = tmp_path / "ok\x1b[2J\nforged.toml"
+    assert mine("--case-db", str(case_db), "--family", "WIDGET", "--min-count", "1", "--out", str(ok)) == 0
+    _assert_stderr_clean(capsys.readouterr().err, "\x1b", str(ok))
+
+
+def test_exception_messages_are_sanitized(tmp_path, capsys):
+    bad = tmp_path / "bad\x1b[2J\nforged.sqlite"
+    bad.write_bytes(b"not a database" * 100)
+    assert mine("--case-db", str(bad)) == 1
+    _assert_stderr_clean(capsys.readouterr().err, "\x1b", str(bad))
+
+
+def test_usage_errors_do_not_echo_raw_values(case_db, capsys):
+    with pytest.raises(SystemExit):
+        mine("--case-db", str(case_db), "--limit", "x\x1b[2J")
+    _assert_stderr_clean(capsys.readouterr().err, "\x1b")
+
+
+def test_stderr_summary_never_shows_examples(tmp_path, capsys):
+    canary = "CANARY-EXAMPLE-123"
+    msgs = [f"{canary} 0x1", f"{canary} 0x1", f"{canary} 0x2", f"{canary} 11"]
+    db = build_case(tmp_path / "c.sqlite", {"OVER": msgs})
+    out_file = tmp_path / "o.toml"
+    assert mine("--case-db", str(db), "--family", "OVER", "--min-count", "1", "--out", str(out_file)) == 0
+    err = capsys.readouterr().err
+    assert "SKIPPED" in err and "CANARY" not in err
+    assert "conflicts with OVER-001" in err
+
+
+def test_unmatched_example_reason_is_generic(tmp_path, capsys, monkeypatch):
+    canary = "CANARY-EXAMPLE-123"
+    db = build_case(tmp_path / "c.sqlite", {"GIZMO": [f"{canary} a"] * 2 + [f"{canary} b"]})
+    monkeypatch.setattr(mt, "build_regex", lambda *a, **k: ("^NEVER-MATCHES$", {}))
+    out_file = tmp_path / "o.toml"
+    assert mine("--case-db", str(db), "--family", "GIZMO", "--min-count", "1", "--out", str(out_file)) == 0
+    err = capsys.readouterr().err
+    assert "no regex matched its examples" in err and "CANARY" not in err
+    assert "SKIPPED" in out_file.read_text(encoding="utf-8")  # the detail stays in the output file
+
+
+def test_rejected_catalog_reason_in_summary_is_generic(tmp_path, capsys, monkeypatch):
+    db = build_case(tmp_path / "c.sqlite", {"GIZMO": ["Gizmo spun up 1"] * 3})
+    monkeypatch.setattr(mt, "_usable", lambda *a: (mt.REASON_CATALOG, "detail CANARY-EXAMPLE-123 \x1b"))
+    assert mine("--case-db", str(db), "--family", "GIZMO", "--min-count", "1") == 0
+    cap = capsys.readouterr()
+    assert "catalog rejected the draft" in cap.err and "CANARY" not in cap.err and "\x1b" not in cap.err
+    assert not CTRL.search(cap.err)
+
+
+def _entry_case(tmp_path: Path, column: str, value) -> Path:
+    db = build_case(tmp_path / "c.sqlite", {"GADGET": OTHER + ["Other thing 1", "Other thing 1"]})
+    conn = sqlite3.connect(db)
+    conn.execute(
+        f"UPDATE entry SET {column} = ? WHERE id = (SELECT first_entry_id FROM unknown_sig "
+        "WHERE signature LIKE 'Gizmo%')",
+        (value,),
+    )
+    conn.commit()
+    conn.close()
+    return db
+
+
+BAD_ENTRY_VALUES = [("flags", "text\x1b[2J"), ("flags", 1.5), ("msg", b"\xff\x00")]
+
+
+@pytest.mark.parametrize(("column", "value"), BAD_ENTRY_VALUES)
+def test_invalid_entry_values_reject_the_row_with_a_column_only_warning(tmp_path, capsys, column, value):
+    db = _entry_case(tmp_path, column, value)
+    assert mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1") == 0
+    cap = capsys.readouterr()
+    assert "ignored because of invalid data" in cap.err
+    assert f"entry row rejected: invalid value in column {column}" in cap.err
+    _assert_stderr_clean(cap.err, "\x1b", "text")
+    # the rejected row gave no example: no active template quotes it from the bad row alone
+    doc = tomllib.loads(cap.out)
+    assert any("Other thing" in (t.get("text") or t.get("regex") or "") for t in doc["template"])
+
+
+def test_invalid_row_does_not_use_up_the_limit(tmp_path, capsys):
+    db = _sig_case(tmp_path, "n", "bad")  # sorts before every integer
+    assert mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1", "--limit", "1") == 0
+    cap = capsys.readouterr()
+    doc = tomllib.loads(cap.out)
+    (tpl,) = doc["template"]
+    assert "Other thing" in (tpl.get("text") or tpl["regex"])
+    assert "column n" in cap.err
+
+
+def test_zero_count_row_is_rejected_with_a_warning(tmp_path, capsys):
+    db = _sig_case(tmp_path, "n", 0)
+    assert mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1") == 0
+    cap = capsys.readouterr()
+    assert "unknown_sig row rejected: invalid value in column n" in cap.err
+    assert len(tomllib.loads(cap.out)["template"]) == 1

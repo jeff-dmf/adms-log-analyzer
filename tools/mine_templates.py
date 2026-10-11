@@ -38,6 +38,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent.parent
 if importlib.util.find_spec("dmslog") is None:  # run from a checkout without installing
@@ -107,8 +108,17 @@ class Draft:
     group: Group
     code: str
     body: str = ""
-    skipped: str = ""
+    skipped: str = ""  # detail for the ``# SKIPPED`` comment in the output file (may quote examples)
+    skip_code: str = ""  # fixed, generic reason: the only thing the stderr summary may show
     examples: list[str] = field(default_factory=list)
+
+
+REASON_NO_EXAMPLE = "no example record found"
+REASON_TOO_LONG = "example too long"
+REASON_NO_MATCH = "no regex matched its examples"
+REASON_CATALOG = "catalog rejected the draft"
+REASON_NO_REGEX = "no safe regex found"
+REASON_NOT_CLASSIFIED = "the catalog does not classify its example"
 
 
 class MineError(Exception):
@@ -165,6 +175,11 @@ def comment_text(text: str, limit: int = MAX_COMMENT_CHARS) -> str:
     if len(result) > limit:
         result = f"{result[:limit]}...[{len(result) - limit} more chars]"
     return result
+
+
+def safe_text(value: object, limit: int = MAX_COMMENT_CHARS) -> str:
+    """Make any value safe to print to the terminal (stderr): one line, no control characters."""
+    return comment_text(str(value), limit)
 
 
 def toml_regex(text: str) -> str:
@@ -267,23 +282,23 @@ def load_draft(text: str, *, check_examples: bool = False):  # noqa: ANN201
     return load_texts({f"{COMMON}.toml": library, "draft.toml": text}, check_examples=check_examples)
 
 
-def _usable(family: str, body: str, examples: list[str]) -> str:
-    """Empty string when the template loads and matches its examples, else the reason."""
+def _usable(family: str, body: str, examples: list[str]) -> tuple[str, str]:
+    """``("", "")`` when the template loads and matches its examples, else ``(generic code, detail)``."""
     try:  # without ``extends``: the per-template check does not need the library
         catalog = load_texts({"draft.toml": f"schema = 1\nfamily = {toml_str(family)}\n\n{body}"})
     except TemplateError as exc:
-        return str(exc)
+        return REASON_CATALOG, str(exc)
     (template,) = catalog.families[family].templates
     for example in examples:
         if len(example.strip()) > min(template.window, MAX_MATCH_CHARS):  # the loader skips longer ones
-            return f"example is longer than the match window ({template.window} characters)"
+            return REASON_TOO_LONG, f"example is longer than the match window ({template.window} characters)"
         if template.text is not None:
             hit = template.text == example.strip()
         else:
             hit = template.regex.match(example.strip()) is not None  # type: ignore[union-attr]
         if not hit:
-            return f"does not match its example {example!r}"
-    return ""
+            return REASON_NO_MATCH, f"does not match its example {example!r}"
+    return "", ""
 
 
 def draft_template(code: str, group: Group) -> Draft:
@@ -292,25 +307,26 @@ def draft_template(code: str, group: Group) -> Draft:
     cut = cut or any(len(e) > MAX_INPUT_CHARS for e in group.examples)
     draft = Draft(group, code, examples=list(group.examples))
     if not group.examples:
-        draft.skipped = "no example record found"
+        draft.skipped = draft.skip_code = REASON_NO_EXAMPLE
         return draft
-    reason = ""
+    why, detail = "", ""
     if not _MARKER.search(sig) and not cut and len(set(group.examples)) == 1:
         text = group.examples[0].strip()
         body = _template_toml(code, group, group.examples, None, text, {}, None)
-        reason = _usable(group.family, body, group.examples)
-        if not reason:
+        why, detail = _usable(group.family, body, group.examples)
+        if not why:
             draft.body = body
             return draft
     for loose_n, flexible_space in ((False, False), (True, False), (True, True)):
         regex, fields = build_regex(sig, cut=cut, loose_n=loose_n, flexible_space=flexible_space)
         for window in WINDOWS:
             body = _template_toml(code, group, group.examples, regex, None, fields, window)
-            reason = _usable(group.family, body, group.examples)
-            if not reason:
+            why, detail = _usable(group.family, body, group.examples)
+            if not why:
                 draft.body = body
                 return draft
-    draft.skipped = reason or "no safe regex found"
+    draft.skip_code = why or REASON_NO_REGEX
+    draft.skipped = detail or REASON_NO_REGEX
     return draft
 
 
@@ -320,12 +336,13 @@ def draft_template(code: str, group: Group) -> Draft:
 def open_case(path: Path) -> sqlite3.Connection:
     """Open a case database read-only; ValueError when it is missing or not a dmslog case."""
     if not path.is_file():
-        raise ValueError(f"case database not found: {path}")
+        raise ValueError(f"case database not found: {safe_text(path)}")
     for suffix in ("-wal", "-shm"):
         side = path.with_name(path.name + suffix)
         if side.is_file() and side.stat().st_size > 0:
             raise ValueError(
-                f"the case has a pending write-ahead log ({side.name}); close the viewer/server or run "
+                f"the case has a pending write-ahead log ({safe_text(side.name)}); close the "
+                "viewer/server or run "
                 "dmslog on it first so the log is checkpointed, then retry (this tool never writes "
                 "next to the case)"
             )
@@ -334,7 +351,7 @@ def open_case(path: Path) -> sqlite3.Connection:
         conn.execute("SELECT family, signature, n, first_entry_id FROM unknown_sig LIMIT 1").fetchall()
     except sqlite3.DatabaseError as exc:
         conn.close()
-        raise ValueError(f"not a dmslog case database: {path} ({exc})") from None
+        raise ValueError(f"not a dmslog case database: {safe_text(path)} ({safe_text(exc)})") from None
     return conn
 
 
@@ -355,14 +372,19 @@ def _is_int(value: object) -> bool:
 def read_groups(
     conn: sqlite3.Connection, family: str, min_count: int, limit: int, warnings: list[str] | None = None
 ) -> list[Group]:
-    """The signature groups of a family. Rows with a wrong column type are skipped (noted in ``warnings``)."""
-    rows = conn.execute(
-        "SELECT family, signature, n, first_entry_id FROM unknown_sig WHERE family = ? AND n >= ? "
-        "ORDER BY n DESC, signature LIMIT ?",
-        (family, min_count, limit),
-    ).fetchall()
+    """Up to ``limit`` valid signature groups of a family, most frequent first.
+
+    Rows are validated before the limit and ``min_count`` apply, so an invalid row never uses up a
+    slot. Rows with a wrong column type (or ``n`` < 1) are rejected; ``warnings`` only gets the
+    column names, never the values.
+    """
+    cursor = conn.execute(
+        "SELECT family, signature, n, first_entry_id FROM unknown_sig WHERE family = ? "
+        "ORDER BY n DESC, signature",
+        (family,),
+    )
     groups: list[Group] = []
-    for r in rows:
+    for r in cursor:
         bad = [
             name
             for name, ok in (
@@ -375,14 +397,21 @@ def read_groups(
         ]
         if bad:
             if warnings is not None:
-                warnings.append(f"unknown_sig row skipped: invalid value in column {', '.join(bad)}")
+                warnings.append(f"unknown_sig row rejected: invalid value in column {', '.join(bad)}")
             continue
-        groups.append(Group(r[0], r[1], r[2], r[3]))
+        if r[2] >= min_count and len(groups) < limit:
+            groups.append(Group(r[0], r[1], r[2], r[3]))
     for group in groups:
         row = conn.execute("SELECT msg, flags FROM entry WHERE id = ?", (group.first_entry_id,)).fetchone()
-        if row is not None and isinstance(row[0], str):
-            group.examples.append(row[0].strip())
-            group.first_has_cont = _is_int(row[1]) and bool(row[1] & 2)
+        if row is None:
+            continue
+        bad = [name for name, ok in (("msg", isinstance(row[0], str)), ("flags", _is_int(row[1]))) if not ok]
+        if bad:
+            if warnings is not None:
+                warnings.append(f"entry row rejected: invalid value in column {', '.join(bad)}")
+            continue
+        group.examples.append(row[0].strip())
+        group.first_has_cont = bool(row[1] & 2)
     _fill_examples(conn, groups)
     return groups
 
@@ -471,7 +500,7 @@ def render_drafts(
         if loser is None:
             return "\n".join(out) + "\n" + text, drafts
         draft, reason = loser
-        draft.body, draft.skipped = "", reason
+        draft.body, draft.skipped, draft.skip_code = "", reason, reason
 
 
 def _next_conflict(family: str, text: str, drafts: list[Draft]) -> tuple[Draft, str] | None:
@@ -479,7 +508,7 @@ def _next_conflict(family: str, text: str, drafts: list[Draft]) -> tuple[Draft, 
     try:
         catalog = load_draft(text)
     except TemplateError as exc:
-        raise MineError(f"the draft does not load: {comment_text(str(exc), 300)}") from None
+        raise MineError(f"the draft does not load: {safe_text(exc, 300)}") from None
     problems = catalog.check_examples()
     if not problems:
         return None
@@ -493,10 +522,10 @@ def _next_conflict(family: str, text: str, drafts: list[Draft]) -> tuple[Draft, 
             pick = max(code, other, key=index.__getitem__)  # tie: the later (less frequent) one
         draft = drafts[index[pick]]
         why = other if pick == code else code
-        reason = f"conflicts with {why}" if why else "the catalog does not classify its example"
+        reason = f"conflicts with {safe_text(why)}" if why else REASON_NOT_CLASSIFIED
         candidates.append((draft.group.count, -index[pick], draft, reason))
     if not candidates:
-        raise MineError(f"the draft fails the catalog checks: {comment_text('; '.join(problems), 300)}")
+        raise MineError(f"the draft fails the catalog checks: {safe_text('; '.join(problems), 300)}")
     _, _, draft, reason = min(candidates, key=lambda c: (c[0], c[1]))
     return draft, reason
 
@@ -532,8 +561,16 @@ def _conflicts(catalog, family: str, codes: set[str]) -> list[tuple[str, str]]: 
 # --- CLI ---------------------------------------------------------------------------------------
 
 
+class _SafeParser(argparse.ArgumentParser):
+    """Argparse whose usage errors never echo raw argument values (terminal escapes)."""
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_USAGE, f"{self.prog}: error: {safe_text(message)}\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _SafeParser(
         prog="mine_templates.py",
         description=(
             "Propose a draft template file (TOML) for one family from the records of an indexed "
@@ -570,12 +607,13 @@ def summarize(drafts: list[Draft], warnings: list[str]) -> list[str]:
         f"{len(skipped)} commented out as SKIPPED"
     ]
     lines += [
-        f"  SKIPPED {comment_text(d.code)} ({int(d.group.count)} records): {comment_text(d.skipped)}"
+        f"  SKIPPED {safe_text(d.code)} ({int(d.group.count)} records): "
+        f"{safe_text(d.skip_code or REASON_NO_REGEX)}"
         for d in skipped
     ]
     if warnings:
-        lines.append(f"  {len(warnings)} unknown_sig row(s) ignored because of invalid data:")
-        lines += [f"    {comment_text(w)}" for w in warnings[:MAX_WARNINGS_SHOWN]]
+        lines.append(f"  {len(warnings)} row(s) ignored because of invalid data:")
+        lines += [f"    {safe_text(w)}" for w in warnings[:MAX_WARNINGS_SHOWN]]
         if len(warnings) > MAX_WARNINGS_SHOWN:
             lines.append(f"    ... and {len(warnings) - MAX_WARNINGS_SHOWN} more")
     return lines
@@ -589,8 +627,8 @@ def run(argv: list[str] | None = None) -> int:
     try:
         db = args.case_db or case_db_path(resolve_data_dir(args.data_dir), args.case)
         conn = open_case(Path(db))
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        print(f"error: {safe_text(exc)}", file=sys.stderr)
         return EXIT_FAILED
     try:
         totals = family_totals(conn)
@@ -599,35 +637,46 @@ def run(argv: list[str] | None = None) -> int:
             if len(totals) > 1:
                 print("error: several families have unknown records; pass --family:", file=sys.stderr)
                 for name, signatures, records in totals:
-                    line = f"  {comment_text(name)}: {signatures} signatures, {records} records"
+                    line = f"  {safe_text(name)}: {signatures} signatures, {records} records"
                     print(line, file=sys.stderr)
                 return EXIT_USAGE
             family = totals[0][0] if totals else None
         known = {t[0]: t for t in totals}
         if family is None or family not in known:
-            print(f"error: no unknown records{f' for family {family}' if family else ''}", file=sys.stderr)
+            which = f" for family {safe_text(family)}" if family else ""
+            print(f"error: no unknown records{which}", file=sys.stderr)
             return EXIT_FAILED
         warnings: list[str] = []
         groups = read_groups(conn, family, args.min_count, args.limit, warnings)
+    except sqlite3.Error as exc:
+        print(f"error: cannot read the case: {safe_text(exc)}", file=sys.stderr)
+        return EXIT_FAILED
     finally:
         conn.close()
     if not groups:
         for line in summarize([], warnings):
             print(line, file=sys.stderr)
-        print(f"error: no signature of {family} reaches --min-count {args.min_count}", file=sys.stderr)
+        print(
+            f"error: no signature of {safe_text(family)} reaches --min-count {args.min_count}",
+            file=sys.stderr,
+        )
         return EXIT_FAILED
     try:
         text, drafts = render_drafts(family, groups, Path(db).name, len(groups), known[family][1])
     except MineError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {safe_text(exc)}", file=sys.stderr)
         return EXIT_FAILED
     for line in summarize(drafts, warnings):
         print(line, file=sys.stderr)
     if args.out is not None:
-        args.out.write_text(text, encoding="utf-8", newline="\n")
+        try:
+            args.out.write_text(text, encoding="utf-8", newline="\n")
+        except OSError as exc:
+            print(f"error: cannot write {safe_text(args.out)}: {safe_text(exc)}", file=sys.stderr)
+            return EXIT_FAILED
         active = sum(1 for d in drafts if d.body)
         extra = f" ({len(drafts) - active} SKIPPED, commented out)" if active != len(drafts) else ""
-        print(f"wrote {active} active draft templates to {args.out}{extra}", file=sys.stderr)
+        print(f"wrote {active} active draft templates to {safe_text(args.out)}{extra}", file=sys.stderr)
     else:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
         sys.stdout.write(text)
