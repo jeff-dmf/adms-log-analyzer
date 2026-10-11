@@ -675,6 +675,28 @@ def test_values_that_look_public_do_not_survive_strict_mode(value, template):
         assert piece not in out, out
 
 
+# -- an identifier word glued to a short secret number (strict mode) -------------------------------------
+
+LABEL_WORD_SECRETS = ["Crew1234", "SERVER12", "node345", "Meter7788", "Feeder0421", "USER2468", "Token9911"]
+LABEL_WORD_WRAPPERS = [
+    "{s}",
+    "the value {s} was seen",
+    "x={s}",
+    '"{s}"',
+    "<x>{s}</x>",
+    '{{"k": "{s}"}}',
+    "({s})",
+]
+
+
+@pytest.mark.parametrize("secret", LABEL_WORD_SECRETS)
+@pytest.mark.parametrize("wrapper", LABEL_WORD_WRAPPERS)
+@pytest.mark.parametrize("payload", [True, False])
+def test_label_word_glued_to_a_secret_does_not_survive_strict_mode(secret, wrapper, payload):
+    out = Redactor(PROFILES["strict"]).redact(wrapper.format(s=secret), payload=payload)
+    assert re.search(r"\d{2,}", out) is None, out
+
+
 # -- review round 5: generative structured payloads (strict mode, default-deny) ------------------------
 
 SECRET_WORD = "Zq7Kx9Wv"
