@@ -270,6 +270,45 @@ def test_import_dedups_by_uid_and_keeps_the_multiplicity_of_items_without_one(co
     assert bm.import_bookmarks(conn, repeated) == {"imported": 1, "existing": 0, "unmatched": 0, "invalid": 1}
 
 
+@pytest.mark.parametrize("loose_first", [True, False])
+def test_import_never_lets_an_item_without_uid_take_the_bookmark_a_uid_names(conn, loose_first):
+    # The case holds U; the file holds U and another note with the same locator and identity but no
+    # uid. Whatever the order, U answers for its own item and the other note is imported, not lost.
+    bm.create_bookmark(conn, 2, "red", "one")
+    data = bm.export_bookmarks(conn)
+    item = data["bookmarks"][0]
+    loose = {k: v for k, v in item.items() if k != "uid"} | {"note": "loose"}
+    doc = {**data, "bookmarks": [loose, item] if loose_first else [item, loose]}
+    assert bm.import_bookmarks(conn, doc) == {"imported": 1, "existing": 1, "unmatched": 0, "invalid": 0}
+    rows = conn.execute("SELECT uid, note, entry_id FROM bookmark ORDER BY id").fetchall()
+    assert rows[0] == (item["uid"], "one", 2)
+    assert rows[1][1:] == ("loose", None) and rows[1][0] != item["uid"]  # same record, held by U
+    assert bm.import_bookmarks(conn, doc) == {"imported": 0, "existing": 2, "unmatched": 0, "invalid": 0}
+    assert conn.execute("SELECT count(*) FROM bookmark").fetchone()[0] == 2  # idempotent
+    # Its export round-trips too: both carry uids now.
+    again = bm.export_bookmarks(conn)
+    assert bm.import_bookmarks(conn, again) == {"imported": 0, "existing": 2, "unmatched": 0, "invalid": 0}
+
+
+def test_import_mixed_file_keeps_every_note_and_counts_right(conn):
+    # Two bookmarks in the case at one locator; the file names one by uid, repeats it (invalid), and
+    # brings three items without uid with that identity, around the named one.
+    bm.create_bookmark(conn, 2, "red", "one")
+    data = bm.export_bookmarks(conn)
+    item = data["bookmarks"][0]
+    twin = {**item, "uid": "0" * 32, "note": "twin"}
+    assert bm.import_bookmarks(conn, {**data, "bookmarks": [twin]})["imported"] == 1
+    loose = {k: v for k, v in item.items() if k != "uid"}
+    doc = {**data, "bookmarks": [
+        {**loose, "note": "a"}, item, {**loose, "note": "b"}, {**item, "note": "dup"}, {**loose, "note": "c"},
+    ]}  # fmt: skip
+    # U answers for its item; twin answers for one loose item; the other two are imported.
+    assert bm.import_bookmarks(conn, doc) == {"imported": 2, "existing": 2, "unmatched": 0, "invalid": 1}
+    assert conn.execute("SELECT count(*) FROM bookmark").fetchone()[0] == 4
+    assert bm.import_bookmarks(conn, doc) == {"imported": 0, "existing": 4, "unmatched": 0, "invalid": 1}
+    assert conn.execute("SELECT count(*) FROM bookmark").fetchone()[0] == 4
+
+
 def test_import_gives_a_record_to_the_item_that_was_linked_not_to_an_orphan_listed_first(conn):
     made = bm.create_bookmark(conn, 2, "red", "linked")
     item = bm.export_bookmarks(conn)["bookmarks"][0]

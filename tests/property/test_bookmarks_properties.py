@@ -13,7 +13,9 @@ content is its known identity; (c) no note is lost: the notes change only by exp
 again on its own; (f) a complete fingerprint never changes and an open one only gets stronger;
 (g) the ``entry_id`` cache is what a full resolution (locator + fingerprint) gives; and, after each
 ingestion, a linked bookmark whose record survived stays on it, and a record that comes back is
-taken by an orphan of its identity.
+taken by the orphan of its identity that the model says wins: the one orphaned last (a bookmark whose
+record was only parsed again within the step counts as orphaned in it), never one that lost its
+record earlier; bookmarks orphaned only by an import or a migration rank last, the oldest first.
 
 ``DMSLOG_BOOKMARK_EXAMPLES`` raises the number of examples for a longer local run.
 """
@@ -113,6 +115,9 @@ class Model:
     lineage: int | None  # source id; None = detached
     ident: tuple | None  # ("f", off, ts, text) | ("p", off, ts, prefix) | ("o", fp) | None
     fp: str | None  # last stored fingerprint seen
+    # Model clock of the file step in which an ingestion last took its record away; None when that
+    # never happened since it was imported or migrated (it then ranks below any such step).
+    orphaned: int | None = None
 
 
 class Snapshot:
@@ -148,6 +153,7 @@ class BookmarkMachine(RuleBasedStateMachine):
         self.notes = 0
         self.models: dict[str, Model] = {}
         self.cases = 0
+        self.step = 0  # model clock: one tick per file step
         # Source rows dropped by an ingestion (their ids may be reused at once by a new source).
         self.conn.execute("CREATE TEMP TABLE dropped(id INTEGER)")
         self.conn.execute(
@@ -190,6 +196,7 @@ class BookmarkMachine(RuleBasedStateMachine):
         self.conn.execute("DELETE FROM dropped")
         self.conn.commit()
         self.write_files()
+        self.step += 1
         self.ingest(batch)
         self.check(before, ingested=True)
 
@@ -385,8 +392,9 @@ class BookmarkMachine(RuleBasedStateMachine):
     def export_delete_import(self) -> None:
         before = Snapshot(self.conn)
         data = bm.export_bookmarks(self.conn)
-        for row in before.rows.values():
+        for note, row in before.rows.items():
             bm.delete_bookmark(self.conn, row[1])
+            self.models[note].orphaned = None  # new rows: no ingestion has orphaned them yet
         n = len(data["bookmarks"])
         counts = bm.import_bookmarks(self.conn, data)
         assert counts == {"imported": n, "existing": 0, "unmatched": 0, "invalid": 0}
@@ -450,7 +458,7 @@ class BookmarkMachine(RuleBasedStateMachine):
                 row = after.rows[item["note"]]
                 assert row[7] == item["uid"] and (row[5] is None) == item["detached"]
                 ident = known[item["note"]].ident
-                self.models[item["note"]] = Model(lineage=row[5], ident=ident, fp=item["fp"])
+                self.models[item["note"]] = Model(lineage=row[5], ident=ident, fp=item["fp"], orphaned=None)
         self.check(before, imported=True)
 
     @precondition(lambda self: self.models)
@@ -522,7 +530,8 @@ class BookmarkMachine(RuleBasedStateMachine):
         assert sorted(after.rows) == sorted(self.models), "notes lost or invented"  # (c)
         self.check_structure(after, self.conn)  # (a), (g)
         old_keys = before.content_keys() if ingested else set()
-        held = {r[4] for r in after.rows.values() if r[4] is not None}
+        if ingested:
+            self.check_winners(before, after, old_keys)
         for note, model in self.models.items():
             row = after.rows[note]
             eid, sid, fp = row[4], row[5], row[6]
@@ -547,8 +556,6 @@ class BookmarkMachine(RuleBasedStateMachine):
                 if here is not None and ident_matches(model.ident, after.entries[here]):
                     if prev is not None and prev[4] is not None:  # continuity: it stays on its record
                         assert eid == here, (note, "lost a record that is still there")
-                    elif (here, after.entries[here]) not in old_keys and here not in held:
-                        raise AssertionError((note, "its record came back but it stayed an orphan"))
             # update the model: open identities become complete once a later record exists
             model.lineage = sid
             if c is not None:
@@ -561,6 +568,40 @@ class BookmarkMachine(RuleBasedStateMachine):
             elif model.ident is not None and model.ident[0] != "o":
                 assert fp == expected_fp(model.ident), (note, "orphan fingerprint", fp, model.ident)
             model.fp = fp
+
+    def check_winners(self, before: Snapshot, after: Snapshot, old_keys: set[tuple[int, Content]]) -> None:
+        """After an ingestion: each record that came back is held by the bookmark the model predicts.
+
+        The model clock moves first: a bookmark whose record went away in this step was orphaned in
+        it (even when it took a new parse of the record back). Among the bookmarks of the record's
+        lineage and line whose identity it has, the one orphaned at the latest step wins; inside one
+        step the order of the writer's calls decides, so any of them may; among bookmarks no ingestion
+        has orphaned (imported or migrated) the oldest wins. The others stay orphans.
+        """
+        after_keys = after.content_keys()
+        for note, model in self.models.items():
+            prev = before.rows.get(note)
+            if prev is not None and prev[4] is not None:
+                if (prev[4], before.entries[prev[4]]) not in after_keys:
+                    model.orphaned = self.step
+        claims: dict[int, list[str]] = {}  # record that came back -> notes whose identity it has
+        for note, model in self.models.items():
+            row = after.rows[note]
+            if row[5] is None or model.ident is None:
+                continue
+            here = after.at_line.get((row[5], row[3]))
+            if here is None or (here, after.entries[here]) in old_keys:
+                continue
+            if ident_matches(model.ident, after.entries[here]):
+                claims.setdefault(here, []).append(note)
+        for here, notes in claims.items():
+            rank = {n: -1 if self.models[n].orphaned is None else self.models[n].orphaned for n in notes}
+            top = max(rank.values())
+            group = sorted((n for n in notes if rank[n] == top), key=lambda n: after.rows[n][1])
+            winners = group[:1] if top == -1 else group
+            holders = [n for n in notes if after.rows[n][4] == here]
+            assert holders, (notes, "its record came back but they all stayed orphans")
+            assert holders[0] in winners, (here, "taken by", holders[0], "expected one of", winners, rank)
 
     @invariant()
     def one_bookmark_per_record(self) -> None:

@@ -923,6 +923,8 @@ def import_bookmarks(conn: sqlite3.Connection, data: Any) -> dict[str, int]:
     bookmarks that share a locator and a record identity both survive. A version-2 item without a uid
     (a file edited by hand) is ``existing`` when an unclaimed bookmark at its locator has its identity;
     each bookmark of the case answers for one item at most, so the multiplicity of the file is kept.
+    The uids are resolved first, for the whole file, so a bookmark named by its uid is never taken by
+    an item without one, whatever the order of the items.
     A version-1 item is ``existing`` when any bookmark sits at its locator.
 
     The record identity decides the link, never the line alone: an item links to the record at its
@@ -964,7 +966,24 @@ def import_bookmarks(conn: sqlite3.Connection, data: Any) -> dict[str, int]:
     with _Tx(conn):
         total = conn.execute("SELECT count(*) FROM bookmark").fetchone()[0]
         claimed: set[int] = set()  # bookmarks that already answered for an item of this file
+        # First pass: every item whose uid the case holds reserves that bookmark before any item
+        # without a uid looks for one by identity, whatever the order of the file; otherwise the
+        # fallback could take the very bookmark a later item names and one note of the file would
+        # be lost. A bookmark never answers for two items.
+        rest: list[_Parsed] = []
         for one in parsed:
+            row = None
+            if one[9] is not None:
+                row = conn.execute("SELECT id FROM bookmark WHERE uid = ?", (one[9],)).fetchone()
+            if row is None:
+                rest.append(one)
+            elif row[0] in claimed:  # unreachable with unique uids in file and case; never reuse
+                counts["invalid"] += 1
+            else:
+                claimed.add(row[0])
+                counts["existing"] += 1
+        # Second pass: the rest (new uids and items without one), in placement order.
+        for one in rest:
             outcome = _import_one(conn, one, legacy, total, claimed)
             counts[outcome] += 1
             total += outcome == "imported"
@@ -972,12 +991,8 @@ def import_bookmarks(conn: sqlite3.Connection, data: Any) -> dict[str, int]:
 
 
 def _import_one(conn: sqlite3.Connection, one: _Parsed, legacy: bool, total: int, claimed: set[int]) -> str:
+    """Place one item the first pass did not resolve: its uid, if any, is not in the case."""
     member, line_no, color, note, created, guid, stamp, fp, detached, uid, _orphan = one
-    if uid is not None:
-        row = conn.execute("SELECT id FROM bookmark WHERE uid = ?", (uid,)).fetchone()
-        if row is not None:
-            claimed.add(row[0])
-            return "existing"
     collection_id = _collection_for(conn, guid, stamp)
     if collection_id is None:
         return "unmatched"
