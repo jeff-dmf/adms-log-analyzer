@@ -373,3 +373,81 @@ def test_unresolvable_draft_exits_with_an_error(tmp_path, capsys, monkeypatch):
     assert mine("--case-db", str(db), "--family", "GIZMO", "--out", str(out_file)) == 1
     assert "synthetic failure" in capsys.readouterr().err and not out_file.exists()
     monkeypatch.setattr(mt, "load_draft", real)
+
+
+# --- hostile numeric/text columns and the stderr summary ---------------------------------------
+
+HOSTILE_VALUES = [
+    "0\npayload_defaults = {}\n#",
+    "0\x00",
+    "9" * 5000,
+    1.5,
+    b"\x00\xff\nx = 1",
+]
+
+
+def _sig_case(tmp_path: Path, column: str, value) -> Path:
+    db = build_case(tmp_path / "c.sqlite", {"GADGET": OTHER + ["Other thing 1", "Other thing 1"]})
+    conn = sqlite3.connect(db)
+    conn.execute(f"UPDATE unknown_sig SET {column} = ? WHERE signature LIKE 'Gizmo%'", (value,))
+    conn.commit()
+    conn.close()
+    return db
+
+
+@pytest.mark.parametrize("column", ["n", "first_entry_id", "signature"])
+@pytest.mark.parametrize("value", HOSTILE_VALUES)
+def test_hostile_numeric_columns_never_reach_the_output(tmp_path, capsys, column, value):
+    db = _sig_case(tmp_path, column, value)
+    rc = mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1")
+    cap = capsys.readouterr()
+    if rc == 0:
+        doc = tomllib.loads(cap.out)
+        assert set(doc) == EXPECTED_TOP and "payload_defaults" not in doc
+        for tpl in doc["template"]:
+            assert set(tpl) <= EXPECTED_KEYS
+        mt.load_draft(cap.out, check_examples=True)
+        for line in cap.out.splitlines():
+            assert "payload_defaults" not in line or line.startswith("#")
+    else:
+        assert rc == 1 and cap.out == ""
+
+
+@pytest.mark.parametrize("column", ["n", "first_entry_id"])
+@pytest.mark.parametrize("value", [v for v in HOSTILE_VALUES if v != "0\x00"])  # that one is stored as 0
+def test_invalid_integer_rows_are_skipped_with_a_warning(tmp_path, capsys, column, value):
+    db = _sig_case(tmp_path, column, value)
+    assert mine("--case-db", str(db), "--family", "GADGET", "--min-count", "1") == 0
+    cap = capsys.readouterr()
+    doc = tomllib.loads(cap.out)
+    assert len(doc["template"]) == 1 and "ignored because of invalid data" in cap.err
+    assert column in cap.err and "payload_defaults" not in cap.err
+
+
+def test_all_rows_invalid_is_an_error_with_the_warning(tmp_path, capsys):
+    db = build_case(tmp_path / "c.sqlite", {"GIZMO": OTHER})
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE unknown_sig SET first_entry_id = '0\npayload_defaults = {}\n#'")
+    conn.commit()
+    conn.close()
+    assert mine("--case-db", str(db), "--family", "GIZMO", "--min-count", "1") == 1
+    cap = capsys.readouterr()
+    assert cap.out == "" and "invalid data" in cap.err
+
+
+def test_dropped_candidates_are_summarized_on_stderr(tmp_path, capsys):
+    msgs = ["Value 0x1", "Value 0x1", "Value 0x2", "Value 11", "Value 12"]
+    db = build_case(tmp_path / "c.sqlite", {"OVER": msgs})
+    out_file = tmp_path / "o.toml"
+    assert mine("--case-db", str(db), "--family", "OVER", "--min-count", "1", "--out", str(out_file)) == 0
+    err = capsys.readouterr().err
+    assert "2 signature groups, 1 active templates, 1 commented out as SKIPPED" in err
+    assert "SKIPPED OVER-002" in err and "conflicts with OVER-001" in err
+    assert "wrote 1 active draft templates" in err and "1 SKIPPED" in err
+    catalog = mt.load_draft(out_file.read_text(encoding="utf-8"), check_examples=True)
+    assert len(catalog.families["OVER"].templates) == 1
+
+
+def test_no_summary_when_nothing_was_dropped(case_db, capsys):
+    assert mine("--case-db", str(case_db), "--family", "WIDGET", "--min-count", "1") == 0
+    assert "summary" not in capsys.readouterr().err

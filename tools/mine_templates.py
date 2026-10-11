@@ -85,6 +85,9 @@ _N_STRICT = r"\d+(?:\.\d+)?"
 _N_LOOSE = r"[\d.]+"
 
 
+MAX_WARNINGS_SHOWN = 10
+
+
 @dataclass
 class Group:
     """One signature of one family, with its examples."""
@@ -338,23 +341,48 @@ def open_case(path: Path) -> sqlite3.Connection:
 def family_totals(conn: sqlite3.Connection) -> list[tuple[str, int, int]]:
     """``(family, signatures, records)`` for every family with unknown records."""
     rows = conn.execute(
-        "SELECT family, count(*), sum(n) FROM unknown_sig GROUP BY family ORDER BY sum(n) DESC, family"
+        "SELECT family, count(*), sum(n) FROM unknown_sig WHERE typeof(family) = 'text' "
+        "GROUP BY family ORDER BY sum(n) DESC, family"
     ).fetchall()
-    return [(r[0], r[1], r[2]) for r in rows]
+    return [(r[0], r[1], r[2] if isinstance(r[2], int) else 0) for r in rows]
 
 
-def read_groups(conn: sqlite3.Connection, family: str, min_count: int, limit: int) -> list[Group]:
+def _is_int(value: object) -> bool:
+    """True for a real integer (SQLite columns are dynamically typed: bool/float/text/bytes are not)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def read_groups(
+    conn: sqlite3.Connection, family: str, min_count: int, limit: int, warnings: list[str] | None = None
+) -> list[Group]:
+    """The signature groups of a family. Rows with a wrong column type are skipped (noted in ``warnings``)."""
     rows = conn.execute(
         "SELECT family, signature, n, first_entry_id FROM unknown_sig WHERE family = ? AND n >= ? "
         "ORDER BY n DESC, signature LIMIT ?",
         (family, min_count, limit),
     ).fetchall()
-    groups = [Group(r[0], r[1], r[2], r[3]) for r in rows]
+    groups: list[Group] = []
+    for r in rows:
+        bad = [
+            name
+            for name, ok in (
+                ("family", isinstance(r[0], str)),
+                ("signature", isinstance(r[1], str)),
+                ("n", _is_int(r[2]) and r[2] >= 1),
+                ("first_entry_id", _is_int(r[3])),
+            )
+            if not ok
+        ]
+        if bad:
+            if warnings is not None:
+                warnings.append(f"unknown_sig row skipped: invalid value in column {', '.join(bad)}")
+            continue
+        groups.append(Group(r[0], r[1], r[2], r[3]))
     for group in groups:
         row = conn.execute("SELECT msg, flags FROM entry WHERE id = ?", (group.first_entry_id,)).fetchone()
-        if row is not None:
+        if row is not None and isinstance(row[0], str):
             group.examples.append(row[0].strip())
-            group.first_has_cont = bool(row[1] & 2)
+            group.first_has_cont = _is_int(row[1]) and bool(row[1] & 2)
     _fill_examples(conn, groups)
     return groups
 
@@ -366,13 +394,14 @@ def _unknown_messages(conn: sqlite3.Connection, family: str) -> Iterator[str]:
         (family, MAX_SCAN_ROWS),
     )
     for (msg,) in cursor:
-        yield msg
+        if isinstance(msg, str):  # the column is dynamically typed
+            yield msg
 
 
 def _fill_examples(conn: sqlite3.Connection, groups: list[Group]) -> None:
     """Add distinct examples (up to ``MAX_EXAMPLES``) by scanning the family's unknown records."""
     wanted = {g.signature: g for g in groups if g.count > 1 and len(g.examples) < MAX_EXAMPLES}
-    if not wanted:
+    if not wanted or not groups:
         return
     for msg in _unknown_messages(conn, groups[0].family):
         text = msg.strip()
@@ -395,7 +424,7 @@ def make_code(family: str) -> str:
 
 
 def _block(d: Draft) -> str:
-    note = f"# {d.group.count} records, first entry id {d.group.first_entry_id}"
+    note = f"# {int(d.group.count)} records, first entry id {int(d.group.first_entry_id)}"
     if d.group.first_has_cont:
         note += ", has continuation lines"
     head = f"{note}\n# signature: {comment_text(d.group.signature)}\n"
@@ -411,7 +440,16 @@ def _assemble(family: str, drafts: list[Draft]) -> str:
 
 
 def render(family: str, groups: Iterable[Group], source: str, shown: int, total: int) -> str:
-    """The TOML text: header, one block per signature, skipped ones as comments.
+    """Same as :func:`render_drafts`, keeping only the text."""
+    return render_drafts(family, groups, source, shown, total)[0]
+
+
+def render_drafts(
+    family: str, groups: Iterable[Group], source: str, shown: int, total: int
+) -> tuple[str, list[Draft]]:
+    """The TOML text and the drafts (active ones have a body, the others a ``skipped`` reason).
+
+    Header, one block per signature, skipped ones as comments.
 
     The result always loads with ``check_examples=True`` next to ``_common``: templates that
     conflict with each other are commented out (lowest record count first) until it does;
@@ -422,8 +460,8 @@ def render(family: str, groups: Iterable[Group], source: str, shown: int, total:
     out = [
         f"# DRAFT templates for family {comment_text(family)}, mined from {comment_text(source)}.",
         f"# WARNING: {WARNING}",
-        f"# {shown} of {total} signatures, most frequent first. Starting point only: fill class, sev,",
-        "# title, field names, keys and counter_examples, then merge into src/dmslog/adapters/.",
+        f"# {int(shown)} of {int(total)} signatures, most frequent first. Starting point only: fill",
+        "# class, sev, title, field names, keys and counter_examples, then merge into src/dmslog/adapters/.",
         "# Validate with load_catalog(check_examples=True) (docs/FAMILIA-NOVA.md, step 4).",
         "",
     ]
@@ -431,7 +469,7 @@ def render(family: str, groups: Iterable[Group], source: str, shown: int, total:
         text = _assemble(family, drafts)
         loser = _next_conflict(family, text, drafts)
         if loser is None:
-            return "\n".join(out) + "\n" + text
+            return "\n".join(out) + "\n" + text, drafts
         draft, reason = loser
         draft.body, draft.skipped = "", reason
 
@@ -522,6 +560,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def summarize(drafts: list[Draft], warnings: list[str]) -> list[str]:
+    """Lines for stderr; empty when nothing was skipped or discarded."""
+    skipped = [d for d in drafts if not d.body]
+    if not skipped and not warnings:
+        return []
+    lines = [
+        f"summary: {len(drafts)} signature groups, {len(drafts) - len(skipped)} active templates, "
+        f"{len(skipped)} commented out as SKIPPED"
+    ]
+    lines += [
+        f"  SKIPPED {comment_text(d.code)} ({int(d.group.count)} records): {comment_text(d.skipped)}"
+        for d in skipped
+    ]
+    if warnings:
+        lines.append(f"  {len(warnings)} unknown_sig row(s) ignored because of invalid data:")
+        lines += [f"    {comment_text(w)}" for w in warnings[:MAX_WARNINGS_SHOWN]]
+        if len(warnings) > MAX_WARNINGS_SHOWN:
+            lines.append(f"    ... and {len(warnings) - MAX_WARNINGS_SHOWN} more")
+    return lines
+
+
 def run(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.min_count < 1 or args.limit < 1:
@@ -540,27 +599,35 @@ def run(argv: list[str] | None = None) -> int:
             if len(totals) > 1:
                 print("error: several families have unknown records; pass --family:", file=sys.stderr)
                 for name, signatures, records in totals:
-                    print(f"  {name}: {signatures} signatures, {records} records", file=sys.stderr)
+                    line = f"  {comment_text(name)}: {signatures} signatures, {records} records"
+                    print(line, file=sys.stderr)
                 return EXIT_USAGE
             family = totals[0][0] if totals else None
         known = {t[0]: t for t in totals}
         if family is None or family not in known:
             print(f"error: no unknown records{f' for family {family}' if family else ''}", file=sys.stderr)
             return EXIT_FAILED
-        groups = read_groups(conn, family, args.min_count, args.limit)
+        warnings: list[str] = []
+        groups = read_groups(conn, family, args.min_count, args.limit, warnings)
     finally:
         conn.close()
     if not groups:
+        for line in summarize([], warnings):
+            print(line, file=sys.stderr)
         print(f"error: no signature of {family} reaches --min-count {args.min_count}", file=sys.stderr)
         return EXIT_FAILED
     try:
-        text = render(family, groups, Path(db).name, len(groups), known[family][1])
+        text, drafts = render_drafts(family, groups, Path(db).name, len(groups), known[family][1])
     except MineError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_FAILED
+    for line in summarize(drafts, warnings):
+        print(line, file=sys.stderr)
     if args.out is not None:
         args.out.write_text(text, encoding="utf-8", newline="\n")
-        print(f"wrote {len(groups)} draft templates to {args.out}", file=sys.stderr)
+        active = sum(1 for d in drafts if d.body)
+        extra = f" ({len(drafts) - active} SKIPPED, commented out)" if active != len(drafts) else ""
+        print(f"wrote {active} active draft templates to {args.out}{extra}", file=sys.stderr)
     else:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
         sys.stdout.write(text)
