@@ -58,7 +58,7 @@ from typing import Any
 from .. import __version__, messages
 from ..parse.envelope import LEVEL_NAMES
 from ..store import query
-from .redact import Profile, Redactor, default_profile
+from .redact import CATEGORIES, Profile, Redactor, default_profile
 
 DEFAULT_MAX_BYTES = 30_000
 MIN_MAX_BYTES = 2_000
@@ -739,7 +739,14 @@ class _Builder:
             known["host"] = [m.strip() for m in info.machine.split(",") if m.strip()]
         if info.accounts:
             known["user"] = sorted(info.accounts)
-        probe = Redactor(Profile(categories=dict(profile.categories), payload_names=()), known=known)
+        # The probe runs the strict nets, except in standard mode with every category off: there it
+        # redacts nothing, so every safe catalog name or code stays an exception (as it always has).
+        # In strict mode the nets stay on with every category off, so the exceptions stay narrow.
+        any_on = any(profile.enabled(c) for c in CATEGORIES)
+        probe_mode = "strict" if profile.mode == "strict" or any_on else "standard"
+        probe = Redactor(
+            Profile(categories=dict(profile.categories), payload_names=(), mode=probe_mode), known=known
+        )
         families, operations = _catalog_names()
         candidates: set[str] = set()
         for event in events:

@@ -10,6 +10,7 @@ leaves the text untouched. Every value below is fictitious.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -92,3 +93,43 @@ def test_only_the_explicit_option_exports_the_text_untouched(case_db):
     text = _export(case_db, anonymize=False)
     missing = [v for v in SENSITIVE_VALUES if v not in text]
     assert missing == []
+
+
+# -- automatic exceptions with every category off ------------------------------------------------
+
+
+def _case_with_catalog_code(tmp_path: Path, code: str) -> Path:
+    """The fixture case with ``code`` defined in its catalog, listed in the event and in a message."""
+    db = case_module.build_export_case(tmp_path / "catalog-code.sqlite")
+    conn = connect(db)
+    with conn:
+        conn.execute(
+            "INSERT INTO template(id, code, family, class, sev, pattern, fts, def_version)"
+            " VALUES (2, ?, 'AWFM', 'error', 2, 'x', 1, 'v')",
+            (code,),
+        )
+        conn.execute("UPDATE event SET detail = ? WHERE id = 1", (json.dumps({"error_codes": [code]}),))
+        conn.execute("UPDATE entry SET msg = ? WHERE id = 1", (f"Start SendWorks with code {code}",))
+    conn.close()
+    return db
+
+
+@pytest.mark.parametrize("mode", ["standard", "strict"])
+def test_catalog_code_listed_as_a_term_with_every_category_off(tmp_path, mode):
+    # standard is unchanged: with every category off the probe redacts nothing, so every catalog code is
+    # an automatic exception and wins over a user term; strict keeps only what its nets prove harmless
+    db = _case_with_catalog_code(tmp_path, SECRET)
+    profile = Profile(categories=dict(ALL_OFF), terms_word=(SECRET,), mode=mode)
+    text = _export(db, anonymize=True, profile=profile)
+    if mode == "standard":
+        assert SECRET in text and "<TERM-" not in text
+    else:
+        assert SECRET not in text
+
+
+@pytest.mark.parametrize("category", CATEGORIES)
+def test_every_category_alone_turns_the_probe_nets_on(category):
+    # the export's probe relies on it: before strict kept its nets with every category off, any category
+    # on meant a pattern rule, hence the nets; one category on must still mean an active probe
+    only = Profile(categories={c: c == category for c in CATEGORIES}, payload_names=())
+    assert Redactor(only).active
