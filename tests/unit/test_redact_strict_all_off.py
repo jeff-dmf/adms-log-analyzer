@@ -132,4 +132,7 @@ def test_every_category_alone_turns_the_probe_nets_on(category):
     # the export's probe relies on it: before strict kept its nets with every category off, any category
     # on meant a pattern rule, hence the nets; one category on must still mean an active probe
     only = Profile(categories={c: c == category for c in CATEGORIES}, payload_names=())
-    assert Redactor(only).active
+    redactor = Redactor(only)
+    # strict is always active, so also pin the premise itself: the category contributes a finder
+    assert redactor._finders, f"category {category!r} has no finder"
+    assert redactor.active
