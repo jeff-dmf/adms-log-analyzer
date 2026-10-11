@@ -49,4 +49,4 @@ Nenhum vazamento de categoria habilitada nos cenários anonimizados padrão (s01
 
 ## Conclusão
 
-Com anonimização padrão (strict), os exports da fixture não contêm GUID, IPv4, host, usuário, URL, placa, e-mail, telefone nem os valores literais da lista sensível, inclusive dentro do payload XML. Com uma categoria desligada, os valores passam (em standard, sempre; em strict, para ticket e mrid). O mapa local não aparece no `.txt`, e o arquivo sai em UTF-8 sem BOM com CRLF. Pendência: achado 1 (decidir se o standard deve avisar sobre termos não configurados). O achado 2 foi corrigido.
+Com anonimização padrão (strict), os exports da fixture não contêm GUID, IPv4, host, usuário, URL, placa, e-mail, telefone nem os valores literais da lista sensível, inclusive dentro do payload XML. Com uma categoria desligada, os valores passam em standard; em strict, depois do conserto do achado 2, o valor vira `<VALUE-n>` (antes, ticket e mrid passavam). O mapa local não aparece no `.txt`, e o arquivo sai em UTF-8 sem BOM com CRLF. Pendência: achado 1 (decidir se o standard deve avisar sobre termos não configurados). O achado 2 foi corrigido.
