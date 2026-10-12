@@ -6,6 +6,7 @@ The section starts at the level-2 heading ``## [VERSION]`` (literal comparison; 
 `` - date`` suffix is allowed) and ends at the next level-2 heading (any line starting with ``## ``).
 Exit 1 when the version has no section, more than one section, or an empty one.
 """
+
 from __future__ import annotations
 
 import argparse

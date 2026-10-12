@@ -25,7 +25,11 @@ def pyz(tmp_path, monkeypatch):
 def test_smoke_ingest_runs_against_the_built_pyz(pyz):
     result = subprocess.run(
         [sys.executable, str(PACKAGING / "smoke_ingest.py"), sys.executable, "-I", str(pyz)],
-        capture_output=True, text=True, encoding="utf-8", timeout=180, check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "page returns at least one row" in result.stdout

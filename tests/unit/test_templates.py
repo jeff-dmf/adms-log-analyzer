@@ -571,7 +571,10 @@ def _classify_cold_and_warm(ts, text):
 def test_template_applies_only_to_messages_that_fit_its_window(window):
     ts = _only(_REVIEW_RX, window)
     fits = "a" + "x" * (window - 3) + "bc"  # exactly `window` characters
-    assert len(fits) == window and _classify_cold_and_warm(ts, fits).fields == {"x": "x" * (window - 3), "y": ""}
+    assert len(fits) == window and _classify_cold_and_warm(ts, fits).fields == {
+        "x": "x" * (window - 3),
+        "y": "",
+    }
     assert _classify_cold_and_warm(_only(_REVIEW_RX, window), fits + "EXTRA") is None
     assert ts.classify_text(fits + "c") is None
     # the quadratic reviewer pattern itself, at the largest window that fits the budget
@@ -694,7 +697,9 @@ def test_class_and_capture_limits_are_the_documented_values():
     with pytest.raises(UnsafeRegexError, match="nested deeper"):
         T._compile_regex("^" + _nested_captures(4) + "$", src="t", where="X-001", window=128)
     with pytest.raises(InvalidRegexError, match="more than 24"):
-        T._compile_regex("^" + "".join(f"(?P<v{i}>x)" for i in range(25)) + "$", src="t", where="X-001", window=128)
+        T._compile_regex(
+            "^" + "".join(f"(?P<v{i}>x)" for i in range(25)) + "$", src="t", where="X-001", window=128
+        )
 
 
 @pytest.mark.parametrize("ch", [chr(0x10000), chr(0x1005D)], ids=["first_range", "last_range"])
@@ -708,7 +713,10 @@ def test_pattern_at_the_limits_is_accepted_and_fast(ch):
     assert accepted, "the counter-case must be accepted at some window"
     window = accepted[0]
     pat = T.re.compile(rx)
-    for n in (*(n for n in (64, 256, 1024) if n < window), window):  # escalating: abort at the first slow probe
+    for n in (
+        *(n for n in (64, 256, 1024) if n < window),
+        window,
+    ):  # escalating: abort at the first slow probe
         t0 = time.perf_counter()
         pat.match(ch * (n - 1) + "!")
         dt = time.perf_counter() - t0
@@ -1264,7 +1272,9 @@ def _walk_all(items):
 
 
 _ATTACK_SIZES = (64, 512, 1024, T.MAX_MATCH_CHARS)
-_ATTACK_LIMIT = 0.25  # seconds per probe: catastrophe threshold (locally the worst shipped regex takes a few ms)
+_ATTACK_LIMIT = (
+    0.25  # seconds per probe: catastrophe threshold (locally the worst shipped regex takes a few ms)
+)
 
 
 def _probe_catalog() -> None:
@@ -1364,7 +1374,9 @@ def test_stats_csv_single_line_above_the_cap_is_reported_cut():
     assert got.fields["rows"] == [] and got.fields["n_rows"] == 0 and got.fields["rows_cut"] is True
 
 
-@pytest.mark.parametrize("prefix", ["\n", "[methodname, call count, request total size, response total size]\n", "\n\n"])
+@pytest.mark.parametrize(
+    "prefix", ["\n", "[methodname, call count, request total size, response total size]\n", "\n\n"]
+)
 def test_stats_csv_cut_is_reported_after_an_empty_line_or_header(prefix):
     cont = prefix + "M" * (T.MAX_CONT_CHARS + 10) + ",1,2,3\n"
     got = _csv_template().for_family("X", sensitive=False).classify_text("By count:", cont)

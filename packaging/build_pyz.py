@@ -6,6 +6,7 @@ order with fixed timestamps and permissions, and no .pyc files are included.
 The commit hash is written to dmslog/_build_info.py inside the archive only (the repo
 checkout is never modified). Set DMSLOG_COMMIT to override the detected hash.
 """
+
 from __future__ import annotations
 
 import os
@@ -39,6 +40,7 @@ def detect_commit() -> str:
     if override:
         return override
     try:
+
         def git(*args: str) -> str:
             return subprocess.run(
                 ["git", *args], cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8"

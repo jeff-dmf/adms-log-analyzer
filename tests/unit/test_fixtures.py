@@ -74,9 +74,7 @@ def test_edge_case_bytes():
     fx = mf.build_all()
     assert fx["bom_crlf.log"].startswith(mf.BOM) and b"\r\n" in fx["bom_crlf.log"]
     assert b"\r" not in fx["lf_only.log"] and not fx["lf_only.log"].startswith(mf.BOM)
-    assert b"[TID=" not in b"".join(
-        line for line in fx["no_tid.log"].splitlines(True) if b"PSAttach" in line
-    )
+    assert b"[TID=" not in b"".join(line for line in fx["no_tid.log"].splitlines(True) if b"PSAttach" in line)
     assert b" - \tManaged BLT" in fx["leading_tab.log"]
     assert fx["big_dump.log"].count(b"\n") >= 1600 and len(fx["big_dump.log"]) < 32_000
     assert not fx["truncated.log"].endswith(b"\n")

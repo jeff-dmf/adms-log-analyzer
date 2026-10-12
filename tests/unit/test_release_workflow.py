@@ -1,4 +1,5 @@
 """Static checks of the release workflow: it must never ship the knowledge pack (ARQUITETURA D10)."""
+
 from __future__ import annotations
 
 import re
@@ -48,7 +49,9 @@ def _notes(tmp_path, changelog: str, version: str = "0.1.0"):
     path.write_text(changelog, encoding="utf-8")
     return subprocess.run(
         [sys.executable, "-I", str(SCRIPT), version, "--changelog", str(path)],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 

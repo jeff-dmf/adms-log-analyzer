@@ -1,4 +1,5 @@
 """The no-pack guard recognises the pack by content, looks inside archives and fails safe."""
+
 import importlib.util
 import io
 import json
@@ -16,13 +17,15 @@ ROOT = Path(__file__).resolve().parents[2]
 GUARD = ROOT / "packaging" / "check_no_pack.py"
 MINI_PACK = ROOT / "tests" / "fixtures" / "knowledge" / "mini_pack"
 FIXTURE_REL = Path("tests", "fixtures", "knowledge", "mini_pack")
-NOTICE = ("This pack is derived from Schneider Electric documentation (synthetic wording for the test). "
-          "The repository must stay private; do not publish this pack, nor artifacts that embed it.")
-MANIFEST = ('{"schema_version": 1, "generator_version": "1.0.0", "vault_commit": null, '
-            f'"notice": "{NOTICE}", "files": {{}}}}').encode()
-MANIFEST_NO_NOTICE_TEXT = (b'{"schema_version": 1, "generator_version": "1.0.0", '
-                           b'"notice": "x", "files": {}}')
-
+NOTICE = (
+    "This pack is derived from Schneider Electric documentation (synthetic wording for the test). "
+    "The repository must stay private; do not publish this pack, nor artifacts that embed it."
+)
+MANIFEST = (
+    '{"schema_version": 1, "generator_version": "1.0.0", "vault_commit": null, '
+    f'"notice": "{NOTICE}", "files": {{}}}}'
+).encode()
+MANIFEST_NO_NOTICE_TEXT = b'{"schema_version": 1, "generator_version": "1.0.0", "notice": "x", "files": {}}'
 
 
 def load_packaging_module(name):
@@ -102,8 +105,13 @@ def test_a_single_renamed_data_file_is_caught_by_shape(repo):
 
 
 def test_the_four_data_files_together_in_another_folder_are_caught(repo):
-    track(repo, {f"elsewhere/{f}": b"{}" for f in
-                 ("adapters.json", "error_codes.json", "operations.json", "parameters.json")})
+    track(
+        repo,
+        {
+            f"elsewhere/{f}": b"{}"
+            for f in ("adapters.json", "error_codes.json", "operations.json", "parameters.json")
+        },
+    )
     assert_blocked(run_guard(repo), "elsewhere/", "data file set")
 
 
@@ -217,6 +225,7 @@ def test_unreadable_tracked_file_is_a_problem():
 
 # --- accidental escapes: formatting, encoding, damage, key case -----------------------------------
 
+
 def _encoded(text, encoding):
     return text.encode(encoding)
 
@@ -271,8 +280,9 @@ def test_manifest_key_case_does_not_matter(repo, spelling):
 
 
 def test_manifest_with_other_key_spellings_is_caught(repo):
-    renamed = (MANIFEST.replace(b'"schema_version"', b'"Schema-Version"')
-               .replace(b'"generator_version"', b'"GENERATOR VERSION"'))
+    renamed = MANIFEST.replace(b'"schema_version"', b'"Schema-Version"').replace(
+        b'"generator_version"', b'"GENERATOR VERSION"'
+    )
     track(repo, {"kb/info.dat": renamed.replace(NOTICE.encode(), b"x")})
     assert_blocked(run_guard(repo), "kb/info.dat", "knowledge pack manifest")
 
@@ -286,16 +296,19 @@ def test_data_file_key_case_does_not_matter(repo):
 
 def test_legitimate_json_like_files_pass(repo):
     shutil.copytree(MINI_PACK, repo / FIXTURE_REL)
-    track(repo, {
-        "package.json": '{"name": "x", "version": "1.0.0", "files": ["dist"], "scripts": {}}',
-        "pkg/broken.json": '{"name": "x", "files": ["a"',
-        "pkg/list.json": '[{"a": 1}, {"b": 2}]',
-        "pkg/spaced.json": b"\n" + b" " * 40 + b'{"version": 1}',
-        "pkg/utf16.json": b"\xff\xfe" + '{"hello": "world"}'.encode("utf-16-le"),
-        "pkg/utf16-text.txt": b"\xff\xfe" + "just some text".encode("utf-16-le"),
-        "pkg/notes.txt": "{ a plain note, not json",
-        "pkg/blob.bin": bytes(range(256)) * 8,
-    })
+    track(
+        repo,
+        {
+            "package.json": '{"name": "x", "version": "1.0.0", "files": ["dist"], "scripts": {}}',
+            "pkg/broken.json": '{"name": "x", "files": ["a"',
+            "pkg/list.json": '[{"a": 1}, {"b": 2}]',
+            "pkg/spaced.json": b"\n" + b" " * 40 + b'{"version": 1}',
+            "pkg/utf16.json": b"\xff\xfe" + '{"hello": "world"}'.encode("utf-16-le"),
+            "pkg/utf16-text.txt": b"\xff\xfe" + "just some text".encode("utf-16-le"),
+            "pkg/notes.txt": "{ a plain note, not json",
+            "pkg/blob.bin": bytes(range(256)) * 8,
+        },
+    )
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     result = run_guard(repo)
     assert result.returncode == 0, result.stderr
@@ -344,12 +357,15 @@ def test_data_file_behind_a_long_blank_prefix_is_caught(repo, encoding):
 
 def test_blank_and_binary_files_do_not_trip_the_guard(repo):
     shutil.copytree(MINI_PACK, repo / FIXTURE_REL)
-    track(repo, {
-        "pkg/blank.txt": b" " * 100_000,
-        "pkg/blank16.txt": (" " * 100_000).encode("utf-16"),
-        "pkg/big.bin": bytes(range(256)) * 8192,
-        "pkg/legit.json": b" " * 5000 + b'{"name": "x", "version": 1}',
-    })
+    track(
+        repo,
+        {
+            "pkg/blank.txt": b" " * 100_000,
+            "pkg/blank16.txt": (" " * 100_000).encode("utf-16"),
+            "pkg/big.bin": bytes(range(256)) * 8192,
+            "pkg/legit.json": b" " * 5000 + b'{"name": "x", "version": 1}',
+        },
+    )
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     result = run_guard(repo)
     assert result.returncode == 0, result.stderr
@@ -368,8 +384,11 @@ def test_unnormalised_constants_are_detected(monkeypatch):
     guard = load_packaging_module("check_no_pack")
     monkeypatch.setattr(guard, "KEY_PROCESS_MAP", "process_map")
     monkeypatch.setattr(guard, "_SIGNATURES", {"error_codes": {"adms_severity"}})
-    assert guard.unnormalized_constants() == ["KEY_PROCESS_MAP", "section:error_codes",
-                                              "error_codes.adms_severity"]
+    assert guard.unnormalized_constants() == [
+        "KEY_PROCESS_MAP",
+        "section:error_codes",
+        "error_codes.adms_severity",
+    ]
 
 
 # Python embeddable stdlib zip: ``zipimport.pyc`` holds the zip signatures as data constants.
@@ -389,7 +408,11 @@ def is_zipfile_flavour(request, monkeypatch):
 
 def embeddable_stdlib_zip(extra=None):
     members = {
-        "zipimport.pyc": b"\xcb\x0d\x0d\x0a" + b"\x00" * 12 + ZIP_SIGNATURES + b"\xe3" * 300 + ZIP_SIGNATURES
+        "zipimport.pyc": b"\xcb\x0d\x0d\x0a"
+        + b"\x00" * 12
+        + ZIP_SIGNATURES
+        + b"\xe3" * 300
+        + ZIP_SIGNATURES
         + BOGUS_END_RECORD,
         "truncated.pyc": b"\xcb\x0d\x0d\x0a" + b"\x07" * 40 + b"PK\x05\x06" + b"\x00" * 10,
         "os.pyc": b"\xcb\x0d\x0d\x0a" + b"\x00" * 200,
