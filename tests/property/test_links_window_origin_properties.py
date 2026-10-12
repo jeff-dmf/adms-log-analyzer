@@ -192,6 +192,10 @@ def test_window_origin_memory_bound_never_guesses(requests, strays, callbacks, b
                 assert summary.links + decided + summary.dropped == len(b_rows)
                 if summary.dropped == 0:
                     assert got == want
+                if a_rows:  # requests exist: a lone callback is never "unmatched", whatever the bound
+                    assert summary.unmatched == 0
+                else:
+                    assert summary.out_of_window == 0
             finally:
                 conn.close()
     finally:

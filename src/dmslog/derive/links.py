@@ -658,6 +658,7 @@ def _window_origin_links(
         if eid == _OVERFLOW:
             # the later anchors cannot be ordered: decide nothing from here on in this partition
             overflow = True
+            n_a += 1  # requests exist even if none was emitted yet: earlier lone ``b`` are out_of_window
             counters.dropped += sum(1 for ev in events if ev[1])
             break
         if not is_b:

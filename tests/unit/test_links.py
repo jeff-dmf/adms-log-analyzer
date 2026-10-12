@@ -968,6 +968,19 @@ def test_window_origin_overflow_of_requests_in_flight_stops_linking(make, monkey
     assert s.dropped == 2 and s.errors == []
 
 
+def test_window_origin_overflow_before_any_anchor_keeps_out_of_window(make, monkeypatch):
+    """Re-review of PR #91: the overflow hides every anchor, but requests exist: not ``unmatched``."""
+    monkeypatch.setattr(links_mod, "MAX_OPEN_KEYS", 1)
+    c = make(WINDOW_ORIGIN)
+    c.add("TST-002", 500, tid=9)  # before every request
+    hazard_op(c, 1000, dur=8000)
+    hazard_op(c, 1001, dur=8000, tid=2)  # two in flight: overflow before the first anchor is emitted
+    c.add("TST-002", 9500, tid=9)
+    s = c.run()
+    assert c.links() == []
+    assert counts(s) == (0, 0, 0, 0, 1, 1)
+
+
 def test_window_origin_queries_never_sort_in_a_temp_btree(make):
     """Review of PR #91: anchors and callbacks are read in index order (ix_entry_tpl_ts), no ORDER BY sort."""
     c = make(WINDOW_ORIGIN)
