@@ -1,0 +1,216 @@
+name: release
+
+# Release 0.1.0 and later: a pushed tag vX.Y.Z builds the public artifacts (never with the knowledge
+# pack), checks them, and publishes a GitHub Release. workflow_dispatch is a dry run: it builds and
+# checks everything and uploads a workflow artifact, but never creates a release (docs/RELEASE.md).
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+# Least privilege: only the publish job gets write access to contents.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Package version, and the tag must match it
+        id: version
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          init_version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/dmslog/__init__.py)
+          toml_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)
+          echo "src/dmslog/__init__.py: ${init_version}; pyproject.toml: ${toml_version}"
+          if ! [[ "${init_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::unexpected package version '${init_version}'"; exit 1
+          fi
+          if [ "${init_version}" != "${toml_version}" ]; then
+            echo "::error::__version__ and pyproject.toml disagree"; exit 1
+          fi
+          if [ "${EVENT}" = "push" ]; then
+            if [ "${REF_TYPE}" != "tag" ] || [ "${REF_NAME}" != "v${init_version}" ]; then
+              echo "::error::tag '${REF_NAME}' does not match package version v${init_version}"; exit 1
+            fi
+          fi
+          echo "version=${init_version}" >> "$GITHUB_OUTPUT"
+      - name: The CHANGELOG has a section for this version
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python packaging/release_notes.py "${VERSION}" > /dev/null
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check
+      - name: Guard - no knowledge pack tracked (ARQUITETURA D10)
+        run: python packaging/check_no_pack.py
+      - run: python -m pytest -q
+
+  build-linux:
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Build dmslog.pyz and the Linux tarball (no pack)
+        run: python packaging/build_linux.py
+      - name: Guard - no knowledge pack in the artifacts (ARQUITETURA D10)
+        run: python packaging/check_no_pack.py --artifact dist/dmslog.pyz dist/dmslog-linux.tar.gz
+      - name: Smoke test the zipapp
+        shell: bash
+        run: |
+          python3 -I dist/dmslog.pyz --version
+          python3 -I dist/dmslog.pyz info | tee info.txt
+          grep -q "^fts5: yes" info.txt
+          grep -q "^knowledge pack: not installed" info.txt
+          python packaging/smoke_health.py python3 -I dist/dmslog.pyz
+          python packaging/smoke_ingest.py python3 -I dist/dmslog.pyz
+      - name: Smoke test the tarball launcher
+        run: |
+          mkdir -p "$RUNNER_TEMP/linux-unpacked"
+          tar -xzf dist/dmslog-linux.tar.gz -C "$RUNNER_TEMP/linux-unpacked"
+          "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog" --version
+          python packaging/smoke_health.py "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog"
+          python packaging/smoke_ingest.py "$RUNNER_TEMP/linux-unpacked/dmslog-linux/dmslog"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux
+          path: |
+            dist/dmslog.pyz
+            dist/dmslog-linux.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      # Never pass --pack here: the public release has no knowledge pack (ARQUITETURA D10).
+      - run: python packaging/build_portable.py
+      - name: Guard - no knowledge pack in the portable folder and zip (ARQUITETURA D10)
+        run: >-
+          python packaging/check_no_pack.py --artifact dist/dmslog-portable-win64
+          dist/dmslog-portable-win64.zip dist/dmslog.pyz
+      - name: Smoke test the portable folder (embeddable Python, not the runner Python)
+        shell: pwsh
+        run: |
+          $dir = Join-Path $PWD "dist\dmslog-portable-win64"
+          & "$dir\dmslog.bat" --version
+          if ($LASTEXITCODE -ne 0) { throw "dmslog.bat --version failed" }
+          & "$dir\python\python.exe" -I -c "import sqlite3, zipfile, http.server; print(sqlite3.sqlite_version)"
+          if ($LASTEXITCODE -ne 0) { throw "embeddable Python stdlib check failed" }
+          $info = & "$dir\dmslog.bat" info
+          if ($LASTEXITCODE -ne 0) { throw "dmslog.bat info failed" }
+          $info
+          if (-not ($info -match "^fts5: yes")) { throw "FTS5 missing in the embeddable Python" }
+          if (-not ($info -match "^knowledge pack: not installed")) { throw "the public build must not ship a pack" }
+      - name: Smoke test dmslog.bat serve and ingest
+        shell: pwsh
+        run: |
+          python packaging/smoke_health.py (Join-Path $PWD "dist\dmslog-portable-win64\dmslog.bat")
+          if ($LASTEXITCODE -ne 0) { throw "serve smoke test failed" }
+          python packaging/smoke_ingest.py (Join-Path $PWD "dist\dmslog-portable-win64\dmslog.bat")
+          if ($LASTEXITCODE -ne 0) { throw "ingest smoke test failed" }
+      - name: Name the zip after the release version
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: cp dist/dmslog-portable-win64.zip "dist/dmslog-${VERSION}-windows-portable.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-windows
+          path: dist/dmslog-${{ needs.verify.outputs.version }}-windows-portable.zip
+          if-no-files-found: error
+
+  bundle:
+    # Assembles and re-checks the final files. This is the whole dry run: it also runs on dispatch.
+    runs-on: ubuntu-latest
+    needs: [verify, build-linux, build-windows]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: staging
+          merge-multiple: true
+      - name: Assemble the release files and checksums
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir release
+          cp staging/dmslog.pyz staging/dmslog-linux.tar.gz "staging/dmslog-${VERSION}-windows-portable.zip" release/
+          python packaging/release_notes.py "${VERSION}" --out release/NOTES.md
+          (cd release && sha256sum dmslog.pyz dmslog-linux.tar.gz "dmslog-${VERSION}-windows-portable.zip" > SHA256SUMS)
+          cat release/SHA256SUMS
+      - name: Guard - no knowledge pack in the final files (ARQUITETURA D10)
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: >-
+          python packaging/check_no_pack.py --artifact release/dmslog.pyz release/dmslog-linux.tar.gz
+          "release/dmslog-${VERSION}-windows-portable.zip"
+      - name: Verify the checksums and the zipapp version
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          (cd release && sha256sum -c SHA256SUMS)
+          test "$(python3 -I release/dmslog.pyz --version)" = "${VERSION}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-bundle
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    # Only on a pushed tag; a dispatch never publishes.
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    needs: [verify, bundle]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-bundle
+          path: release
+      - name: Create the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          gh release create "${TAG}" \
+            --verify-tag \
+            --title "dmslog ${VERSION}" \
+            --notes-file release/NOTES.md \
+            release/dmslog.pyz \
+            release/dmslog-linux.tar.gz \
+            "release/dmslog-${VERSION}-windows-portable.zip" \
+            release/SHA256SUMS
