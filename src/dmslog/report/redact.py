@@ -165,8 +165,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from dmslog.paths import private_mkdir
+
 PROFILE_FILENAME = "redaction.toml"
 MAP_FOLDER = "redaction-maps"
+_CASE_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 PROFILE_VERSION = 1
 DEFAULT_PROFILE_NAME = "default"
 MODES = ("strict", "standard")
@@ -378,7 +381,7 @@ _SAVE_LOCK = threading.Lock()
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private_mkdir(path.parent)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
     tmp = Path(tmp_name)
     try:
@@ -403,20 +406,54 @@ def save_profile(data_dir: str | os.PathLike[str], profile: Profile) -> None:
 def write_value_map(
     data_dir: str | os.PathLike[str], case: str, redactor: Redactor, stamp: str | None = None
 ) -> Path | None:
-    """Save the marker -> original map of one export under ``<data dir>/redaction-maps/``.
+    """Save the marker -> original map of one export under ``<data dir>/cases/<case>/redaction-maps/``.
 
+    The map holds the real values, so it lives inside the case folder: deleting the case deletes it.
     Returns the file written, or None when nothing was replaced. The file name is opaque (random):
     it carries neither the case nor any value; the case and the time are stored inside the file. The
     file is for the user to revert a marker; it must never be shared or exported.
+    ``case`` must be a valid case id (raises ValueError otherwise: it becomes a folder name).
     """
+    if not _CASE_FOLDER.fullmatch(case) or case[-1] in ".-":
+        raise ValueError(f"invalid case id: {case!r}")
     values = redactor.value_map()
     if not values:
         return None
     when = stamp or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    path = Path(data_dir) / MAP_FOLDER / f"{secrets.token_hex(12)}.map.json"
+    path = Path(data_dir) / "cases" / case / MAP_FOLDER / f"{secrets.token_hex(12)}.map.json"
     body = json.dumps({"case": case, "created": when, "values": values}, ensure_ascii=False, indent=1)
     _atomic_write(path, body.encode("utf-8", errors="backslashreplace"))  # lone surrogates as \\udxxx
     return path
+
+
+def remove_legacy_value_maps(data_dir: str | os.PathLike[str], case: str) -> int:
+    """Delete value maps of ``case`` left in the old shared ``<data dir>/redaction-maps/`` folder.
+
+    Before 0.1.0 the maps lived outside the case folder and survived the deletion of the case. Maps
+    whose ``case`` field equals ``case`` (case-insensitive) are removed; unreadable files and maps of
+    other cases are left alone. The folder is removed when it ends up empty. Returns the count removed.
+    """
+    folder = Path(data_dir) / MAP_FOLDER
+    removed = 0
+    try:
+        candidates = sorted(folder.glob("*.map.json"))
+    except OSError:
+        return 0
+    wanted = case.casefold()
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            owner = data.get("case") if isinstance(data, dict) else None
+            if isinstance(owner, str) and owner.casefold() == wanted:
+                path.unlink()
+                removed += 1
+        except (OSError, ValueError):
+            continue
+    try:
+        folder.rmdir()  # only succeeds when empty
+    except OSError:
+        pass
+    return removed
 
 
 # --------------------------------------------------------------------------- patterns

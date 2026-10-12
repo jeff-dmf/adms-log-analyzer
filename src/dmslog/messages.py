@@ -67,6 +67,11 @@ INGEST_NOT_FOUND = "cannot ingest: {error}"
 INGEST_UNSAFE = "cannot ingest: unsafe or invalid archive: {error}"
 INGEST_CONFLICT = "cannot add this collection to case {case}: {error}"
 INGEST_INVALID_CASE = "{error}"
+INGEST_NOT_ENOUGH_SPACE = (
+    "not enough free disk space to index: {free_mb} MB free in the data folder, "
+    "{needed_mb} MB needed ({factor}x the data to index); free some space or use --data-dir on another disk"
+)
+INGEST_LIMIT = "cannot ingest: {error}"
 
 INFO_CASES_NONE = "none"
 

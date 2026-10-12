@@ -21,13 +21,16 @@ Zip-bomb policy (applied on top of the listing limits of ``discover``):
   reject a member: ``relax_ratio_violations`` accepts it while its declared size is at most
   ``ratio_exempt_max_bytes`` (1 GiB). Bytes are streamed in constant memory and ``zipfile``
   never returns more than the declared size, so what such a member can cost is bounded by that
-  cap. Above the cap, a high ratio still rejects it.
+  cap. Above the cap, a high ratio still rejects it. The exempt members of one run also share an
+  aggregate cap (``RATIO_EXEMPT_MAX_TOTAL_BYTES``, 8 GiB): past it, further high-ratio members stay
+  rejected, so a small zip cannot be turned into an arbitrarily large database (review 8.2, S2).
 """
 
 from __future__ import annotations
 
 import codecs
 import itertools
+import shutil
 import zipfile
 from collections.abc import Iterable, Iterator
 from contextlib import closing
@@ -35,6 +38,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from types import TracebackType
 
+from dmslog import messages
 from dmslog.ingest.discover import (
     DEFAULT_MAX_MEMBER_BYTES,
     DEFAULT_MAX_MEMBERS,
@@ -47,6 +51,11 @@ from dmslog.ingest.fingerprint import HASH_SPAN
 
 CHUNK_SIZE = 1 << 20
 RATIO_EXEMPT_MAX_BYTES = 1024**3
+# Sum of the declared sizes of all members accepted despite their ratio, per ingestion run.
+RATIO_EXEMPT_MAX_TOTAL_BYTES = 8 * 1024**3
+# Free space required in the data folder before indexing: this many times the bytes to index
+# (the database plus the FTS index and the WAL are a few times the size of the text).
+FREE_SPACE_FACTOR = 3
 
 BOM_UTF16_LE = b"\xff\xfe"
 BOM_UTF16_BE = b"\xfe\xff"
@@ -69,6 +78,7 @@ class ReadLimits:
     max_member_bytes: int = DEFAULT_MAX_MEMBER_BYTES
     max_ratio: float = DEFAULT_MAX_RATIO
     ratio_exempt_max_bytes: int = RATIO_EXEMPT_MAX_BYTES
+    ratio_exempt_max_total_bytes: int = RATIO_EXEMPT_MAX_TOTAL_BYTES
     max_members: int = DEFAULT_MAX_MEMBERS
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES
 
@@ -90,14 +100,41 @@ class ReadBudget:
             raise ReadLimitError("total_bytes", f"run exceeded {self.limits.max_total_bytes} bytes read")
 
 
+class InsufficientDiskSpaceError(ReadLimitError):
+    """The data folder does not have enough free space to index the selected sources."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("disk_space", message)
+
+
+def check_free_space(folder: Path, bytes_to_index: int, factor: int = FREE_SPACE_FACTOR) -> None:
+    """Raise ``InsufficientDiskSpaceError`` when ``folder`` has under ``factor`` x ``bytes_to_index`` free."""
+    needed = bytes_to_index * factor
+    free = shutil.disk_usage(folder).free
+    if free < needed:
+        raise InsufficientDiskSpaceError(
+            messages.INGEST_NOT_ENOUGH_SPACE.format(
+                free_mb=free // (1024 * 1024), needed_mb=-(-needed // (1024 * 1024)), factor=factor
+            )
+        )
+
+
 def relax_ratio_violations(sources: Iterable[SourceInfo], limits: ReadLimits) -> list[SourceInfo]:
     """Accept ``ratio`` violations of members at most ``ratio_exempt_max_bytes`` long.
 
-    The caller must run ``resolve_scope`` again on the result so the default scope reflects it.
+    The members accepted in one call add up to at most ``ratio_exempt_max_total_bytes``; later ones
+    keep the violation. The caller must run ``resolve_scope`` again on the result so the default
+    scope reflects it.
     """
     out = []
+    accepted = 0
     for s in sources:
-        if s.limit_violation == "ratio" and s.size <= limits.ratio_exempt_max_bytes:
+        if (
+            s.limit_violation == "ratio"
+            and s.size <= limits.ratio_exempt_max_bytes
+            and accepted + s.size <= limits.ratio_exempt_max_total_bytes
+        ):
+            accepted += s.size
             s = replace(s, limit_violation=None)
         out.append(s)
     return out

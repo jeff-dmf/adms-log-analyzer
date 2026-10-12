@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tomllib
 import zipfile
 from collections.abc import Iterable, Iterator
@@ -474,6 +475,8 @@ def _scan_folder(root: Path, rules: RuleSet | _AliasedRules) -> Iterator[SourceI
                 st = full.stat()
             except OSError:
                 continue
+            if not stat.S_ISREG(st.st_mode):
+                continue  # FIFO, socket or device: opening one could block forever (docs: review 8.2, S1)
             member = normalize_member_name(full.relative_to(root).as_posix())
             yield _build(
                 root,

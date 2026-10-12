@@ -90,7 +90,7 @@ python3 dmslog.pyz export --case my-case --filter-json @filter.json --out report
   `--anonymize` is set); without it they are omitted.
 - `--out FILE` writes to a file; without it the report goes to stdout. `--max-bytes N` (default
   30000) limits one part; larger reports are split into numbered parts (`report-part1of3.txt`, ...).
-- With `--anonymize`, a value map is saved in the data directory (local only, never share it).
+- With `--anonymize`, a value map is saved in the case folder (`cases/<case>/redaction-maps/`, local only, never share it; deleting the case deletes it).
 
 ## Data directory
 

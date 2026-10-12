@@ -171,15 +171,15 @@ def test_the_default_export_is_the_original_text(client, server, demo, options):
     assert not (server.api.data_dir / "redaction-maps").exists()
 
 
-def test_value_map_goes_to_the_data_dir_only(client, server, demo):  # noqa: F811
+def test_value_map_goes_inside_the_case_folder(client, server, demo):  # noqa: F811
     data = client.post("/api/export", body())[1]
-    maps = list((server.api.data_dir / "redaction-maps").glob("*.map.json"))
+    maps = list((server.api.store.root / "Demo" / "redaction-maps").glob("*.map.json"))
     assert len(maps) == 1 and data["map_saved"] is True
     assert "Demo" not in maps[0].name  # the file name does not carry the case id
     values = json.loads(maps[0].read_text(encoding="utf-8"))["values"]
     assert values["<GUID-1>"] == case_module.GUID_A
     assert case_module.GUID_A not in data["parts"][0]["text"]
-    assert not list((server.api.store.root / "Demo").glob("*.json"))  # nothing inside the case folder
+    assert not (server.api.data_dir / "redaction-maps").exists()  # not in the shared folder any more
 
 
 def test_parts_when_the_report_is_larger_than_the_limit(client, server, demo):  # noqa: F811

@@ -64,8 +64,6 @@ MAX_PAGE_LIMIT = 500
 DEFAULT_PAGE_LIMIT = 200
 MAX_PATH_CHARS = 4096
 CASE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
-WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{n}" for n in range(1, 10)),
-                              *(f"lpt{n}" for n in range(1, 10))})  # fmt: skip
 SCOPES = (pipeline.SCOPE_DEFAULT, pipeline.SCOPE_ALL)
 SCOPE_LEAVES = frozenset({"source", "stream", "family", "ts"})
 _ENTRY_ID = re.compile(r"\d{1,18}\Z")
@@ -135,7 +133,7 @@ class CaseStore:
             not isinstance(value, str)
             or not CASE_ID_PATTERN.match(value)
             or value[-1] in ".-"
-            or value.split(".", 1)[0].lower() in WINDOWS_RESERVED
+            or pipeline.is_reserved_case_name(value)
         ):
             raise ApiError(400, "invalid_case_id", messages.API_INVALID_CASE_ID)
         return value
@@ -217,6 +215,7 @@ class CaseStore:
             raise ApiError(
                 409, "case_busy", messages.API_CASE_DELETE_FAILED.format(case=cid, error=exc)
             ) from exc
+        redact.remove_legacy_value_maps(self.data_dir, cid)  # maps written before they moved into the case
 
     def summary(self, case_id: str) -> dict[str, Any]:
         folder = self.root / case_id
