@@ -69,7 +69,8 @@ Examples (the codes are placeholders)::
 
 Execution: ``link_pending`` works per collection group. A group is recomputed only when the signature in
 ``meta['correlate.links.<group>']`` (sources of its streams, rules, template ids and, when a rule uses
-``origin``, the operation events of the streams) changed; an unchanged group writes nothing. The same meta
+``origin``, the operation events of the streams and a hash of the operation of every ``a`` record)
+changed; an unchanged group writes nothing. The same meta
 value keeps the counters of the last run per rule (``link_stats``). Recomputing deletes the links of this
 module's kinds that start in the group, inserts the new ones and stores the signature, all inside one
 SAVEPOINT. Candidates are read through ``ix_entry_tpl_ts`` by template id, one cursor per code, merged in
@@ -261,12 +262,35 @@ def _signature(
                 (st.id,),
             ).fetchone()
             parts.append([st.id, list(ops)])
+    for family in sorted(origin_families):
+        for rule in rules[family]:
+            if not _origin(rule) or _rule_problem(rule) is not None:
+                continue
+            for stream_ids in _partitions(streams, rule.get("scope", "stream"), family):
+                parts.append(_origin_digest(conn, rule, ids, stream_ids))
     parts.append({fam: [dict(r) for r in rules[fam]] for fam in sorted(rules)})
     defs = dict(conn.execute("SELECT code, def_version FROM template").fetchall())
     parts.append({c: [ids.get(c), defs.get(c)] for c in sorted(used)})
     row = conn.execute("SELECT value FROM meta WHERE key = 'entries_epoch'").fetchone()
     parts.append(row[0] if row else None)
     return _digest(*parts)
+
+
+def _origin_digest(conn: sqlite3.Connection, rule: Any, ids: dict[str, int], stream_ids: list[int]) -> str:
+    """Streaming hash of the ``a`` records of an origin rule with the operation that holds each of them.
+
+    The aggregates of the event table do not see an ``a`` record moved to another operation (same event ids,
+    same count, same starts); this hash does: it covers ``(entry id, key value, operation id, operation
+    start)`` of every ``a`` record, in O(number of ``a`` records) time and constant memory.
+    """
+    h = hashlib.sha1()
+    for code in sorted(set(_codes(rule["a"]))):
+        if code not in ids:
+            continue
+        h.update(code.encode("utf-8"))
+        for row in _keyed_rows(conn, ids[code], stream_ids, rule["key"], with_operation=True):
+            h.update(json.dumps(row[1:], default=str).encode("utf-8"))
+    return h.hexdigest()
 
 
 # --------------------------------------------------------------------------- candidate reading

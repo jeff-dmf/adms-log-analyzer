@@ -718,3 +718,46 @@ def test_old_meta_format_recomputes_once(make):
     assert links_mod.link_stats(c.conn, 1) == {}
     assert c.run().groups == 1
     assert c.run().groups == 0
+
+
+def test_origin_moving_an_a_record_to_another_operation_recomputes(make):
+    """Review of PR #89: same event ids, same count and same starts; only one ``entry.event_id`` changes."""
+    c = make(origin_rules())
+    start1 = c.add("TST-003", 1000, tid=1)
+    a1 = c.add("TST-001", 1100, "g1", tid=1)
+    a2 = c.add("TST-001", 1150, "g1", tid=1)
+    op1 = add_operation(c, start1, None, [a1, a2], tid=1)
+    start2 = c.add("TST-003", 1000, tid=2)
+    op2 = add_operation(c, start2, None, [], tid=2)
+    b = c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    assert c.links() == [(start1, b, "callback", 2)]
+    events_before = c.conn.execute("SELECT id, start_entry_id FROM event ORDER BY id").fetchall()
+    c.conn.execute("UPDATE entry SET event_id = ? WHERE id = ?", (op2, a2))
+    assert c.conn.execute("SELECT id, start_entry_id FROM event ORDER BY id").fetchall() == events_before
+    assert op1 != op2
+    s = c.run()
+    assert s.groups == 1 and s.ambiguous == 1
+    assert c.links() == []
+    assert c.run().groups == 0  # and stable afterwards
+
+
+def test_origin_links_survive_the_payload_recomputation(make):
+    """derive/payloads.py removes only its own normal_sensitive announcement pairs, never callbacks."""
+    from dmslog.derive.payloads import link_payloads
+
+    c = make(origin_rules())
+    start, _ = request(c, 1000, ["g1"])
+    b = c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    # the worst case: a stale announcement link of the payload linker on the very same (a, b) pair
+    c.conn.execute("INSERT INTO link VALUES (?, ?, 'normal_sensitive', 2)", (start, b))
+    c.conn.execute(
+        "INSERT INTO payload(entry_id, ref_entry_id, role, direction, fmt, char_off, char_len)"
+        " VALUES (?, ?, 'request', 'in', 'xml', 0, 1)",
+        (b, start),
+    )
+    s = link_payloads(c.conn, c.cat)
+    assert s.errors == [] and s.groups == 1
+    assert c.links("normal_sensitive") == []  # its own stale pair is gone
+    assert c.links("callback") == [(start, b, "callback", 2)]

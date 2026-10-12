@@ -153,3 +153,48 @@ def test_origin_links_match_the_oracle(ops, strays, callbacks):
             assert conn.total_changes == before
         finally:
             conn.close()
+
+
+def _starts(conn):
+    return dict(conn.execute("SELECT id, start_entry_id FROM event"))
+
+
+@SETTINGS
+@given(
+    st.lists(operation, min_size=1, max_size=6),
+    st.lists(stray, max_size=3),
+    st.lists(callback, min_size=1, max_size=12),
+    st.data(),
+)
+def test_origin_links_follow_a_moved_event_id(ops, strays, callbacks, data):
+    """Re-derivation that only moves ``entry.event_id`` of ``a`` records (event table untouched)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        conn, cat, a_rows, b_rows = _build(Path(tmp) / "case.sqlite", ops, strays, callbacks)
+        try:
+            L.link_pending(conn, cat)
+            if not a_rows:
+                return
+            starts = _starts(conn)
+            moves = data.draw(
+                st.lists(
+                    st.tuples(
+                        st.integers(min_value=0, max_value=len(a_rows) - 1),
+                        st.one_of(st.none(), st.sampled_from(sorted(starts))),
+                    ),
+                    min_size=1,
+                    max_size=3,
+                )
+            )
+            for i, ev in moves:
+                ts, eid, g, _ = a_rows[i]
+                conn.execute("UPDATE entry SET event_id = ? WHERE id = ?", (ev, eid))
+                a_rows[i] = (ts, eid, g, None if ev is None else starts[ev])
+            summary = L.link_pending(conn, cat)
+            got = set(conn.execute("SELECT a_entry_id, b_entry_id, kind, confidence FROM link").fetchall())
+            want, counts = _oracle(a_rows, b_rows)
+            assert summary.errors == []
+            assert got == want
+            if summary.groups:
+                assert {k: getattr(summary, k) for k in counts} == counts
+        finally:
+            conn.close()
