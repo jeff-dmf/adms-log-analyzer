@@ -437,3 +437,16 @@ normal = "OSR-005"
 sensitive = "OSR-S005"
 match = ["pid", "tid"]
 max_dt_ms = 1000
+
+# IMS callback (OSR-031) <-> CreatedIncidentHazards request (issue #66). The GID of the callback is logged
+# nowhere else (no key in the request at DebugLog), so the link is a time heuristic (confidence 0): the
+# callback goes to the CreatedIncidentHazards operation that ENDED at most 5 s before it, only when that
+# operation is the only one in the window and the callback the only one after it (otherwise nothing is
+# linked; counters in link_stats). Measured in docs/formato/avl-osr-smn-siteswitch.md, section 3.
+[[link_rule]]
+kind = "callback"
+a = "OSR-026"
+b = "OSR-031"
+window_only = true
+origin = "operation"
+max_dt_ms = 5000

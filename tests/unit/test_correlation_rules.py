@@ -42,6 +42,7 @@ EXPECTED_LINKS = {
     ("AONT", "retry", "ONT-016A", "ONT-016A"),
     ("AONT", "response", "ONT-011", "ONT-012"),
     ("AONT", "response", "ONT-016A", "ONT-016B"),
+    ("AOSR", "callback", "OSR-026", "OSR-031"),
 }
 
 
@@ -165,6 +166,16 @@ def test_wfm_callback_origin_is_by_gid_only(cat: Catalog) -> None:
     origin = [r for r in rules if r.get("origin") == "operation"]
     assert len(origin) == 1 and origin[0]["key"] == "gid"
     assert set(_codes(origin[0]["a"])) == {"WFM-123", "WFM-124A", "WFM-124B"}
+
+
+def test_osr_callback_is_the_strict_window_on_the_operation_end(cat: Catalog) -> None:
+    # Issue #66: OSR-031 carries a GID logged nowhere else; only the unique-both-ways window anchored at the
+    # end of CreatedIncidentHazards (confidence 0) is allowed, never the plain consuming window.
+    rules = [r for fam, r in _all_links(cat) if fam == "AOSR" and "OSR-031" in _codes(r["b"])]
+    assert len(rules) == 1
+    r = rules[0]
+    assert r.get("window_only") is True and r.get("origin") == "operation" and "key" not in r
+    assert _codes(r["a"]) == ["OSR-026"] and r["max_dt_ms"] == 5000
 
 
 def test_documented_pairs_have_a_rule(cat: Catalog) -> None:

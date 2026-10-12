@@ -221,6 +221,36 @@ Regra geral: início e fim saem **na mesma thread**, e o par fecha antes de a th
 - Volume (inícios por hora): 280–700 de madrugada, 1.600–2.850 das 09 às 20h. Pico de 2.854 às 16h de 07/10 (GetIncidents 2.487).
 - Pollers periódicos de 900 s: `active` NotRestored/PartiallyRestored/Restored e `archived`, sempre perto de :00/:15/:30/:45 (+10 s a +40 s).
 
+#### Callback do IMS ↔ CreatedIncidentHazards (issue #66)
+
+O OSR-031 (`IMS callback received for OMS_REQUEST GID: <gid> - <status>.`) chega fora de qualquer operação e não tem chave que o ligue ao pedido. Medido por script nas três capturas locais (as duas de 10-08 se sobrepõem no tempo; só contagens):
+
+| Medida | 10-08 12:40 | 10-08 14:53 | 10-09 14:50 |
+|---|---|---|---|
+| OSR-031 (todos com GID; nenhum GID repetido; só `Approved`) | 89 | 96 | 51 |
+| CreatedIncidentHazards (OSR-026 → OSR-030, todas `ok`) | 89 | 96 | 51 |
+| Registros (normal ou sensitive, qualquer template) com o GID de um OSR-031, fora ele mesmo | 0 | 0 | 0 |
+| OSR-031 dentro de uma operação ou na TID de uma operação aberta | 0 | 0 | 0 |
+| TIDs distintas dos OSR-031 (threads de longa vida, como no Wfm) | 2 | 2 | 3 |
+| OSR-031 antes do fim do CreatedIncidentHazards mais próximo | 0 | 0 | 0 |
+| Sequências início → fim → callback isoladas | 86 | 93 | 49 |
+
+- Δt entre o fim do CreatedIncidentHazards (OSR-030) e o OSR-031: mín. 0,39 s, p50 1,8–2,0 s, p90 2,9 s, máx. 3,4 s. Nenhuma outra operação do Osr tem contagem compatível (ChangeIncidents: 4.111; ChangedIncidentHazards: 617).
+- Nível: 100% DEBUGLOG nos dois arquivos do Osr, sem janela Info. O GID do `OMS_REQUEST` só existiria no payload (`MessageLogLevel=Info` não o loga).
+- Os OSR-024/025 (`IMS Close/OpenIncidentDevices for incidentId: <gid>`) trazem o GID do incidente, dentro do ChangeIncidents e na TID dele; nunca coincidem com o GID de um OSR-031.
+- Casos ambíguos: duas rajadas, uma com três pedidos em ~2,5 s e callbacks no mesmo ms, outra com dois pedidos no mesmo ms.
+
+**Regra (implementada em `derive/links.py`, `window_only` + `origin = "operation"`; `aosr.toml`):** liga o início do CreatedIncidentHazards (OSR-026) ao OSR-031 quando o fim da operação fica no máximo 5 s antes do callback **e** a correspondência é única nos dois sentidos: só um pedido terminou nessa janela antes do callback, e só um callback chegou nos 5 s após o fim desse pedido. Confiança 0 (`window (heuristic)` na UI), porque não há chave. Fora disso, **sem ligação**, contado por motivo em `meta['correlate.links.<grupo>']` (`link_stats`): `ambiguous` (mais de um pedido na janela, ou mais de um callback para o pedido), `no_operation` (o único candidato não é início de operação fechada: aberta, truncada ou sem operação), `out_of_window` (nenhum pedido terminou nos 5 s anteriores) e `unmatched` (não há nenhum OSR-026 no stream). No pipeline real: 86, 93 e 49 ligados; 3, 3 e 2 ambíguos; 0 nos demais motivos.
+
+- Janela: o máximo medido é 3,4 s; 5 s dá folga sem juntar pedidos vizinhos. Com 10 s, 30 s e 60 s os ligados caem para 84/91/49, 79/86/49 e 74/81/38 (mais vizinhos na janela).
+- A âncora é o **fim** da operação (`event.ts_end`), não o início: o callback vem depois da resposta ao sistema externo.
+
+**Escopo e o que ficou de fora:**
+- A relação CreatedIncidentHazards → `OMS_REQUEST` vem da medição (contagem 1:1, ordem início → fim → callback, Δt estável), não da documentação do vault, que não descreve esse callback. Por isso a confiança é 0. Se o Jefferson preferir não exibir ligação heurística, basta remover a regra do `aosr.toml`.
+- Status diferente de `Approved` e CreatedIncidentHazards com falha não aparecem nas amostras. A regra não olha o status: um pedido com falha que seja o único candidato também é ligado.
+- ChangeIncidents e ChangedIncidentHazards não têm callback no log; OSR-023/024/025 já ficam dentro da operação pela TID e não precisam de ligação.
+- Callback que chega depois de 5 s (IMS lento) fica sem ligação (`out_of_window`), sem chute.
+
 ### Smn
 
 Fluxo de saída (cliente SOAP para o SAP PI), tudo na mesma TID:
