@@ -162,3 +162,37 @@ def test_window_origin_follows_moved_operation_ends(requests, callbacks, data):
             assert got == want
         finally:
             conn.close()
+
+
+@SETTINGS
+@given(
+    st.lists(request, max_size=8),
+    st.lists(TS, max_size=2),
+    st.lists(TS, max_size=10),
+    st.integers(min_value=1, max_value=3),
+)
+def test_window_origin_memory_bound_never_guesses(requests, strays, callbacks, bound):
+    """Review of PR #91: with a tiny ``MAX_OPEN_KEYS`` the engine links a subset of the oracle, never more.
+
+    Every callback is still accounted for exactly once (linked, or one of the counters, ``dropped`` for what
+    the bound made undecidable).
+    """
+    saved = L.MAX_OPEN_KEYS
+    L.MAX_OPEN_KEYS = bound
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn, cat, a_rows, b_rows = _build(Path(tmp) / "case.sqlite", requests, strays, callbacks)
+            try:
+                summary = L.link_pending(conn, cat)
+                got = set(conn.execute("SELECT a_entry_id, b_entry_id, kind, confidence FROM link"))
+                want, _counts = _oracle(a_rows, b_rows)
+                assert summary.errors == []
+                assert got <= want
+                decided = summary.ambiguous + summary.unmatched + summary.no_operation + summary.out_of_window
+                assert summary.links + decided + summary.dropped == len(b_rows)
+                if summary.dropped == 0:
+                    assert got == want
+            finally:
+                conn.close()
+    finally:
+        L.MAX_OPEN_KEYS = saved

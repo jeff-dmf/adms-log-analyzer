@@ -35,7 +35,9 @@ family, process and pid). Rules of one family never link records of another fami
   Otherwise nothing is linked and the ``b`` is counted: ``ambiguous`` (several ``a`` in its window, or its
   ``a`` has several ``b``), ``no_operation`` (the single ``a`` does not start a closed operation: open,
   truncated or missing; it is then anchored at its own ts), ``out_of_window`` (no ``a`` anchored in its
-  window) or ``unmatched`` (the partition has no ``a`` record at all).
+  window) or ``unmatched`` (the partition has no ``a`` record at all). The anchors are read in record
+  order (no database sort) and reordered by a heap of the operations in flight; what the memory bounds
+  make undecidable is counted as ``dropped`` and never linked.
 
 Examples (the codes are placeholders)::
 
@@ -322,13 +324,16 @@ def _origin_digest(conn: sqlite3.Connection, rule: Any, ids: dict[str, int], str
 
 
 def _anchor_digest(conn: sqlite3.Connection, rule: Any, ids: dict[str, int], stream_ids: list[int]) -> str:
-    """Streaming hash of the ``a`` records of a window origin rule with their anchors (operation end)."""
+    """Streaming hash of the ``a`` records of a window origin rule with their operation and its end.
+
+    Read in record order through ``ix_entry_tpl_ts`` (no sort): ``(ts, id, operation id, operation end)``.
+    """
     h = hashlib.sha1()
     for code in sorted(set(_codes(rule["a"]))):
         if code not in ids:
             continue
         h.update(code.encode("utf-8"))
-        for row in _anchored_rows(conn, ids[code], stream_ids):
+        for row in conn.execute(_anchor_sql(stream_ids), (ids[code],)):
             h.update(json.dumps(row, default=str).encode("utf-8"))
     return h.hexdigest()
 
@@ -389,27 +394,50 @@ def _keyed_rows(
         yield (row[0], row[1], str(row[2]), *row[3:])
 
 
-def _anchored_rows(
-    conn: sqlite3.Connection, tpl_id: int, stream_ids: list[int]
-) -> Iterator[tuple[int, int, int]]:
-    """``(anchor, id, closed)`` of one template in the streams, by (anchor, id).
+def _anchor_sql(stream_ids: list[int]) -> str:
+    """``(ts, id, operation id, operation end)`` of one template (``?``) in the streams, by (ts, id).
 
-    The anchor is the end of the operation the record starts (``entry.event_id`` -> an ``operation`` event
-    of the same streams whose ``start_entry_id`` is the record and whose ``ts_end`` is not before it);
-    ``closed`` is 1 then. Otherwise (no operation, open or truncated operation, odd end) the anchor is the
-    record's ts and ``closed`` is 0. SQLite sorts by anchor (operations overlap: not the record order).
+    The operation is the ``operation`` event of the same streams that the record STARTS (``entry.event_id``
+    and ``start_entry_id``). Ordered like ``ix_entry_tpl_ts``, so SQLite never sorts (no temp B-tree).
     """
     streams = ",".join(str(int(s)) for s in stream_ids)
-    cur = conn.execute(
-        "SELECT CASE WHEN ev.ts_end >= e.ts THEN ev.ts_end ELSE e.ts END AS anchor, e.id,"
-        " CASE WHEN ev.ts_end >= e.ts THEN 1 ELSE 0 END"
-        " FROM entry e LEFT JOIN event ev ON ev.id = e.event_id AND ev.kind = 'operation'"
-        f" AND ev.start_entry_id = e.id AND ev.stream_id IN ({streams})"
+    return (
+        "SELECT e.ts, e.id, ev.id, ev.ts_end FROM entry e LEFT JOIN event ev ON ev.id = e.event_id"
+        f" AND ev.kind = 'operation' AND ev.start_entry_id = e.id AND ev.stream_id IN ({streams})"
         " WHERE e.tpl_id = ? AND e.ts IS NOT NULL AND e.source_id IN"
-        f" (SELECT id FROM source WHERE stream_id IN ({streams})) ORDER BY anchor, e.id",
-        (tpl_id,),
+        f" (SELECT id FROM source WHERE stream_id IN ({streams})) ORDER BY e.ts, e.id"
     )
-    yield from cur
+
+
+_OVERFLOW = -1  # entry id of the sentinel ``_anchors`` yields when the anchors in flight exceed the bound
+
+
+def _anchors(
+    conn: sqlite3.Connection, tpl_ids: list[int], stream_ids: list[int]
+) -> Iterator[tuple[int, int, int, bool]]:
+    """``(anchor, 0, id, closed)`` of the ``a`` records, by (anchor, id), without a database sort.
+
+    The anchor is the end of the operation the record starts when that end is not before the record
+    (``closed``); otherwise (no operation, open or truncated operation, odd end) the record's own ts. Records
+    arrive by (ts, id) and every anchor is >= its ts, so an anchor is final once the read position passes it:
+    a heap holds only the operations still in flight at the read position (concurrency, not history). More
+    than ``MAX_OPEN_KEYS`` of them yields the sentinel ``(read ts, 0, _OVERFLOW, False)``, in order, and stops
+    (beyond that point the order could no longer be guaranteed).
+    """
+    rows = heapq.merge(*(conn.execute(_anchor_sql(stream_ids), (t,)) for t in tpl_ids))
+    pending: list[tuple[int, int, bool]] = []
+    for ts, eid, _op, end in rows:
+        while pending and pending[0][0] < ts:
+            at, aid, closed = heapq.heappop(pending)
+            yield (at, 0, aid, closed)
+        closed = end is not None and end >= ts
+        heapq.heappush(pending, (end if closed else ts, eid, closed))
+        if len(pending) > MAX_OPEN_KEYS:
+            yield (ts, 0, _OVERFLOW, False)  # every pending anchor is >= ts: the sentinel is in order
+            return
+    while pending:
+        at, aid, closed = heapq.heappop(pending)
+        yield (at, 0, aid, closed)
 
 
 def _candidates(
@@ -594,12 +622,14 @@ def _window_origin_links(
     One sweep over the ``a`` anchors and the ``b`` records merged by time (an anchor before a ``b`` with the
     same ts); memory is the anchors of the last ``max_dt`` ms. How many ``b`` fall in the window of an anchor
     is the difference of the running ``b`` count, taken when the sweep passes ``anchor + max_dt``.
+
+    Memory bounds never produce a link: an anchor evicted from the window (more than ``MAX_OPEN_KEYS``)
+    leaves ``evicted_until`` behind, and every ``b`` whose window could reach it (``ts <= evicted_until``)
+    is counted as ``dropped``, as are the ``b`` pending on it; an overflow of the anchors in flight
+    (``_anchors``) stops the partition at that time and counts every ``b`` not yet decided as ``dropped``.
     """
-    a_gens = [
-        ((at, 0, eid, bool(closed)) for at, eid, closed in _anchored_rows(conn, ids[c], stream_ids))
-        for c in sorted(set(_codes(rule["a"])))
-        if c in ids
-    ]
+    a_tpls = [ids[c] for c in sorted(set(_codes(rule["a"]))) if c in ids]
+    a_gens = [_anchors(conn, a_tpls, stream_ids)] if a_tpls else []
     b_gens = [
         ((ts, 1, eid, False) for ts, eid, _v in _keyed_rows(conn, ids[c], stream_ids, None))
         for c in sorted(set(_codes(rule["b"])))
@@ -607,6 +637,8 @@ def _window_origin_links(
     ]
     window: deque[_Anchor] = deque()
     n_a = n_b = no_anchor = 0
+    evicted_until: int | None = None  # latest ``anchor + max_dt`` of an anchor dropped by the bound
+    overflow = False
 
     def close(w: _Anchor) -> Iterator[_Link]:
         if not w.pending:
@@ -619,17 +651,27 @@ def _window_origin_links(
         else:
             counters.ambiguous += w.pending
 
-    for t, is_b, eid, closed in heapq.merge(*a_gens, *b_gens):
+    events = heapq.merge(*a_gens, *b_gens)
+    for t, is_b, eid, closed in events:
         while window and window[0].at + max_dt < t:
-            yield from close(window.popleft())
+            yield from close(window.popleft())  # every anchor before t is known: these are final
+        if eid == _OVERFLOW:
+            # the later anchors cannot be ordered: decide nothing from here on in this partition
+            overflow = True
+            counters.dropped += sum(1 for ev in events if ev[1])
+            break
         if not is_b:
             n_a += 1
             window.append(_Anchor(t, eid, closed, n_b))
             if len(window) > MAX_OPEN_KEYS:
-                dropped = window.popleft()
-                counters.dropped += 1 + dropped.pending  # its pending ``b`` are never linked
+                gone = window.popleft()
+                counters.dropped += gone.pending  # its pending ``b`` are never linked
+                evicted_until = gone.at + max_dt
             continue
         n_b += 1
+        if evicted_until is not None and t <= evicted_until:
+            counters.dropped += 1  # an evicted anchor is (or may be) in its window: never guess
+            continue
         if not window:
             no_anchor += 1
         elif len(window) > 1:
@@ -637,8 +679,12 @@ def _window_origin_links(
         else:
             window[0].pending += 1
             window[0].pending_b = eid
+    if overflow:  # the ``b`` pending on anchors still open are not decided either
+        counters.dropped += sum(w.pending for w in window)
+        window.clear()
     while window:
         yield from close(window.popleft())
+    # a ``b`` with an empty window saw every anchor up to its ts (the merge orders them before it)
     if n_a:
         counters.out_of_window += no_anchor
     else:

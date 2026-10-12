@@ -937,7 +937,56 @@ def test_window_origin_bound_is_counted_and_never_guesses(make, monkeypatch):
     c.add("TST-002", 1500, tid=9)  # pending on the first request
     hazard_op(c, 2000)  # evicts the first request (bound): its pending callback is dropped
     s = c.run()
-    assert c.links() == [] and s.dropped == 2
+    assert c.links() == [] and s.dropped == 1
+
+
+def test_window_origin_eviction_keeps_later_callbacks_ambiguous(make, monkeypatch):
+    """Review of PR #91: a callback arriving AFTER the eviction must not link to the surviving request."""
+    monkeypatch.setattr(links_mod, "MAX_OPEN_KEYS", 1)
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000)  # ends at 1016
+    hazard_op(c, 2000)  # ends at 2016: evicts the first one
+    c.add("TST-002", 3000, tid=9)  # both requests are in its window
+    late = hazard_op(c, 30_000)  # far away: the bound no longer matters
+    b = c.add("TST-002", 31_000, tid=9)
+    s = c.run()
+    assert c.links() == [(late, b, "callback", 0)]
+    assert counts(s) == (1, 0, 0, 0, 0, 1)
+
+
+def test_window_origin_overflow_of_requests_in_flight_stops_linking(make, monkeypatch):
+    monkeypatch.setattr(links_mod, "MAX_OPEN_KEYS", 1)
+    c = make(WINDOW_ORIGIN)
+    first = hazard_op(c, 1000)
+    b = c.add("TST-002", 2000, tid=9)
+    hazard_op(c, 10_000, dur=8000)  # two long requests in flight at once: more than the bound
+    hazard_op(c, 10_001, dur=8000, tid=2)
+    c.add("TST-002", 19_000, tid=9)
+    c.add("TST-002", 40_000, tid=9)
+    s = c.run()
+    assert c.links() == [(first, b, "callback", 0)]  # decided before the overflow, still exact
+    assert s.dropped == 2 and s.errors == []
+
+
+def test_window_origin_queries_never_sort_in_a_temp_btree(make):
+    """Review of PR #91: anchors and callbacks are read in index order (ix_entry_tpl_ts), no ORDER BY sort."""
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000)
+    c.add("TST-002", 2000, tid=9)
+    sid = c.stream()
+    plans = [c.conn.execute("EXPLAIN QUERY PLAN " + links_mod._anchor_sql([sid]), (1,)).fetchall()]
+    rows = list(links_mod._keyed_rows(c.conn, c.cat.tpl_id("TST-002"), [sid], None))
+    assert rows
+    traced: list[str] = []
+    c.conn.set_trace_callback(traced.append)
+    list(links_mod._keyed_rows(c.conn, c.cat.tpl_id("TST-002"), [sid], None))
+    c.conn.set_trace_callback(None)
+    sql = next(q for q in traced if q.lstrip().upper().startswith("SELECT"))
+    plans.append(c.conn.execute("EXPLAIN QUERY PLAN " + sql).fetchall())
+    for plan in plans:
+        text = " | ".join(str(r[-1]) for r in plan)
+        assert "TEMP B-TREE" not in text.upper(), text
+        assert "ix_entry_tpl_ts" in text, text
 
 
 def test_window_origin_rule_problems():
