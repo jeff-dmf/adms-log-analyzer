@@ -368,3 +368,99 @@ def test_api_and_cli_share_the_reserved_name_rule(server):  # noqa: F811
 
     with pytest.raises(ApiError):
         server.api.store.validate_id("COM1")
+
+
+# ---------------------------------------------------------------- plan == run (disk space check)
+
+PLAIN = b"just some plain text without any header\r\n"
+HEADED = b"2030-01-15 10:00:00.000 [PID=1111][TID=0x1] INFO - hello world\r\n"
+
+
+def _folder_with(tmp_path: Path, files: dict[str, bytes]) -> Path:
+    folder = tmp_path / "Log" / "dnaApp_zone1" / "DMS_INTEGRATION"
+    folder.mkdir(parents=True)
+    for name, data in files.items():
+        (folder / name).write_bytes(data)
+    return tmp_path / "Log"
+
+
+def _set_mark(conn, mark: int) -> None:
+    for (source_id,) in conn.execute("SELECT id FROM source").fetchall():
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+            (f"payload_extraction_version.{source_id}", str(mark)),
+        )
+    conn.commit()
+
+
+def test_the_small_plain_source_is_planned_as_a_reindex_even_with_a_key_only_upgrade(tmp_path, monkeypatch):
+    # reviewer scenario: mark 1 (key-only upgrade to 2), ~1 kB indexed as plain, then a 2-byte append
+    root = _folder_with(tmp_path, {"WfmAdapter_1111.log": PLAIN * 25})
+    conn = create_case_db(tmp_path / "data" / "cases" / "c" / "case.sqlite")
+    try:
+        run_ingest(conn, root, IngestOptions(scope="all"))
+        assert conn.execute("SELECT envelope FROM source").fetchone()[0] == "plain"
+        _set_mark(conn, 1)
+        log = root / "dnaApp_zone1" / "DMS_INTEGRATION" / "WfmAdapter_1111.log"
+        with log.open("ab") as fh:
+            fh.write(b"zz")
+        size = log.stat().st_size
+        monkeypatch.setattr(reader_module.shutil, "disk_usage", lambda _p: FakeUsage(10, 10, 6))
+        with pytest.raises(InsufficientDiskSpaceError):  # the run would re-index all ~1 kB
+            run_ingest(conn, root, IngestOptions(scope="all"))
+        monkeypatch.setattr(reader_module.shutil, "disk_usage", lambda _p: FakeUsage(10, 10, 10**9))
+        result = run_ingest(conn, root, IngestOptions(scope="all"))
+        assert [d.action for d in result.details] == ["reindex"] and result.bytes >= size - 2
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["new", "unchanged", "append", "old_mark", "key_only", "plain_key_only_append", "plain_old_mark_append",
+     "pending", "truncated"],
+)  # fmt: skip
+def test_the_plan_and_the_run_decide_the_same_action_for_every_source(tmp_path, monkeypatch, scenario):
+    from dmslog.ingest import pipeline
+
+    plain = scenario.startswith("plain")
+    base = (PLAIN if plain else HEADED) * (25 if plain else 50)
+    root = _folder_with(tmp_path, {"WfmAdapter_1111.log": base, "WfmAdapter_2222.log": HEADED * 10})
+    folder = root / "dnaApp_zone1" / "DMS_INTEGRATION"
+    conn = create_case_db(tmp_path / "data" / "cases" / "c" / "case.sqlite")
+    try:
+        if scenario != "new":
+            run_ingest(conn, root, IngestOptions(scope="all"))
+        if scenario in ("old_mark", "plain_old_mark_append"):
+            _set_mark(conn, 0)
+        if scenario in ("key_only", "plain_key_only_append"):
+            _set_mark(conn, 1)
+        if scenario.endswith("append") or scenario == "pending":
+            with (folder / "WfmAdapter_1111.log").open("ab") as fh:
+                fh.write(PLAIN if plain else HEADED)
+        if scenario == "pending":
+            conn.execute("UPDATE source SET status='pending' WHERE member LIKE '%1111%'")
+            conn.commit()
+        if scenario == "truncated":
+            (folder / "WfmAdapter_1111.log").write_bytes(HEADED * 3)
+        planned, ran = {}, {}
+        phase = {"run": False}
+        real_plan, real_pending = pipeline._Run.plan_action, pipeline._Run.pending_bytes
+
+        def spy_plan(self, row, info, reader):
+            out = real_plan(self, row, info, reader)
+            (ran if phase["run"] else planned)[info.member] = (out[0].value, out[1])
+            return out
+
+        def spy_pending(self, *args):
+            out = real_pending(self, *args)
+            phase["run"] = True
+            return out
+
+        monkeypatch.setattr(pipeline._Run, "plan_action", spy_plan)
+        monkeypatch.setattr(pipeline._Run, "pending_bytes", spy_pending)
+        result = run_ingest(conn, root, IngestOptions(scope="all"))
+    finally:
+        conn.close()
+    assert {k: v for k, v in ran.items() if k in planned} == planned  # the same decision, source by source
+    assert {d.member: d.action for d in result.details}  # the run did act on every source

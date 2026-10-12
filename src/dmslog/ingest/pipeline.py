@@ -625,31 +625,16 @@ class _Run:
     def process(self, row: SourceRow, info: SourceInfo, reader: SourceReader) -> None:
         self.current_member = info.member
         self.current_action = None
-        is_zip = info.container_kind == "zip"
-        known = KnownSource(
-            row.status, row.size, row.zip_crc, row.head_hash, row.indexed_bytes, row.tail_hash
-        )
         try:
-            action = self._decide(info, known, reader, is_zip)
+            action, key_only = self.plan_action(row, info, reader)
         except (OSError, zipfile.BadZipFile, ReadLimitError) as exc:
             self._fail(row, info, exc)
             return
-        if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME):
-            mark = _source_mark(self.w.conn, row.id)
-            if (mark, PAYLOAD_EXTRACTION_VERSION) in KEY_ONLY_UPGRADES:
-                # only the payload keys changed: rewrite them from the stored payloads, no reindex
-                self.w.refresh_payload_keys(row.id)
-                _mark_source(self.w.conn, row.id)
-                self.w.commit()
-            elif mark < PAYLOAD_EXTRACTION_VERSION:
-                action = Action.REINDEX  # its records predate the current payload extraction
-        if (
-            action in (Action.APPEND, Action.RESUME)
-            and row.envelope == PLAIN_ENVELOPE
-            and row.indexed_bytes < DETECT_BYTES
-        ):
-            # picked as plain from a first, still tiny read (a live file): detect the envelope again
-            action = Action.REINDEX
+        if key_only:
+            # only the payload keys changed: rewrite them from the stored payloads, no reindex
+            self.w.refresh_payload_keys(row.id)
+            _mark_source(self.w.conn, row.id)
+            self.w.commit()
         if action in (Action.NEW, Action.REINDEX):
             _mark_source(self.w.conn, row.id)  # from here on every record of it is extracted by this code
         self.current_action = action.value
@@ -683,10 +668,37 @@ class _Run:
         )
         self._finish_source(info, fed, stats.records)
 
+    def plan_action(self, row: SourceRow, info: SourceInfo, reader: SourceReader) -> tuple[Action, bool]:
+        """What to do with one source, WITHOUT writing: ``(action, key_only_upgrade)``.
+
+        The single decision function: ``process`` acts on it and ``pending_bytes`` (the disk-space check)
+        sizes it, so the plan and the run can never disagree. ``key_only_upgrade`` means the records are
+        kept and only their payload keys are rewritten (the action stays UNCHANGED/APPEND/RESUME).
+        """
+        known = KnownSource(
+            row.status, row.size, row.zip_crc, row.head_hash, row.indexed_bytes, row.tail_hash
+        )
+        action = self._decide(info, known, reader, info.container_kind == "zip")
+        key_only = False
+        if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME):
+            mark = _source_mark(self.w.conn, row.id)
+            if (mark, PAYLOAD_EXTRACTION_VERSION) in KEY_ONLY_UPGRADES:
+                key_only = True
+            elif mark < PAYLOAD_EXTRACTION_VERSION:
+                action = Action.REINDEX  # its records predate the current payload extraction
+        if (
+            action in (Action.APPEND, Action.RESUME)
+            and row.envelope == PLAIN_ENVELOPE
+            and row.indexed_bytes < DETECT_BYTES
+        ):
+            # picked as plain from a first, still tiny read (a live file): detect the envelope again
+            action = Action.REINDEX
+        return action, key_only
+
     def pending_bytes(
         self, selected: list[SourceInfo], rows: dict[str, SourceRow], reader: SourceReader
     ) -> int:
-        """Bytes the run will add to the index, decided per source WITHOUT writing anything.
+        """Bytes the run will add to the index, from ``plan_action`` of every source (nothing is written).
 
         Nothing for an unchanged source, only the new tail for an append or a resume, the whole source for
         a new one or a re-index. A source that cannot be read here counts as zero (``process`` reports it).
@@ -694,32 +706,16 @@ class _Run:
         total = 0
         for info in selected:
             row = rows.get(info.member)
-            if row is None or row.status == "pending":
+            if row is None:
                 total += info.size
                 continue
-            known = KnownSource(
-                row.status, row.size, row.zip_crc, row.head_hash, row.indexed_bytes, row.tail_hash
-            )
             try:
-                action = self._decide(info, known, reader, info.container_kind == "zip")
+                action, _key_only = self.plan_action(row, info, reader)
             except (OSError, zipfile.BadZipFile, ReadLimitError):
-                continue
-            if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME):
-                mark = _source_mark(self.w.conn, row.id)
-                if (mark, PAYLOAD_EXTRACTION_VERSION) not in KEY_ONLY_UPGRADES and (
-                    mark < PAYLOAD_EXTRACTION_VERSION
-                    or (
-                        action is not Action.UNCHANGED
-                        and row.envelope == PLAIN_ENVELOPE
-                        and row.indexed_bytes < DETECT_BYTES
-                    )
-                ):
-                    action = Action.REINDEX
-            if action is Action.UNCHANGED:
                 continue
             if action in (Action.APPEND, Action.RESUME):
                 total += max(info.size - row.indexed_bytes, 0)
-            else:
+            elif action is not Action.UNCHANGED:
                 total += info.size
         return total
 
