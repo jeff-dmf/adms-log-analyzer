@@ -41,10 +41,12 @@ def seed(conn):
             (id_, source, id_, id_, 1, ts, tid, 3, 4, 1 if id_ == 1 else 0, msg),
         )
     for entry_id in range(1, 13):
-        conn.execute("INSERT INTO entry_key VALUES ('msgid', 'M-1', ?)", (entry_id,))
-    conn.execute("INSERT INTO entry_key VALUES ('msgid', 'M-2', 1)")
-    conn.execute("INSERT INTO entry_key VALUES ('errcode', '50%/ \u00e9', 2)")
-    conn.execute("INSERT INTO entry_key VALUES ('errcode', ?, 3)", (HOSTILE,))
+        conn.execute(
+            "INSERT INTO entry_key(key_type, value, entry_id) VALUES ('msgid', 'M-1', ?)", (entry_id,)
+        )
+    conn.execute("INSERT INTO entry_key(key_type, value, entry_id) VALUES ('msgid', 'M-2', 1)")
+    conn.execute("INSERT INTO entry_key(key_type, value, entry_id) VALUES ('errcode', '50%/ \u00e9', 2)")
+    conn.execute("INSERT INTO entry_key(key_type, value, entry_id) VALUES ('errcode', ?, 3)", (HOSTILE,))
     conn.executemany(
         "INSERT INTO link VALUES (?,?,?,?)",
         [

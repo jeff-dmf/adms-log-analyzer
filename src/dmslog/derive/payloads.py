@@ -14,7 +14,8 @@ payload), ``event_id`` + ``event_conf`` (the operation), ``pair_id`` (request <-
    time first. Sets ``ref_entry_id`` and inserts a ``normal_sensitive`` link announcement -> payload record
    (confidence 3 with an id, 2 without). Existing links are kept (``INSERT OR IGNORE``).
 2. Request -> operation: the payload ``msg_id`` equals an ``entry_key`` value (``msgid``/``request_id``) of
-   a record that belongs to an ``operation`` event of the same process (``event_conf`` 3).
+   a record that belongs to an ``operation`` event of the same process (``event_conf`` 3). Only template
+   keys (``origin`` 0) count: the keys read from the payloads themselves never link a payload.
 3. Response -> request: ``corr_id`` equals the ``msg_id`` of a request payload (Wfm): ``pair_id`` on both,
    the request's event, ``event_conf`` 3. Without such a request, the operation holding the id as a key.
 4. Response without ids (Ont/Smn): operations of the process whose END is at most 16 ms from the payload and
@@ -396,7 +397,7 @@ class _Ops:
         rows = self.conn.execute(
             "SELECT DISTINCT ev.id, ev.name, ev.ts_start, ev.ts_end FROM entry_key k"
             " JOIN entry e ON e.id = k.entry_id JOIN event ev ON ev.id = e.event_id"
-            f" WHERE k.key_type IN ({types}) AND k.value IN (?, ?) AND ev.kind = 'operation'"
+            f" WHERE k.key_type IN ({types}) AND k.value IN (?, ?) AND k.origin = 0 AND ev.kind = 'operation'"
             f" AND ev.stream_id IN ({self.streams}) LIMIT {MAX_SCAN}",
             (raw, raw.lower()),
         ).fetchall()

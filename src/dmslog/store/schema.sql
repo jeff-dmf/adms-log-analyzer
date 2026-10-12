@@ -80,8 +80,11 @@ CREATE TABLE entry_key(                                        -- correlation ke
                                                                -- (also keys extracted from payloads, section 6.6)
   value TEXT NOT NULL,
   entry_id INTEGER NOT NULL,
+  origin INTEGER NOT NULL DEFAULT 0,                           -- 0 template (the derivers see it), 1 payload
+                                                               -- (search only; migration 5, section 6.6)
   PRIMARY KEY(key_type, value, entry_id)) WITHOUT ROWID;
 CREATE INDEX ix_key_entry ON entry_key(entry_id);
+CREATE INDEX ix_key_payload ON entry_key(entry_id) WHERE origin = 1;  -- payload keys only (migration 5)
 
 -- Templates -----------------------------------------------------------------
 CREATE TABLE template(

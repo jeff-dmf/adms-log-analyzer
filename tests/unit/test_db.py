@@ -19,7 +19,7 @@ TABLES = {
 }
 INDEXES = {
     "ix_entry_ts", "ix_entry_src_ts", "ix_entry_sev_ts", "ix_entry_tpl_ts", "ix_entry_event",
-    "ix_entry_tid", "ix_key_entry", "ix_event_kind", "ix_event_stream", "ix_event_status",
+    "ix_entry_tid", "ix_key_entry", "ix_key_payload", "ix_event_kind", "ix_event_stream", "ix_event_status",
     "ix_link_b", "ix_payload_entry", "ix_payload_event", "ix_payload_op", "ix_payload_msg",
 }
 
@@ -55,7 +55,7 @@ def test_schema_objects_exist(conn):
     assert names(conn, "table") >= TABLES
     assert INDEXES <= names(conn, "index")
     assert names(conn, "view") == {"entry_text"}
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 5
 
 
 def test_pragmas(conn):
@@ -389,4 +389,64 @@ def test_a_future_version_is_rejected_without_committing_the_callers_transaction
         migrate(conn)
     assert conn.in_transaction and caller_row(path) == []
     conn.rollback()
+    conn.close()
+
+
+def make_v4(path):
+    """A version-4 case: ``entry_key`` without ``origin`` nor ``ix_key_payload``."""
+    from dmslog.store.db import MIGRATIONS
+
+    conn = connect(path)
+    conn.isolation_level = None
+    MIGRATIONS[1](conn)
+    conn.execute("DROP INDEX ix_key_payload")
+    conn.execute("ALTER TABLE entry_key DROP COLUMN origin")
+    conn.execute("PRAGMA user_version=4")
+    conn.isolation_level = ""
+    add_entry(conn, "a record", entry_id=3)
+    conn.execute("INSERT INTO entry_key VALUES ('msgid', 'M-1', 3), ('gid', '42', 3)")
+    conn.commit()
+    return conn
+
+
+def test_migration_5_adds_the_key_origin_and_a_covering_index(tmp_path):
+    conn = make_v4(tmp_path / "v4.sqlite")
+    assert migrate(conn) == SCHEMA_VERSION == 5
+    assert [r[1] for r in conn.execute("PRAGMA table_info(entry_key)")] == [
+        "key_type", "value", "entry_id", "origin",
+    ]  # fmt: skip
+    assert [r[2] for r in conn.execute("PRAGMA index_info(ix_key_entry)")] == ["entry_id"]  # unchanged
+    assert [r[2] for r in conn.execute("PRAGMA index_info(ix_key_payload)")] == ["entry_id"]
+    assert conn.execute("SELECT key_type, value, entry_id, origin FROM entry_key ORDER BY 1").fetchall() == [
+        ("gid", "42", 3, 0),
+        ("msgid", "M-1", 3, 0),
+    ]  # every key of a version-4 case is a template key
+    plan = conn.execute(
+        "EXPLAIN QUERY PLAN SELECT entry_id, key_type, value FROM entry_key"
+        " WHERE origin = 1 AND entry_id BETWEEN 1 AND 9"
+    ).fetchall()  # the derivation leaves the payload keys out through the partial index
+    assert "COVERING INDEX ix_key_payload" in " ".join(str(r[3]) for r in plan)
+    plan = conn.execute(
+        "EXPLAIN QUERY PLAN SELECT value FROM entry_key WHERE entry_id = 3 AND key_type = 'gid'"
+    ).fetchall()  # the lookup by record and type of the correlation and the links
+    assert "COVERING INDEX ix_key_entry (entry_id=? AND key_type=?)" in " ".join(str(r[3]) for r in plan)
+    before = conn.execute("SELECT sql FROM sqlite_master WHERE name LIKE '%key%' ORDER BY name")
+    before = before.fetchall()
+    assert migrate(conn) == SCHEMA_VERSION  # idempotent
+    after = conn.execute("SELECT sql FROM sqlite_master WHERE name LIKE '%key%' ORDER BY name")
+    after = after.fetchall()
+    assert before == after
+    conn.close()
+
+
+def test_migration_5_is_a_no_op_on_a_schema_that_already_has_the_origin(tmp_path):
+    from dmslog.store.db import MIGRATIONS
+
+    conn = create_case_db(tmp_path / "c.sqlite")
+    conn.isolation_level = None
+    before = conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall()
+    conn.execute("BEGIN")
+    MIGRATIONS[5](conn)
+    conn.execute("COMMIT")
+    assert conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall() == before
     conn.close()

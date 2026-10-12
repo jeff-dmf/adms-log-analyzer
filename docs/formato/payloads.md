@@ -148,6 +148,32 @@ Consequências:
 
 Para `entry_key`: `msgid` (MessageID e CorrelationID de request/response), `mrid` (INC, PROB, SP/ISS/WR, crew), `gid` (delta, CRS/IMS, publicação). O par request↔response e a operação já resolvem a maior parte da correlação; as chaves do payload servem à busca "tudo de um INC".
 
+### 6.1 Medição e escolha das chaves (issue #67)
+
+Medido por script no banco do ERS Verbose (2026-10-08 14:53; 14.292 payloads, 3,73 M registros), só contagens. "Nas linhas de log" = valores distintos do payload que já existem em `entry_key` (chaves de template) com o mesmo tipo, ou seja, que a busca por chave passa a juntar com linhas de log.
+
+| Caminho no payload | Ocorrências | Distintos | Nas linhas de log | Decisão |
+|---|---|---|---|---|
+| `Header/MessageID` | 7.742 | 7.255 | 6.581 (`msgid`) | `msgid` |
+| `Header/CorrelationID` | 7.742 | 5.403 | 4.729 (`msgid`) | `msgid` (igual ao MessageID nos requests: 1 linha) |
+| `SwitchingStep(s)/mRID` (`SP <n> - ISS <n>`) | 2.827 | 1.383 | 1.018 (`mrid`) | `mrid` |
+| `IncidentRecord/mRID` (`INC <n>`) | 1.617 | 468 | 249 (`mrid`) | `mrid` |
+| `Crew`/`Crews/mRID` | 5.288 | 351 + 181 | ~2 (`mrid`) | `mrid` (identificador central do Wfm) |
+| `Assignments/mRID` (`INC <n>`) | 880 | 184 | 174 (`mrid`) | `mrid` |
+| `SwitchingPlan`, `SwitchingStepGroup`, `Work(s)`, `Incidents` `/mRID` | 1.510 | 8–61 cada | 0–46 cada (`mrid`) | `mrid` |
+| `IncidentHazards/mRID` (`PROB <n>`), `TroubleTickets/mRID` | 523, 732 | 180, 352 | 0 | `mrid` (objetos de negócio do incidente) |
+| `Vehicle/mRID` | 189 | 46 | 46 (`mrid` e `vehicle`) | `mrid` + `vehicle` |
+| `ResourceDescription/id/@gid` (delta, publicação; `0x` + 16 hex) | 3.982 | 1.400 | 25 após hex → decimal (`gid`) | `gid` em decimal |
+| `Property SM_COMMANDING_MODEL_CUSTOMID` (publicação) | 2.097 | — | 1.668 ocorrências (`mrid`) | `mrid` |
+| `ServiceAssignmentId` (WFM-120), `IncidentId` (WFM-S121) | 345, 64 | 153, 57 | 44 + 57 (`incident_gid`, WFM-124B), 29 + 3 (`gid`, OSR) | `gid` + `incident_gid` |
+| `CrewId` (WFM-120, WFM-S121) | 409 | 106 | 0 | `gid` (GID do DMS) |
+| `Equipments/mRID`, `RequestedEquipment/mRID` | 2.981 | 736 | 0 | fora (equipamento; o FTS acha) |
+| `UsagePoint/mRID`, `UsagePoint/meterId` | 729, 366 | 249, 207 | 0 | fora (cliente/medidor) |
+| `Substation`, `Zones`, `Region`, `PSRType` `/mRID` | 5.519 | 3–72 | 0 | fora (classificação, baixa cardinalidade) |
+| nomes, endereços, `comment`, datas, demais `Property` | — | — | — | fora (texto livre ou sensível) |
+
+Resultado gravado no mesmo ERS: 31.139 linhas novas em `entry_key` (`mrid` 15.661, `msgid` 10.082, `gid` 4.798, `incident_gid` 409, `vehicle` 189; 2,7% das 1.147.495 de template), banco +5,0 MB (+0,27%), tempo de ingestão igual dentro do ruído. Distintos que passam a encontrar linhas de log pela mesma chave: `msgid` 6.582 de 7.256, `mrid` 903 de 2.535, `incident_gid` 57 de 166, `gid` 54 de 1.569, `vehicle` 46 de 46. Regras de normalização, limites e a separação da derivação (`entry_key.origin`): ARQUITETURA, seção 6.6, "Chaves do payload".
+
 ## 7. Tamanho
 
 Caracteres do XML (do `<` inicial ao fim, sem o `.`), por tipo:

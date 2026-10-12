@@ -189,8 +189,22 @@ def _entries(conn: sqlite3.Connection, ranges: list[tuple[int, int, int]], start
                 " ORDER BY entry_id, key_type, value",
                 (first_id, last_id),
             )
+            # template keys only: the keys read from payloads (origin 1, small partial index) serve the
+            # search, never the derivation
+            skip = set(
+                conn.execute(
+                    "SELECT entry_id, key_type, value FROM entry_key"
+                    " WHERE origin = 1 AND entry_id BETWEEN ? AND ?",
+                    (first_id, last_id),
+                )
+            )
             for entry_id, group in groupby(cursor, _FIRST):
-                keys[entry_id] = tuple([(g[1], g[2]) for g in group])
+                if skip:
+                    kept = tuple([(g[1], g[2]) for g in group if g not in skip])
+                    if kept:
+                        keys[entry_id] = kept
+                else:
+                    keys[entry_id] = tuple([(g[1], g[2]) for g in group])
             # row + (cont, keys, tpl_code, tpl_class), built with C-level iterators (once per entry)
             ids = list(map(_FIRST, rows))
             tpls = list(map(_LAST, rows))

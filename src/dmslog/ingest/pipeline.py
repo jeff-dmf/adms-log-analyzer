@@ -281,8 +281,12 @@ class SeverityHook:
 # SOURCE in ``meta["payload_extraction_version.<source_id>"]``: a source selected with a lower (or no) mark is
 # re-indexed once; a source that is not selected keeps its old mark and is upgraded when it is selected.
 # ``meta["payload_extraction_version"]`` only says "every indexed source is current".
-PAYLOAD_EXTRACTION_VERSION = 1
+# Version 2 added the payload keys (``entry_key`` origin 1, issue #67).
+PAYLOAD_EXTRACTION_VERSION = 2
 PAYLOAD_VERSION_KEY = "payload_extraction_version"
+# (from, to) upgrades in which only the payload keys changed: the source is NOT reindexed, its keys are
+# rewritten from the stored payloads (``IndexWriter.refresh_payload_keys``). Any other older mark reindexes.
+KEY_ONLY_UPGRADES = frozenset({(1, 2)})
 
 
 def _source_mark(conn, source_id: int) -> int:
@@ -612,10 +616,15 @@ class _Run:
         except (OSError, zipfile.BadZipFile, ReadLimitError) as exc:
             self._fail(row, info, exc)
             return
-        if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME) and (
-            _source_mark(self.w.conn, row.id) < PAYLOAD_EXTRACTION_VERSION
-        ):
-            action = Action.REINDEX  # its records predate the current payload extraction
+        if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME):
+            mark = _source_mark(self.w.conn, row.id)
+            if (mark, PAYLOAD_EXTRACTION_VERSION) in KEY_ONLY_UPGRADES:
+                # only the payload keys changed: rewrite them from the stored payloads, no reindex
+                self.w.refresh_payload_keys(row.id)
+                _mark_source(self.w.conn, row.id)
+                self.w.commit()
+            elif mark < PAYLOAD_EXTRACTION_VERSION:
+                action = Action.REINDEX  # its records predate the current payload extraction
         if (
             action in (Action.APPEND, Action.RESUME)
             and row.envelope == PLAIN_ENVELOPE

@@ -129,12 +129,28 @@ def _migrate_to_4(conn: sqlite3.Connection) -> None:
         conn.execute(ddl)
 
 
+def _migrate_to_5(conn: sqlite3.Connection) -> None:
+    """Add ``entry_key.origin`` (0 = key of a template, 1 = key read from a payload).
+
+    Existing rows are template keys (no payload key was written before v5), so the default 0 is right for
+    them; no row is rewritten. ``ix_key_payload`` (partial, ``origin = 1``) lets the derivation leave the
+    payload keys out without reading the table; ``ix_key_entry`` stays as it is (the query planner relies
+    on it for the lookups by record and type). The payload keys of such a case come from the pipeline,
+    source by source (payload extraction version 2, ARQUITETURA 6.6).
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(entry_key)")}
+    if "origin" not in columns:
+        conn.execute("ALTER TABLE entry_key ADD COLUMN origin INTEGER NOT NULL DEFAULT 0")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_key_payload ON entry_key(entry_id) WHERE origin = 1")
+
+
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_1,
     2: _migrate_to_2,
     3: _migrate_to_3,
     4: _migrate_to_4,
+    5: _migrate_to_5,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

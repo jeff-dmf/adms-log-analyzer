@@ -8,7 +8,7 @@ import time
 import pytest
 import test_pipeline as tp
 
-from dmslog.ingest.pipeline import IngestOptions, run_ingest
+from dmslog.ingest.pipeline import PAYLOAD_EXTRACTION_VERSION, IngestOptions, run_ingest
 from dmslog.parse.payload import check_xml, extract_payload, local_name, role_of_root
 from dmslog.parse.templates import PayloadSpec, load_texts
 from dmslog.store.writer import FLAG_HAS_PAYLOAD
@@ -20,6 +20,7 @@ DEFAULTS = {
     "response": {"direction": "out", "peer": "EXT"},
     "fault": {"direction": "out", "peer": "EXT"},
 }
+CURRENT = str(PAYLOAD_EXTRACTION_VERSION)
 G1 = "00000000-0000-4000-8000-000000000001"
 G2 = "00000000-0000-4000-8000-000000000002"
 
@@ -449,7 +450,7 @@ def test_old_case_is_reextracted_once(tmp_path):
     assert second.sources_failed == 0 and second.payloads == 3
     assert conn.execute("SELECT count(*) FROM payload").fetchone() == (3,)
     assert conn.execute("SELECT value FROM meta WHERE key = 'payload_extraction_version'").fetchone() == (
-        "1",
+        CURRENT,
     )
     rows = conn.execute("SELECT count(*) FROM payload p JOIN entry e ON e.id = p.entry_id").fetchone()
     assert rows == (3,)
@@ -463,7 +464,8 @@ def test_old_case_is_reextracted_once(tmp_path):
 def test_fresh_case_stores_the_extraction_version_without_forcing_anything(tmp_path, db):
     result = ingest(db, tmp_path)
     assert result.sources_indexed >= 1
-    assert db.execute("SELECT value FROM meta WHERE key = 'payload_extraction_version'").fetchone() == ("1",)
+    row = db.execute("SELECT value FROM meta WHERE key = 'payload_extraction_version'").fetchone()
+    assert row == (CURRENT,)
 
 
 def test_newer_extraction_version_reindexes_once(tmp_path, db, monkeypatch):
@@ -573,7 +575,7 @@ def test_extraction_version_is_tracked_per_source(tmp_path, db):
     old_state()
     first = run_ingest(db, root, default)  # only the Wfm log is in the default scope
     assert first.sources_selected == 1 and first.sources_indexed == 1
-    assert marks() == {f"payload_extraction_version.{wfm_id}": "1"}  # the other source is NOT marked
+    assert marks() == {f"payload_extraction_version.{wfm_id}": CURRENT}  # the other source is NOT marked
     assert db.execute("SELECT count(*) FROM payload").fetchone() == (3,)
 
     changes = db.total_changes
@@ -584,9 +586,9 @@ def test_extraction_version_is_tracked_per_source(tmp_path, db):
     later = run_ingest(db, root, everything)  # selecting the other source upgrades it, and only it
     assert later.sources_indexed == 1 and later.sources_unchanged == 1
     assert marks() == {
-        "payload_extraction_version": "1",
-        f"payload_extraction_version.{wfm_id}": "1",
-        f"payload_extraction_version.{other_id}": "1",
+        "payload_extraction_version": CURRENT,
+        f"payload_extraction_version.{wfm_id}": CURRENT,
+        f"payload_extraction_version.{other_id}": CURRENT,
     }
     assert db.execute("SELECT count(*) FROM payload").fetchone() == (3,)  # NMC has no payload template
     changes = db.total_changes
