@@ -208,6 +208,7 @@ jobs:
         run: |
           gh release create "${TAG}" \
             --verify-tag \
+            --prerelease \
             --title "dmslog ${VERSION}" \
             --notes-file release/NOTES.md \
             release/dmslog.pyz \

@@ -84,3 +84,7 @@ def test_release_notes_empty_section_fails(tmp_path):
 
 def test_release_workflow_uses_the_notes_script():
     assert "packaging/release_notes.py" in _text()
+
+
+def test_release_workflow_publishes_a_prerelease():
+    assert any("--prerelease" in line for line in _code_lines())

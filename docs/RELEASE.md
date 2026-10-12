@@ -24,7 +24,7 @@ Em Actions, rodar o workflow `release` manualmente (`workflow_dispatch`) na `mai
    git push origin v0.1.0
    ```
 
-3. Acompanhar o run `release` da tag. A release só aparece se todos os jobs passarem.
+3. Acompanhar o run `release` da tag. A release só aparece se todos os jobs passarem. Ela é publicada como **pré-release** (decisão do Jefferson, 2026-10-12): fica assim até o UAT e o teste manual no Windows passarem; então a promoção a release normal é manual (página da release > Edit > desmarcar "Set as a pre-release" e marcar "Set as the latest release").
 
 ## O que o workflow faz
 
@@ -32,7 +32,7 @@ Em Actions, rodar o workflow `release` manualmente (`workflow_dispatch`) na `mai
 2. `build-linux`: constrói `dmslog.pyz` e `dmslog-linux.tar.gz`; guarda sobre os artefatos; smoke do zipapp e do launcher.
 3. `build-windows`: constrói a pasta portátil (Python embeddable 3.13 + `dmslog.pyz` + `dmslog.bat` + `README.txt`) **sem** `--pack`, guarda, smoke com o Python embutido (não o do runner) e zip `dmslog-<versão>-windows-portable.zip`.
 4. `bundle`: reúne os arquivos, gera `SHA256SUMS`, extrai as notas do CHANGELOG, roda a guarda de novo sobre os arquivos finais e confere checksums e `--version` do zipapp.
-5. `publish` (só em tag; usa `contents: write`, único job com essa permissão): `gh release create` com os 4 arquivos e as notas. Sem segredos além do `GITHUB_TOKEN`, sem upload para serviços externos.
+5. `publish` (só em tag; usa `contents: write`, único job com essa permissão): `gh release create --prerelease` com os 4 arquivos e as notas. Sem segredos além do `GITHUB_TOKEN`, sem upload para serviços externos.
 
 Qualquer falha em `verify`, nas guardas ou nos smokes interrompe o fluxo antes de publicar.
 
