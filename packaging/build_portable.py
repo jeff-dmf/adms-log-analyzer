@@ -22,7 +22,7 @@ import build_pyz
 
 PY_VERSION = "3.13.16"
 PY_EMBED_URL = f"https://www.python.org/ftp/python/{PY_VERSION}/python-{PY_VERSION}-embed-amd64.zip"
-# SHA-256 of the 3.13.16 embeddable package as listed on its python.org release page (also matches the downloaded file).
+# SHA-256 of the 3.13.16 embeddable package, as listed on its python.org release page.
 PY_EMBED_SHA256 = "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
 
 ROOT = Path(__file__).resolve().parent.parent
