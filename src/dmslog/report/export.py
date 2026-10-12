@@ -117,6 +117,11 @@ class ExportOptions:
     profile: Profile | None = None  # only with anonymize; None = the default profile (everything on)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.anonymize, bool):
+            raise ExportError(
+                "bad_option",
+                messages.EXPORT_BAD_OPTION.format(field="anonymize", problem="true or false"),
+            )
         if self.profile is not None and not self.anonymize:
             raise ExportError("redaction_not_requested", messages.EXPORT_REDACTION_NOT_REQUESTED)
 

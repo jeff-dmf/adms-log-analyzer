@@ -266,6 +266,14 @@ def test_a_profile_without_anonymization_is_an_error_not_ignored():
     assert parse_options({"anonymize": True}, PROFILE).profile is PROFILE
 
 
+@pytest.mark.parametrize("value", [1, 0, "false", "true", None, 1.0])
+def test_a_non_boolean_anonymize_is_rejected_by_the_constructor(value):
+    for profile in (None, PROFILE):
+        with pytest.raises(ExportError) as info:
+            ExportOptions(anonymize=value, profile=profile)
+        assert info.value.code == "bad_option"
+
+
 @pytest.mark.parametrize(
     "extra",
     [
