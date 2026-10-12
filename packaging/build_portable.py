@@ -20,10 +20,10 @@ from pathlib import Path
 
 import build_pyz
 
-PY_VERSION = "3.13.7"
+PY_VERSION = "3.13.16"
 PY_EMBED_URL = f"https://www.python.org/ftp/python/{PY_VERSION}/python-{PY_VERSION}-embed-amd64.zip"
-# python.org publishes only MD5/signatures; this SHA-256 was pinned on the first download (TOFU).
-PY_EMBED_SHA256 = "f6cca216a359be84797cabb54149ce5e062afb16cc7567eb7fc51cacb2d86b65"
+# SHA-256 of the 3.13.16 embeddable package, as listed on its python.org release page.
+PY_EMBED_SHA256 = "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "dist" / ".cache"
