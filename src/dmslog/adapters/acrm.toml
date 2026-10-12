@@ -152,8 +152,10 @@ start = ["CRM-001", "CRM-010"]
 end = ["CRM-003", "CRM-015"]
 fail = ["CRM-004", "CRM-014"]
 pair_by = ["tid"]
-# "Detected errors" + SystemEventSender inside the operation = business_error (the event is sent only
-# when a code reaches ErrorSeverityEventingThreshold; Info-only codes stay ok). Confirmed 2026-10-11.
+# Same GEN-ERR-01 ("Detected errors") + GEN-EVT-01 (SystemEventSender) pair and same threshold as the
+# Wfm family: the event is sent only when a code reaches ErrorSeverityEventingThreshold, so Info-only
+# codes stay ok. The operation always ends ok, and it IS a business_error. Definition confirmed by the
+# maintainer on 2026-10-11 (docs/formato/crm-e-demais.md).
 business_error = ["GEN-ERR-01", "GEN-EVT-01"]
 
 [[sensitive_pair]]

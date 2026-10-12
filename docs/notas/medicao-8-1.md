@@ -46,11 +46,11 @@ Detalhe das fases no sintético Verbose de 2.600 MB (mediana): indexação 245 s
 | Banco ao fim | | | 1.776 MB (1,65 GiB) |
 
 - O número do M6 (36,7 s) corresponde à indexação do Enterprise sem a derivação (hoje 37,7 s). O código do merge do M6 (`c3e9ea5`), medido na mesma máquina, dá o mesmo resultado (55,6 s + 21,8 s de tempo total): **não há regressão desde o M6**.
-- Contando só a indexação do par, 51,8 s ≤ 60 s: PASS. Contando a ingestão inteira do par (o que o usuário espera), 73,3 s > 60 s: FAIL por 13 s. RSS (394 MB < 600 MB): PASS. Banco: 1,78 GB decimais > 1,7 GB: FAIL por 4,5 %; só passa se a meta for lida em GiB (1,65 GiB), o que é decisão do Jefferson.
+- Contando só a indexação do par, 51,8 s ≤ 60 s: PASS (critério adotado pelo Jefferson em 2026-10-11). A ingestão inteira do par, 73,3 s (13 s acima de 60 s), fica registrada como informação. RSS (394 MB < 600 MB): PASS. Banco: 1,78 GB decimais contra 1,7 GB, desvio de 4,5 % (1,65 GiB se a meta for lida em GiB): aceito pelo Jefferson em 2026-10-11.
 
 ### Projeção de 14 adapters Verbose com densidade real
 
-O sintético tem densidade de registros próxima da real (6,5 mil registros/MB no sintético, 6,1 mil no log normal real e 4,7 mil no par normal + sensitive). Na vazão medida no ERS real (10,7 MB/s na ingestão inteira), 2.600 MB levariam ≈ 245 s; a vazão do sintético dá 346 s. Proporcional à meta do M6 (1.041 MiB em 60 s ≈ 17,4 MiB/s), o alvo seria ≈ 143 s: **nenhuma das duas leituras chega lá**. O ROADMAP não pede tempo para o pior caso sintético (só sem erro e RSS < 1 GB); a decisão sobre uma meta de tempo para ele fica com o Jefferson (seção "Decisões").
+O sintético tem densidade de registros próxima da real (6,5 mil registros/MB no sintético, 6,1 mil no log normal real e 4,7 mil no par normal + sensitive). Na vazão medida no ERS real (10,7 MB/s na ingestão inteira), 2.600 MB levariam ≈ 245 s; a vazão do sintético dá 346 s. Proporcional à meta do M6 (1.041 MiB em 60 s ≈ 17,4 MiB/s), o alvo seria ≈ 143 s: **nenhuma das duas leituras chega lá**. O ROADMAP não pede tempo para o pior caso sintético (só sem erro e RSS < 1 GB); o tempo medido (346 s) foi aceito pelo Jefferson para a 0.1.0 em 2026-10-11 (seção "Decisões").
 
 ## Responsividade (meta R)
 
@@ -80,7 +80,7 @@ Servidor real em processo (como `dmslog serve`): o caso é criado e a coleção 
 | Incremental com 5 MB a mais num arquivo, caso de 2.600 MB (16,9 milhões de registros) † | 20,5–20,6 s por ciclo (3 ciclos), dos quais derivação 1,3 s; RSS 424 MB |
 | Incremental com 5 MB a mais, caso de 800 MB (5,2 milhões de registros, tamanho do ERS Verbose real) | 6,4–6,6 s por ciclo (3 ciclos), derivação 0,4–0,5 s; RSS 273 MB |
 
-**Incremental: o custo de um ciclo cresce com o caso, não com o que chegou.** Perfil de um ciclo no caso de 2.600 MB: ligação de payloads 60 %, correlação normal↔sensitive e ligações por chave 30 %, derivação 10 %. Causa: crescer um arquivo apaga e reprocessa o último registro (seção 9.3), o que incrementa `meta['entries_epoch']`; esse contador entra na assinatura de **todos** os grupos em `derive/payloads.py`, `derive/correlate.py` e `derive/links.py`, então todos os processos do caso são recalculados a cada ciclo. Não há meta de tempo para o ciclo no ROADMAP; com o polling de 2 s, o Follow fica 6 a 20 s atrás do arquivo nesses tamanhos. Correção proposta (não feita aqui; seção "Decisões").
+**Incremental: o custo de um ciclo cresce com o caso, não com o que chegou.** Perfil de um ciclo no caso de 2.600 MB: ligação de payloads 60 %, correlação normal↔sensitive e ligações por chave 30 %, derivação 10 %. Causa: crescer um arquivo apaga e reprocessa o último registro (seção 9.3), o que incrementa `meta['entries_epoch']`; esse contador entra na assinatura de **todos** os grupos em `derive/payloads.py`, `derive/correlate.py` e `derive/links.py`, então todos os processos do caso são recalculados a cada ciclo. Não há meta de tempo para o ciclo no ROADMAP; com o polling de 2 s, o Follow fica 6 a 20 s atrás do arquivo nesses tamanhos. Correção proposta e aceita como item pós-0.1.0 (seção "Decisões"); não feita aqui.
 
 ## Onde está o tempo (perfil do sintético Verbose de 300 MB)
 
@@ -92,9 +92,12 @@ Sem ponto quente único. Ingestão: SQLite (inserção em `entry` com 6 índices
 - ERS real com os 14 adapters em Verbose: não existe amostra; coberto pelo sintético.
 - Rotação durante o `watch` com o banco grande (só crescimento de arquivo).
 
-## Decisões para o Jefferson
+## Decisões
 
-1. **Meta de tempo do ERS Verbose (M6).** Indexação do par em 51,8 s (PASS), ingestão inteira em 73,3 s (FAIL). Qual vale: a indexação, como foi medido no M6, ou a ingestão inteira?
-2. **Meta de tempo do pior caso.** Hoje 346 s no sintético de 2.600 MB (≈ 245 s com densidade real). Aceitar como está (o ROADMAP só pede sem erro e RSS < 1 GB) ou fixar uma meta e abrir a paralelização (pós-1.0 ou M8)?
-3. **Incremental proporcional ao que chegou.** Proposta: época de registros por stream em vez de global; assinatura e recálculo por processo na ligação de payloads e por par na correlação (com as estatísticas por par agregadas no grupo); `links.py` continua por grupo, mas só quando um stream de chave mudou. Ganho esperado: ciclo de segundos para frações de segundo no caso real. Mexe em três algoritmos com invariantes delicadas; sugerido como item próprio, com teste de equivalência contra o recálculo completo.
-4. **FTS com termo muito frequente.** p95 de 0,9 s (sem carga) a 1,05 s (com carga) no pior caso. Opção: quando a contagem de ocorrências passa de um limite, percorrer `ix_entry_ts` e testar a pertinência em lotes, em vez de materializar e ordenar tudo.
+Decididas pelo Jefferson em 2026-10-11, com os números acima mantidos como medidos:
+
+1. **Meta de tempo do ERS Verbose (M6): conta só a indexação.** Indexação do par em 51,8 s (PASS). A ingestão inteira, 73,3 s, fica registrada como informação, sem valer como meta.
+2. **Banco do ERS Verbose real: desvio de 4,5 % aceito.** 1,78 GB medido contra a meta de 1,7 GB.
+3. **Tempo do pior caso sintético: aceito para a 0.1.0.** 346 s no sintético de 2.600 MB (≈ 245 s com densidade real). O ROADMAP só pede sem erro e RSS < 1 GB; paralelização (derivação por cadeia em processos, ou parse e classificação em processos com um escritor único) não entra na 0.1.0.
+4. **Incremental proporcional ao que chegou: item PÓS-0.1.0.** Proposta aprovada: época de registros por stream em vez de global; assinatura e recálculo por processo na ligação de payloads e por par na correlação (com as estatísticas por par agregadas no grupo); `links.py` continua por grupo, mas só quando um stream de chave mudou. Ganho esperado: ciclo de segundos para frações de segundo no caso real. Mexe em três algoritmos com invariantes delicadas; item próprio, com teste de equivalência contra o recálculo completo.
+5. **FTS com termo muito frequente: plano alternativo PÓS-0.1.0.** p95 de 0,9 s (sem carga) a 1,05 s (com carga) no pior caso. Plano: quando a contagem de ocorrências passa de um limite, percorrer `ix_entry_ts` e testar a pertinência em lotes, em vez de materializar e ordenar tudo.
