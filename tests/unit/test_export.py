@@ -57,7 +57,7 @@ def run(conn, selection, *, profile=PROFILE, **options):
     return build_report(
         conn,
         selection,
-        ExportOptions(profile=profile, **options),
+        ExportOptions(profile=profile if options["anonymize"] else None, **options),
         now=NOW,
         version="0.0.0-test",
     )
@@ -108,9 +108,24 @@ def test_header_reports_redaction_state_and_ers(conn):
     assert "dmslog 0.0.0-test" in on and "test-pack" not in on  # the pack name comes from the case
     off = run(conn, WHOLE, anonymize=False).parts[0].text
     assert "pack test-pack" in off
-    assert "Redaction: OFF (explicit; this report is NOT anonymized)" in off
+    assert "Redaction: OFF (original text)" in off
     assert "(ACMEHOST01)" in off
-    assert "Anonymization was turned off for this export: nothing was replaced." in off
+    assert "== Redaction legend ==" not in off  # U18: only an anonymized report has a legend
+    assert "== Redaction legend ==" in on
+
+
+def test_the_default_report_is_the_original_text(conn):
+    # U18: the app does not anonymize unless asked; every planted value reaches the report untouched
+    result = build_report(
+        conn, WHOLE, ExportOptions(include_payloads=True, context=1), now=NOW, version="0.0.0-test"
+    )
+    text = full_text(result)
+    assert result.anonymized is False and result.redactor is None and result.legend == []
+    assert "Redaction: OFF (original text)" in text and "== Redaction legend ==" not in text
+    assert not re.search(r"<[A-Z]+-\d+>", text)  # no marker at all
+    missing = [v for values in SENSITIVE.values() for v in values if v not in text]
+    assert missing == []
+    assert parse_options({}) == ExportOptions() and parse_options(None) == ExportOptions()
 
 
 @pytest.mark.parametrize("mode", ["strict", "standard"])
@@ -223,14 +238,40 @@ def test_selection_accepts_event_or_events_and_dedupes():
 # -- options ----------------------------------------------------------------------------------
 
 
-def test_anonymize_has_no_default():
-    for raw in ({}, {"anonymize": None}, {"anonymize": "yes"}, {"anonymize": 1}, {"include_payloads": True}):
+def test_anonymize_is_off_unless_asked_for_explicitly():
+    assert parse_options({}).anonymize is False
+    assert parse_options({"include_payloads": True}).anonymize is False
+    assert parse_options({"anonymize": False}).anonymize is False
+    assert parse_options({"anonymize": True}).anonymize is True
+    assert ExportOptions().anonymize is False
+    for raw in ({"anonymize": None}, {"anonymize": "yes"}, {"anonymize": 1}):
         with pytest.raises(ExportError) as info:
             parse_options(raw)
-        assert info.value.code == "anonymize_required"
-    with pytest.raises(ExportError):
-        parse_options(None)
-    assert parse_options({"anonymize": False}).anonymize is False
+        assert info.value.code == "bad_option"
+    for raw in ("x", [], 3):
+        with pytest.raises(ExportError) as info:
+            parse_options(raw)
+        assert info.value.code == "bad_options"
+
+
+def test_a_profile_without_anonymization_is_an_error_not_ignored():
+    for call in (
+        lambda: parse_options({}, PROFILE),
+        lambda: parse_options({"anonymize": False}, Profile(mode="standard")),
+        lambda: ExportOptions(profile=PROFILE),
+    ):
+        with pytest.raises(ExportError) as info:
+            call()
+        assert info.value.code == "redaction_not_requested"
+    assert parse_options({"anonymize": True}, PROFILE).profile is PROFILE
+
+
+@pytest.mark.parametrize("value", [1, 0, "false", "true", None, 1.0])
+def test_a_non_boolean_anonymize_is_rejected_by_the_constructor(value):
+    for profile in (None, PROFILE):
+        with pytest.raises(ExportError) as info:
+            ExportOptions(anonymize=value, profile=profile)
+        assert info.value.code == "bad_option"
 
 
 @pytest.mark.parametrize(

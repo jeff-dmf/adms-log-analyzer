@@ -58,7 +58,8 @@ function wholeNumber(value, fallback) {
 }
 
 // Form values -> request options. Numbers outside the server limits are clamped; the
-// anonymization flag is ALWAYS sent, true unless the form says exactly `false`.
+// anonymization flag is ALWAYS sent, false unless the form says exactly `true` (U18: the report
+// keeps the original text; anonymization is asked for explicitly).
 export function normalizeOptions(form) {
   const raw = form || {};
   const context = Math.min(wholeNumber(raw.context, EXPORT_DEFAULTS.context), EXPORT_LIMITS.contextMax);
@@ -67,7 +68,7 @@ export function normalizeOptions(form) {
     EXPORT_LIMITS.maxBytesMax,
   );
   return {
-    anonymize: raw.anonymize !== false,
+    anonymize: raw.anonymize === true,
     include_payloads: raw.includePayloads === true,
     context,
     max_bytes: maxBytes,
@@ -112,7 +113,7 @@ export function createExportFlow({ api, getCase, onState }) {
     legend: [],
     warnings: [],
     counts: null,
-    anonymized: true,
+    anonymized: false,
     mapSaved: false,
     error: null,
     errorKey: null,
@@ -176,7 +177,7 @@ export function createExportFlow({ api, getCase, onState }) {
       state.legend = legendRows(data.legend);
       state.warnings = Array.isArray(data.warnings) ? data.warnings.map(String) : [];
       state.counts = data.counts || null;
-      state.anonymized = data.anonymized !== false;
+      state.anonymized = data.anonymized === true;
       state.mapSaved = data.map_saved === true;
       state.active = 0;
       state.status = "ready";

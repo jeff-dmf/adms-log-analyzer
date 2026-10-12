@@ -45,7 +45,7 @@ test("selection objects", () => {
 });
 
 test("options are clamped and anonymization is always sent", () => {
-  assert.deepEqual(normalizeOptions(undefined), { anonymize: true, include_payloads: false, context: 0, max_bytes: 30000 });
+  assert.deepEqual(normalizeOptions(undefined), { anonymize: false, include_payloads: false, context: 0, max_bytes: 30000 });
   assert.deepEqual(
     normalizeOptions({ anonymize: false, includePayloads: true, context: "7", maxBytes: "50000" }),
     { anonymize: false, include_payloads: true, context: 7, max_bytes: 50000 },
@@ -56,10 +56,11 @@ test("options are clamped and anonymization is always sent", () => {
   assert.equal(normalizeOptions({ maxBytes: "999999999" }).max_bytes, EXPORT_LIMITS.maxBytesMax);
   assert.equal(normalizeOptions({ context: "-3" }).context, 0);
   assert.equal(normalizeOptions({ context: "abc", maxBytes: "" }).max_bytes, 30000);
-  // only an explicit false turns anonymization off
-  for (const value of [undefined, null, "off", 0, "false"]) {
-    assert.equal(normalizeOptions({ anonymize: value }).anonymize, true);
+  // U18: the original text is the default; only an explicit true turns anonymization on
+  for (const value of [undefined, null, "on", 1, "true", false]) {
+    assert.equal(normalizeOptions({ anonymize: value }).anonymize, false);
   }
+  assert.equal(normalizeOptions({ anonymize: true }).anonymize, true);
   assert.equal(normalizeOptions({ includePayloads: "yes" }).include_payloads, false);
 });
 
