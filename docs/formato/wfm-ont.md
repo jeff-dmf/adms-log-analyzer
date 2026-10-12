@@ -202,7 +202,34 @@ Normalização usada: GUID→`<guid>`, números→`<n>`, `'…'`/`"…"`→`<s>`
 
 - **Chave:** `request_id` (GUID) de WFM-010 → WFM-012. Esse GUID é o `MessageID` do header da mensagem recebida, e nos requests observados `CorrelationID = MessageID`. Na resposta (`CrewsResponseMessage` etc., visível no sensitive em INFO), o `MessageID` é novo e o `CorrelationID` é o request_id.
 - **Thread:** o fim fica sempre na mesma thread do início (21.918/21.918). As linhas sem ID (Connecting, Detected errors, SystemEvent, `ERROR - Processing…`, `Unable to execute…`) pertencem à requisição aberta na mesma TID. Há 3.120 TIDs distintas (pool WCF).
-- **Callbacks:** WFM-030 chega por outras threads, só 3 TIDs de longa vida (0x4404, 0x500c, 0x6b4c). A ligação é por `GID` (OMS_CREW_CHANGE_REQ), que não aparece na linha de início. Correlacionar callback e request só por janela de tempo, ou pelo XML de INFO.
+- **Callbacks:** WFM-030 chega por outras threads, só 3 TIDs de longa vida (0x4404, 0x500c, 0x6b4c). A ligação é por `GID` (OMS_CREW_CHANGE_REQ), que não aparece na linha de início. Regra adotada (issue #65) na subseção seguinte.
+
+#### Callback ↔ requisição de origem (issue #65)
+
+Medido por script nas três capturas locais (ERS de 10-08 12:40, de 10-08 14:53 e de 10-09 14:50; só contagens):
+
+| Medida | 10-08 12:40 | 10-08 14:53 | 10-09 14:50 |
+|---|---|---|---|
+| WFM-030 (todos com GID; nenhum GID repetido) | 16.212 | 19.098 | 6.626 |
+| WFM-030 em INFO | 4 | 407 | 97 |
+| WFM-030 cujo GID aparece num WFM-123/124 | 4 | 406 | 97 |
+| … com todos os WFM-123/124 do GID numa única requisição (mesma TID, entre WFM-010 e o fim) | 4 | 406 | 97 |
+| GID em mais de uma requisição | 0 | 0 | 0 |
+| Callback antes do pedido | 0 | 0 | 0 |
+| Registros DEBUGLOG (normal ou sensitive) que trazem o GID de um callback, fora o próprio WFM-030/S030 | 0 | 0 | 0 |
+
+- Δt entre o último WFM-123/124 e o WFM-030 (507 casos): p50 ≈ 2,0 s, p99 3,5 s, máximo 13,1 s.
+- Requisições de origem: só operações de assignments (Changed 423, Created 74, Deleted 10, somando as três capturas, que se sobrepõem no tempo).
+- O WFM-126 (`CRS sent callback …`) sai na mesma TID do WFM-030 e, em 2 de 406 casos, **depois** dele; a regra `WFM-126 → WFM-030` (só "b depois de a") perde esses 2.
+- WFM-S030: dentro da cobertura do log normal, 100% têm o par WFM-030 (mesmo GID, mesma TID, Δt ≤ 1 s). Fora dela não há WFM-123/124 em nenhum arquivo, e o sensitive não traz outra linha com o GID.
+- A antiga regra por janela de tempo (WFM-010 → WFM-030, 35 s, confiança 0, só com uma requisição aberta) ligava 360, 361 e 158 callbacks (≈ 2%) e deixava ~98% como ambíguos. Das ligações feitas, 878 de 879 iam para `Changed crews`, `Changed vehicles` ou `Created crew model`, que nunca aparecem como origem verificável; só 1 caso pôde ser conferido pelo GID.
+
+**Regra (implementada em `derive/links.py`, `origin = "operation"`; `awfm.toml`):** liga o registro de início da operação (WFM-010/011) ao WFM-030 quando (1) algum WFM-123/124A/124B do mesmo processo tem o GID do callback; (2) **todos** esses registros pertencem à mesma operação (`entry.event_id` de um evento `operation` do stream); (3) o último deles fica no máximo 60 s antes do callback. Confiança 2 (chave idêntica + pertença à operação pela TID). Sem GID no pedido (DebugLog), GID em mais de uma operação (ou em registro fora de operação), callback antes do pedido ou depois da janela: **sem ligação**, contado por motivo (`unmatched`, `ambiguous`, `no_operation`, `out_of_window`) em `meta['correlate.links.<grupo>']` (`link_stats`). No pipeline real: 4, 406 e 97 ligados; 0 ambíguos, 0 fora de operação, 0 fora da janela; os demais (16.208, 18.692, 6.529) sem GID no pedido.
+
+**Escopo e o que ficou de fora:**
+- Fora das janelas Info (DebugLog, ~98% dos callbacks nas amostras) **não existe ligação segura**: nenhum registro do pedido traz o GID. A heurística por janela de tempo foi removida do catálogo (não a funcionalidade `window_only` do motor), porque as medições mostram que ela erra o tipo de requisição em quase todos os casos.
+- O WFM-S030 não recebe ligação própria: chega à requisição pelo par normal↔sensitive com o WFM-030.
+- As ligações por GID já existentes (WFM-123/124 → WFM-126 → WFM-030) continuam; a nova não depende do WFM-126.
 - **Requisição sem fim = falha.** As 184 não fechadas (143 Changed crews, 32 Changed vehicles, 9 Changed crew assignments) batem uma a uma com WFM-081 na mesma TID.
 - **Duração (WFM-010→012):**
 
@@ -284,7 +311,7 @@ Normalização usada: GUID→`<guid>`, números→`<n>`, `'…'`/`"…"`→`<s>`
 1. Por que o log normal começa em 10-07 (02:30 no Wfm, 20:30 no Ont) e não no start do processo? Pode ser rollover por tamanho ou corte pelo ERS. Há arquivos `_N.log` anteriores fora do ERS?
 2. Numeração `DebugLog (3) … Verbose (6)`: confirmar o enum completo (onde ficam Fatal/Exit/Error/Always) e se o `toggleDebug` sempre dá a volta para DebugLog.
 3. O efeito de `ModelUpdatersLogLevel=Info` (Wfm) não é visível. Ele controla os dumps de mapa (WFM-001) ou os `[Info] AlternateRadioID…`?
-4. Como ligar com segurança o `Callback received … GID` (WFM-030) à requisição de origem sem o XML de INFO?
+4. ~~Como ligar com segurança o `Callback received … GID` (WFM-030) à requisição de origem sem o XML de INFO?~~ Respondida (issue #65, seção 4): só com nível ≥ Info, pelo GID de WFM-123/124 dentro da requisição; em DebugLog não há chave e nada é ligado.
 5. A linha sem `[TID=…]` (`PSAttach`) é um formato do logger nativo (C++)? Pode aparecer em outros adapters com mais frequência?
 6. Em falha (WFM-081), qual resposta foi devolvida ao sistema externo (código CIM)? Só dá para confirmar com o sensitive em INFO durante uma falha.
 7. O sensitive retém muito mais história (desde 08-28 no Ont, 10-05 no Wfm) que o normal: a rotação é por tamanho, por arquivo? Confirmar a política.

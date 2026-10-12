@@ -12,10 +12,20 @@ family, process and pid). Rules of one family never link records of another fami
 * ``retry``: records of the codes ``a`` + ``b`` with the same key value form a chain ordered by time; a chain
   starts at an ``a`` record and every following record gets a link from the previous one (``a -> b -> b``,
   confidence 3). A gap larger than ``max_dt_ms`` breaks the chain.
-* ``window_only = true`` (no key; Wfm "Callback received"): a ``b`` is linked to the one unconsumed ``a`` that
-  precedes it within ``max_dt_ms``, only when that ``a`` is unambiguous (exactly one open ``a``); the link has
-  confidence 0 and the ``a`` is consumed. With two or more open ``a`` nothing is linked (counted as
-  ``ambiguous``).
+* ``window_only = true`` (no key): a ``b`` is linked to the one unconsumed ``a`` that precedes it within
+  ``max_dt_ms``, only when that ``a`` is unambiguous (exactly one open ``a``); the link has confidence 0 and
+  the ``a`` is consumed. With two or more open ``a`` nothing is linked (counted as ``ambiguous``). No rule
+  of the catalog uses it today (the Wfm one was measured wrong, docs/formato/wfm-ont.md, section 4).
+* ``origin = "operation"`` (``callback`` and ``response`` only, with ``key``): the ``a`` records only carry
+  the key (Wfm: the GID that CRS/IMS returned, logged inside the request); the link goes from the START
+  record of the operation (``event.kind = 'operation'``, through ``entry.event_id``) that holds them to each
+  ``b`` with the same key value (confidence 2: identical key plus TID membership of the operation).
+  Safe-match rule: every ``a`` record of the value in the partition must belong to one and the same
+  operation, and the latest ``a`` at or before the ``b`` must be at most ``max_dt_ms`` older. Otherwise
+  nothing is linked and the ``b`` is counted: ``unmatched`` (no ``a`` with that value, e.g. the INFO lines
+  were not logged), ``ambiguous`` (``a`` records in more than one operation, or more than ``MAX_A_PER_KEY``
+  of them), ``no_operation`` (``a`` outside any operation) or ``out_of_window`` (the ``b`` is older than
+  every ``a``, or too far after them).
 
 Examples (the codes are placeholders)::
 
@@ -44,22 +54,36 @@ Examples (the codes are placeholders)::
     # callback with no key on the start line: only by time window, heuristic
     [[link_rule]]
     kind = "callback"
-    a = "WFM-123"
-    b = "WFM-126"
+    a = "XYZ-001"
+    b = "XYZ-002"
     window_only = true
     max_dt_ms = 30000
 
+    # callback linked to the request (operation) whose thread logged the key it carries
+    [[link_rule]]
+    kind = "callback"
+    a = ["WFM-123", "WFM-124A", "WFM-124B"]
+    b = "WFM-030"
+    key = "gid"
+    origin = "operation"
+
 Execution: ``link_pending`` works per collection group. A group is recomputed only when the signature in
-``meta['correlate.links.<group>']`` (sources of its streams, rules, template ids) changed; an unchanged group
-writes nothing. Recomputing deletes the links of this module's kinds that start in the group, inserts the new
-ones and stores the signature, all inside one SAVEPOINT. Candidates are read through ``ix_entry_tpl_ts`` by
-template id, one cursor per code, merged in time order; memory is bounded (``MAX_OPEN_KEYS`` open keys,
-``MAX_B_PER_A`` links per ``a``), and what is dropped by those bounds is counted in ``LinkSummary.dropped``.
-Odd data (``NULL`` ts or key) is skipped, never raised.
+``meta['correlate.links.<group>']`` (sources of its streams, rules, template ids and, when a rule uses
+``origin``, the operation events of the streams) changed; an unchanged group writes nothing. The same meta
+value keeps the counters of the last run per rule (``link_stats``). Recomputing deletes the links of this
+module's kinds that start in the group, inserts the new ones and stores the signature, all inside one
+SAVEPOINT. Candidates are read through ``ix_entry_tpl_ts`` by template id, one cursor per code, merged in
+time order; memory is bounded (``MAX_OPEN_KEYS`` open keys, ``MAX_B_PER_A`` links per ``a``,
+``MAX_A_PER_KEY``), and what is dropped by those bounds is counted in ``LinkSummary.dropped``. Odd data
+(``NULL`` ts or key, a dangling ``event_id``) is skipped, never raised.
+
+The ``normal_sensitive`` links of ``correlate.py`` and ``payloads.py`` are never touched here, and those
+engines never delete this module's kinds: the origin links survive their recomputation.
 """
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import heapq
 import json
@@ -76,9 +100,12 @@ KINDS = ("callback", "retry", "response")
 DEFAULT_MAX_DT_MS = 60000
 MAX_OPEN_KEYS = 200_000  # open keys (or open window records) kept per rule and partition
 MAX_B_PER_A = 64  # callbacks linked to one ``a`` record
+MAX_A_PER_KEY = 64  # ``origin`` rules: ``a`` records kept per key value; more makes the value ambiguous
 BATCH = 5000
 META_PREFIX = "correlate.links."
-_SIGNATURE_VERSION = "1"
+_SIGNATURE_VERSION = "2"
+ORIGINS = ("record", "operation")
+ORIGIN_CONFIDENCE = 2
 _FIELD_NAME = re.compile(r"^\w+$")
 
 # (ts, rank, entry_id, key value, is_a, is_b); rank puts a pure ``a`` before a ``b`` with the same ts
@@ -91,13 +118,32 @@ class LinkSummary:
     groups: int = 0  # collection groups recomputed (unchanged ones are skipped)
     errors: list[tuple[int, str]] = field(default_factory=list)  # (collection_group, message)
     dropped: int = 0  # candidates lost to the memory bounds (open keys, links per ``a``)
-    ambiguous: int = 0  # window_only ``b`` records not linked because several ``a`` were open
+    ambiguous: int = 0  # ``b`` not linked: several open ``a`` (window_only) or several operations (origin)
+    unmatched: int = 0  # origin rules: ``b`` whose key value no ``a`` record carries
+    no_operation: int = 0  # origin rules: the ``a`` records of the value are outside any operation
+    out_of_window: int = 0  # origin rules: ``b`` before every ``a`` of its value, or max_dt_ms after them
+
+
+_COUNTERS = ("dropped", "ambiguous", "unmatched", "no_operation", "out_of_window")
 
 
 @dataclass
 class _Counters:
+    linked: int = 0
     dropped: int = 0
     ambiguous: int = 0
+    unmatched: int = 0
+    no_operation: int = 0
+    out_of_window: int = 0
+
+    def add_to(self, other: Any) -> None:
+        for name in _COUNTERS:
+            setattr(other, name, getattr(other, name) + getattr(self, name))
+
+    def as_dict(self) -> dict[str, int]:
+        out = {"linked": self.linked}
+        out.update({name: getattr(self, name) for name in _COUNTERS if getattr(self, name)})
+        return out
 
 
 # --------------------------------------------------------------------------- helpers
@@ -132,7 +178,25 @@ def _rule_problem(rule: Any) -> str | None:
         return "rule without key (and not window_only)"
     if rule.get("scope", "stream") not in ("stream", "group"):
         return f"unknown scope {rule.get('scope')!r}"
+    origin = rule.get("origin", "record")
+    if origin not in ORIGINS:
+        return f"unknown origin {origin!r}"
+    if origin == "operation":
+        if rule["kind"] == "retry" or window_only:
+            return "origin = 'operation' needs a keyed callback or response rule"
+        if set(_codes(rule.get("a"))) & set(_codes(rule.get("b"))):
+            return "origin = 'operation' needs disjoint a and b codes"
     return None
+
+
+def _origin(rule: Any) -> bool:
+    return rule.get("origin", "record") == "operation"
+
+
+def _rule_label(family: str, rule: Any) -> str:
+    a, b = "+".join(_codes(rule.get("a"))), "+".join(_codes(rule.get("b")))
+    suffix = "@operation" if _origin(rule) else ""
+    return f"{family}/{rule.get('kind')}:{a}>{b}{suffix}"
 
 
 def _digest(*parts: Any) -> str:
@@ -182,9 +246,21 @@ def _signature(
         ).fetchall()
         parts.append([st.id, st.family, st.process, st.pid, st.sensitive, rows])
     used: set[str] = set()
+    origin_families: set[str] = set()
     for family in sorted(rules):
         for rule in rules[family]:
             used.update(_codes(rule.get("a")) + _codes(rule.get("b")))
+            if _origin(rule):
+                origin_families.add(family)
+    for st in streams:
+        if st.family in origin_families:
+            # the origin links follow the operations: a re-derivation (new [[operation]] rule) recomputes them
+            ops = conn.execute(
+                "SELECT count(*), coalesce(max(id), 0), coalesce(sum(id), 0),"
+                " coalesce(sum(start_entry_id), 0) FROM event WHERE stream_id = ? AND kind = 'operation'",
+                (st.id,),
+            ).fetchone()
+            parts.append([st.id, list(ops)])
     parts.append({fam: [dict(r) for r in rules[fam]] for fam in sorted(rules)})
     defs = dict(conn.execute("SELECT code, def_version FROM template").fetchall())
     parts.append({c: [ids.get(c), defs.get(c)] for c in sorted(used)})
@@ -194,6 +270,59 @@ def _signature(
 
 
 # --------------------------------------------------------------------------- candidate reading
+
+
+def _keyed_rows(
+    conn: sqlite3.Connection,
+    tpl_id: int,
+    stream_ids: list[int],
+    key: str | None,
+    with_operation: bool = False,
+) -> Iterator[tuple[Any, ...]]:
+    """``(ts, id, value[, operation id, operation start])`` of one template in the streams, by (ts, id).
+
+    ``with_operation`` adds the operation event that holds the record (``entry.event_id``), only when it is an
+    operation of the same streams; otherwise both columns are NULL.
+    """
+    streams = ",".join(str(int(s)) for s in stream_ids)
+    where = (
+        "e.tpl_id = ? AND e.ts IS NOT NULL AND e.source_id IN"
+        f" (SELECT id FROM source WHERE stream_id IN ({streams}))"
+    )
+    op_cols, op_join = "", ""
+    if with_operation:
+        op_cols = ", ev.id, ev.start_entry_id"
+        op_join = (
+            " LEFT JOIN event ev ON ev.id = e.event_id AND ev.kind = 'operation'"
+            f" AND ev.stream_id IN ({streams})"
+        )
+    if key is None:
+        yield from conn.execute(
+            f"SELECT e.ts, e.id, ''{op_cols} FROM entry e{op_join} WHERE {where} ORDER BY e.ts, e.id",
+            (tpl_id,),
+        )
+        return
+    cur = conn.execute(
+        f"SELECT e.ts, e.id, k.value{op_cols} FROM entry e JOIN entry_key k ON k.entry_id = e.id"
+        f" AND k.key_type = ?{op_join} WHERE {where} ORDER BY e.ts, e.id",
+        (key, tpl_id),
+    )
+    found = False
+    for row in cur:
+        found = True
+        yield (row[0], row[1], str(row[2]), *row[3:])
+    if found or not _FIELD_NAME.match(key):
+        return
+    # the key is a field name, not an entry_key type: read it from the stored fields
+    cur = conn.execute(
+        f"SELECT e.ts, e.id, json_extract(e.fields, ?){op_cols} FROM entry e{op_join}"
+        f" WHERE {where} AND e.fields IS NOT NULL ORDER BY e.ts, e.id",
+        (f'$."{key}"', tpl_id),
+    )
+    for row in cur:
+        if row[2] is None or isinstance(row[2], (list, dict)):
+            continue
+        yield (row[0], row[1], str(row[2]), *row[3:])
 
 
 def _candidates(
@@ -206,37 +335,8 @@ def _candidates(
     is_b: bool,
 ) -> Iterator[_Event]:
     """Records of one template inside the streams, ordered by (ts, id), as events."""
-    streams = ",".join(str(int(s)) for s in stream_ids)
-    where = (
-        "e.tpl_id = ? AND e.ts IS NOT NULL AND e.source_id IN"
-        f" (SELECT id FROM source WHERE stream_id IN ({streams}))"
-    )
-    if key is None:
-        cur = conn.execute(f"SELECT e.ts, e.id, '' FROM entry e WHERE {where} ORDER BY e.ts, e.id", (tpl_id,))
-        for ts, eid, value in cur:
-            yield (ts, rank, eid, value, is_a, is_b)
-        return
-    cur = conn.execute(
-        f"SELECT e.ts, e.id, k.value FROM entry e JOIN entry_key k ON k.entry_id = e.id AND k.key_type = ?"
-        f" WHERE {where} ORDER BY e.ts, e.id",
-        (key, tpl_id),
-    )
-    found = False
-    for ts, eid, value in cur:
-        found = True
-        yield (ts, rank, eid, str(value), is_a, is_b)
-    if found or not _FIELD_NAME.match(key):
-        return
-    # the key is a field name, not an entry_key type: read it from the stored fields
-    cur = conn.execute(
-        f"SELECT e.ts, e.id, json_extract(e.fields, ?) FROM entry e WHERE {where} AND e.fields IS NOT NULL"
-        f" ORDER BY e.ts, e.id",
-        (f'$."{key}"', tpl_id),
-    )
-    for ts, eid, value in cur:
-        if value is None or isinstance(value, (list, dict)):
-            continue
-        yield (ts, rank, eid, str(value), is_a, is_b)
+    for ts, eid, value in _keyed_rows(conn, tpl_id, stream_ids, key):
+        yield (ts, rank, eid, value, is_a, is_b)
 
 
 def _events(
@@ -317,6 +417,70 @@ def _window_links(events: Iterator[_Event], kind: str, max_dt: int, counters: _C
                 counters.dropped += 1
 
 
+class _OriginKey:
+    """What the ``a`` records of one key value say about its origin operation."""
+
+    __slots__ = ("op", "start", "ts", "mixed")
+
+    def __init__(self, op: int | None, start: int | None, ts: int) -> None:
+        self.op, self.start, self.ts, self.mixed = op, start, [ts], False
+
+    def add(self, op: int | None, start: int | None, ts: int) -> None:
+        if op != self.op or start != self.start or len(self.ts) >= MAX_A_PER_KEY:
+            self.mixed = True
+        else:
+            self.ts.append(ts)  # rows arrive merged by (ts, id): the list stays sorted
+
+
+def _origin_links(
+    conn: sqlite3.Connection,
+    rule: Any,
+    ids: dict[str, int],
+    stream_ids: list[int],
+    max_dt: int,
+    counters: _Counters,
+) -> Iterator[_Link]:
+    """origin = "operation": each ``b`` to the start record of the one operation holding its key's ``a``."""
+    key = rule["key"]
+    a_gens = [
+        _keyed_rows(conn, ids[c], stream_ids, key, with_operation=True)
+        for c in sorted(set(_codes(rule["a"])))
+        if c in ids
+    ]
+    origins: dict[str, _OriginKey] = {}
+    for ts, _eid, value, op, start in heapq.merge(*a_gens):
+        cur = origins.get(value)
+        if cur is not None:
+            cur.add(op, start, ts)
+        elif len(origins) < MAX_OPEN_KEYS:
+            origins[value] = _OriginKey(op, start, ts)
+        else:
+            counters.dropped += 1  # the value stays unknown: its ``b`` count as unmatched, never guessed
+    fanout: dict[int, int] = {}
+    b_gens = [_keyed_rows(conn, ids[c], stream_ids, key) for c in sorted(set(_codes(rule["b"]))) if c in ids]
+    for ts, eid, value in heapq.merge(*b_gens):
+        cur = origins.get(value)
+        if cur is None:
+            counters.unmatched += 1
+            continue
+        if cur.mixed:
+            counters.ambiguous += 1
+            continue
+        if cur.op is None or cur.start is None or cur.start == eid:
+            counters.no_operation += 1
+            continue
+        i = bisect.bisect_right(cur.ts, ts)
+        if i == 0 or ts - cur.ts[i - 1] > max_dt:
+            counters.out_of_window += 1
+            continue
+        n = fanout.get(cur.start, 0)
+        if n >= MAX_B_PER_A:
+            counters.dropped += 1
+            continue
+        fanout[cur.start] = n + 1
+        yield (cur.start, eid, rule["kind"], ORIGIN_CONFIDENCE)
+
+
 # --------------------------------------------------------------------------- a group
 
 
@@ -331,12 +495,37 @@ def _partitions(streams: list[_Stream], scope: str, family: str) -> list[list[in
     return list(by_process.values())
 
 
+def _rule_links(
+    conn: sqlite3.Connection,
+    streams: list[_Stream],
+    family: str,
+    rule: Any,
+    ids: dict[str, int],
+    counters: _Counters,
+) -> Iterator[_Link]:
+    kind = rule["kind"]
+    window_only = bool(rule.get("window_only", False))
+    key = None if window_only else rule["key"]
+    max_dt = _max_dt(rule)
+    for stream_ids in _partitions(streams, rule.get("scope", "stream"), family):
+        if _origin(rule):
+            yield from _origin_links(conn, rule, ids, stream_ids, max_dt, counters)
+            continue
+        events = _events(conn, rule, ids, stream_ids, key)
+        if window_only:
+            yield from _window_links(events, kind, max_dt, counters)
+        elif kind == "retry":
+            yield from _retry_links(events, max_dt, counters)
+        else:
+            yield from _keyed_links(events, kind, max_dt, counters)
+
+
 def _compute(
     conn: sqlite3.Connection,
     streams: list[_Stream],
     rules: dict[str, list[Any]],
     ids: dict[str, int],
-    counters: _Counters,
+    stats: dict[str, _Counters],
     problems: list[str],
 ) -> Iterator[_Link]:
     for family in sorted(rules):
@@ -345,18 +534,10 @@ def _compute(
             if problem is not None:
                 problems.append(f"{family}: {problem}")
                 continue
-            kind = rule["kind"]
-            window_only = bool(rule.get("window_only", False))
-            key = None if window_only else rule["key"]
-            max_dt = _max_dt(rule)
-            for stream_ids in _partitions(streams, rule.get("scope", "stream"), family):
-                events = _events(conn, rule, ids, stream_ids, key)
-                if window_only:
-                    yield from _window_links(events, kind, max_dt, counters)
-                elif kind == "retry":
-                    yield from _retry_links(events, max_dt, counters)
-                else:
-                    yield from _keyed_links(events, kind, max_dt, counters)
+            counters = stats.setdefault(_rule_label(family, rule), _Counters())
+            for link in _rule_links(conn, streams, family, rule, ids, counters):
+                counters.linked += 1
+                yield link
 
 
 def _recompute_group(
@@ -366,7 +547,7 @@ def _recompute_group(
     rules: dict[str, list[Any]],
     ids: dict[str, int],
     signature: str,
-    counters: _Counters,
+    stats: dict[str, _Counters],
     problems: list[str],
 ) -> int:
     kinds = ",".join(f"'{k}'" for k in KINDS)
@@ -384,18 +565,41 @@ def _recompute_group(
     inserted = 0
     batch: list[_Link] = []
     sql = "INSERT OR IGNORE INTO link(a_entry_id, b_entry_id, kind, confidence) VALUES (?, ?, ?, ?)"
-    for row in _compute(conn, streams, rules, ids, counters, problems):
+    for row in _compute(conn, streams, rules, ids, stats, problems):
         batch.append(row)
         if len(batch) >= BATCH:
             inserted += conn.executemany(sql, batch).rowcount
             batch.clear()
     if batch:
         inserted += conn.executemany(sql, batch).rowcount
+    value = {"sig": signature, "rules": {label: c.as_dict() for label, c in sorted(stats.items())}}
     conn.execute(
         "INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (f"{META_PREFIX}{group}", signature),
+        (f"{META_PREFIX}{group}", json.dumps(value, sort_keys=True)),
     )
     return inserted
+
+
+def _stored(raw: Any) -> dict[str, Any]:
+    """The stored meta value as a dict (``{}`` when absent or in an older format)."""
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else None
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def link_stats(conn: sqlite3.Connection, group: int) -> dict[str, dict[str, int]]:
+    """Counters of the last run of the group, per rule label ``"<family>/<kind>:<a>><b>[@operation]"``.
+
+    Each value has ``linked`` and, when not zero, ``dropped``, ``ambiguous``, ``unmatched``, ``no_operation``
+    and ``out_of_window``. Empty when the group was never linked.
+    """
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"{META_PREFIX}{group}",)).fetchone()
+    rules = _stored(row[0] if row else None).get("rules")
+    if not isinstance(rules, dict):
+        return {}
+    return {str(k): dict(v) for k, v in rules.items() if isinstance(v, dict)}
 
 
 def link_pending(conn: sqlite3.Connection, catalog: Any, kb: Any = None) -> LinkSummary:
@@ -418,16 +622,16 @@ def link_pending(conn: sqlite3.Connection, catalog: Any, kb: Any = None) -> Link
         try:
             signature = _signature(conn, streams, rules, ids)
             row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"{META_PREFIX}{group}",)).fetchone()
-            if row is not None and row[0] == signature:
+            if row is not None and _stored(row[0]).get("sig") == signature:
                 continue
             if not rules and row is None:
                 continue  # nothing to correlate and nothing stored: leave the database untouched
-            counters = _Counters()
+            stats: dict[str, _Counters] = {}
             problems: list[str] = []
             if own_tx:
                 conn.execute("BEGIN")
             conn.execute(f"SAVEPOINT {savepoint}")
-            inserted = _recompute_group(conn, group, streams, rules, ids, signature, counters, problems)
+            inserted = _recompute_group(conn, group, streams, rules, ids, signature, stats, problems)
             if own_tx:
                 conn.execute("COMMIT")  # ends the transaction with the savepoint still active
             else:
@@ -438,7 +642,7 @@ def link_pending(conn: sqlite3.Connection, catalog: Any, kb: Any = None) -> Link
             continue
         summary.groups += 1
         summary.links += inserted
-        summary.dropped += counters.dropped
-        summary.ambiguous += counters.ambiguous
+        for counters in stats.values():
+            counters.add_to(summary)
         summary.errors.extend((group, p) for p in problems)
     return summary

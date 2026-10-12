@@ -727,10 +727,20 @@ b = "WFM-030"
 key = "gid"
 max_dt_ms = 60000
 
-# Without INFO lines the callback has no key back to its request: time window only.
+# "Callback received" -> the request that caused it (issue #65, docs/formato/wfm-ont.md section 4).
+# The GID returned by CRS/IMS (WFM-123/124) is logged inside the request operation (its TID); the
+# callback (WFM-030) carries the same GID on one of the long-lived callback threads. The link goes from
+# the operation start (WFM-010/011) to the callback, only when every WFM-123/124 of that GID lies in one
+# and the same operation and the callback comes at most max_dt_ms after it (sample: p99 3.5 s, max
+# 13.1 s). Without the INFO lines (DebugLog) no record carries the GID: nothing is linked. A time-window
+# guess (WFM-010 -> WFM-030, 35 s) was removed: it linked about 2% of the callbacks, almost all of
+# them to "Changed crews"/"Changed vehicles" requests, while every verifiable origin is a crew
+# assignments request. The sensitive callback (WFM-S030) reaches the request through its
+# normal_sensitive pair with WFM-030.
 [[link_rule]]
 kind = "callback"
-a = "WFM-010"
+a = ["WFM-123", "WFM-124A", "WFM-124B"]
 b = "WFM-030"
-window_only = true
-max_dt_ms = 35000
+key = "gid"
+origin = "operation"
+max_dt_ms = 60000
