@@ -131,6 +131,18 @@ test("the anonymization flag the server answers with wins", async () => {
   assert.equal(flow.state.mapSaved, false);
 });
 
+test("by default (U18) the build asks for the original text", async () => {
+  const { flow, calls } = setup();
+  assert.equal(flow.state.anonymized, false);
+  const building = flow.build("record", ctx(), {});
+  assert.equal(calls[0].options.anonymize, false);
+  const { anonymized, ...answer } = report("p");  // a server answer without the flag is not anonymized
+  assert.equal(anonymized, true);
+  calls[0].d.resolve({ ...answer, legend: [], map_saved: false });
+  await building;
+  assert.equal(flow.state.anonymized, false);
+});
+
 // -- redaction settings ----------------------------------------------------------------------
 
 function redactionSetup() {

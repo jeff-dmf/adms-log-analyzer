@@ -5,14 +5,14 @@ Layout (all fixed texts live in :mod:`dmslog.messages`)::
     dmslog report - <case label>[ - part k/N]
     Generated: <local time> - dmslog <version> - pack <version>
     Source: ERS <time> (<machine>) - Enterprise+Sensitive
-    Redaction: ON (profile "default", strict mode)
+    Redaction: OFF (original text)      or, when asked: Redaction: ON (profile "default", strict mode)
     Time shown as logged (local server time, no conversion).
 
     == Summary ==
     == Events ==        events selected by id, with their records
     == Records ==       selected records (ids or a filter) with ``context`` records around them
     == Payloads ==      only with ``include_payloads``; excerpts then point to ``P<n>``
-    == Redaction legend ==
+    == Redaction legend ==  only when anonymization was asked for
 
 Format rules: UTF-8 without BOM, CRLF line ends, ASCII frame, log lines literal (never wrapped).
 A part is at most ``max_bytes`` UTF-8 bytes: longer reports are split in numbered parts
@@ -20,7 +20,9 @@ A part is at most ``max_bytes`` UTF-8 bytes: longer reports are split in numbere
 
 Privacy rules:
 
-* ``options.anonymize`` has no default: the caller says true or false on every export;
+* the report is the original text by default (U18: the app runs locally and does not anonymize);
+  anonymization is a development tool that the caller asks for explicitly (``options.anonymize``);
+  a redaction profile given without it is an error, never silently ignored;
 * with anonymization on, EVERY text taken from the case (record text, keys, notes, file names, the
   case label, the machine name) goes through the :class:`~dmslog.report.redact.Redactor`; payloads
   also get the per-element rules; the legend lists categories and counts, never values;
@@ -107,12 +109,16 @@ class Selection:
 
 @dataclass(frozen=True, slots=True)
 class ExportOptions:
-    anonymize: bool
+    anonymize: bool = False  # U18: original text unless anonymization is asked for explicitly
     include_payloads: bool = False
     context: int = 0
     max_bytes: int = DEFAULT_MAX_BYTES
     split: bool = True
-    profile: Profile | None = None  # None = the default profile (everything on)
+    profile: Profile | None = None  # only with anonymize; None = the default profile (everything on)
+
+    def __post_init__(self) -> None:
+        if self.profile is not None and not self.anonymize:
+            raise ExportError("redaction_not_requested", messages.EXPORT_REDACTION_NOT_REQUESTED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,13 +186,14 @@ def _bool_option(raw: Mapping[str, Any], name: str, default: bool) -> bool:
 
 
 def parse_options(raw: Any, profile: Profile | None = None) -> ExportOptions:
-    """Validate the ``options`` object; ``anonymize`` must be present and boolean."""
+    """Validate the ``options`` object (absent = every default). ``anonymize`` defaults to false (U18);
+    a ``profile`` without ``anonymize`` true is refused (``redaction_not_requested``)."""
+    if raw is None:
+        raw = {}
     if not isinstance(raw, Mapping):
         raise ExportError("bad_options", messages.EXPORT_BAD_OPTIONS)
-    if not isinstance(raw.get("anonymize"), bool):
-        raise ExportError("anonymize_required", messages.EXPORT_ANONYMIZE_REQUIRED)
     return ExportOptions(
-        anonymize=raw["anonymize"],
+        anonymize=_bool_option(raw, "anonymize", False),
         include_payloads=_bool_option(raw, "include_payloads", False),
         context=_int_option(raw, "context", 0, 0, MAX_CONTEXT),
         max_bytes=_int_option(raw, "max_bytes", DEFAULT_MAX_BYTES, MIN_MAX_BYTES, MAX_MAX_BYTES),
@@ -1062,9 +1069,10 @@ class _Builder:
         return lines
 
     def _legend_lines(self) -> list[str]:
-        lines = ["", messages.EXPORT_SECTION_LEGEND]
+        """The legend section; only an anonymized report has one."""
         if self.redactor is None:
-            return [*lines, messages.EXPORT_LEGEND_OFF]
+            return []
+        lines = ["", messages.EXPORT_SECTION_LEGEND]
         lines.append(messages.EXPORT_LEGEND_NOTE)
         legend = self.redactor.legend()
         if not legend:

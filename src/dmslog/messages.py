@@ -225,7 +225,9 @@ EXPORT_BAD_SELECTION = "selection must be an object with a 'filter', 'ids' or 'e
 EXPORT_BAD_IDS = "selection.ids must be a list of 1 to {limit} positive integers"
 EXPORT_BAD_EVENTS = "selection.events must be a list of 1 to {limit} positive integers"
 EXPORT_BAD_OPTIONS = "options must be an object"
-EXPORT_ANONYMIZE_REQUIRED = "options.anonymize must be set to true or false on every export"
+EXPORT_REDACTION_NOT_REQUESTED = (
+    "A redaction profile or mode only applies when anonymization is asked for (anonymize = true)"
+)
 EXPORT_BAD_OPTION = "Invalid option {field!r}: {problem}"
 EXPORT_BAD_FILTER = "selection.filter must be a filter object"
 EXPORT_NOTHING = "The selection matched no records"
@@ -239,7 +241,7 @@ EXPORT_SOURCE = "Source: ERS {ers_ts} ({machine}) - {variant}"
 EXPORT_SOURCE_PLAIN = "Source: {kind} ({machine})"
 EXPORT_SOURCE_UNKNOWN = "Source: unknown"
 EXPORT_REDACTION_ON = 'Redaction: ON (profile "{profile}")'
-EXPORT_REDACTION_OFF = "Redaction: OFF (explicit; this report is NOT anonymized)"
+EXPORT_REDACTION_OFF = "Redaction: OFF (original text)"
 EXPORT_TIME_NOTE = "Time shown as logged (local server time, no conversion)."
 EXPORT_UNKNOWN_VALUE = "unknown"
 EXPORT_SECTION_SUMMARY = "== Summary =="
@@ -271,7 +273,6 @@ EXPORT_LEGEND_NOTE = "Values were replaced by stable markers: the same value alw
 EXPORT_LEGEND_NOTE_2 = "Automatic anonymization is best effort: review the text before sharing it."
 EXPORT_LEGEND_LINE = "{text}: {distinct} distinct values, {replaced} replacements (markers <{label}-n>)"
 EXPORT_LEGEND_NONE = "No value was replaced."
-EXPORT_LEGEND_OFF = "Anonymization was turned off for this export: nothing was replaced."
 EXPORT_LEGEND_OVERFLOW = "{count} replacements used the generic marker because the marker table is full."
 EXPORT_TRUNCATED_NOTICE = (
     "[... {count} more lines not shown: the report exceeds {limit} bytes; export in numbered parts]"
@@ -285,7 +286,8 @@ EXPORT_WARN_MISSING = "{count} selected ids do not exist in this case."
 
 HELP_EXPORT_CMD = (
     "Export a plain-text report (.txt) of selected records or events, e.g. for a support ticket. "
-    "Choose a selection (--ids, --event or --filter-json) and say --anonymize or --no-anonymize."
+    "Choose a selection (--ids, --event or --filter-json). The report keeps the original text; "
+    "add --anonymize to replace sensitive values with markers."
 )
 HELP_EXPORT_CASE = "Case to export from (as listed by `dmslog info`)."
 HELP_EXPORT_IDS = "Comma-separated record ids to export."
@@ -294,10 +296,13 @@ HELP_EXPORT_FILTER = (
     "Filter tree as JSON text, or @FILE to read it from a file (same format the viewer sends)."
 )
 HELP_EXPORT_ANONYMIZE = (
-    "Replace sensitive values with stable markers, using the redaction profile (<data dir>/redaction.toml)."
+    "Replace sensitive values with stable markers, using the redaction profile (<data dir>/redaction.toml). "
+    "Off by default."
 )
-HELP_EXPORT_NO_ANONYMIZE = "Export WITHOUT anonymization (the choice must be explicit on every export)."
-HELP_EXPORT_PAYLOADS = "Include request/response payloads (anonymized per XML/JSON element)."
+HELP_EXPORT_NO_ANONYMIZE = "Keep the original text (the default; accepted for scripts that still pass it)."
+HELP_EXPORT_PAYLOADS = (
+    "Include request/response payloads (with --anonymize, also redacted per XML/JSON element)."
+)
 HELP_EXPORT_CONTEXT = (
     "Log records of context to include before and after each selected record or event (default: 0)."
 )
@@ -308,7 +313,7 @@ HELP_EXPORT_OUT = (
     "Write the report to this file (numbered parts get a -part1of3 suffix before the extension; "
     "default: stdout)."
 )
-EXPORT_CLI_NEED_ANONYMIZE = "dmslog export: say --anonymize or --no-anonymize explicitly"
+EXPORT_CLI_MODE_NEEDS_ANONYMIZE = "--redaction-mode only applies together with --anonymize"
 EXPORT_CLI_NEED_SELECTION = "dmslog export: give --ids, --event or --filter-json"
 EXPORT_CLI_BAD_LIST = "dmslog export: {option} must be a comma-separated list of positive integers"
 EXPORT_CLI_BAD_FILTER = "dmslog export: --filter-json is not valid JSON or not an object ({error})"
@@ -323,7 +328,8 @@ REDACT_CATEGORY_TEXT["value"] = "Other values (strict mode: template fields, lab
 REDACT_PROFILE_PROBLEMS["bad_mode"] = "mode must be 'strict' or 'standard'"
 EXPORT_REDACTION_ON_MODE = 'Redaction: ON (profile "{profile}", {mode} mode)'
 HELP_EXPORT_REDACTION_MODE = (
-    "Override the mode of the redaction profile for this export: 'strict' (default; template-aware, "
+    "With --anonymize only: override the mode of the redaction profile for this export: 'strict' "
+    "(the default mode of anonymization; template-aware, "
     "replaces every value it cannot prove harmless) or 'standard' (pattern rules only, more readable)."
 )
 API_BAD_BOOKMARK_ID = "Invalid bookmark id"

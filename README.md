@@ -59,7 +59,7 @@ in place (never extracted) and log files are opened, read and closed on every cy
 | `serve [--port PORT] [--no-browser]` | Start the local web viewer on 127.0.0.1 (random free port by default). Optionally follows a Log folder while serving: `--watch PATH [--watch-case NAME] [--watch-interval S] [--all-logs]`. |
 | `ingest PATH [--case NAME] [--all-logs]` | Index an ERS zip, `Log` folder or log file into a case. `--case` names the case (default: derived from the ERS GUID and capture time, or the folder name); `--all-logs` indexes every text log, not only the default scope. |
 | `watch PATH --case NAME [--interval S] [--all-logs]` | Keep a case up to date while the adapters write: polls an installation `Log` folder (default every 2 s) and indexes new records. Folders only (zips are static). Ctrl+C stops. |
-| `export --case NAME (--ids ... \| --event ... \| --filter-json ...) (--anonymize \| --no-anonymize) [options]` | Write a plain-text (`.txt`) report of a selection. See below. |
+| `export --case NAME (--ids ... \| --event ... \| --filter-json ...) [--anonymize [--redaction-mode strict\|standard]] [options]` | Write a plain-text (`.txt`) report of a selection. See below. |
 | `info` | Show version, Python, SQLite/FTS5, data directory and cases. |
 
 Every command accepts `--data-dir DIR`; `--version` and `--help` are global (`dmslog COMMAND --help`
@@ -73,19 +73,19 @@ example to attach to a support ticket.
 ```bash
 python3 dmslog.pyz export --case my-case --event 12,15 --anonymize --out report.txt
 python3 dmslog.pyz export --case my-case --ids 101,102 --context 5 --include-payloads --anonymize
-python3 dmslog.pyz export --case my-case --filter-json @filter.json --no-anonymize --out report.txt
+python3 dmslog.pyz export --case my-case --filter-json @filter.json --out report.txt
 ```
 
 - Selection (at least one): `--ids` (record ids), `--event` (event ids), `--filter-json` (a filter
   tree as JSON text or `@FILE`, in the format the viewer sends). `--context N` adds N records of
   context around each selected record or event.
-- Anonymization is always explicit: `--anonymize` replaces sensitive values (GUIDs, hosts, IPs, users,
-  URLs, paths, e-mails, phone numbers, ticket numbers and others) with stable markers, using the
-  profile `redaction.toml` in the data directory; `--no-anonymize` exports the text as logged and says
-  so in the report header. `--redaction-mode strict|standard` overrides the profile's mode for one
-  export: `strict` (default) also replaces every value it cannot prove harmless; `standard` applies
-  pattern rules only and is more readable. Anonymization is best effort: review the text before
-  sharing it.
+- By default the report keeps the original text (the app runs locally and does not anonymize).
+  `--anonymize` replaces sensitive values (GUIDs, hosts, IPs, users, URLs, paths, e-mails, phone
+  numbers, ticket numbers and others) with stable markers, using the profile `redaction.toml` in the
+  data directory; `--redaction-mode strict|standard` overrides the profile's mode for one export and
+  is only accepted together with `--anonymize`: `strict` (default) also replaces every value it cannot
+  prove harmless; `standard` applies pattern rules only and is more readable. `--no-anonymize` is
+  still accepted and means the default. Anonymization is best effort: review the text before sharing it.
 - `--include-payloads` adds request/response payloads (anonymized per XML/JSON element when
   `--anonymize` is set); without it they are omitted.
 - `--out FILE` writes to a file; without it the report goes to stdout. `--max-bytes N` (default

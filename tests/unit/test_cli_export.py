@@ -1,4 +1,5 @@
-"""`dmslog export`: explicit anonymization, selections, parts, files, the local value map."""
+"""`dmslog export`: original text by default (U18), explicit anonymization, selections, parts, files,
+the local value map."""
 
 from __future__ import annotations
 
@@ -36,12 +37,39 @@ def test_export_is_no_longer_a_stub():
     assert "export" not in STUB_COMMANDS
 
 
-@pytest.mark.parametrize("flags", [[], ["--anonymize", "--no-anonymize"]])
-def test_anonymization_must_be_chosen_explicitly(data_dir, flags, capsys):
+def test_the_default_export_is_the_original_text(data_dir, capsysbinary):
+    # U18: no flag = no anonymization, no profile read, no value map
+    (data_dir / "redaction.toml").write_text("[categories\n", encoding="utf-8")  # not even read
+    selection = ["--event", "1", "--ids", "7", "--filter-json", '{"source": [1, 2]}', "--context", "2"]
+    assert run(data_dir, *selection, "--include-payloads") == 0
+    text = capsysbinary.readouterr().out.decode("utf-8")
+    assert "Redaction: OFF (original text)" in text and "== Redaction legend ==" not in text
+    assert "<GUID-" not in text and "<VALUE-" not in text
+    missing = [v for v in SENSITIVE_VALUES if v not in text]
+    assert missing == []
+    assert not (data_dir / "redaction-maps").exists()
+
+
+def test_no_anonymize_is_still_accepted_and_equals_the_default(data_dir, capsysbinary):
+    assert run(data_dir, "--ids", "3") == 0
+    default = capsysbinary.readouterr().out
+    assert run(data_dir, "--ids", "3", "--no-anonymize") == 0
+    assert capsysbinary.readouterr().out == default
+
+
+def test_anonymize_and_no_anonymize_together_are_refused(data_dir, capsys):
     with pytest.raises(SystemExit) as info:
-        run(data_dir, "--ids", "7", *flags)
+        run(data_dir, "--ids", "7", "--anonymize", "--no-anonymize")
     assert info.value.code == 2
     assert "anonymize" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flags", [[], ["--no-anonymize"]])
+def test_redaction_mode_without_anonymize_is_an_error(data_dir, flags, capsys):
+    assert run(data_dir, "--ids", "3", "--redaction-mode", "strict", *flags) == 1
+    captured = capsys.readouterr()
+    assert "--redaction-mode only applies together with --anonymize" in captured.err
+    assert captured.out == ""
 
 
 def test_a_selection_is_required(data_dir, capsys):

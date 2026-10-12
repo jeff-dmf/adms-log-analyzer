@@ -1474,6 +1474,8 @@ class Api:
         return Response(200, {"profile": profile.to_dict(), "invalid": False})
 
     def export_report(self, request: Request) -> Response:
+        """The report keeps the original text unless ``options.anonymize`` is true (U18); only then is
+        the stored redaction profile read (and an invalid one fails closed)."""
         body = request.read_body()
         cid = _case_from_body(self.store, body)
         try:
