@@ -83,6 +83,45 @@ def test_value_map_refuses_a_case_id_that_is_not_a_folder_name(tmp_path, bad):
     assert everything_under(tmp_path) == []
 
 
+def test_a_delete_racing_the_export_leaves_no_map_and_no_folder(client, server, demo, monkeypatch):  # noqa: F811
+    # the case is deleted right after the export read it and before the map is written
+    real = redact.write_value_map
+    case_dir = server.api.store.root / demo
+
+    def after_delete(*args, **kwargs):
+        import shutil
+
+        shutil.rmtree(case_dir)  # the concurrent DELETE won the race
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(redact, "write_value_map", after_delete)
+    status, data, _ = client.post("/api/export", body())
+    assert status == 200 and data["map_saved"] is False
+    assert not case_dir.exists() and not list(server.api.data_dir.rglob("*.map.json"))
+
+
+def test_write_value_map_never_creates_the_case_folder(tmp_path):
+    r = redact.Redactor()
+    r.redact("id 11111111-2222-3333-4444-555555555555")
+    with pytest.raises(FileNotFoundError):
+        redact.write_value_map(tmp_path, "gone", r)
+    assert everything_under(tmp_path) == []
+
+
+def test_delete_and_map_write_are_serialized(server):  # noqa: F811
+    assert hasattr(server.api.store, "map_lock")
+
+
+@pytest.mark.parametrize("name", ["_demo", "a..b", "x_1"])
+def test_cli_anonymized_export_works_for_every_name_the_cli_accepts(tmp_path, capsys, name):
+    data_dir = tmp_path / "data"
+    case_module.build_export_case(data_dir / "cases" / name / "case.sqlite")
+    args = ["--data-dir", str(data_dir), "export", "--case", name, "--ids", "3", "--anonymize"]
+    assert main(args) == 0
+    assert list((data_dir / "cases" / name / "redaction-maps").glob("*.map.json"))
+    assert "Value map saved to" in capsys.readouterr().err
+
+
 def test_cli_export_then_removing_the_case_folder_leaves_nothing(tmp_path, capsys):
     data_dir = tmp_path / "data"
     case_module.build_export_case(data_dir / "cases" / "demo" / "case.sqlite")
@@ -183,7 +222,32 @@ def test_ingest_proceeds_with_enough_free_space(tmp_path, monkeypatch):
         assert run_ingest(conn, zpath, IngestOptions()).records > 0
     finally:
         conn.close()
-    assert seen == [tmp_path / "data" / "cases" / "c"]
+    assert set(seen) == {tmp_path / "data" / "cases" / "c"}
+
+
+def test_unchanged_reingest_and_small_appends_need_little_space(tmp_path, monkeypatch):
+    folder = tmp_path / "Log" / "dnaApp_zone1" / "DMS_INTEGRATION"
+    folder.mkdir(parents=True)
+    log = folder / "WfmAdapter_1111.log"
+    line = b"2030-01-15 10:00:00.000 [PID=1111][TID=0x1] INFO - hello world\r\n"
+    log.write_bytes(line * 2000)  # ~130 kB
+    conn = create_case_db(tmp_path / "data" / "cases" / "c" / "case.sqlite")
+    try:
+        assert run_ingest(conn, tmp_path / "Log", IngestOptions(scope="all")).records == 2000
+        monkeypatch.setattr(reader_module.shutil, "disk_usage", lambda _p: FakeUsage(10, 10, 10_000))
+        # nothing changed: needs no space at all, however full the disk
+        assert run_ingest(conn, tmp_path / "Log", IngestOptions(scope="all")).sources_unchanged == 1
+        # a small append (3 lines, ~200 bytes, x3 = 600 < 10 kB free) goes through
+        with log.open("ab") as fh:
+            fh.write(line * 3)
+        assert run_ingest(conn, tmp_path / "Log", IngestOptions(scope="all")).records >= 3
+        # a big append does not (free 10 kB < 3 x ~65 kB)
+        with log.open("ab") as fh:
+            fh.write(line * 1000)
+        with pytest.raises(InsufficientDiskSpaceError):
+            run_ingest(conn, tmp_path / "Log", IngestOptions(scope="all"))
+    finally:
+        conn.close()
 
 
 def test_cli_reports_the_space_problem_clearly(tmp_path, monkeypatch, capsys):

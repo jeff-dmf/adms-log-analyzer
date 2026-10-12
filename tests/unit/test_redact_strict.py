@@ -1163,6 +1163,7 @@ def test_round14_lone_surrogates_through_the_export_and_the_value_map(tmp_path, 
     for part in [*result.parts, *plain.parts]:
         part.text.encode("utf-8")  # strict: no lone surrogate reaches any output
     assert all("Quintanilha" not in part.text for part in result.parts)
+    (tmp_path / "cases" / "case").mkdir(parents=True)
     path = write_value_map(tmp_path, "case", result.redactor)
     assert path is not None and path.read_bytes().decode("utf-8")
 

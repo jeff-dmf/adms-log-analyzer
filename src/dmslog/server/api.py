@@ -127,6 +127,9 @@ class CaseStore:
         self.data_dir = Path(data_dir)
         self.root = self.data_dir / "cases"
         self._create_lock = threading.Lock()
+        # Held while a value map is written and while a case is deleted, so a delete cannot slip in
+        # between the existence check and the write (the map must never outlive its case).
+        self.map_lock = threading.Lock()
 
     def validate_id(self, value: Any) -> str:
         if (
@@ -209,13 +212,14 @@ class CaseStore:
 
     def delete(self, case_id: str) -> None:
         cid = self.require(case_id)
-        try:
-            shutil.rmtree(self.root / cid)
-        except OSError as exc:
-            raise ApiError(
-                409, "case_busy", messages.API_CASE_DELETE_FAILED.format(case=cid, error=exc)
-            ) from exc
-        redact.remove_legacy_value_maps(self.data_dir, cid)  # maps written before they moved into the case
+        with self.map_lock:
+            try:
+                shutil.rmtree(self.root / cid)
+            except OSError as exc:
+                raise ApiError(
+                    409, "case_busy", messages.API_CASE_DELETE_FAILED.format(case=cid, error=exc)
+                ) from exc
+            redact.remove_legacy_value_maps(self.data_dir, cid)  # maps from before the move
 
     def summary(self, case_id: str) -> dict[str, Any]:
         folder = self.root / case_id
@@ -1498,7 +1502,8 @@ class Api:
         map_saved = False
         if result.redactor is not None:
             try:
-                map_saved = redact.write_value_map(self.data_dir, cid, result.redactor) is not None
+                with self.store.map_lock:  # no write_value_map after a concurrent delete of the case
+                    map_saved = redact.write_value_map(self.data_dir, cid, result.redactor) is not None
             except OSError:
                 map_saved = False
         return Response(

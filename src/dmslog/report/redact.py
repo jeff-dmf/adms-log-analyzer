@@ -169,7 +169,6 @@ from dmslog.paths import private_mkdir
 
 PROFILE_FILENAME = "redaction.toml"
 MAP_FOLDER = "redaction-maps"
-_CASE_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 PROFILE_VERSION = 1
 DEFAULT_PROFILE_NAME = "default"
 MODES = ("strict", "standard")
@@ -412,13 +411,19 @@ def write_value_map(
     Returns the file written, or None when nothing was replaced. The file name is opaque (random):
     it carries neither the case nor any value; the case and the time are stored inside the file. The
     file is for the user to revert a marker; it must never be shared or exported.
-    ``case`` must be a valid case id (raises ValueError otherwise: it becomes a folder name).
+    ``case`` must be a plain folder name (ValueError for separators, ``..`` or reserved names) of an
+    existing case folder (FileNotFoundError otherwise: the folder is never created here).
     """
-    if not _CASE_FOLDER.fullmatch(case) or case[-1] in ".-":
+    from dmslog.ingest.pipeline import is_reserved_case_name
+
+    if not case or case in (".", "..") or any(ch in case for ch in "/\\:\0") or is_reserved_case_name(case):
         raise ValueError(f"invalid case id: {case!r}")
     values = redactor.value_map()
     if not values:
         return None
+    if not (Path(data_dir) / "cases" / case).is_dir():
+        # never recreate a case folder (a concurrent delete must not leave a map behind)
+        raise FileNotFoundError(f"case folder does not exist: {case!r}")
     when = stamp or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     path = Path(data_dir) / "cases" / case / MAP_FOLDER / f"{secrets.token_hex(12)}.map.json"
     body = json.dumps({"case": case, "created": when, "values": values}, ensure_ascii=False, indent=1)

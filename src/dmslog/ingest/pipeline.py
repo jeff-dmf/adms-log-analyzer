@@ -650,6 +650,7 @@ class _Run:
         ):
             # picked as plain from a first, still tiny read (a live file): detect the envelope again
             action = Action.REINDEX
+        _check_free_space(self.w.conn, self._pending_bytes(action, row, info))
         if action in (Action.NEW, Action.REINDEX):
             _mark_source(self.w.conn, row.id)  # from here on every record of it is extracted by this code
         self.current_action = action.value
@@ -682,6 +683,15 @@ class _Run:
             SourceResult(self._shown(info.member), action.value, stats.records, stats.lines, fed)
         )
         self._finish_source(info, fed, stats.records)
+
+    @staticmethod
+    def _pending_bytes(action: Action, row: SourceRow, info: SourceInfo) -> int:
+        """Bytes this source will add to the index: nothing, only the new tail, or the whole source."""
+        if action is Action.UNCHANGED:
+            return 0
+        if action in (Action.APPEND, Action.RESUME):
+            return max(info.size - row.indexed_bytes, 0)
+        return info.size
 
     def _finish_source(self, info: SourceInfo, fed: int, records: int = 0) -> None:
         self.bytes_done += info.size
@@ -894,7 +904,6 @@ def run_ingest(
     run.result.sources_skipped = len(plan.sources) - len(selected)
     run.bytes_total = sum(s.size for s in selected)
     run.sources_total = len(selected)
-    _check_free_space(conn, run.bytes_total)
     with SourceReader(options.limits) as reader:
         by_member = {s.member: s for s in plan.sources}
         run.follow_rotations(cid, by_member, reader)
