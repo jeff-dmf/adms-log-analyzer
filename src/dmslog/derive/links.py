@@ -15,7 +15,8 @@ family, process and pid). Rules of one family never link records of another fami
 * ``window_only = true`` (no key): a ``b`` is linked to the one unconsumed ``a`` that precedes it within
   ``max_dt_ms``, only when that ``a`` is unambiguous (exactly one open ``a``); the link has confidence 0 and
   the ``a`` is consumed. With two or more open ``a`` nothing is linked (counted as ``ambiguous``). No rule
-  of the catalog uses it today (the Wfm one was measured wrong, docs/formato/wfm-ont.md, section 4).
+  of the catalog uses this plain form today (the Wfm one was measured wrong, docs/formato/wfm-ont.md,
+  section 4); the Osr callback uses the stricter form with ``origin = "operation"`` below.
 * ``origin = "operation"`` (``callback`` and ``response`` only, with ``key``): the ``a`` records only carry
   the key (Wfm: the GID that CRS/IMS returned, logged inside the request); the link goes from the START
   record of the operation (``event.kind = 'operation'``, through ``entry.event_id``) that holds them to each
@@ -26,6 +27,15 @@ family, process and pid). Rules of one family never link records of another fami
   were not logged), ``ambiguous`` (``a`` records in more than one operation, or more than ``MAX_A_PER_KEY``
   of them), ``no_operation`` (``a`` outside any operation) or ``out_of_window`` (the ``b`` is older than
   every ``a``, or too far after them).
+* ``window_only = true`` with ``origin = "operation"`` (``callback`` and ``response`` only, no key; Osr
+  OSR-026 -> OSR-031): the ``a`` codes are START records of operations; the anchor of an ``a`` is the end
+  (``event.ts_end``) of the operation it starts. A ``b`` is linked to an ``a`` (confidence 0, heuristic)
+  only when the match is unique on BOTH sides: the ``a`` is the only one whose anchor lies in
+  ``[b.ts - max_dt_ms, b.ts]`` and the ``b`` is the only one in ``[anchor, anchor + max_dt_ms]``.
+  Otherwise nothing is linked and the ``b`` is counted: ``ambiguous`` (several ``a`` in its window, or its
+  ``a`` has several ``b``), ``no_operation`` (the single ``a`` does not start a closed operation: open,
+  truncated or missing; it is then anchored at its own ts), ``out_of_window`` (no ``a`` anchored in its
+  window) or ``unmatched`` (the partition has no ``a`` record at all).
 
 Examples (the codes are placeholders)::
 
@@ -67,9 +77,19 @@ Examples (the codes are placeholders)::
     key = "gid"
     origin = "operation"
 
+    # callback with no key anywhere, linked to the operation that ended just before it, if unique both ways
+    [[link_rule]]
+    kind = "callback"
+    a = "OSR-026"
+    b = "OSR-031"
+    window_only = true
+    origin = "operation"
+    max_dt_ms = 5000
+
 Execution: ``link_pending`` works per collection group. A group is recomputed only when the signature in
 ``meta['correlate.links.<group>']`` (sources of its streams, rules, template ids and, when a rule uses
-``origin``, the operation events of the streams and a hash of the operation of every ``a`` record)
+``origin``, the operation events of the streams and a hash of the operation of every ``a`` record, with
+its end for the window form)
 changed; an unchanged group writes nothing. The same meta
 value keeps the counters of the last run per rule (``link_stats``). Recomputing deletes the links of this
 module's kinds that start in the group, inserts the new ones and stores the signature, all inside one
@@ -104,7 +124,7 @@ MAX_B_PER_A = 64  # callbacks linked to one ``a`` record
 MAX_A_PER_KEY = 64  # ``origin`` rules: ``a`` records kept per key value; more makes the value ambiguous
 BATCH = 5000
 META_PREFIX = "correlate.links."
-_SIGNATURE_VERSION = "2"
+_SIGNATURE_VERSION = "3"
 ORIGINS = ("record", "operation")
 ORIGIN_CONFIDENCE = 2
 _FIELD_NAME = re.compile(r"^\w+$")
@@ -122,7 +142,7 @@ class LinkSummary:
     ambiguous: int = 0  # ``b`` not linked: several open ``a`` (window_only) or several operations (origin)
     unmatched: int = 0  # origin rules: ``b`` whose key value no ``a`` record carries
     no_operation: int = 0  # origin rules: the ``a`` records of the value are outside any operation
-    out_of_window: int = 0  # origin rules: ``b`` before every ``a`` of its value, or max_dt_ms after them
+    out_of_window: int = 0  # origin rules: no ``a`` of its value (or, window form, no anchor) in the window
 
 
 _COUNTERS = ("dropped", "ambiguous", "unmatched", "no_operation", "out_of_window")
@@ -183,8 +203,10 @@ def _rule_problem(rule: Any) -> str | None:
     if origin not in ORIGINS:
         return f"unknown origin {origin!r}"
     if origin == "operation":
-        if rule["kind"] == "retry" or window_only:
-            return "origin = 'operation' needs a keyed callback or response rule"
+        if rule["kind"] == "retry":
+            return "origin = 'operation' needs a callback or response rule"
+        if window_only and key is not None:
+            return "origin = 'operation' with window_only takes no key (it would be ignored)"
         if set(_codes(rule.get("a"))) & set(_codes(rule.get("b"))):
             return "origin = 'operation' needs disjoint a and b codes"
     return None
@@ -194,9 +216,14 @@ def _origin(rule: Any) -> bool:
     return rule.get("origin", "record") == "operation"
 
 
+def _window_origin(rule: Any) -> bool:
+    """``origin = "operation"`` without a key: the unique-both-ways window anchored at the operation end."""
+    return _origin(rule) and bool(rule.get("window_only", False))
+
+
 def _rule_label(family: str, rule: Any) -> str:
     a, b = "+".join(_codes(rule.get("a"))), "+".join(_codes(rule.get("b")))
-    suffix = "@operation" if _origin(rule) else ""
+    suffix = "@operation-end" if _window_origin(rule) else "@operation" if _origin(rule) else ""
     return f"{family}/{rule.get('kind')}:{a}>{b}{suffix}"
 
 
@@ -266,8 +293,9 @@ def _signature(
         for rule in rules[family]:
             if not _origin(rule) or _rule_problem(rule) is not None:
                 continue
+            digest = _anchor_digest if _window_origin(rule) else _origin_digest
             for stream_ids in _partitions(streams, rule.get("scope", "stream"), family):
-                parts.append(_origin_digest(conn, rule, ids, stream_ids))
+                parts.append(digest(conn, rule, ids, stream_ids))
     parts.append({fam: [dict(r) for r in rules[fam]] for fam in sorted(rules)})
     defs = dict(conn.execute("SELECT code, def_version FROM template").fetchall())
     parts.append({c: [ids.get(c), defs.get(c)] for c in sorted(used)})
@@ -290,6 +318,18 @@ def _origin_digest(conn: sqlite3.Connection, rule: Any, ids: dict[str, int], str
         h.update(code.encode("utf-8"))
         for row in _keyed_rows(conn, ids[code], stream_ids, rule["key"], with_operation=True):
             h.update(json.dumps(row[1:], default=str).encode("utf-8"))
+    return h.hexdigest()
+
+
+def _anchor_digest(conn: sqlite3.Connection, rule: Any, ids: dict[str, int], stream_ids: list[int]) -> str:
+    """Streaming hash of the ``a`` records of a window origin rule with their anchors (operation end)."""
+    h = hashlib.sha1()
+    for code in sorted(set(_codes(rule["a"]))):
+        if code not in ids:
+            continue
+        h.update(code.encode("utf-8"))
+        for row in _anchored_rows(conn, ids[code], stream_ids):
+            h.update(json.dumps(row, default=str).encode("utf-8"))
     return h.hexdigest()
 
 
@@ -347,6 +387,29 @@ def _keyed_rows(
         if row[2] is None or isinstance(row[2], (list, dict)):
             continue
         yield (row[0], row[1], str(row[2]), *row[3:])
+
+
+def _anchored_rows(
+    conn: sqlite3.Connection, tpl_id: int, stream_ids: list[int]
+) -> Iterator[tuple[int, int, int]]:
+    """``(anchor, id, closed)`` of one template in the streams, by (anchor, id).
+
+    The anchor is the end of the operation the record starts (``entry.event_id`` -> an ``operation`` event
+    of the same streams whose ``start_entry_id`` is the record and whose ``ts_end`` is not before it);
+    ``closed`` is 1 then. Otherwise (no operation, open or truncated operation, odd end) the anchor is the
+    record's ts and ``closed`` is 0. SQLite sorts by anchor (operations overlap: not the record order).
+    """
+    streams = ",".join(str(int(s)) for s in stream_ids)
+    cur = conn.execute(
+        "SELECT CASE WHEN ev.ts_end >= e.ts THEN ev.ts_end ELSE e.ts END AS anchor, e.id,"
+        " CASE WHEN ev.ts_end >= e.ts THEN 1 ELSE 0 END"
+        " FROM entry e LEFT JOIN event ev ON ev.id = e.event_id AND ev.kind = 'operation'"
+        f" AND ev.start_entry_id = e.id AND ev.stream_id IN ({streams})"
+        " WHERE e.tpl_id = ? AND e.ts IS NOT NULL AND e.source_id IN"
+        f" (SELECT id FROM source WHERE stream_id IN ({streams})) ORDER BY anchor, e.id",
+        (tpl_id,),
+    )
+    yield from cur
 
 
 def _candidates(
@@ -505,6 +568,83 @@ def _origin_links(
         yield (cur.start, eid, rule["kind"], ORIGIN_CONFIDENCE)
 
 
+class _Anchor:
+    """An ``a`` record of a window origin rule while ``b`` records can still fall in its window."""
+
+    __slots__ = ("at", "eid", "closed", "b_before", "pending", "pending_b")
+
+    def __init__(self, at: int, eid: int, closed: bool, b_before: int) -> None:
+        self.at, self.eid, self.closed, self.b_before = at, eid, closed, b_before
+        self.pending = 0  # ``b`` records for which this was the only ``a`` in the window
+        self.pending_b = 0
+
+
+def _window_origin_links(
+    conn: sqlite3.Connection,
+    rule: Any,
+    ids: dict[str, int],
+    stream_ids: list[int],
+    max_dt: int,
+    counters: _Counters,
+) -> Iterator[_Link]:
+    """window_only + origin = "operation": ``b`` to the ``a`` whose operation ended just before it.
+
+    The match must be unique both ways (one ``a`` in the window of the ``b``, one ``b`` in that of the ``a``).
+
+    One sweep over the ``a`` anchors and the ``b`` records merged by time (an anchor before a ``b`` with the
+    same ts); memory is the anchors of the last ``max_dt`` ms. How many ``b`` fall in the window of an anchor
+    is the difference of the running ``b`` count, taken when the sweep passes ``anchor + max_dt``.
+    """
+    a_gens = [
+        ((at, 0, eid, bool(closed)) for at, eid, closed in _anchored_rows(conn, ids[c], stream_ids))
+        for c in sorted(set(_codes(rule["a"])))
+        if c in ids
+    ]
+    b_gens = [
+        ((ts, 1, eid, False) for ts, eid, _v in _keyed_rows(conn, ids[c], stream_ids, None))
+        for c in sorted(set(_codes(rule["b"])))
+        if c in ids
+    ]
+    window: deque[_Anchor] = deque()
+    n_a = n_b = no_anchor = 0
+
+    def close(w: _Anchor) -> Iterator[_Link]:
+        if not w.pending:
+            return
+        if w.pending == 1 and n_b - w.b_before == 1:
+            if w.closed:
+                yield (w.eid, w.pending_b, rule["kind"], 0)
+            else:
+                counters.no_operation += 1
+        else:
+            counters.ambiguous += w.pending
+
+    for t, is_b, eid, closed in heapq.merge(*a_gens, *b_gens):
+        while window and window[0].at + max_dt < t:
+            yield from close(window.popleft())
+        if not is_b:
+            n_a += 1
+            window.append(_Anchor(t, eid, closed, n_b))
+            if len(window) > MAX_OPEN_KEYS:
+                dropped = window.popleft()
+                counters.dropped += 1 + dropped.pending  # its pending ``b`` are never linked
+            continue
+        n_b += 1
+        if not window:
+            no_anchor += 1
+        elif len(window) > 1:
+            counters.ambiguous += 1
+        else:
+            window[0].pending += 1
+            window[0].pending_b = eid
+    while window:
+        yield from close(window.popleft())
+    if n_a:
+        counters.out_of_window += no_anchor
+    else:
+        counters.unmatched += no_anchor
+
+
 # --------------------------------------------------------------------------- a group
 
 
@@ -532,6 +672,9 @@ def _rule_links(
     key = None if window_only else rule["key"]
     max_dt = _max_dt(rule)
     for stream_ids in _partitions(streams, rule.get("scope", "stream"), family):
+        if _window_origin(rule):
+            yield from _window_origin_links(conn, rule, ids, stream_ids, max_dt, counters)
+            continue
         if _origin(rule):
             yield from _origin_links(conn, rule, ids, stream_ids, max_dt, counters)
             continue
@@ -614,7 +757,7 @@ def _stored(raw: Any) -> dict[str, Any]:
 
 
 def link_stats(conn: sqlite3.Connection, group: int) -> dict[str, dict[str, int]]:
-    """Counters of the last run of the group, per rule label ``"<family>/<kind>:<a>><b>[@operation]"``.
+    """Counters of the last run of the group, per rule label ``"<family>/<kind>:<a>><b>[@operation[-end]]"``.
 
     Each value has ``linked`` and, when not zero, ``dropped``, ``ambiguous``, ``unmatched``, ``no_operation``
     and ``out_of_window``. Empty when the group was never linked.

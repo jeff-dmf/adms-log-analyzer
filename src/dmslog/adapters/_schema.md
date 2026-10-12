@@ -44,7 +44,9 @@ both sides; required for `callback`, `retry` and `response`, except when `window
 stored with confidence 0) and `origin` (`record`, the default, or `operation`: keyed `callback`/`response`
 rules only, with disjoint `a` and `b`; the link starts at the start record of the single operation that
 holds every `a` record of the key value, with confidence 2, and nothing is linked when that operation is
-not unique; see `derive/links.py`). Rules of one family never link records of another family.
+not unique; with `window_only = true` and no `key`, the `a` codes are operation starts anchored at the end of
+their operation, and a `b` is linked with confidence 0 only when the match is unique both ways within
+`max_dt_ms`; see `derive/links.py`). Rules of one family never link records of another family.
 
 Families without a file (`UNKNOWN`, service logs, ...) get the `_common` library.
 
