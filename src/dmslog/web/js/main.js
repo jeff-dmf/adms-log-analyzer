@@ -186,6 +186,7 @@ function start() {
   let bookmarksPanel = null;
   let detailBookmark = null;
   let compare = null;
+  let distinctUi = null; // "Distinct values" and "Group by template" (distinct-panel.js)
   const compareSelection = createCompareSelection();
   const compareButton = byId("compare-button");
   function paintCompareButton(entry) {
@@ -333,6 +334,9 @@ function start() {
     const loaded = grid.setView({ caseId, filter, range });
     if (timeline) {
       timeline.refresh();
+    }
+    if (distinctUi) {
+      distinctUi.viewChanged();
     }
     return loaded;
   };
@@ -709,6 +713,24 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: the button stays hidden.
+  });
+  // Distinct values of a field (drill-down into the filter) and "Group by template": optional module.
+  Promise.all([import("./distinct-panel.js"), import("./distinct-model.js")]).then(([panelModule, model]) => {
+    distinctUi = panelModule.mountDistinct({
+      toolbar: byId("toolbar"),
+      beforeButton: byId("theme-button"),
+      panelParent: byId("grid-panel"),
+      beforePanel: byId("filter-form"),
+      api,
+      getCase: () => caseId,
+      getFilter: () => currentFilter,
+      getFieldNames: () => Array.from(seenFields),
+      getSourceName: (id) => sourceNames.get(id) || String(id),
+      onDrill: (leaf, exclude) => setUserFilter(model.drillFilter(userFilter, leaf, exclude)),
+      onReveal: revealEntry,
+    });
+  }).catch(() => {
+    // Module missing or failing: no buttons.
   });
   // Bookmarks (detail section, panel, shortcuts) and "Compare with...": optional modules.
   const bookmarksHost = byId("bookmarks-host");

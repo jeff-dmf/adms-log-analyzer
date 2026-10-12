@@ -64,6 +64,8 @@ EXPECTED_MODULES = {
     "saved-views-model.js",
     "follow-tail-model.js",
     "follow-tail.js",
+    "distinct-model.js",
+    "distinct-panel.js",
 }
 
 FORBIDDEN_JS = [

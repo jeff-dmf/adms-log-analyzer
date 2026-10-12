@@ -15,6 +15,7 @@ Grammar (each node is an object with exactly one key)::
                | {"tpl": tpls} | {"text": {"fts": str} | {"substr": str}}
                | {"key": {"type": str, "eq": str} | {"type": str, "in": [str, ...]} | {"type": str}}
                | {"event_status": strs} | {"flags": flag | [flag, ...]}
+               | {"field": {"name": field_name, "eq": str | int | float | null}}
                | {"payload": {"role"|"roles"|"direction"|"peer"|"operation"|"fmt"|"msg_id"|"corr_id"
                               |"root": strs, "orphan": bool}}
     ids       := int | [int, ...]
@@ -35,6 +36,11 @@ it); all terms must match (implicit AND). Every term is emitted as a quoted FTS5
 so ``OR``, ``NOT``, ``NEAR``, ``column:``, ``^``, ``+`` and parentheses are plain words.
 Terms without any letter or digit are dropped (the tokenizer ignores them anyway).
 
+``field`` compares one parsed field of ``entry.fields`` (``json_extract``) with ``IS``: equal value
+and type (``"5"`` is not ``5``); ``null`` matches entries without the field. ``field_name`` matches
+``[A-Za-z_][A-Za-z0-9_]{0,63}`` and is bound as the JSON path ``$.<name>``, never written into SQL.
+It is the drill-down leaf of the distinct values of a field (``store/distinct.py``).
+
 ``text.substr`` is a case-sensitive substring test on ``msg`` and the continuation
 lines (``instr``); it scans rows, so the caller should pair it with a source or time
 filter (ARQUITETURA 9.4) and run it under the query timeout (``query.py``).
@@ -46,6 +52,7 @@ compile normally and simply match nothing.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -79,6 +86,7 @@ FLAG_BITS = {
     "has_payload": 64,
 }
 
+_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")  # same rule as the grid's fields.<name>
 _COMPARE_OPS = {"eq": "=", "ne": "<>", "lt": "<", "le": "<=", "gt": ">", "ge": ">="}
 _PAYLOAD_ALIASES = {"roles": "role"}
 _PAYLOAD_COLUMNS = ("role", "direction", "peer", "operation", "fmt", "msg_id", "corr_id", "root")
@@ -440,6 +448,24 @@ class _Compiler:
         self.bind(mask, mask)
         return "(e.flags & ?) = ?"
 
+    def field(self, arg: Any, path: str) -> str:
+        if not isinstance(arg, dict) or set(arg) != {"name", "eq"}:
+            raise FilterError("bad_type", path, expected='{"name": field, "eq": value}')
+        name = _str(arg["name"], f"{path}.name", 64)
+        if not _FIELD_NAME.match(name):
+            raise FilterError("bad_value", f"{path}.name", detail="a field name is letters, digits and '_'")
+        value = arg["eq"]
+        if isinstance(value, str):
+            _str(value, f"{path}.eq")
+        elif isinstance(value, bool) or not (value is None or isinstance(value, (int, float))):
+            raise FilterError("bad_type", f"{path}.eq", expected="a string, a number or null")
+        elif isinstance(value, int):
+            _int(value, f"{path}.eq")
+        elif isinstance(value, float) and value != value:  # NaN never equals anything
+            raise FilterError("bad_value", f"{path}.eq", detail="not a number")
+        self.bind("$." + name, value)
+        return "(json_extract(e.fields, ?) IS ?)"
+
     def payload(self, arg: Any, path: str) -> str:
         if not isinstance(arg, dict):
             raise FilterError("bad_type", path, expected="an object of payload attributes")
@@ -547,5 +573,6 @@ _LEAVES = {
     "event_status": _Compiler.event_status,
     "flags": _Compiler.flags,
     "payload": _Compiler.payload,
+    "field": _Compiler.field,
 }
 LEAF_OPERATORS = frozenset(_LEAVES)

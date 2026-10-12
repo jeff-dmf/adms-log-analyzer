@@ -360,3 +360,12 @@ WATCH_CONFLICT = "case {case!r} cannot follow this folder: {error}"
 WATCH_STOPPED = "Stopped watching."
 SERVE_WATCHING = "Following {path} into case {case} every {interval:g} s"
 API_WATCH_DONE = "Followed {records} new records"
+
+# Distinct values of a field (store/distinct.py, POST /api/entries/distinct).
+DISTINCT_ERRORS = {
+    "bad_field": (
+        "unknown field {name!r} (expected tpl, source, sev, level, tid, pid, fields.<name> or key.<type>)"
+    ),
+    "bad_top": "limit must be an integer from 1 to {limit}",
+    "bad_span": "span must be true or false",
+}

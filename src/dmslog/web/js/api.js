@@ -84,6 +84,8 @@ export const api = {
   histogram: (caseId, filter, bucketMs, split, signal) =>
     request("POST", "/api/histogram", { case: caseId, filter, bucket_ms: bucketMs, split }, signal),
   count: (caseId, filter, signal) => request("POST", "/api/entries/count", { case: caseId, filter }, signal),
+  distinct: (caseId, filter, field, limit, span, signal) =>
+    request("POST", "/api/entries/distinct", { case: caseId, filter, field, limit, span: Boolean(span) }, signal),
   entry: (caseId, id, signal) =>
     request("GET", "/api/entries/" + encodeURIComponent(id) + query({ case: caseId }), undefined, signal),
   context: (caseId, id, same, before, after, signal) =>

@@ -79,6 +79,11 @@ leaf = st.one_of(
         st.sampled_from(["m-1", "g-9", "' OR 1=1 --"]),
     ),
     st.builds(lambda t: {"key": {"type": t}}, st.sampled_from(["msgid", "gid", "x"])),
+    st.builds(
+        lambda n, v: {"field": {"name": n, "eq": v}},
+        st.sampled_from(["op", "n", "nope"]),
+        st.sampled_from(["timeout", "crew", "' OR 1=1 --", 3, 3.0, "3", 0, None]),
+    ),
     st.builds(lambda v: {"event_status": v}, st.one_of(st.sampled_from(["fail", "ok"]), str_list)),
     st.builds(lambda v: {"flags": v}, st.lists(st.sampled_from(sorted(F.FLAG_BITS)), min_size=1, max_size=3)),
     st.builds(

@@ -1,0 +1,165 @@
+/* "Distinct values" panel and "Group by template" view. Colours come from the tokens of app.css. */
+.dst-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.dst-title {
+  margin: 0 8px 0 0;
+  font-size: 1em;
+}
+
+.dst-top {
+  width: 5em;
+}
+
+.dst-status,
+.dst-others,
+.dst-empty {
+  color: var(--muted);
+  font-size: 0.9em;
+  margin: 4px 0;
+}
+
+.dst-status.is-error {
+  color: var(--error-text);
+}
+
+.dst-table-host,
+.grp-list {
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.dst-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dst-table th,
+.dst-table td {
+  text-align: left;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.dst-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+
+.dst-table .dst-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dst-value {
+  font-family: ui-monospace, monospace;
+  max-width: 40em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dst-share {
+  position: relative;
+  min-width: 7em;
+}
+
+.dst-bar {
+  position: absolute;
+  left: 0;
+  top: 15%;
+  height: 70%;
+  background: var(--selected);
+  border-radius: 2px;
+}
+
+.dst-pct {
+  position: relative;
+}
+
+.dst-actions {
+  white-space: nowrap;
+}
+
+.dst-actions button + button {
+  margin-left: 4px;
+}
+
+.grp-list,
+.grp-row-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.grp-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.grp-toggle,
+.grp-row {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  align-items: baseline;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  padding: 4px 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.grp-toggle:hover,
+.grp-row:hover {
+  background: var(--panel-alt);
+}
+
+.grp-toggle:focus-visible,
+.grp-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.grp-caret {
+  width: 1em;
+  flex: none;
+}
+
+.grp-name {
+  font-family: ui-monospace, monospace;
+  min-width: 10em;
+}
+
+.grp-count,
+.grp-span,
+.grp-ts,
+.grp-src {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.grp-rows {
+  padding: 0 0 6px 2em;
+}
+
+.grp-msg {
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.grp-more {
+  margin: 4px 0 0 6px;
+}
