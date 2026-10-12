@@ -379,8 +379,9 @@ def load_profile(data_dir: str | os.PathLike[str]) -> Profile:
 _SAVE_LOCK = threading.Lock()
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
-    private_mkdir(path.parent)
+def _atomic_write(path: Path, data: bytes, *, create_parents: bool = True) -> None:
+    if create_parents:
+        private_mkdir(path.parent)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
     tmp = Path(tmp_name)
     try:
@@ -421,13 +422,20 @@ def write_value_map(
     values = redactor.value_map()
     if not values:
         return None
-    if not (Path(data_dir) / "cases" / case).is_dir():
-        # never recreate a case folder (a concurrent delete must not leave a map behind)
-        raise FileNotFoundError(f"case folder does not exist: {case!r}")
+    case_dir = Path(data_dir) / "cases" / case
+    folder = case_dir / MAP_FOLDER
+    try:
+        # Never create the case folder or its parents (a concurrent delete must not leave a map behind,
+        # with or without a lock): only ``redaction-maps`` itself, and FileNotFoundError if the case is gone.
+        folder.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
     when = stamp or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    path = Path(data_dir) / "cases" / case / MAP_FOLDER / f"{secrets.token_hex(12)}.map.json"
+    path = folder / f"{secrets.token_hex(12)}.map.json"
     body = json.dumps({"case": case, "created": when, "values": values}, ensure_ascii=False, indent=1)
-    _atomic_write(path, body.encode("utf-8", errors="backslashreplace"))  # lone surrogates as \\udxxx
+    _atomic_write(
+        path, body.encode("utf-8", errors="backslashreplace"), create_parents=False
+    )  # lone surrogates as \\udxxx
     return path
 
 

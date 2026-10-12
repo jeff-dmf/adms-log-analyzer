@@ -650,7 +650,6 @@ class _Run:
         ):
             # picked as plain from a first, still tiny read (a live file): detect the envelope again
             action = Action.REINDEX
-        _check_free_space(self.w.conn, self._pending_bytes(action, row, info))
         if action in (Action.NEW, Action.REINDEX):
             _mark_source(self.w.conn, row.id)  # from here on every record of it is extracted by this code
         self.current_action = action.value
@@ -684,14 +683,45 @@ class _Run:
         )
         self._finish_source(info, fed, stats.records)
 
-    @staticmethod
-    def _pending_bytes(action: Action, row: SourceRow, info: SourceInfo) -> int:
-        """Bytes this source will add to the index: nothing, only the new tail, or the whole source."""
-        if action is Action.UNCHANGED:
-            return 0
-        if action in (Action.APPEND, Action.RESUME):
-            return max(info.size - row.indexed_bytes, 0)
-        return info.size
+    def pending_bytes(
+        self, selected: list[SourceInfo], rows: dict[str, SourceRow], reader: SourceReader
+    ) -> int:
+        """Bytes the run will add to the index, decided per source WITHOUT writing anything.
+
+        Nothing for an unchanged source, only the new tail for an append or a resume, the whole source for
+        a new one or a re-index. A source that cannot be read here counts as zero (``process`` reports it).
+        """
+        total = 0
+        for info in selected:
+            row = rows.get(info.member)
+            if row is None or row.status == "pending":
+                total += info.size
+                continue
+            known = KnownSource(
+                row.status, row.size, row.zip_crc, row.head_hash, row.indexed_bytes, row.tail_hash
+            )
+            try:
+                action = self._decide(info, known, reader, info.container_kind == "zip")
+            except (OSError, zipfile.BadZipFile, ReadLimitError):
+                continue
+            if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME):
+                mark = _source_mark(self.w.conn, row.id)
+                if (mark, PAYLOAD_EXTRACTION_VERSION) not in KEY_ONLY_UPGRADES and (
+                    mark < PAYLOAD_EXTRACTION_VERSION
+                    or (
+                        action is not Action.UNCHANGED
+                        and row.envelope == PLAIN_ENVELOPE
+                        and row.indexed_bytes < DETECT_BYTES
+                    )
+                ):
+                    action = Action.REINDEX
+            if action is Action.UNCHANGED:
+                continue
+            if action in (Action.APPEND, Action.RESUME):
+                total += max(info.size - row.indexed_bytes, 0)
+            else:
+                total += info.size
+        return total
 
     def _finish_source(self, info: SourceInfo, fed: int, records: int = 0) -> None:
         self.bytes_done += info.size
@@ -906,6 +936,8 @@ def run_ingest(
     run.sources_total = len(selected)
     with SourceReader(options.limits) as reader:
         by_member = {s.member: s for s in plan.sources}
+        # refuse BEFORE writing any source state, so a refusal leaves the case as it was
+        _check_free_space(conn, run.pending_bytes(selected, writer.sources(cid), reader))
         run.follow_rotations(cid, by_member, reader)
         run.register_sources(cid, list(plan.sources), selected_members)
         run.store_installation(cid, list(selected))

@@ -100,6 +100,55 @@ def test_a_delete_racing_the_export_leaves_no_map_and_no_folder(client, server, 
     assert not case_dir.exists() and not list(server.api.data_dir.rglob("*.map.json"))
 
 
+@pytest.mark.parametrize("stage", ["before_write", "before_temp_file"])
+def test_cli_export_racing_a_delete_never_recreates_the_case(tmp_path, monkeypatch, capsys, stage):
+    import shutil
+
+    data_dir = tmp_path / "data"
+    case_dir = data_dir / "cases" / "demo"
+    case_module.build_export_case(case_dir / "case.sqlite")
+
+    def delete_case():
+        shutil.rmtree(case_dir)  # the DELETE lands inside the CLI's write, with no lock around it
+
+    if stage == "before_write":
+        real = redact.write_value_map
+        monkeypatch.setattr(redact, "write_value_map", lambda *a, **k: (delete_case(), real(*a, **k))[1])
+    else:
+        real_mkstemp = redact.tempfile.mkstemp
+        monkeypatch.setattr(
+            redact.tempfile, "mkstemp", lambda *a, **k: (delete_case(), real_mkstemp(*a, **k))[1]
+        )
+    args = ["--data-dir", str(data_dir), "export", "--case", "demo", "--ids", "3", "--anonymize"]
+    main(args)
+    assert not case_dir.exists() and not list(data_dir.rglob("*.map.json"))
+
+
+def test_a_refusal_for_space_on_the_second_source_writes_nothing(tmp_path, monkeypatch):
+    folder = tmp_path / "Log" / "dnaApp_zone1" / "DMS_INTEGRATION"
+    folder.mkdir(parents=True)
+    line = b"2030-01-15 10:00:00.000 [PID=1111][TID=0x1] INFO - hello world\r\n"
+    (folder / "WfmAdapter_1111.log").write_bytes(line * 10)
+    conn = create_case_db(tmp_path / "data" / "cases" / "c" / "case.sqlite")
+    try:
+        # pretend disk: enough for one source (~650 B x 3) but not for the four together
+        monkeypatch.setattr(reader_module.shutil, "disk_usage", lambda _p: FakeUsage(10, 10, 6000))
+        (folder / "WfmAdapter_2222.log").write_bytes(line * 10)
+        (folder / "WfmAdapter_3333.log").write_bytes(line * 10)
+        (folder / "WfmAdapter_4444.log").write_bytes(line * 10)
+        with pytest.raises(InsufficientDiskSpaceError):
+            run_ingest(conn, tmp_path / "Log", IngestOptions(scope="all"))
+        assert conn.execute("SELECT count(*) FROM source").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM entry").fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT count(*) FROM meta WHERE key LIKE 'ingest_generation%'").fetchone()[0] == 0
+        )
+        monkeypatch.setattr(reader_module.shutil, "disk_usage", lambda _p: FakeUsage(10, 10, 10**9))
+        assert run_ingest(conn, tmp_path / "Log", IngestOptions(scope="all")).sources_indexed == 4
+    finally:
+        conn.close()
+
+
 def test_write_value_map_never_creates_the_case_folder(tmp_path):
     r = redact.Redactor()
     r.redact("id 11111111-2222-3333-4444-555555555555")
