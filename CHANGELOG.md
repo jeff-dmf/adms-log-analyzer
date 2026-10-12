@@ -10,5 +10,5 @@ First release. A local log analyzer and viewer for the ADMS online-interface ada
 - Normal/sensitive correlation, callbacks, retries and key-based search across the sources of a case.
 - Payloads (request/response): extraction, XML viewer and link to the event.
 - Live mode (`dmslog watch`, `serve --watch`, follow tail), bookmarks and record comparison.
-- Configurable redaction and `.txt` export for support tickets (`dmslog export`).
+- `.txt` export of a selection for support tickets (`dmslog export`): the original text by default, or best-effort anonymization only when explicitly requested (`--anonymize`). The redaction tooling itself is a development tool, separate from the app.
 - Distribution: `dmslog.pyz` (Windows and Linux), Linux tarball and a Windows portable folder (embeddable Python 3.13, no installer, no admin). The public artifacts never include the knowledge pack.

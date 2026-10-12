@@ -54,7 +54,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          grep -q "^## \[${VERSION}\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for ${VERSION}"; exit 1; }
+          python packaging/release_notes.py "${VERSION}" > /dev/null
       - run: python -m pip install -e ".[dev]"
       - run: ruff check
       - name: Guard - no knowledge pack tracked (ARQUITETURA D10)
@@ -163,8 +163,7 @@ jobs:
         run: |
           mkdir release
           cp staging/dmslog.pyz staging/dmslog-linux.tar.gz "staging/dmslog-${VERSION}-windows-portable.zip" release/
-          awk -v h="## [${VERSION}]" 'index($0, "## [") == 1 { on = (index($0, h) == 1); next } on' CHANGELOG.md > release/NOTES.md
-          grep -q '[^[:space:]]' release/NOTES.md || { echo "::error::empty release notes for ${VERSION}"; exit 1; }
+          python packaging/release_notes.py "${VERSION}" --out release/NOTES.md
           (cd release && sha256sum dmslog.pyz dmslog-linux.tar.gz "dmslog-${VERSION}-windows-portable.zip" > SHA256SUMS)
           cat release/SHA256SUMS
       - name: Guard - no knowledge pack in the final files (ARQUITETURA D10)
