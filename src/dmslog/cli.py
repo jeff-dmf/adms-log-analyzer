@@ -114,14 +114,15 @@ def _add_export_parser(sub: argparse._SubParsersAction, data_dir_parent: argpars
     export.add_argument("--ids", metavar="ID[,ID...]", default=None, help=messages.HELP_EXPORT_IDS)
     export.add_argument("--event", metavar="ID[,ID...]", default=None, help=messages.HELP_EXPORT_EVENT)
     export.add_argument("--filter-json", metavar="JSON|@FILE", default=None, help=messages.HELP_EXPORT_FILTER)
-    mode = export.add_mutually_exclusive_group(required=True)
+    # U18: the report keeps the original text; anonymization (a development tool) is asked for explicitly
+    mode = export.add_mutually_exclusive_group()
     mode.add_argument(
         "--anonymize", dest="anonymize", action="store_true", help=messages.HELP_EXPORT_ANONYMIZE
     )
     mode.add_argument(
         "--no-anonymize", dest="anonymize", action="store_false", help=messages.HELP_EXPORT_NO_ANONYMIZE
     )
-    export.set_defaults(anonymize=None)
+    export.set_defaults(anonymize=False)
     export.add_argument("--include-payloads", action="store_true", help=messages.HELP_EXPORT_PAYLOADS)
     export.add_argument("--context", type=int, default=0, metavar="N", help=messages.HELP_EXPORT_CONTEXT)
     export.add_argument(
@@ -360,8 +361,10 @@ def cmd_export(args: argparse.Namespace) -> int:
         if ids is None and events is None and flt is None:
             raise ValueError(messages.EXPORT_CLI_NEED_SELECTION)
         selection = export.parse_selection({"ids": ids, "events": events, "filter": flt})
+        if args.redaction_mode and not args.anonymize:
+            raise ValueError(messages.EXPORT_CLI_MODE_NEEDS_ANONYMIZE)  # never ignored silently
         profile = redact.load_profile(data_dir) if args.anonymize else None
-        if profile is not None and getattr(args, "redaction_mode", None):
+        if profile is not None and args.redaction_mode:
             profile = dataclasses.replace(profile, mode=args.redaction_mode)
         options = export.parse_options(
             {

@@ -2,9 +2,9 @@
 
 Switching every category off in the profile is not a way to export without anonymization: in strict
 mode the free-text allowlist and the structural nets still replace what they cannot prove harmless.
-The only way to get the text untouched is the explicit option not to anonymize (``anonymize=False``,
-``--no-anonymize``). The standard mode is the pattern layer alone, so with every category off it
-leaves the text untouched. Every value below is fictitious.
+Once anonymization is asked for (``anonymize=True``, ``--anonymize``), the only way to get the text
+untouched is not to ask for it (the default since U18). The standard mode is the pattern layer alone,
+so with every category off it leaves the text untouched. Every value below is fictitious.
 """
 
 from __future__ import annotations
@@ -74,7 +74,9 @@ def _export(case_db, *, anonymize, profile=None):
         result = build_report(
             conn,
             Selection(events=(1,), ids=(7,), filter={"source": [1, 2]}),
-            ExportOptions(anonymize=anonymize, profile=profile, include_payloads=True, context=2),
+            ExportOptions(anonymize=anonymize, profile=profile, include_payloads=True, context=2)
+            if anonymize is not None
+            else ExportOptions(include_payloads=True, context=2),  # the default (U18)
             now=NOW,
             version="0.0.0-test",
         )
@@ -89,8 +91,9 @@ def test_strict_export_with_every_category_off_leaks_no_planted_value(case_db):
     assert leaked == []
 
 
-def test_only_the_explicit_option_exports_the_text_untouched(case_db):
-    text = _export(case_db, anonymize=False)
+@pytest.mark.parametrize("anonymize", [False, None])
+def test_only_an_export_without_anonymization_keeps_the_text_untouched(case_db, anonymize):
+    text = _export(case_db, anonymize=anonymize)
     missing = [v for v in SENSITIVE_VALUES if v not in text]
     assert missing == []
 

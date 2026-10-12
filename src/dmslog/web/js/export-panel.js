@@ -105,13 +105,15 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
   contextInput.max = String(EXPORT_LIMITS.contextMax);
   contextInput.value = String(EXPORT_DEFAULTS.context);
   const anonymizeSelect = document.createElement("select");
-  for (const [value, label] of [["on", S.exportAnonOn], ["off", S.exportAnonOff]]) {
+  // U18: off (original text) is the default; "on" is the explicit choice to anonymize
+  for (const [value, label] of [["off", S.exportAnonOff], ["on", S.exportAnonOn]]) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = label;
     anonymizeSelect.appendChild(option);
   }
-  const anonWarning = element("div", "export-warning", S.exportAnonOffWarning);
+  anonymizeSelect.value = "off";
+  const anonWarning = element("div", "export-warning", S.exportAnonOnNote);
   anonWarning.hidden = true;
   const payloadBox = document.createElement("input");
   payloadBox.type = "checkbox";
@@ -173,7 +175,7 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
   function formValues() {
     return {
       context: contextInput.value,
-      anonymize: anonymizeSelect.value !== "off",
+      anonymize: anonymizeSelect.value === "on",
       includePayloads: payloadBox.checked,
       maxBytes: sizeInput.value,
     };
@@ -209,7 +211,6 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
     summary.textContent =
       (state.anonymized ? S.exportAnonymized : S.exportNotAnonymized) + ". " + format(S.exportCounts, counts) +
       (state.mapSaved ? ". " + S.exportMapSaved : "");
-    summary.classList.toggle("is-warning", !state.anonymized);
     const part = state.parts[state.active];
     preview.textContent = part ? part.text : "";
     notes.textContent = "";
@@ -244,14 +245,9 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
     const context = getContext();
     const values = formValues();
     flow.build(selectedKind(), context, values);
-    if (!values.anonymize) {
-      // Turning anonymization off is explicit on every export: the choice goes back to "on".
-      anonymizeSelect.value = "on";
-      anonWarning.hidden = true;
-    }
   });
   anonymizeSelect.addEventListener("change", () => {
-    anonWarning.hidden = anonymizeSelect.value !== "off";
+    anonWarning.hidden = anonymizeSelect.value !== "on";
   });
   partSelect.addEventListener("change", () => flow.selectPart(Number(partSelect.value)));
   copyButton.addEventListener("click", async () => {

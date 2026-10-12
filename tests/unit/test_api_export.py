@@ -99,7 +99,9 @@ def test_a_damaged_profile_file_fails_closed(client, server, demo):  # noqa: F81
     status, data, _ = client.post("/api/export", body())
     assert status == 409 and data["error"] == "redaction_profile_invalid"
     status, data, _ = client.post("/api/export", body(options={"anonymize": False}))
-    assert status == 200 and data["anonymized"] is False  # explicit opt-out does not need the profile
+    assert status == 200 and data["anonymized"] is False  # the original text does not need the profile
+    status, data, _ = client.post("/api/export", body(options={}))
+    assert status == 200 and data["anonymized"] is False  # neither does the default (U18)
     assert put_profile(client, {"name": "fixed"})[0] == 200
     assert client.post("/api/export", body())[0] == 200
 
@@ -154,6 +156,21 @@ def test_explicit_no_anonymize(client, server, demo):  # noqa: F811
     assert not (server.api.data_dir / "redaction-maps").exists()
 
 
+@pytest.mark.parametrize("options", [{}, {"include_payloads": True, "context": 1}, None])
+def test_the_default_export_is_the_original_text(client, server, demo, options):  # noqa: F811
+    # U18: without ``anonymize`` the report is the original text, the CLI's default too
+    request = body(options=options)
+    if options is None:
+        del request["options"]
+    status, data, _ = client.post("/api/export", request)
+    assert status == 200 and data["anonymized"] is False
+    assert data["legend"] == [] and data["map_saved"] is False
+    text = data["parts"][0]["text"]
+    assert "Redaction: OFF (original text)" in text and "== Redaction legend ==" not in text
+    assert case_module.GUID_A in text and "<GUID-" not in text and "<VALUE-" not in text
+    assert not (server.api.data_dir / "redaction-maps").exists()
+
+
 def test_value_map_goes_to_the_data_dir_only(client, server, demo):  # noqa: F811
     data = client.post("/api/export", body())[1]
     maps = list((server.api.data_dir / "redaction-maps").glob("*.map.json"))
@@ -195,9 +212,9 @@ def test_selection_by_filter_with_scope_check(client, server, demo):  # noqa: F8
 @pytest.mark.parametrize(
     ("overrides", "status", "error"),
     [
-        ({"options": {"include_payloads": True}}, 400, "anonymize_required"),
-        ({"options": {"anonymize": "true"}}, 400, "anonymize_required"),
-        ({"options": None}, 400, "bad_options"),
+        ({"options": {"anonymize": "true"}}, 400, "bad_option"),
+        ({"options": {"anonymize": None}}, 400, "bad_option"),
+        ({"options": []}, 400, "bad_options"),
         ({"options": {"anonymize": True, "context": 500}}, 400, "bad_option"),
         ({"selection": None}, 400, "bad_selection"),
         ({"selection": {"ids": []}}, 400, "bad_ids"),

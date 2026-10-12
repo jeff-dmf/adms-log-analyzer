@@ -47,8 +47,7 @@
   align-items: center;
 }
 
-.export-warning,
-.export-summary.is-warning {
+.export-warning {
   background: var(--error-bg);
   color: var(--error-text);
   padding: 4px 8px;
