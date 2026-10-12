@@ -27,8 +27,21 @@ GID = st.one_of(
 )
 
 
-def esc(value: str) -> str:
-    return value.replace("&", "&amp;").replace("<", "&lt;").replace('"', "&quot;")
+NOTES = st.sampled_from([None, "a>b", "x'>y", '">"', "&gt;"])
+
+
+def esc(value: str, refs: bool = False) -> str:
+    """Escape for XML; with ``refs`` every letter or digit becomes a character reference (decimal with
+    leading zeros or hex), which the parser must decode before validating the value."""
+    plain = {"&": "&amp;", "<": "&lt;", '"': "&quot;"}
+    return "".join(
+        (
+            (f"&#{ord(ch):07d};" if i % 2 else f"&#x{ord(ch):x};")
+            if refs and ch.isalnum()
+            else plain.get(ch, ch)
+        )
+        for i, ch in enumerate(value)
+    )
 
 
 @st.composite
@@ -39,7 +52,7 @@ def trees(draw, depth=0):
         if kind == "leaf":
             name = draw(st.sampled_from(LEAVES))
             value = draw(GID) if name in pp.GID_LEAVES else draw(TEXT)
-            return (name, value, None)
+            return (name, value, draw(NOTES))
         if kind == "id":
             return ("id", None, {"gid": draw(GID), "type": "1"})
         prop = draw(st.sampled_from([*pp.PROPERTY_MRIDS, "SM_OTHER"]))
@@ -49,16 +62,17 @@ def trees(draw, depth=0):
     return (name, children, None)
 
 
-def render(node, prefix: bool, comments: bool) -> str:
+def render(node, prefix: bool, comments: bool, refs: bool = False) -> str:
     name, body, attrs = node
     tag = f"p:{name}" if prefix else name
+    if isinstance(body, str):  # a leaf, maybe with a note attribute holding '>' or quotes
+        note = "" if attrs is None else f' note="{esc(attrs)}"'
+        return f"<{tag}{note}>{esc(body, refs)}</{tag}>"
     if attrs is not None:
-        inner = " ".join(f'{k}="{esc(v)}"' for k, v in attrs.items())
+        inner = " ".join(f'{k}="{esc(v, refs and k != "id")}"' for k, v in attrs.items())
         return f"<{tag} {inner}/>"
-    if isinstance(body, str):
-        return f"<{tag}>{esc(body)}</{tag}>"
     note = "<!-- <mRID>hidden</mRID> -->" if comments else ""
-    return f"<{tag}>{note}\n  " + "\n  ".join(render(c, prefix, comments) for c in body) + f"\n</{tag}>"
+    return f"<{tag}>{note}\n  " + "\n  ".join(render(c, prefix, comments, refs) for c in body) + f"\n</{tag}>"
 
 
 def ident(raw: str):
@@ -91,7 +105,7 @@ def oracle(xml: str) -> list[tuple[str, str]]:
         name = local(el)
         up = local(parent[el]) if el in parent else None
         found: list[tuple[str, str | None]] = []
-        if len(el) == 0 and el.text is not None and not el.attrib:
+        if len(el) == 0 and el.text is not None and name not in ("id", "Property"):
             if name == "mRID" and up in pp.MRID_PARENTS:
                 types = ("mrid", "vehicle") if up == "Vehicle" else ("mrid",)
                 found = [(t, ident(el.text)) for t in types]
@@ -109,11 +123,16 @@ def oracle(xml: str) -> list[tuple[str, str]]:
     return list(out)
 
 
+HIDDEN_PI = "<?p > <Crew><mRID>HIDDEN</mRID></Crew> ?>"  # ElementTree never sees this element
+
+
 @SETTINGS
-@given(tree=trees(), prefix=st.booleans(), comments=st.booleans())
-def test_keys_agree_with_an_element_tree_oracle(tree, prefix, comments):
-    body = render(("Root", [tree], None), prefix, comments)
+@given(tree=trees(), prefix=st.booleans(), comments=st.booleans(), refs=st.booleans(), pi=st.booleans())
+def test_keys_agree_with_an_element_tree_oracle(tree, prefix, comments, refs, pi):
+    body = render(("Root", [tree], None), prefix, comments, refs)
     xml = body.replace("<p:Root>", '<p:Root xmlns:p="urn:example">', 1) if prefix else body
+    if pi:
+        xml = HIDDEN_PI + xml
     expected = oracle(xml)[: pp.MAX_KEYS]
     assert list(pp.payload_keys(xml, 0, len(xml))) == expected
 

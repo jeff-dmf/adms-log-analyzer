@@ -122,7 +122,7 @@ def test_content_to_crs_and_ims_gids():
     assert keys(text) == [
         ("gid", "1234567890"),
         ("gid", "288230376151711745"),
-        ("incident_gid", "288230376151711745"),
+        # a crew Assignment of the CRS: a generic GID, never an incident (it may be a switching or work one)
     ]
     ims = "<A><IncidentCrewAssigment><IncidentId>5</IncidentId></IncidentCrewAssigment></A>"
     assert keys(ims) == [("gid", "5"), ("incident_gid", "5")]
@@ -154,12 +154,35 @@ def test_identifier_normalization():
     assert keys("<Crew><mRID>A&#xD;&#xA;B</mRID></Crew>") == []  # a line break is never part of a key
     assert keys("<Crew><mRID>&#xD800;</mRID></Crew>") == []  # a surrogate could not be stored
     assert keys("<Crew><mRID>&#0;x</mRID><mRID>&#x110000;</mRID></Crew>") == []
-    assert keys("<Crew><mRID>&unknown;</mRID></Crew>") == [("mrid", "&unknown;")]
+    assert keys("<Crew><mRID>&unknown;</mRID></Crew>") == []  # not a valid reference: never kept as text
+    assert keys("<Crew><mRID>A & B</mRID></Crew>") == []
+    assert keys("<Crew><mRID>&#000000065;</mRID></Crew>") == [("mrid", "A")]  # leading zeros are valid
+    assert keys("<Crew><mRID>&#x1100000;</mRID></Crew>") == []  # out of range: rejected, not literal
+    assert keys("<Crew><mRID>x&#99999999999;</mRID></Crew>") == []
     publication = (
         '<ResourceDescription><Property id="SM_COMMANDING_MODEL_CUSTOMID" value="SP\t1"/>'
         "</ResourceDescription>"
     )
     assert keys(publication) == [("mrid", "SP 1")]  # attribute blanks are normalized as XML does
+
+
+def test_references_are_decoded_before_a_gid_is_read():
+    assert keys("<A><CrewId>&#49;&#x32;</CrewId></A>") == [("gid", "12")]
+    assert keys("<A><ResourceDescription><id gid='0x&#49;0'/></ResourceDescription></A>") == [("gid", "16")]
+    assert keys("<A><CrewId>&#x1100000;1</CrewId><CrewId>1&bogus;</CrewId></A>") == []
+
+
+def test_greater_than_inside_a_quoted_attribute_does_not_end_the_tag():
+    assert keys('<Crew><mRID note="a>b">C1</mRID></Crew>') == [("mrid", "C1")]
+    assert keys("<Crew><mRID note='x>\"y'>C2</mRID></Crew>") == [("mrid", "C2")]
+    text = '<ResourceDescription><id note=">" gid="0x10"/></ResourceDescription>'
+    assert keys(text) == [("gid", "16")]
+
+
+def test_processing_instruction_is_skipped_up_to_its_end():
+    assert keys("<?p > <Crew><mRID>HIDDEN</mRID></Crew> ?><Root/>") == []
+    assert keys("<?p > ?><Crew><mRID>C1</mRID></Crew>") == [("mrid", "C1")]
+    assert keys("<?p never closed <Crew><mRID>X</mRID></Crew>") == []
 
 
 def test_only_leaves_with_their_closing_tag_count():
@@ -219,6 +242,9 @@ HOSTILE = [
     "<!--" * 200_000,
     "<![CDATA[" * 100_000,
     "<?" * 300_000,
+    '<a b="' * 150_000,
+    "<a b='>" * 120_000,
+    "<Crew><mRID>" + "&#1" * 300_000 + "</mRID></Crew>",
 ]
 
 
@@ -458,3 +484,65 @@ def test_payload_linking_ignores_payload_keys(tmp_path):
         assert case.row(template_key)[0] == ev
     finally:
         case.conn.close()
+
+
+# --------------------------------------------------------------------------- never drive correlation or links
+
+
+def _payload_key(conn, entry_id, key_type, value):
+    conn.execute(
+        "INSERT INTO entry_key(key_type, value, entry_id, origin) VALUES (?, ?, ?, 1)",
+        (key_type, value, entry_id),
+    )
+
+
+def _pairs_case(tmp_path, name, with_payload_keys):
+    import test_correlate_pairs as tcp
+
+    from dmslog.derive.correlate import correlate_pending
+    from dmslog.store.db import create_case_db
+
+    conn = create_case_db(tmp_path / f"{name}.sqlite")
+    c = tcp.Case(conn)
+    c.bracket()
+    n = c.normal(5000, tid=7, key_type="rid", key="K1")
+    s1 = c.sensitive(5300, tid=8)
+    s2 = c.sensitive(5600, tid=8)
+    if with_payload_keys:
+        _payload_key(conn, s1, "rid", "K1")  # only a payload says K1: must not raise the confidence
+    conn.commit()
+    correlate_pending(conn, tcp.catalog(key="rid", match=["pid"]))
+    got = conn.execute("SELECT a_entry_id, b_entry_id, kind, confidence FROM link ORDER BY 1, 2").fetchall()
+    conn.close()
+    return got, (n, s1, s2)
+
+
+def test_correlation_ignores_payload_keys(tmp_path):
+    plain, ids = _pairs_case(tmp_path, "plain", False)
+    with_keys, ids2 = _pairs_case(tmp_path, "keys", True)
+    assert ids == ids2 and with_keys == plain
+    assert all(conf < 3 for *_, conf in with_keys)  # no key-equality pairing came from a payload key
+
+
+def _links_case(tmp_path, name, with_payload_keys):
+    import test_links as tl
+
+    sub = tmp_path / name
+    sub.mkdir()
+    c = tl.Case(sub, tl.catalog(tl.callback_rules()))
+    a = c.add("TST-001", 1000, "g1", tid=1)
+    b = c.add("TST-002", 2000, None, tid=9)
+    other = c.add("TST-002", 3000, "g2", tid=9)
+    if with_payload_keys:
+        _payload_key(c.conn, b, "gid", "g1")  # the callback carries g1 only inside a payload
+        _payload_key(c.conn, a, "gid", "g2")
+    c.run()
+    got = c.links()
+    c.conn.close()
+    return got, (a, b, other)
+
+
+def test_link_rules_ignore_payload_keys(tmp_path):
+    plain, ids = _links_case(tmp_path, "plain", False)
+    with_keys, ids2 = _links_case(tmp_path, "keys", True)
+    assert ids == ids2 and with_keys == plain == []

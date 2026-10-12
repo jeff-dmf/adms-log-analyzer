@@ -196,22 +196,27 @@ MRID_PARENTS = frozenset(
         "SwitchingStep", "SwitchingSteps", "SwitchingStepGroup", "SwitchingPlan", "Work", "Works",
     }
 )  # fmt: skip
-# Leaf element (local name) -> key types of its decimal GID.
+# Leaf element (local name) -> key types of its decimal GID. IncidentId is the incident in the IMS cache
+# (``incident_gid``, as WFM-124B logs it; ``gid``, as OSR logs it). ServiceAssignmentId is the Assignment
+# of a crew in the CRS cache: it may belong to an incident or to a switching step/plan or work request, so
+# it is only a generic ``gid``, never an ``incident_gid``.
 GID_LEAVES: dict[str, tuple[str, ...]] = {
     "CrewId": ("gid",),
     "IncidentId": ("gid", "incident_gid"),
-    "ServiceAssignmentId": ("gid", "incident_gid"),
+    "ServiceAssignmentId": ("gid",),
 }
 # <Property id="..." value="..."/> of a publication whose value is the mRID of the published entity.
 PROPERTY_MRIDS = frozenset({"SM_COMMANDING_MODEL_CUSTOMID"})
 
-# A tag: '<', optional '/', the name, the rest up to '>'. Possessive quantifiers: linear, no backtracking.
-_TAG = re.compile(r"<(/?)([^\s/<>]++)([^<>]*+)>")
+# A tag: '<', optional '/', the name, the rest up to the first '>' outside a quoted attribute value. The
+# alternatives start with different characters and nothing crosses a '<' (not allowed in attribute values),
+# so an attempt never reads past the next '<': possessive quantifiers, linear, no backtracking.
+_TAG = re.compile(r"""<(/?)([^\s/<>"']++)((?:[^<>"']++|"[^"<]*+"|'[^'<]*+')*+)>""")
 _ATTRS = re.compile(r"""([^\s=/<>"']++)\s*+=\s*+(?:"([^"<]*+)"|'([^'<]*+)')""")
 _GID_HEX = re.compile(r"0[xX]([0-9a-fA-F]{1,16})")
 _GID_DEC = re.compile(r"[0-9]{1,20}")
 _ENTITIES = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
-_ENTITY = re.compile(r"&(?:(amp|lt|gt|quot|apos)|#([0-9]{1,7})|#x([0-9a-fA-F]{1,6}));")
+_ENTITY = re.compile(r"&(?:(amp|lt|gt|quot|apos)|#([0-9]++)|#x([0-9a-fA-F]++));")
 _ATTR_BLANKS = str.maketrans("\t\n\r", "   ")  # attribute-value normalization of XML 1.0
 
 
@@ -224,14 +229,30 @@ def _entity(m: re.Match[str]) -> str:
     return "\x00"  # an invalid reference (or a surrogate, which SQLite cannot store) rejects the value
 
 
-def _ident(raw: str) -> str | None:
-    """An identifier as stored: the 5 XML entities and character references decoded, blanks trimmed, at
-    most ``MAX_ID_CHARS`` characters, no control character; case and inner spaces kept (``INC 12`` matches
-    the log lines)."""
+def _decode(raw: str) -> str | None:
+    """``raw`` with the 5 XML entities and the character references decoded; ``None`` when it is too long
+    (over 8 * ``MAX_ID_CHARS``), holds a reference that is not valid XML (unknown entity, bare ``&``, code
+    point out of range, surrogate) or decodes to a control character. Applied to every key value before its
+    own validation, so ``&#49;`` is a digit for a GID and an invalid reference never survives as text."""
     if len(raw) > 8 * MAX_ID_CHARS:
         return None
-    value = _ENTITY.sub(_entity, raw) if "&" in raw else raw
-    value = value.strip()
+    value = raw
+    if "&" in raw:
+        if "&" in _ENTITY.sub("", raw):  # a '&' that does not start a valid reference
+            return None
+        value = _ENTITY.sub(_entity, raw)
+    if any(ch < " " and ch not in "\t\n\r" or ch == "\x7f" for ch in value):
+        return None
+    return value
+
+
+def _ident(raw: str) -> str | None:
+    """An identifier as stored: decoded (``_decode``), blanks trimmed, at most ``MAX_ID_CHARS`` characters,
+    no control character; case and inner spaces kept (``INC 12`` matches the log lines)."""
+    decoded = _decode(raw)
+    if decoded is None:
+        return None
+    value = decoded.strip()
     if not value or len(value) > MAX_ID_CHARS or "<" in value:
         return None
     if any(ch < " " or ch == "\x7f" for ch in value):
@@ -241,7 +262,10 @@ def _ident(raw: str) -> str | None:
 
 def _gid(raw: str) -> str | None:
     """A DMS GID in the decimal form of the log lines (``0x0400...`` -> ``288230...``); 0 is not a GID."""
-    value = raw.strip()
+    decoded = _decode(raw)
+    if decoded is None:
+        return None
+    value = decoded.strip()
     m = _GID_HEX.fullmatch(value)
     if m is not None:
         number = int(m.group(1), 16)
@@ -271,7 +295,7 @@ def payload_keys(text: str, start: int, end: int) -> tuple[tuple[str, str], ...]
     * ``mrid``: ``mRID`` whose parent is in ``MRID_PARENTS`` (``Vehicle/mRID`` also as ``vehicle``), and the
       value of a ``Property`` in ``PROPERTY_MRIDS``;
     * ``gid``: ``id/@gid`` of a ``ResourceDescription`` (hex turned decimal) and the leaves of ``GID_LEAVES``
-      (incident GIDs also as ``incident_gid``).
+      (``IncidentId`` also as ``incident_gid``).
 
     Elements are matched by local name (any namespace prefix). Only the first ``MAX_KEY_SCAN_CHARS``
     characters are read, at most ``MAX_KEYS`` distinct pairs are returned, in document order. A leaf counts
@@ -314,6 +338,8 @@ def _payload_keys(text: str, start: int, end: int) -> tuple[tuple[str, str], ...
                 close, width = find("-->", lt + 4, end), 3
             elif text.startswith("![CDATA[", lt + 1):
                 close, width = find("]]>", lt + 9, end), 3
+            elif nxt == "?":  # a processing instruction ends at '?>', not at the first '>'
+                close, width = find("?>", lt + 2, end), 2
             else:
                 close, width = find(">", lt + 2, end), 1
             if close < 0:
