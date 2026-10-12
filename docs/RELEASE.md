@@ -2,10 +2,9 @@
 
 Vale para a 0.1.0 e para as seguintes. A release é feita pelo workflow `.github/workflows/release.yml`, a partir de uma tag `vX.Y.Z` na `main`.
 
-## Pré-requisitos
+## Pré-requisitos para publicar (pré-release)
 
-- `main` com CI verde (Linux e Windows) e com tudo o que a release inclui já integrado (ver `docs/ROADMAP.md`: marcos, 8.1 a 8.5 e UAT).
-- Teste manual em um PC Windows sem admin e sem internet concluído (`docs/CHECKLIST-WINDOWS.md`), no Edge e no Chrome.
+- `main` com CI verde (Linux e Windows) e com tudo o que a versão inclui já integrado (ver `docs/ROADMAP.md`: marcos e 8.1 a 8.5). O UAT e o teste manual no Windows acontecem **depois** da publicação, sobre a pré-release.
 - A versão está igual em `pyproject.toml` e em `src/dmslog/__init__.py`.
 - `CHANGELOG.md` tem a seção `## [X.Y.Z]` da versão. O texto dela vira as notas da release.
 - Nenhum pack de conhecimento no repositório (a guarda `packaging/check_no_pack.py` roda no workflow).
@@ -24,7 +23,7 @@ Em Actions, rodar o workflow `release` manualmente (`workflow_dispatch`) na `mai
    git push origin v0.1.0
    ```
 
-3. Acompanhar o run `release` da tag. A release só aparece se todos os jobs passarem. Ela é publicada como **pré-release** (decisão do Jefferson, 2026-10-12): fica assim até o UAT e o teste manual no Windows passarem; então a promoção a release normal é manual (página da release > Edit > desmarcar "Set as a pre-release" e marcar "Set as the latest release").
+3. Acompanhar o run `release` da tag. A release só aparece se todos os jobs passarem. Ela é publicada como **pré-release** (decisão do Jefferson, 2026-10-12) e continua assim até o app estar 100% pronto, com o UAT e o teste manual em um PC Windows sem admin e sem internet concluídos (`docs/CHECKLIST-WINDOWS.md`, no Edge e no Chrome); só então a promoção a release normal é manual (página da release > Edit > desmarcar "Set as a pre-release" e marcar "Set as the latest release").
 
 ## O que o workflow faz
 
