@@ -472,3 +472,292 @@ def test_deleted_and_recreated_record_gets_new_links_only(make):
     c.conn.execute("UPDATE source SET zip_crc = 10")
     c.run()
     assert c.links() == []
+
+
+# --------------------------------------------------------------------------- origin = "operation" (issue #65)
+
+ORIGIN = """
+[[link_rule]]
+kind = "callback"
+a = "TST-001"
+b = "TST-002"
+key = "gid"
+origin = "operation"
+scope = "{scope}"
+max_dt_ms = 5000
+"""
+
+
+def origin_rules(scope="stream"):
+    return ORIGIN.format(scope=scope)
+
+
+def add_operation(c, start, end, members, stream=None, tid=1, kind="operation"):
+    """An operation event of the stream from ``start`` to ``end`` whose entries get ``entry.event_id``."""
+    sid = stream or c.stream()
+    ts_start = c.conn.execute("SELECT ts FROM entry WHERE id = ?", (start,)).fetchone()[0]
+    cur = c.conn.execute(
+        "INSERT INTO event(stream_id, kind, name, tid, start_entry_id, end_entry_id, ts_start, sev)"
+        " VALUES (?, ?, 'Changed crew assignments', ?, ?, ?, ?, 4)",
+        (sid, kind, tid, start, end, ts_start),
+    )
+    for eid in (start, *members, *([end] if end else [])):
+        c.conn.execute("UPDATE entry SET event_id = ? WHERE id = ?", (cur.lastrowid, eid))
+    return cur.lastrowid
+
+
+def request(c, ts, gids, tid=1, stream=None, close=True):
+    """A request (start record) logging the GIDs returned by CRS on its TID; returns (start, sent ids)."""
+    start = c.add("TST-003", ts, tid=tid, stream=stream)
+    sent = [c.add("TST-001", ts + 100 + i, g, tid=tid, stream=stream) for i, g in enumerate(gids)]
+    end = c.add("TST-004", ts + 200, tid=tid, stream=stream) if close else None
+    add_operation(c, start, end, sent, stream=stream, tid=tid)
+    return start, sent
+
+
+def test_origin_unique_match_links_the_operation_start(make):
+    c = make(origin_rules())
+    start, _ = request(c, 1000, ["g1", "g2"])
+    b1 = c.add("TST-002", 2000, "g1", tid=9)
+    b2 = c.add("TST-002", 2100, "g2", tid=8)
+    s = c.run()
+    assert c.links() == [(start, b1, "callback", 2), (start, b2, "callback", 2)]
+    assert (s.links, s.ambiguous, s.unmatched, s.no_operation, s.out_of_window) == (2, 0, 0, 0, 0)
+    assert links_mod.link_stats(c.conn, 1) == {"AWFM/callback:TST-001>TST-002@operation": {"linked": 2}}
+
+
+def test_origin_absent_key_links_nothing_and_counts(make):
+    # DebugLog: the request never logged the GID, the callback has nothing to match
+    c = make(origin_rules())
+    request(c, 1000, [])
+    c.add("TST-002", 2000, "g1", tid=9)
+    s = c.run()
+    assert c.links() == []
+    assert s.unmatched == 1
+    assert links_mod.link_stats(c.conn, 1)["AWFM/callback:TST-001>TST-002@operation"] == {
+        "linked": 0,
+        "unmatched": 1,
+    }
+
+
+def test_origin_ambiguous_key_in_two_operations_links_nothing(make):
+    c = make(origin_rules())
+    request(c, 1000, ["g1"], tid=1)
+    request(c, 1050, ["g1"], tid=2)
+    c.add("TST-002", 2000, "g1", tid=9)
+    s = c.run()
+    assert c.links() == []
+    assert s.ambiguous == 1
+
+
+def test_origin_key_logged_twice_in_the_same_operation_is_not_ambiguous(make):
+    # WFM-123 and WFM-124 carry the same GID inside one request
+    c = make(origin_rules())
+    start, _ = request(c, 1000, ["g1", "g1"])
+    b = c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    assert c.links() == [(start, b, "callback", 2)]
+
+
+def test_origin_key_outside_any_operation_links_nothing(make):
+    c = make(origin_rules())
+    c.add("TST-001", 1000, "g1")  # no event_id
+    c.add("TST-002", 1500, "g1", tid=9)
+    s = c.run()
+    assert c.links() == [] and s.no_operation == 1
+
+
+def test_origin_key_both_inside_and_outside_an_operation_is_ambiguous(make):
+    c = make(origin_rules())
+    request(c, 1000, ["g1"])
+    c.add("TST-001", 1300, "g1", tid=5)  # same GID on a thread without an operation
+    c.add("TST-002", 2000, "g1", tid=9)
+    s = c.run()
+    assert c.links() == [] and s.ambiguous == 1
+
+
+def test_origin_callback_before_the_request_or_too_late_links_nothing(make):
+    c = make(origin_rules())
+    start, _ = request(c, 1000, ["g1"])  # GID logged at 1100
+    c.add("TST-002", 1050, "g1", tid=9)  # before the GID was logged
+    late = c.add("TST-002", 1100 + 5001, "g1", tid=9)  # beyond max_dt_ms
+    ok = c.add("TST-002", 1100 + 5000, "g1", tid=9)  # exactly max_dt_ms
+    s = c.run()
+    assert c.links() == [(start, ok, "callback", 2)]
+    assert s.out_of_window == 2
+    assert late not in {b for _, b, _, _ in c.links()}
+
+
+def test_origin_ignores_events_that_are_not_operations_or_of_other_streams(make):
+    c = make(origin_rules())
+    other = c.stream(process="Other", pid=200)
+    a = c.add("TST-001", 1000, "g1")
+    starter = c.add("TST-003", 900, stream=other)
+    add_operation(c, starter, None, [], stream=other)
+    c.conn.execute("UPDATE entry SET event_id = (SELECT max(id) FROM event) WHERE id = ?", (a,))
+    b_start = c.add("TST-003", 950)
+    add_operation(c, b_start, None, [], kind="level_window")
+    a2 = c.add("TST-001", 1000, "g2")
+    c.conn.execute("UPDATE entry SET event_id = (SELECT max(id) FROM event) WHERE id = ?", (a2,))
+    a3 = c.add("TST-001", 1000, "g3")
+    c.conn.execute("UPDATE entry SET event_id = 999999 WHERE id = ?", (a3,))  # dangling
+    for g in ("g1", "g2", "g3"):
+        c.add("TST-002", 1500, g, tid=9)
+    s = c.run()
+    assert c.links() == [] and s.no_operation == 3 and s.errors == []
+
+
+def test_origin_sensitive_callback_needs_scope_group(make):
+    c = make(origin_rules(scope="group"))
+    normal = c.stream(sensitive=0)
+    sens = c.stream(sensitive=1)
+    start, _ = request(c, 1000, ["g1"], stream=normal)
+    b = c.add("TST-002", 2000, "g1", stream=sens, tid=9)
+    c.run()
+    assert c.links() == [(start, b, "callback", 2)]
+
+
+def test_origin_scope_stream_does_not_reach_the_sensitive_callback(make):
+    c2 = make(origin_rules(scope="stream"))
+    n2, s2 = c2.stream(sensitive=0), c2.stream(sensitive=1)
+    request(c2, 1000, ["g1"], stream=n2)
+    c2.add("TST-002", 2000, "g1", stream=s2, tid=9)
+    assert (c2.run().unmatched, c2.links()) == (1, [])
+
+
+def test_origin_open_operation_still_links(make):
+    c = make(origin_rules())
+    start, _ = request(c, 1000, ["g1"], close=False)  # truncated by the ERS: no end record
+    b = c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    assert c.links() == [(start, b, "callback", 2)]
+
+
+def test_origin_rerun_is_idempotent_and_growth_recomputes(make):
+    c = make(origin_rules())
+    start, _ = request(c, 1000, ["g1", "g2"])
+    b1 = c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    before = c.conn.total_changes
+    assert (c.run().groups, c.conn.total_changes) == (0, before)
+    b2 = c.add("TST-002", 2500, "g2", tid=9)  # the callback arrives in the next cycle
+    c.touch(c.stream())
+    s = c.run()
+    assert s.groups == 1
+    assert c.links() == [(start, b1, "callback", 2), (start, b2, "callback", 2)]
+
+
+def test_origin_follows_a_rederivation_without_source_change(make):
+    c = make(origin_rules())
+    start, sent = request(c, 1000, ["g1"])
+    b = c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    assert c.links() == [(start, b, "callback", 2)]
+    # a new [[operation]] rule re-derives the stream: the GID record is no longer inside an operation
+    c.conn.execute("UPDATE entry SET event_id = NULL")
+    c.conn.execute("DELETE FROM event")
+    s = c.run()
+    assert s.groups == 1 and c.links() == [] and s.no_operation == 1
+
+
+def test_origin_links_survive_the_normal_sensitive_recomputation(make):
+    """Regression (8.1): correlate._delete_links removes normal_sensitive links only, never callbacks."""
+    from dmslog.derive.correlate import correlate_pending
+
+    pair = '\n[[sensitive_pair]]\nnormal = "TST-002"\nsensitive = "TST-002"\nmatch = ["pid", "tid"]\n'
+    c = make(origin_rules() + pair)
+    normal = c.stream(sensitive=0)
+    sens = c.stream(sensitive=1)
+    start, _ = request(c, 1000, ["g1"], stream=normal)
+    b = c.add("TST-002", 2000, "g1", stream=normal, tid=9)
+    c.add("TST-002", 2000, "g1", stream=sens, tid=9)
+    c.run()
+    correlate_pending(c.conn, c.cat)
+    c.touch(normal)
+    c.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('entries_epoch', '7')")
+    correlate_pending(c.conn, c.cat)  # recomputes the group: deletes and recreates its normal_sensitive links
+    assert c.links("callback") == [(start, b, "callback", 2)]
+    assert len(c.links("normal_sensitive")) == 1
+
+
+def test_origin_bounds_are_counted(make, monkeypatch):
+    monkeypatch.setattr(links_mod, "MAX_B_PER_A", 2)
+    monkeypatch.setattr(links_mod, "MAX_A_PER_KEY", 2)
+    c = make(origin_rules())
+    request(c, 1000, ["g1", "g2", "g3"])
+    for i, g in enumerate(("g1", "g2", "g3")):
+        c.add("TST-002", 2000 + i, g, tid=9)
+    request(c, 10_000, ["h", "h", "h"])  # more GID records than MAX_A_PER_KEY: not trusted
+    c.add("TST-002", 11_000, "h", tid=9)
+    s = c.run()
+    assert len(c.links()) == 2
+    assert (s.dropped, s.ambiguous) == (1, 1)
+
+
+def test_origin_rule_problems(make):
+    p = links_mod._rule_problem
+    base = {"kind": "callback", "a": "X", "b": "Y", "key": "gid", "origin": "operation"}
+    assert p(base) is None
+    assert p({**base, "kind": "response"}) is None
+    assert p({**base, "kind": "retry"}) is not None
+    assert p({**base, "window_only": True}) is not None
+    assert p({**base, "b": ["X", "Y"]}) is not None
+    assert p({**base, "origin": "nope"}) is not None
+    c = make(origin_rules().replace('origin = "operation"', 'origin = "bogus"'))
+    c.add("TST-002", 1000, "g1")
+    s = c.run()
+    assert s.links == 0 and any("unknown origin" in m for _, m in s.errors)
+
+
+def test_old_meta_format_recomputes_once(make):
+    c = make(origin_rules())
+    request(c, 1000, ["g1"])
+    c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    c.conn.execute("UPDATE meta SET value = 'deadbeef' WHERE key LIKE 'correlate.links.%'")
+    assert links_mod.link_stats(c.conn, 1) == {}
+    assert c.run().groups == 1
+    assert c.run().groups == 0
+
+
+def test_origin_moving_an_a_record_to_another_operation_recomputes(make):
+    """Review of PR #89: same event ids, same count and same starts; only one ``entry.event_id`` changes."""
+    c = make(origin_rules())
+    start1 = c.add("TST-003", 1000, tid=1)
+    a1 = c.add("TST-001", 1100, "g1", tid=1)
+    a2 = c.add("TST-001", 1150, "g1", tid=1)
+    op1 = add_operation(c, start1, None, [a1, a2], tid=1)
+    start2 = c.add("TST-003", 1000, tid=2)
+    op2 = add_operation(c, start2, None, [], tid=2)
+    b = c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    assert c.links() == [(start1, b, "callback", 2)]
+    events_before = c.conn.execute("SELECT id, start_entry_id FROM event ORDER BY id").fetchall()
+    c.conn.execute("UPDATE entry SET event_id = ? WHERE id = ?", (op2, a2))
+    assert c.conn.execute("SELECT id, start_entry_id FROM event ORDER BY id").fetchall() == events_before
+    assert op1 != op2
+    s = c.run()
+    assert s.groups == 1 and s.ambiguous == 1
+    assert c.links() == []
+    assert c.run().groups == 0  # and stable afterwards
+
+
+def test_origin_links_survive_the_payload_recomputation(make):
+    """derive/payloads.py removes only its own normal_sensitive announcement pairs, never callbacks."""
+    from dmslog.derive.payloads import link_payloads
+
+    c = make(origin_rules())
+    start, _ = request(c, 1000, ["g1"])
+    b = c.add("TST-002", 2000, "g1", tid=9)
+    c.run()
+    # the worst case: a stale announcement link of the payload linker on the very same (a, b) pair
+    c.conn.execute("INSERT INTO link VALUES (?, ?, 'normal_sensitive', 2)", (start, b))
+    c.conn.execute(
+        "INSERT INTO payload(entry_id, ref_entry_id, role, direction, fmt, char_off, char_len)"
+        " VALUES (?, ?, 'request', 'in', 'xml', 0, 1)",
+        (b, start),
+    )
+    s = link_payloads(c.conn, c.cat)
+    assert s.errors == [] and s.groups == 1
+    assert c.links("normal_sensitive") == []  # its own stale pair is gone
+    assert c.links("callback") == [(start, b, "callback", 2)]

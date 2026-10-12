@@ -40,8 +40,11 @@ equal on both sides the link has confidence 3).
 the first and the later record), `key` (an `entry_key` type or a field name that must be equal on
 both sides; required for `callback`, `retry` and `response`, except when `window_only = true`),
 `scope` (`stream`, the default, or `group`: normal and sensitive streams of the same process),
-`max_dt_ms` (default 60000) and `window_only` (`true` = no shared key: heuristic by time window,
-stored with confidence 0). Rules of one family never link records of another family.
+`max_dt_ms` (default 60000), `window_only` (`true` = no shared key: heuristic by time window,
+stored with confidence 0) and `origin` (`record`, the default, or `operation`: keyed `callback`/`response`
+rules only, with disjoint `a` and `b`; the link starts at the start record of the single operation that
+holds every `a` record of the key value, with confidence 2, and nothing is linked when that operation is
+not unique; see `derive/links.py`). Rules of one family never link records of another family.
 
 Families without a file (`UNKNOWN`, service logs, ...) get the `_common` library.
 

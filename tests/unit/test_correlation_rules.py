@@ -5,7 +5,7 @@ import pytest
 from dmslog.parse.templates import Catalog, TemplateDef, load_catalog
 
 PAIR_KEYS = {"normal", "sensitive", "match", "max_dt_ms", "key", "order"}
-LINK_KEYS = {"kind", "a", "b", "key", "scope", "max_dt_ms", "window_only"}
+LINK_KEYS = {"kind", "a", "b", "key", "scope", "max_dt_ms", "window_only", "origin"}
 LINK_KINDS = {"callback", "retry", "response"}
 
 # (family, normal, sensitive): verified pairs from docs/formato (sections "normal <-> sensitive").
@@ -33,7 +33,9 @@ EXPECTED_LINKS = {
     ("ACRM", "callback", "CRM-011", "CRM-012"),
     ("AWFM", "callback", "WFM-124A", "WFM-126"),
     ("AWFM", "callback", "WFM-126", "WFM-030"),
-    ("AWFM", "callback", "WFM-010", "WFM-030"),
+    ("AWFM", "callback", "WFM-124A", "WFM-030"),
+    ("AWFM", "callback", "WFM-124B", "WFM-030"),
+    ("AWFM", "callback", "WFM-123", "WFM-030"),
     ("ASMN", "retry", "SMN-007", "SMN-007"),
     ("ASMN", "response", "SMN-007", "SMN-008"),
     ("AONT", "retry", "ONT-011", "ONT-011"),
@@ -146,6 +148,23 @@ def test_link_rules_shape(cat: Catalog) -> None:
             # Rules of one family never reach into another family (the common library is allowed).
             assert t.family in (fam, "_common"), (fam, code)
     assert n >= len(EXPECTED_LINKS) // 2
+
+
+def test_link_rules_are_runnable(cat: Catalog) -> None:
+    from dmslog.derive.links import _rule_problem
+
+    for fam, r in _all_links(cat):
+        assert _rule_problem(r) is None, (fam, r)
+
+
+def test_wfm_callback_origin_is_by_gid_only(cat: Catalog) -> None:
+    # Issue #65: the callback reaches its request only through the GID logged inside the request; the
+    # time-window guess (WFM-010 -> WFM-030) was measured wrong and must not come back.
+    rules = [r for fam, r in _all_links(cat) if fam == "AWFM" and "WFM-030" in _codes(r["b"])]
+    assert not [r for r in rules if r.get("window_only")]
+    origin = [r for r in rules if r.get("origin") == "operation"]
+    assert len(origin) == 1 and origin[0]["key"] == "gid"
+    assert set(_codes(origin[0]["a"])) == {"WFM-123", "WFM-124A", "WFM-124B"}
 
 
 def test_documented_pairs_have_a_rule(cat: Catalog) -> None:

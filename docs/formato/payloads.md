@@ -125,11 +125,12 @@ Response do SAP PI (Ont/Smn), sem MessageID nem CorrelationID:
 | request sem response | request cuja operação falhou | Smn 37 (`[Validation Critical]`/exceção), Wfm 17 (fault no lugar do response) | — |
 | WFM-120/WFM-S121/WFM-S112 ↔ operação (Wfm) | mesma TID dentro da operação aberta (WFM-010 … WFM-012/081) | 408/408, 64/64, 1.885/1.885 | 2 |
 | callback CRS/IMS ↔ pedido (Wfm, só em Info) | GID de WFM-124/WFM-123 (pedido enviado) = GID de WFM-126 e de WFM-030 (callback) | 405/406 e 406/407 | 3 |
+| callback ↔ requisição de origem (Wfm, só em Info; issue #65) | WFM-123/124 com o GID do WFM-030, todos dentro de uma única operação (WFM-010…fim, mesma TID), até 60 s antes do callback; ligação do início da operação ao WFM-030 | 406/407 (o restante sem WFM-123/124); 0 ambíguos | 2 |
 
 Consequências:
 - Em Ont/Smn, as TIDs de anúncio e payload são do mesmo pool de 24 threads de envio, mas de outra thread naquele instante. Pareamento por TID com a operação **não funciona** (0 de 4.716 no Wfm); só a chave ou o tempo.
 - Request e response do mesmo par **não** ficam na mesma TID nem em sequência; parear por ordem dentro da TID erra ~50%.
-- A ligação por GID do callback responde à pergunta 4 de `wfm-ont.md`, mas só existe com nível ≥ Info (WFM-124 é INFO).
+- A ligação por GID do callback responde à pergunta 4 de `wfm-ont.md`, mas só existe com nível ≥ Info (WFM-124 é INFO). A regra segura e os números das três capturas estão em `wfm-ont.md`, seção 4 (issue #65).
 
 ## 6. Chaves úteis dentro do payload
 
