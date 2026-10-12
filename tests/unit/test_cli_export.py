@@ -90,7 +90,7 @@ def test_anonymized_report_to_a_file(data_dir, tmp_path, capsys):
         assert value not in text, value
     captured = capsys.readouterr()
     assert f"Wrote {out}" in captured.out
-    maps = list((data_dir / "redaction-maps").glob("*.map.json"))
+    maps = list((data_dir / "cases" / "demo" / "redaction-maps").glob("*.map.json"))
     assert len(maps) == 1 and "demo" not in maps[0].name
     assert json.loads(maps[0].read_text(encoding="utf-8"))["values"]["<GUID-1>"] == case_module.GUID_A
     assert "Value map saved to" in captured.err and case_module.GUID_A not in captured.err + captured.out

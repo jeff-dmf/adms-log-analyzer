@@ -218,7 +218,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         default_case_name,
         run_ingest,
     )
-    from .ingest.reader import ReadLimits
+    from .ingest.reader import ReadLimitError, ReadLimits
     from .store.db import create_case_db
 
     check = check_sqlite_fts5()
@@ -277,6 +277,9 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     except CollectionConflictError as exc:
         print(messages.INGEST_CONFLICT.format(case=case, error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_CONFLICT
+    except ReadLimitError as exc:
+        print(messages.INGEST_LIMIT.format(error=_shown(exc, data_dir)), file=sys.stderr)
+        return EXIT_FAILED
     except (SourceNotFoundError, UnsafeArchiveError, OSError) as exc:
         print(messages.INGEST_UNSAFE.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED
@@ -455,6 +458,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     from .ingest.discover import SourceNotFoundError, UnsafeArchiveError
     from .ingest.ers import CollectionConflictError
     from .ingest.pipeline import SCOPE_ALL, SCOPE_DEFAULT, IngestOptions, case_db_path
+    from .ingest.reader import ReadLimitError
     from .ingest.watch import CycleReport, Watcher
     from .store.db import create_case_db
 
@@ -510,6 +514,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
     except CollectionConflictError as exc:
         print(messages.WATCH_CONFLICT.format(case=args.case, error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_CONFLICT
+    except ReadLimitError as exc:
+        print(messages.INGEST_LIMIT.format(error=_shown(exc, data_dir)), file=sys.stderr)
+        return EXIT_FAILED
     except (SourceNotFoundError, UnsafeArchiveError, OSError) as exc:
         print(messages.INGEST_UNSAFE.format(error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_FAILED

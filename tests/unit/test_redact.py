@@ -331,12 +331,13 @@ def test_value_map_lives_in_the_data_dir_and_not_in_the_text(tmp_path):
     out = r.redact(f"id {GUID}")
     assert GUID not in out
     assert r.value_map() == {"<GUID-1>": GUID}
-    path = write_value_map(tmp_path, "case/../x", r, stamp="20301015-100000-000000")
-    assert path is not None and path.parent == tmp_path / "redaction-maps"
+    (tmp_path / "cases" / "case-x").mkdir(parents=True)
+    path = write_value_map(tmp_path, "case-x", r, stamp="20301015-100000-000000")
+    assert path is not None and path.parent == tmp_path / "cases" / "case-x" / "redaction-maps"
     assert re.fullmatch(r"[0-9a-f]{24}\.map\.json", path.name)  # opaque: no case id, no value
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["values"] == {"<GUID-1>": GUID} and saved["case"] == "case/../x"
-    other = write_value_map(tmp_path, "case/../x", r, stamp="20301015-100000-000000")
+    assert saved["values"] == {"<GUID-1>": GUID} and saved["case"] == "case-x"
+    other = write_value_map(tmp_path, "case-x", r, stamp="20301015-100000-000000")
     assert other != path
     assert write_value_map(tmp_path, "c", Redactor()) is None  # nothing replaced, no file
 

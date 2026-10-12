@@ -7,6 +7,8 @@ from collections.abc import Callable
 from importlib import resources
 from pathlib import Path
 
+from dmslog.paths import private_mkdir
+
 SCHEMA_RESOURCE = "schema.sql"
 
 # PRAGMAs applied to every connection (docs/ARQUITETURA.md, section 5).
@@ -235,7 +237,7 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
 def create_case_db(path: str | Path) -> sqlite3.Connection:
     """Create the parent folder if needed, open the database read-write and migrate it."""
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    private_mkdir(p.parent)
     conn = connect(p)
     migrate(conn)
     return conn

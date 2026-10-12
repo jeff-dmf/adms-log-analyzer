@@ -64,8 +64,6 @@ MAX_PAGE_LIMIT = 500
 DEFAULT_PAGE_LIMIT = 200
 MAX_PATH_CHARS = 4096
 CASE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
-WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{n}" for n in range(1, 10)),
-                              *(f"lpt{n}" for n in range(1, 10))})  # fmt: skip
 SCOPES = (pipeline.SCOPE_DEFAULT, pipeline.SCOPE_ALL)
 SCOPE_LEAVES = frozenset({"source", "stream", "family", "ts"})
 _ENTRY_ID = re.compile(r"\d{1,18}\Z")
@@ -129,13 +127,16 @@ class CaseStore:
         self.data_dir = Path(data_dir)
         self.root = self.data_dir / "cases"
         self._create_lock = threading.Lock()
+        # Held while a value map is written and while a case is deleted, so a delete cannot slip in
+        # between the existence check and the write (the map must never outlive its case).
+        self.map_lock = threading.Lock()
 
     def validate_id(self, value: Any) -> str:
         if (
             not isinstance(value, str)
             or not CASE_ID_PATTERN.match(value)
             or value[-1] in ".-"
-            or value.split(".", 1)[0].lower() in WINDOWS_RESERVED
+            or pipeline.is_reserved_case_name(value)
         ):
             raise ApiError(400, "invalid_case_id", messages.API_INVALID_CASE_ID)
         return value
@@ -211,12 +212,14 @@ class CaseStore:
 
     def delete(self, case_id: str) -> None:
         cid = self.require(case_id)
-        try:
-            shutil.rmtree(self.root / cid)
-        except OSError as exc:
-            raise ApiError(
-                409, "case_busy", messages.API_CASE_DELETE_FAILED.format(case=cid, error=exc)
-            ) from exc
+        with self.map_lock:
+            try:
+                shutil.rmtree(self.root / cid)
+            except OSError as exc:
+                raise ApiError(
+                    409, "case_busy", messages.API_CASE_DELETE_FAILED.format(case=cid, error=exc)
+                ) from exc
+            redact.remove_legacy_value_maps(self.data_dir, cid)  # maps from before the move
 
     def summary(self, case_id: str) -> dict[str, Any]:
         folder = self.root / case_id
@@ -1499,7 +1502,8 @@ class Api:
         map_saved = False
         if result.redactor is not None:
             try:
-                map_saved = redact.write_value_map(self.data_dir, cid, result.redactor) is not None
+                with self.store.map_lock:  # no write_value_map after a concurrent delete of the case
+                    map_saved = redact.write_value_map(self.data_dir, cid, result.redactor) is not None
             except OSError:
                 map_saved = False
         return Response(

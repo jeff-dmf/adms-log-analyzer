@@ -44,7 +44,13 @@ from dmslog.ingest.fingerprint import (
     sha1_hex,
     span_for,
 )
-from dmslog.ingest.reader import ReadLimitError, ReadLimits, SourceReader, relax_ratio_violations
+from dmslog.ingest.reader import (
+    ReadLimitError,
+    ReadLimits,
+    SourceReader,
+    check_free_space,
+    relax_ratio_violations,
+)
 from dmslog.knowledge.installation import InstallationConfig, read_installation
 from dmslog.knowledge.registry import RegistryError
 from dmslog.parse.envelope import detect_envelope, get_envelope
@@ -204,9 +210,21 @@ def default_case_name(plan: CollectionPlan, aliases: Aliases | None = None) -> s
     return _slug(aliases.apply_name(name) if aliases else name)
 
 
+WINDOWS_RESERVED = frozenset({"con", "prn", "aux", "nul", *(f"com{n}" for n in range(1, 10)),
+                              *(f"lpt{n}" for n in range(1, 10))})  # fmt: skip
+
+
+def is_reserved_case_name(name: str) -> bool:
+    """True for names Windows reserves for devices (CON, NUL, COM1, ``nul.txt``...).
+
+    The one rule shared by the CLI (`validate_case_name`) and the API (`CaseStore.validate_id`).
+    """
+    return name.split(".", 1)[0].lower() in WINDOWS_RESERVED
+
+
 def validate_case_name(name: str) -> str:
     """Return ``name`` if it is a safe single folder name, else raise ValueError."""
-    if not name or name != _slug(name) or name in (".", ".."):
+    if not name or name != _slug(name) or name in (".", "..") or is_reserved_case_name(name):
         raise ValueError(f"invalid case name: {name!r} (use letters, digits, '.', '_' and '-')")
     return name
 
@@ -607,31 +625,16 @@ class _Run:
     def process(self, row: SourceRow, info: SourceInfo, reader: SourceReader) -> None:
         self.current_member = info.member
         self.current_action = None
-        is_zip = info.container_kind == "zip"
-        known = KnownSource(
-            row.status, row.size, row.zip_crc, row.head_hash, row.indexed_bytes, row.tail_hash
-        )
         try:
-            action = self._decide(info, known, reader, is_zip)
+            action, key_only = self.plan_action(row, info, reader)
         except (OSError, zipfile.BadZipFile, ReadLimitError) as exc:
             self._fail(row, info, exc)
             return
-        if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME):
-            mark = _source_mark(self.w.conn, row.id)
-            if (mark, PAYLOAD_EXTRACTION_VERSION) in KEY_ONLY_UPGRADES:
-                # only the payload keys changed: rewrite them from the stored payloads, no reindex
-                self.w.refresh_payload_keys(row.id)
-                _mark_source(self.w.conn, row.id)
-                self.w.commit()
-            elif mark < PAYLOAD_EXTRACTION_VERSION:
-                action = Action.REINDEX  # its records predate the current payload extraction
-        if (
-            action in (Action.APPEND, Action.RESUME)
-            and row.envelope == PLAIN_ENVELOPE
-            and row.indexed_bytes < DETECT_BYTES
-        ):
-            # picked as plain from a first, still tiny read (a live file): detect the envelope again
-            action = Action.REINDEX
+        if key_only:
+            # only the payload keys changed: rewrite them from the stored payloads, no reindex
+            self.w.refresh_payload_keys(row.id)
+            _mark_source(self.w.conn, row.id)
+            self.w.commit()
         if action in (Action.NEW, Action.REINDEX):
             _mark_source(self.w.conn, row.id)  # from here on every record of it is extracted by this code
         self.current_action = action.value
@@ -664,6 +667,57 @@ class _Run:
             SourceResult(self._shown(info.member), action.value, stats.records, stats.lines, fed)
         )
         self._finish_source(info, fed, stats.records)
+
+    def plan_action(self, row: SourceRow, info: SourceInfo, reader: SourceReader) -> tuple[Action, bool]:
+        """What to do with one source, WITHOUT writing: ``(action, key_only_upgrade)``.
+
+        The single decision function: ``process`` acts on it and ``pending_bytes`` (the disk-space check)
+        sizes it, so the plan and the run can never disagree. ``key_only_upgrade`` means the records are
+        kept and only their payload keys are rewritten (the action stays UNCHANGED/APPEND/RESUME).
+        """
+        known = KnownSource(
+            row.status, row.size, row.zip_crc, row.head_hash, row.indexed_bytes, row.tail_hash
+        )
+        action = self._decide(info, known, reader, info.container_kind == "zip")
+        key_only = False
+        if action in (Action.UNCHANGED, Action.APPEND, Action.RESUME):
+            mark = _source_mark(self.w.conn, row.id)
+            if (mark, PAYLOAD_EXTRACTION_VERSION) in KEY_ONLY_UPGRADES:
+                key_only = True
+            elif mark < PAYLOAD_EXTRACTION_VERSION:
+                action = Action.REINDEX  # its records predate the current payload extraction
+        if (
+            action in (Action.APPEND, Action.RESUME)
+            and row.envelope == PLAIN_ENVELOPE
+            and row.indexed_bytes < DETECT_BYTES
+        ):
+            # picked as plain from a first, still tiny read (a live file): detect the envelope again
+            action = Action.REINDEX
+        return action, key_only
+
+    def pending_bytes(
+        self, selected: list[SourceInfo], rows: dict[str, SourceRow], reader: SourceReader
+    ) -> int:
+        """Bytes the run will add to the index, from ``plan_action`` of every source (nothing is written).
+
+        Nothing for an unchanged source, only the new tail for an append or a resume, the whole source for
+        a new one or a re-index. A source that cannot be read here counts as zero (``process`` reports it).
+        """
+        total = 0
+        for info in selected:
+            row = rows.get(info.member)
+            if row is None:
+                total += info.size
+                continue
+            try:
+                action, _key_only = self.plan_action(row, info, reader)
+            except (OSError, zipfile.BadZipFile, ReadLimitError):
+                continue
+            if action in (Action.APPEND, Action.RESUME):
+                total += max(info.size - row.indexed_bytes, 0)
+            elif action is not Action.UNCHANGED:
+                total += info.size
+        return total
 
     def _finish_source(self, info: SourceInfo, fed: int, records: int = 0) -> None:
         self.bytes_done += info.size
@@ -833,6 +887,14 @@ def _bump_ingest_generation(conn) -> None:
     conn.commit()
 
 
+def _check_free_space(conn, bytes_to_index: int) -> None:
+    """Refuse to index when the case database's disk cannot hold it (in-memory databases are skipped)."""
+    row = next((r for r in conn.execute("PRAGMA database_list") if r[1] == "main"), None)
+    if row is None or not row[2]:
+        return
+    check_free_space(Path(row[2]).parent, bytes_to_index)
+
+
 def run_ingest(
     conn,  # sqlite3.Connection of a migrated case database
     path: str | Path,
@@ -842,7 +904,8 @@ def run_ingest(
     """Index (or re-index) ``path`` into the case database ``conn``.
 
     Raises ``CollectionConflictError`` when the case already holds another ERS,
-    ``UnsafeArchiveError`` for unsafe zips and ``SourceNotFoundError`` for missing paths.
+    ``UnsafeArchiveError`` for unsafe zips, ``SourceNotFoundError`` for missing paths and
+    ``InsufficientDiskSpaceError`` (a ``ReadLimitError``) when the disk is too full to index.
     """
     options = options or IngestOptions()
     if options.scope not in (SCOPE_DEFAULT, SCOPE_ALL):
@@ -869,6 +932,8 @@ def run_ingest(
     run.sources_total = len(selected)
     with SourceReader(options.limits) as reader:
         by_member = {s.member: s for s in plan.sources}
+        # refuse BEFORE writing any source state, so a refusal leaves the case as it was
+        _check_free_space(conn, run.pending_bytes(selected, writer.sources(cid), reader))
         run.follow_rotations(cid, by_member, reader)
         run.register_sources(cid, list(plan.sources), selected_members)
         run.store_installation(cid, list(selected))

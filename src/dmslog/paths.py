@@ -35,6 +35,29 @@ def default_data_dir(
     return root / APP_DIR_NAME
 
 
+def private_mkdir(path: str | os.PathLike[str]) -> Path:
+    """Create ``path`` and its missing parents; on POSIX every folder created here is mode 0700.
+
+    The case databases hold whole logs, so the data folder must not be readable by other local users
+    (the process ``umask`` alone usually leaves 0755). Folders that already exist keep their mode.
+    On Windows nothing changes: ``%LOCALAPPDATA%`` already has a private ACL.
+    """
+    target = Path(path)
+    missing = []
+    for folder in (target, *target.parents):
+        if folder.exists():
+            break
+        missing.append(folder)
+    for folder in reversed(missing):
+        folder.mkdir(exist_ok=True)
+        if os.name == "posix":
+            try:
+                folder.chmod(0o700)
+            except OSError:
+                pass
+    return target
+
+
 def resolve_data_dir(
     override: str | os.PathLike[str] | None = None,
     platform: str | None = None,
