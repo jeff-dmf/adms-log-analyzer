@@ -5,6 +5,7 @@ The command is the launcher prefix (e.g. dmslog.bat, or python3 -I dist/dmslog.p
 appends `--data-dir <tmp> ingest ...` and `--data-dir <tmp> serve --no-browser --port <free port>`.
 Exits non-zero on any failure.
 """
+
 from __future__ import annotations
 
 import http.client
@@ -46,7 +47,12 @@ def api(port: int, method: str, path: str, cookie: str, body: dict | None = None
 def ingest(command: list[str], data_dir: Path, zip_path: Path) -> None:
     result = subprocess.run(
         [*command, "--data-dir", str(data_dir), "ingest", str(zip_path), "--case", CASE],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+        check=False,
     )
     print(result.stdout)
     print(result.stderr, file=sys.stderr)
@@ -59,8 +65,11 @@ def serve_and_query(command: list[str], data_dir: Path) -> None:
     port = free_port()
     proc = subprocess.Popen(
         [*command, "--data-dir", str(data_dir), "serve", "--no-browser", "--port", str(port)],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     lines: queue.Queue[str] = queue.Queue()
 

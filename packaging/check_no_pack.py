@@ -20,6 +20,7 @@ notice starts with ``SYNTHETIC TEST FIXTURE``), tracked in that exact folder.
 
 Usage:  python packaging/check_no_pack.py [--root REPO] [--artifact PATH ...]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,7 +69,18 @@ MAX_TOTAL_BYTES = 512 * 1024 * 1024
 MAX_FILE_BYTES = MAX_MEMBER_BYTES
 
 ARCHIVE_SUFFIXES = (
-    ".zip", ".pyz", ".pyzw", ".whl", ".jar", ".tar", ".tgz", ".gz", ".bz2", ".xz", ".tbz2", ".txz",
+    ".zip",
+    ".pyz",
+    ".pyzw",
+    ".whl",
+    ".jar",
+    ".tar",
+    ".tgz",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".tbz2",
+    ".txz",
 )
 
 
@@ -99,8 +111,15 @@ def unnormalized_constants() -> list[str]:
     Every lookup folds the data with ``_norm`` and compares it with these constants, so one that is
     not already folded can never match (it silently disables a check).
     """
-    bad = [name for name, value in (("KEY_NOTICE", KEY_NOTICE), ("KEY_ADAPTERS", KEY_ADAPTERS),
-                                    ("KEY_PROCESS_MAP", KEY_PROCESS_MAP)) if _norm(value) != value]
+    bad = [
+        name
+        for name, value in (
+            ("KEY_NOTICE", KEY_NOTICE),
+            ("KEY_ADAPTERS", KEY_ADAPTERS),
+            ("KEY_PROCESS_MAP", KEY_PROCESS_MAP),
+        )
+        if _norm(value) != value
+    ]
     bad += [f"MANIFEST_KEYS:{k}" for k in MANIFEST_KEYS if _norm(k) != k]
     bad += [f"MANIFEST_SHAPE:{k}" for k in MANIFEST_SHAPE if _norm(k) != k]
     for section, fields in _signatures().items():
@@ -596,10 +615,17 @@ def artifact_problems(path: Path) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fail when the knowledge pack is tracked or shipped.")
-    parser.add_argument("--artifact", nargs="*", type=Path, default=[], metavar="PATH",
-                        help="built .pyz/.zip/.tar.gz files or folders to inspect as well")
-    parser.add_argument("--root", type=Path, default=ROOT,
-                        help="git repository to inspect (default: this one)")
+    parser.add_argument(
+        "--artifact",
+        nargs="*",
+        type=Path,
+        default=[],
+        metavar="PATH",
+        help="built .pyz/.zip/.tar.gz files or folders to inspect as well",
+    )
+    parser.add_argument(
+        "--root", type=Path, default=ROOT, help="git repository to inspect (default: this one)"
+    )
     args = parser.parse_args(argv)
     root = args.root.resolve()
     with git_index_reader(root) as read:
@@ -609,8 +635,10 @@ def main(argv: list[str] | None = None) -> int:
     for problem in problems:
         print(f"check_no_pack: {problem}", file=sys.stderr)
     if problems:
-        print("check_no_pack: the knowledge pack must stay outside the repository and the public artifacts",
-              file=sys.stderr)
+        print(
+            "check_no_pack: the knowledge pack must stay outside the repository and the public artifacts",
+            file=sys.stderr,
+        )
         return 1
     print(f"check_no_pack: ok ({len(args.artifact)} artifact(s) inspected)")
     return 0

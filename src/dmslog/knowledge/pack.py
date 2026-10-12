@@ -153,9 +153,7 @@ def load_pack_from(directory: Path | str) -> Pack:
         shown = "; ".join(problems[:5])
         extra = f" (+{len(problems) - 5} more)" if len(problems) > 5 else ""
         raise PackError(f"invalid knowledge pack in {directory}: {shown}{extra}")
-    data = {
-        name: json.loads((directory / name).read_text(encoding="utf-8")) for name in PACK_FILES
-    }
+    data = {name: json.loads((directory / name).read_text(encoding="utf-8")) for name in PACK_FILES}
     return _build(data)
 
 

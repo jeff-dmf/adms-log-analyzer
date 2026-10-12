@@ -39,7 +39,10 @@ def test_pyz_runs_isolated_and_reports_version(build_pyz):
     pyz = build_pyz.build()
     result = subprocess.run(
         [sys.executable, "-I", str(pyz), "--version"],
-        capture_output=True, text=True, encoding="utf-8", check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
     )
     assert result.stdout.strip() == __version__
 
@@ -48,8 +51,13 @@ def test_pyz_contains_web_assets_and_build_info_without_bytecode(build_pyz):
     pyz = build_pyz.build()
     with zipfile.ZipFile(pyz) as archive:
         names = set(archive.namelist())
-        assert {"__main__.py", "dmslog/web/index.html", "dmslog/web/js/main.js", "dmslog/families.toml",
-                "dmslog/_build_info.py"} <= names
+        assert {
+            "__main__.py",
+            "dmslog/web/index.html",
+            "dmslog/web/js/main.js",
+            "dmslog/families.toml",
+            "dmslog/_build_info.py",
+        } <= names
         assert not [n for n in names if n.endswith(".pyc") or "__pycache__" in n]
         assert b"testcommit" in archive.read("dmslog/_build_info.py")
 
@@ -75,7 +83,11 @@ def run_info(pyz, data_dir):
     env = {k: v for k, v in os.environ.items() if k != "DMSLOG_PACK_DIR"}
     result = subprocess.run(
         [sys.executable, "-I", str(pyz), "info", "--data-dir", str(data_dir)],
-        capture_output=True, text=True, encoding="utf-8", env=env, check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=True,
     )
     return next(line for line in result.stdout.splitlines() if line.startswith("knowledge pack:"))
 
@@ -190,7 +202,10 @@ def test_pyz_serves_health_from_inside_the_archive(build_pyz):
         "print(r.status, b'dmslog' in body)\n"
     )
     result = subprocess.run(
-        [sys.executable, "-I", "-c", code, str(pyz)], capture_output=True, text=True, encoding="utf-8",
+        [sys.executable, "-I", "-c", code, str(pyz)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
         check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -245,7 +260,9 @@ def test_pyz_build_is_identical_across_time_zones(tmp_path):
         env = {**os.environ, "TZ": zone, "DMSLOG_COMMIT": "tz-test"}
         subprocess.run(
             [sys.executable, "-c", driver, str(PACKAGING), str(target)],
-            check=True, capture_output=True, env=env,
+            check=True,
+            capture_output=True,
+            env=env,
         )
         digests.append(hashlib.sha256(target.read_bytes()).hexdigest())
     assert len(set(digests)) == 1, digests

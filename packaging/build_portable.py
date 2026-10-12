@@ -7,6 +7,7 @@ Output: dist/dmslog-portable-win64/  and  dist/dmslog-portable-win64.zip
 the maintainer's INTERNAL builds only: the pack is derived from product documentation and must never
 be published, so CI never passes it (ARQUITETURA D10).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -104,6 +105,11 @@ def build(pack: Path | None = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build the portable Windows folder and zip.")
-    parser.add_argument("--pack", type=Path, default=None, metavar="DIR",
-                        help="internal builds only: copy this knowledge pack to knowledge/pack/")
+    parser.add_argument(
+        "--pack",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="internal builds only: copy this knowledge pack to knowledge/pack/",
+    )
     build(parser.parse_args().pack)

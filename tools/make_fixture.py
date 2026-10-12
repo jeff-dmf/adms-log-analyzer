@@ -47,9 +47,7 @@ def header(
     return f"{ts or fmt_ts(ts_ms)} [PID={pid}]{tid_part} {level} - {msg}"
 
 
-def render(
-    lines: list[str], *, eol: str = "\n", bom: bool = False, final_newline: bool = True
-) -> bytes:
+def render(lines: list[str], *, eol: str = "\n", bom: bool = False, final_newline: bool = True) -> bytes:
     text = eol.join(lines) + (eol if final_newline else "")
     return (BOM if bom else b"") + text.encode("utf-8")
 
@@ -405,9 +403,7 @@ def build_ers_zip(
         entries[f"{ZIP_ROOT}/{adapter}_{pid}{suffix}"] = content
         if kind == "enterprise" and i == 0:
             entries[f"{ZIP_ROOT}/{adapter}_{pid}.log.0"] = fx_rotation_old()
-    blt = render(
-        [header(0, "ALWAYS", "\tManaged BLT: bobjSyntheticOne.dll", pid=4444)], eol="\r\n", bom=True
-    )
+    blt = render([header(0, "ALWAYS", "\tManaged BLT: bobjSyntheticOne.dll", pid=4444)], eol="\r\n", bom=True)
     entries[f"{LOG_ROOT}/BLTHost.DMS_INTEGRATION{suffix}"] = blt
     if kind == "enterprise":
         entries[f"{LOG_ROOT}/oasErrLog.log"] = fx_oaserr()

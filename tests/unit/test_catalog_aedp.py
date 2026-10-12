@@ -15,7 +15,9 @@ PREFIX = "[ReceiveIncidentDeviceService] - Processing message with Id"
 
 @pytest.fixture(scope="module")
 def cat() -> Catalog:
-    files = {n: resources.files("dmslog.adapters").joinpath(n).read_bytes() for n in ("aedp.toml", "_common.toml")}
+    files = {
+        n: resources.files("dmslog.adapters").joinpath(n).read_bytes() for n in ("aedp.toml", "_common.toml")
+    }
     return load_texts(files, check_examples=True)
 
 
@@ -33,7 +35,11 @@ def test_codes_and_examples(cat: Catalog) -> None:
 
 @pytest.mark.parametrize(
     ("tail", "code", "cls"),
-    [("started.", "AEDP-001", "start"), ("successfully finished.", "AEDP-002", "end"), ("failed. ", "AEDP-003", "error")],
+    [
+        ("started.", "AEDP-001", "start"),
+        ("successfully finished.", "AEDP-002", "end"),
+        ("failed. ", "AEDP-003", "error"),
+    ],
 )
 def test_lifecycle_markers_key_on_message_id(cat: Catalog, tail: str, code: str, cls: str) -> None:
     got = cat.for_family("AEDP", sensitive=False).classify_text(f"{PREFIX} '{MID}' {tail}", None)
@@ -49,7 +55,9 @@ def test_failed_continuation_is_read_as_stack(cat: Catalog) -> None:
 
 
 def test_other_shapes_fall_to_common(cat: Catalog) -> None:
-    got = cat.for_family("AEDP", sensitive=False).classify_text("[Communication2] - Client-side statistics:", None)
+    got = cat.for_family("AEDP", sensitive=False).classify_text(
+        "[Communication2] - Client-side statistics:", None
+    )
     assert got is not None and got.code.startswith("GEN-")
 
 

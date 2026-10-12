@@ -30,8 +30,10 @@ MESSAGES = [
     "plain text without placeholders",
     " ".join(f"value {i} is '{i}'" for i in range(30)),  # many groups: engine limits
     " ".join(f"at 2030-01-15 10:00:{i:02d}.000" for i in range(30)),  # 30 timestamps
-    " ".join(f"2030-01-15 10:00:00 {g} {i} '{i}' C:\\d\\{i}" for i, g in
-             enumerate(["0B5C1F7E-1111-2222-3333-444455556666"] * 12)),  # mixed, past the limits
+    " ".join(
+        f"2030-01-15 10:00:00 {g} {i} '{i}' C:\\d\\{i}"
+        for i, g in enumerate(["0B5C1F7E-1111-2222-3333-444455556666"] * 12)
+    ),  # mixed, past the limits
     "Peer 10.20.30.40:5000 and 10.0.0.1 at http://host.invalid/a/b via C:\\x\\f.txt v1.2.3.4 ratio 3.14",
     "Said 'it is ok' then \"two\" with 12.5 and 7 from 192.168.1.1:80 at C:\\x\\y",
     "x" * 400,  # truncated signature: no end anchor
@@ -56,7 +58,12 @@ def sketches():
     rows = [{"signature": signature(m), "n": 3, "family": "AWFM"} for m in MESSAGES]
     result = subprocess.run(
         [node, "--input-type=module", "-e", NODE_SCRIPT],
-        input=json.dumps(rows), capture_output=True, text=True, encoding="utf-8", timeout=60, check=True,
+        input=json.dumps(rows),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=True,
     )
     return json.loads(result.stdout)
 
@@ -66,4 +73,3 @@ def test_sketches_pass_engine_validation_and_example_check(sketches):
     for text in sketches:
         catalog = load_texts({"awfm.toml": text}, check_examples=True)
         assert catalog.check_examples() == []
-

@@ -182,15 +182,28 @@ def test_index_and_assets_are_served(server, cookie):
     assert headers["content-type"].startswith("text/html")
     assert b"innerHTML" not in body
     assert b"<script>" not in body  # no inline scripts: CSP forbids them
-    for path, content_type in (("/js/main.js", "text/javascript"), ("/css/app.css", "text/css"),
-                               ("/js/strings.js", "text/javascript")):
+    for path, content_type in (
+        ("/js/main.js", "text/javascript"),
+        ("/css/app.css", "text/css"),
+        ("/js/strings.js", "text/javascript"),
+    ):
         status, headers, _ = call(server, "GET", path, {"Cookie": cookie})
         assert status == 200
         assert headers["content-type"].startswith(content_type)
 
 
-@pytest.mark.parametrize("path", ["/__init__.py", "/../cli.py", "/js/../../cli.py", "/%2e%2e/cli.py",
-                                  "/js\\main.js", "/nope.html", "/js/"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/__init__.py",
+        "/../cli.py",
+        "/js/../../cli.py",
+        "/%2e%2e/cli.py",
+        "/js\\main.js",
+        "/nope.html",
+        "/js/",
+    ],
+)
 def test_static_paths_cannot_escape_or_leak(server, cookie, path):
     status, _, body = call(server, "GET", path, {"Cookie": cookie})
     assert status == 404

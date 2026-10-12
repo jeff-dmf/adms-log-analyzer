@@ -188,8 +188,11 @@ def validate_pack(directory) -> list[str]:
     for name, key, fields in families:
         _validate_list_file(directory, name, key, fields, errors)
 
-    for name, key in (("operations.json", "operations"), ("error_codes.json", "error_codes"),
-                      ("parameters.json", "parameters")):
+    for name, key in (
+        ("operations.json", "operations"),
+        ("error_codes.json", "error_codes"),
+        ("parameters.json", "parameters"),
+    ):
         data = _load(directory, name, [])
         if isinstance(data, dict) and isinstance(data.get(key), list):
             for index, row in enumerate(data[key]):

@@ -48,17 +48,19 @@ H_TAB = "Aba"
 H_SERVICE_BLOCK = "Serviço/bloco"
 
 # Parameters that matter for log and timing analysis (ARQUITETURA 7.1).
-LOG_RELEVANT_PARAMETERS = frozenset({
-    "AuditingPeriod",
-    "LogFileName",
-    "LogLevel",
-    "MessageLogLevel",
-    "ModelUpdatersLogLevel",
-    "NumOfRetries",
-    "RetryTimeout",
-    "SendTimeout",
-    "WaitForCRSCallback",
-})
+LOG_RELEVANT_PARAMETERS = frozenset(
+    {
+        "AuditingPeriod",
+        "LogFileName",
+        "LogLevel",
+        "MessageLogLevel",
+        "ModelUpdatersLogLevel",
+        "NumOfRetries",
+        "RetryTimeout",
+        "SendTimeout",
+        "WaitForCRSCallback",
+    }
+)
 
 ADAPTER_TYPES = {
     "soap/wsdl": "soap",
@@ -159,8 +161,7 @@ def parse_tables(text: str):
                     cells = split_row(lines[i])
                     if len(cells) != len(headers):
                         raise BuildError(
-                            f"table row has {len(cells)} cells, expected {len(headers)} "
-                            f"(under '{heading}')"
+                            f"table row has {len(cells)} cells, expected {len(headers)} (under '{heading}')"
                         )
                     rows.append([clean_cell(cell) for cell in cells])
                     i += 1
@@ -283,9 +284,15 @@ def build_overview(vault: Vault):
     keys = _column_map(
         headers,
         {
-            "Interface": "title", "Doc": "acronym", "Adapter": "adapter", "Tipo": "type_label",
-            "Operações (WSDL)": "operations", "Configuração": "config",
-            "Mapeamentos": "mappings", "Exemplos": "examples", "Arquivos originais": "files",
+            "Interface": "title",
+            "Doc": "acronym",
+            "Adapter": "adapter",
+            "Tipo": "type_label",
+            "Operações (WSDL)": "operations",
+            "Configuração": "config",
+            "Mapeamentos": "mappings",
+            "Exemplos": "examples",
+            "Arquivos originais": "files",
             "Versão": "version",
         },
         OVERVIEW_NOTE,
@@ -304,23 +311,27 @@ def build_adapters(vault: Vault):
         if config_path:
             process_names = sorted(set(_PROCESS_PREFIX.findall(vault.read(config_path))))
         type_label = null_if_dash(row["type_label"])
-        operations = [] if null_if_dash(row["operations"]) is None else [
-            item.strip() for item in row["operations"].split(",") if item.strip()
-        ]
-        adapters.append({
-            "acronym": acronym,
-            "title": row["title"],
-            "adapter": null_if_dash(row["adapter"]),
-            "type": ADAPTER_TYPES.get(type_label.lower()) if type_label else None,
-            "type_label": type_label,
-            "operations": sorted(operations),
-            "config_note": vault.rel(config_path) if config_path else None,
-            "document_title": meta.get("documento") or None,
-            "document_version": null_if_dash(row["version"]),
-            "aliases": sorted(meta.get("aliases", [])),
-            "index_note": vault.rel(index_path) if index_path else None,
-            "process_names": process_names,
-        })
+        operations = (
+            []
+            if null_if_dash(row["operations"]) is None
+            else [item.strip() for item in row["operations"].split(",") if item.strip()]
+        )
+        adapters.append(
+            {
+                "acronym": acronym,
+                "title": row["title"],
+                "adapter": null_if_dash(row["adapter"]),
+                "type": ADAPTER_TYPES.get(type_label.lower()) if type_label else None,
+                "type_label": type_label,
+                "operations": sorted(operations),
+                "config_note": vault.rel(config_path) if config_path else None,
+                "document_title": meta.get("documento") or None,
+                "document_version": null_if_dash(row["version"]),
+                "aliases": sorted(meta.get("aliases", [])),
+                "index_note": vault.rel(index_path) if index_path else None,
+                "process_names": process_names,
+            }
+        )
     adapters.sort(key=lambda item: item["acronym"])
     process_map: dict[str, str] = {}
     for adapter in adapters:
@@ -342,12 +353,23 @@ def _catalog_rows(vault: Vault, filename: str, mapping_for_headers):
 
 _ERROR_SHAPES = {
     ("Bloco", "Code", "ADMS Severity", "DMS Reason", "DMS Details", "CIM Reason", "CIM Details"): {
-        "Bloco": "block", "Code": "code", "ADMS Severity": "adms_severity", "DMS Reason": "dms_reason",
-        "DMS Details": "dms_details", "CIM Reason": "cim_reason", "CIM Details": "cim_details",
+        "Bloco": "block",
+        "Code": "code",
+        "ADMS Severity": "adms_severity",
+        "DMS Reason": "dms_reason",
+        "DMS Details": "dms_details",
+        "CIM Reason": "cim_reason",
+        "CIM Details": "cim_details",
     },
     ("Bloco", "ID", "ADMS Severity", "Log", "Code", "CIM Severity", "Reason", "Details"): {
-        "Bloco": "block", "ID": "id", "ADMS Severity": "adms_severity", "Log": "log", "Code": "code",
-        "CIM Severity": "cim_severity", "Reason": "cim_reason", "Details": "cim_details",
+        "Bloco": "block",
+        "ID": "id",
+        "ADMS Severity": "adms_severity",
+        "Log": "log",
+        "Code": "code",
+        "CIM Severity": "cim_severity",
+        "Reason": "cim_reason",
+        "Details": "cim_details",
     },
 }
 
@@ -363,14 +385,32 @@ def build_error_codes(vault: Vault):
     rows = []
     for acronym, adapter, record in _catalog_rows(vault, ERROR_CATALOG, _error_columns):
         entry = {
-            "acronym": acronym, "adapter": adapter, "block": "", "id": None, "code": "",
-            "adms_severity": "", "log": None, "dms_reason": None, "dms_details": None,
-            "cim_severity": None, "cim_reason": None, "cim_details": None,
+            "acronym": acronym,
+            "adapter": adapter,
+            "block": "",
+            "id": None,
+            "code": "",
+            "adms_severity": "",
+            "log": None,
+            "dms_reason": None,
+            "dms_details": None,
+            "cim_severity": None,
+            "cim_reason": None,
+            "cim_details": None,
         }
         entry.update(record)
         rows.append(entry)
-    rows.sort(key=lambda r: (r["acronym"], r["block"], r["id"] or "", r["code"], r["dms_reason"] or "",
-                             r["cim_reason"] or "", r["adms_severity"]))
+    rows.sort(
+        key=lambda r: (
+            r["acronym"],
+            r["block"],
+            r["id"] or "",
+            r["code"],
+            r["dms_reason"] or "",
+            r["cim_reason"] or "",
+            r["adms_severity"],
+        )
+    )
     return {"error_codes": rows}
 
 
@@ -378,8 +418,13 @@ def _operation_columns(headers, where):
     return _column_map(
         headers,
         {
-            "WSDL": "wsdl", H_SERVICE: "service", H_OPERATION: "operation", "SOAPAction": "soap_action",
-            "Entrada": "input", "Saída": "output", "Endpoint": "endpoint",
+            "WSDL": "wsdl",
+            H_SERVICE: "service",
+            H_OPERATION: "operation",
+            "SOAPAction": "soap_action",
+            "Entrada": "input",
+            "Saída": "output",
+            "Endpoint": "endpoint",
         },
         where,
     )
@@ -407,8 +452,13 @@ def _parameter_columns(headers, where):
     return _column_map(
         headers,
         {
-            H_TAB: "tab", H_SERVICE_BLOCK: "block", "Property Name": "name", "Description": "description",
-            "Value Type": "value_type", "Default Value": "default", "Domain of Values": "domain",
+            H_TAB: "tab",
+            H_SERVICE_BLOCK: "block",
+            "Property Name": "name",
+            "Description": "description",
+            "Value Type": "value_type",
+            "Default Value": "default",
+            "Domain of Values": "domain",
         },
         where,
     )
@@ -496,18 +546,23 @@ def default_out(data_dir: Path | None = None) -> Path:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Build the knowledge pack from the vault (read-only).")
     parser.add_argument("--vault", required=True, type=Path, help="vault root directory")
-    parser.add_argument("--out", type=Path, default=None,
-                        help="pack output directory (default: <data dir>/knowledge/pack)")
-    parser.add_argument("--data-dir", type=Path, default=None,
-                        help="dmslog data directory used for the default --out")
+    parser.add_argument(
+        "--out", type=Path, default=None, help="pack output directory (default: <data dir>/knowledge/pack)"
+    )
+    parser.add_argument(
+        "--data-dir", type=Path, default=None, help="dmslog data directory used for the default --out"
+    )
     parser.add_argument("--check", action="store_true", help="do not write; fail if --out differs")
     parser.add_argument("--vault-commit", default="auto", help="'auto' (read .git), 'none' or a commit id")
     args = parser.parse_args(argv)
     if args.out is None:
         args.out = default_out(args.data_dir)
     if not args.check and inside_repository(args.out):
-        print(f"kb_build: error: refusing to write the pack inside the repository ({args.out}); "
-              "it is derived from product documentation and must stay outside it", file=sys.stderr)
+        print(
+            f"kb_build: error: refusing to write the pack inside the repository ({args.out}); "
+            "it is derived from product documentation and must stay outside it",
+            file=sys.stderr,
+        )
         return 2
     try:
         files = build_pack(args.vault, args.vault_commit)
@@ -519,8 +574,10 @@ def main(argv=None) -> int:
         for problem in problems:
             print(f"kb_build: {problem}", file=sys.stderr)
         if problems:
-            print("kb_build: pack is out of date; run kb_build without --check and review the diff",
-                  file=sys.stderr)
+            print(
+                "kb_build: pack is out of date; run kb_build without --check and review the diff",
+                file=sys.stderr,
+            )
             return 1
         print("kb_build: pack is up to date")
         return 0
