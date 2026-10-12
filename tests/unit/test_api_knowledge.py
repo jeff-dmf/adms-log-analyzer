@@ -45,7 +45,9 @@ def test_template_knowledge(awfm_pack, client, demo):  # noqa: F811
     assert body["hint"]["params"] == ["WaitForCRSCallback"]
     param = body["params"][0]
     assert (param["name"], param["default"], param["description"]) == (
-        "WaitForCRSCallback", "12345", "Synthetic description."
+        "WaitForCRSCallback",
+        "12345",
+        "Synthetic description.",
     )
     assert body["adapter"]["acronym"] == "AWFM"
     assert body["vault_note"] == body["hint"]["note"]

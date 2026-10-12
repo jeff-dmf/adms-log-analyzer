@@ -391,8 +391,13 @@ def test_device_paths_are_refused_for_every_path_argument(flag, tmp_path, capsys
 
 def test_the_unc_device_alias_cannot_overwrite_the_ers(tmp_path, capsys):
     err = _refused(
-        capsys, "--ers", "\\\\srv\\share\\ers.zip", "--out", str(tmp_path / "o"),
-        "--json", "\\\\.\\UNC\\srv\\share\\ers.zip",
+        capsys,
+        "--ers",
+        "\\\\srv\\share\\ers.zip",
+        "--out",
+        str(tmp_path / "o"),
+        "--json",
+        "\\\\.\\UNC\\srv\\share\\ers.zip",
     )
     assert "--json" in err and "device or extended-length" in err
 

@@ -4,6 +4,7 @@ Usage: python packaging/smoke_health.py <command> [args...]
 The command is the launcher prefix (e.g. dmslog.bat, or python3 dist/dmslog.pyz); this script
 appends `serve --no-browser --port <free port>`. Exits non-zero on any failure.
 """
+
 from __future__ import annotations
 
 import http.client

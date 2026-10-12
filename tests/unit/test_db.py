@@ -13,14 +13,44 @@ from dmslog.store.db import MigrationError
 SRC = Path(__file__).resolve().parents[2] / "src"
 
 TABLES = {
-    "meta", "collection", "stream", "source", "entry", "entry_body", "entry_key", "template",
-    "unknown_sig", "event", "link", "payload", "stat_sample", "bucket", "config_param",
-    "config_observed", "error_config", "bookmark", "saved_view", "entry_fts",
+    "meta",
+    "collection",
+    "stream",
+    "source",
+    "entry",
+    "entry_body",
+    "entry_key",
+    "template",
+    "unknown_sig",
+    "event",
+    "link",
+    "payload",
+    "stat_sample",
+    "bucket",
+    "config_param",
+    "config_observed",
+    "error_config",
+    "bookmark",
+    "saved_view",
+    "entry_fts",
 }
 INDEXES = {
-    "ix_entry_ts", "ix_entry_src_ts", "ix_entry_sev_ts", "ix_entry_tpl_ts", "ix_entry_event",
-    "ix_entry_tid", "ix_key_entry", "ix_key_payload", "ix_event_kind", "ix_event_stream", "ix_event_status",
-    "ix_link_b", "ix_payload_entry", "ix_payload_event", "ix_payload_op", "ix_payload_msg",
+    "ix_entry_ts",
+    "ix_entry_src_ts",
+    "ix_entry_sev_ts",
+    "ix_entry_tpl_ts",
+    "ix_entry_event",
+    "ix_entry_tid",
+    "ix_key_entry",
+    "ix_key_payload",
+    "ix_event_kind",
+    "ix_event_stream",
+    "ix_event_status",
+    "ix_link_b",
+    "ix_payload_entry",
+    "ix_payload_event",
+    "ix_payload_op",
+    "ix_payload_msg",
 }
 
 
@@ -172,7 +202,11 @@ def test_migration_2_backfills_bucket_sev_from_bucket(tmp_path):
 
 
 BOOKMARK_V4_OBJECTS = (
-    "ix_bookmark_source", "ix_bookmark_orphan", "ix_bookmark_open", "ux_bookmark_entry", "ux_bookmark_uid"
+    "ix_bookmark_source",
+    "ix_bookmark_orphan",
+    "ix_bookmark_open",
+    "ux_bookmark_entry",
+    "ux_bookmark_uid",
 )
 
 

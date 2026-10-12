@@ -17,22 +17,68 @@ ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "src" / "dmslog" / "web"
 JS_DIR = WEB / "js"
 EXPECTED_MODULES = {
-    "api.js", "clock-banner.js", "config-panel-model.js", "config-panel.js", "dashboard-model.js",
-    "dashboard.js", "detail-model.js", "detail.js", "events-model.js", "events-panel.js",
-    "filter-tree-model.js", "filter-tree.js", "filters.js", "grid-model.js", "grid.js",
-    "knowledge-model.js", "knowledge.js", "main.js", "saved-views.js", "search.js", "sources.js",
-    "strings.js", "theme.js", "time.js", "timeline-model.js", "timeline.js", "unknown-panel-model.js",
-    "unknown-panel.js", "key-panel-model.js", "key-panel.js", "links-model.js", "links.js", "side-by-side.js",
-    "payload-model.js", "payload.js", "payload-list-model.js", "payload-list.js",
-    "export-model.js", "export-panel.js", "redaction-panel.js",
-    "bookmarks-model.js", "bookmarks-panel.js", "compare-model.js", "compare.js", "saved-views-model.js",
-    "follow-tail-model.js", "follow-tail.js",
+    "api.js",
+    "clock-banner.js",
+    "config-panel-model.js",
+    "config-panel.js",
+    "dashboard-model.js",
+    "dashboard.js",
+    "detail-model.js",
+    "detail.js",
+    "events-model.js",
+    "events-panel.js",
+    "filter-tree-model.js",
+    "filter-tree.js",
+    "filters.js",
+    "grid-model.js",
+    "grid.js",
+    "knowledge-model.js",
+    "knowledge.js",
+    "main.js",
+    "saved-views.js",
+    "search.js",
+    "sources.js",
+    "strings.js",
+    "theme.js",
+    "time.js",
+    "timeline-model.js",
+    "timeline.js",
+    "unknown-panel-model.js",
+    "unknown-panel.js",
+    "key-panel-model.js",
+    "key-panel.js",
+    "links-model.js",
+    "links.js",
+    "side-by-side.js",
+    "payload-model.js",
+    "payload.js",
+    "payload-list-model.js",
+    "payload-list.js",
+    "export-model.js",
+    "export-panel.js",
+    "redaction-panel.js",
+    "bookmarks-model.js",
+    "bookmarks-panel.js",
+    "compare-model.js",
+    "compare.js",
+    "saved-views-model.js",
+    "follow-tail-model.js",
+    "follow-tail.js",
 }
 
 FORBIDDEN_JS = [
-    r"\binnerHTML\b", r"\bouterHTML\b", r"\binsertAdjacentHTML\b", r"\bdocument\.write\b",
-    r"\beval\s*\(", r"\bnew\s+Function\b", r"\bsetTimeout\s*\(\s*[\"'`]", r"\bsetInterval\s*\(\s*[\"'`]",
-    r"setAttribute\(\s*[\"']style[\"']", r"\bDOMParser\b", r"\bcreateContextualFragment\b", r"\bsrcdoc\b",
+    r"\binnerHTML\b",
+    r"\bouterHTML\b",
+    r"\binsertAdjacentHTML\b",
+    r"\bdocument\.write\b",
+    r"\beval\s*\(",
+    r"\bnew\s+Function\b",
+    r"\bsetTimeout\s*\(\s*[\"'`]",
+    r"\bsetInterval\s*\(\s*[\"'`]",
+    r"setAttribute\(\s*[\"']style[\"']",
+    r"\bDOMParser\b",
+    r"\bcreateContextualFragment\b",
+    r"\bsrcdoc\b",
 ]
 
 
@@ -194,7 +240,11 @@ def test_node_unit_tests_pass_in_any_time_zone(zone):
     assert test_files, "no Node test files found"
     result = subprocess.run(
         [node, "--test", *test_files],
-        capture_output=True, text=True, encoding="utf-8", env=env, check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -264,7 +314,10 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
     ]  # fmt: skip
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(pyz), *paths],
-        capture_output=True, text=True, encoding="utf-8", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     served = json.loads(result.stdout.strip().splitlines()[-1])
