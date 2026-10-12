@@ -25,7 +25,7 @@ Modelos: **haiku** = varredura mecânica barata; **sonnet** = implementação ro
 | M6 | **Payloads** (request/response): descoberta de formato (6.1 concluída), templates Info/Verbose, extração, visualização XML, ligação ao evento | M5 (amostras Verbose recebidas em 2026-10-08) |
 | M7 | Incremental ao vivo (pasta de instalação), bookmarks, exportação `.txt` anonimizada para chamado | M5 (payload na exportação: M6) |
 | M8 | Endurecimento: desempenho no pior caso (8.1), revisão de segurança e privacidade (8.2), docs (8.3, 8.4) e workflow de release (8.5). **Desenvolvimento concluído (2026-10-12)**; o teste manual no Windows e a tag `v0.1.0` ficam **depois do M9** (decisão de 2026-10-12, U19) | M7 |
-| M9 | **Features do estudo de referência (U19):** destaques e regras de cor, valores distintos e agrupamento, presets por família, copiar/exportar a visão, visões encadeadas, agregação declarativa, comparação por template, extrator ad hoc, abertura parcial, preferências versionadas e os itens P2 (painéis, duplicados e sequências, alertas locais, detecção de formato, offset entre coletas). A **0.1.0 só sai com o M9 concluído** | M8 |
+| M9 | **Features do estudo de referência (U19) e ajustes de UI de uso (U20):** destaques e regras de cor, valores distintos e agrupamento, presets por família, copiar/exportar a visão, visões encadeadas, agregação declarativa, comparação por template, extrator ad hoc, abertura parcial, preferências versionadas e os itens P2 (painéis, duplicados e sequências, alertas locais, detecção de formato, offset entre coletas). A **0.1.0 só sai com o M9 concluído** | M8 |
 | Pós-1.0 | P1: templates/eventos para os demais logs do ERS. P2: múltiplos ERS por caso, correlação entre máquinas, ajuste de relógio | M8 |
 
 M6 e M7 podem andar em paralelo.
@@ -255,9 +255,9 @@ Origem: estudo de funcionalidades de visualizadores de log (conceitos de uso; a 
 
 Ordem e paralelismo (Opus uma tarefa por vez; Sonnet em paralelo com arquivos disjuntos; um PR por vez na revisão):
 
-- **Onda 1 (P0):** 9.2 abre (endpoint `distinct` é base de 9.1, 9.5 e 9.6); depois 9.1, 9.3 e 9.4.
-- **Onda 2 (P1):** 9.5 antes de 9.7; 9.6 e 9.8 (Opus) alimentam 9.9; 9.10 e 9.15 em paralelo.
-- **Onda 3 (P2):** 9.11 depende de 9.9; 9.12, 9.13 e 9.14 independentes; 9.15 (offset entre coletas) depende da decisão sobre vários ERS por caso (U2/P2) e fica `aguarda-decisao`.
+- **Onda 1 (P0):** 9.2 abre (o endpoint `distinct` é base de 9.1, 9.5, 9.6 e 9.8); depois 9.1 e 9.3; 9.4 é independente e roda em paralelo. A frente de **UI de uso (9.16 a 9.19)** anda em paralelo: 9.16 antes de 9.17, 9.18 antes de 9.19.
+- **Onda 2 (P1):** 9.5 antes de 9.7; 9.6 e 9.8 dependem de 9.2; 9.9 depende só do M8; 9.10 depende de 9.1 e 9.3.
+- **Onda 3 (P2):** 9.11 depende de 9.6; 9.13 depende de 9.3; 9.12 e 9.14 são independentes; 9.15 (offset entre coletas) depende da decisão sobre vários ERS por caso (U5/P2) e fica `aguarda-decisao`, fora da execução enquanto isso.
 
 | # | Tarefa | Modelo | Depende de |
 |---|---|---|---|
@@ -275,12 +275,17 @@ Ordem e paralelismo (Opus uma tarefa por vez; Sonnet em paralelo com arquivos di
 | 9.12 | **Duplicados e sequências esperadas** (P2): marcar repetidos por (template, campos-chave) em janela; passos do ciclo de vida que faltaram | opus | M4 |
 | 9.13 | **Alertas locais no `watch`** (P2): banner e notificação opcional do navegador quando um filtro/preset casa registros novos; sem SMTP | sonnet | 9.3 |
 | 9.14 | **Detecção automática de formato** para logs fora do escopo (P2, liga ao P1 do pós-1.0): envelope genérico parametrizado em `families.toml` | opus | M8 |
-| 9.15 | **Offset de relógio entre coletas** (P2, liga ao P2 do pós-1.0): offset por coleção a partir de dois registros correlatos; **depende da decisão sobre vários ERS por caso** | opus | decisão U2/P2 |
+| 9.15 | **Offset de relógio entre coletas** (P2, liga ao P2 do pós-1.0): offset por coleção a partir de dois registros correlatos; **depende da decisão sobre vários ERS por caso** | opus | decisão U5/P2 |
+| 9.16 | **Seletor de arquivos nativo e navegador de pastas embutido** (UI de uso): botão ao lado do caminho dos ZIPs que abre o seletor do sistema (Windows e Linux) via servidor local, e navegador de pastas embutido (lista diretórios e `.zip` do usuário local, seleção múltipla) quando não houver diálogo nativo; caminhos sempre validados | opus (desenho e segurança) + sonnet | M7 |
+| 9.17 | **Criar caso com um ou vários ZIPs, de forma clara**: texto "1 ou mais ZIPs", seleção múltipla, lista escolhida com nome, tamanho e tipo, remover itens, criar só com pelo menos 1, erros por arquivo | sonnet | 9.16 |
+| 9.18 | **Colunas do grid redimensionáveis**: arrastar a borda do cabeçalho, duplo clique ajusta ao conteúdo, largura mínima e máxima, largura lembrada por usuário, sem quebrar a virtualização | sonnet | M7 |
+| 9.19 | **Coluna Source com o nome do arquivo e filtro de Source na lateral**: o template deixa de ser coluna padrão (fica opcional no seletor de colunas, com o título legível no lugar do código); filtro dinâmico por substring sem diferenciar maiúsculas e minúsculas, com contagem por fonte | sonnet | 9.18 |
 
 Aceite do M9:
 - Cada tarefa tem testes unitários (e de propriedade onde houver algoritmo), UAT novo ou atualizado em `uat`, documentação em `docs/ARQUITETURA.md` e revisão cruzada pelo nível T0/T1/T2 do `docs/REVISAO-CRUZADA.md`.
 - Nenhuma consulta nova monta SQL com texto do usuário; nenhuma tela nova usa `innerHTML` com conteúdo de log; nenhuma conexão de rede nova.
 - As metas do M8 (desempenho no pior caso e responsividade) continuam valendo com as features ligadas; revisão de segurança e privacidade (8.2) refeita sobre o que o M9 acrescentou.
+- UI de uso (9.16 a 9.19): em Windows e Linux o botão abre o seletor do sistema (ou o navegador de pastas embutido quando não houver diálogo), a seleção múltipla de ZIPs aparece como lista clara, as colunas do grid se redimensionam e a largura persiste, e a coluna Source mostra o nome do arquivo com filtro lateral que não diferencia maiúsculas e minúsculas.
 - Só então: teste manual no Windows, UAT do Jefferson e a tag `v0.1.0` (pré-release).
 
 ## Pós-1.0
