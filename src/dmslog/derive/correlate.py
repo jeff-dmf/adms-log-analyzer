@@ -234,7 +234,10 @@ def _iter_records(
                 part = ids[i : i + KEY_CHUNK]
                 q = ",".join("?" * len(part))
                 for eid, value in conn.execute(
-                    f"SELECT entry_id, value FROM entry_key WHERE key_type = ? AND entry_id IN ({q})",
+                    # template keys only: payload keys (origin 1) serve the search, never the pairing. The
+                    # index is named: reading origin makes it non-covering and the planner would scan by type.
+                    "SELECT entry_id, value FROM entry_key INDEXED BY ix_key_entry"
+                    f" WHERE key_type = ? AND origin = 0 AND entry_id IN ({q})",
                     [key, *part],
                 ):
                     missing[eid][3] = value

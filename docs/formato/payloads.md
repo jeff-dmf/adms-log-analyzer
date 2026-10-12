@@ -148,6 +148,35 @@ Consequências:
 
 Para `entry_key`: `msgid` (MessageID e CorrelationID de request/response), `mrid` (INC, PROB, SP/ISS/WR, crew), `gid` (delta, CRS/IMS, publicação). O par request↔response e a operação já resolvem a maior parte da correlação; as chaves do payload servem à busca "tudo de um INC".
 
+### 6.1 Medição e escolha das chaves (issue #67)
+
+Medido por script no banco do ERS Verbose (2026-10-08 14:53; 14.292 payloads, 3,73 M registros), só contagens. "Nas linhas de log" = valores distintos do payload que já existem em `entry_key` (chaves de template) com o mesmo tipo, ou seja, que a busca por chave passa a juntar com linhas de log.
+
+| Caminho no payload | Ocorrências | Distintos | Nas linhas de log | Decisão |
+|---|---|---|---|---|
+| `Header/MessageID` | 7.742 | 7.255 | 6.581 (`msgid`) | `msgid` |
+| `Header/CorrelationID` | 7.742 | 5.403 | 4.729 (`msgid`) | `msgid` (igual ao MessageID nos requests: 1 linha) |
+| `SwitchingStep(s)/mRID` (`SP <n> - ISS <n>`) | 2.827 | 1.383 | 1.018 (`mrid`) | `mrid` |
+| `IncidentRecord/mRID` (`INC <n>`) | 1.617 | 468 | 249 (`mrid`) | `mrid` |
+| `Crew`/`Crews/mRID` | 5.288 | 351 + 181 | ~2 (`mrid`) | `mrid` (identificador central do Wfm) |
+| `Assignments/mRID` (`INC <n>`) | 880 | 184 | 174 (`mrid`) | `mrid` |
+| `SwitchingPlan`, `SwitchingStepGroup`, `Work(s)`, `Incidents` `/mRID` | 1.510 | 8–61 cada | 0–46 cada (`mrid`) | `mrid` |
+| `IncidentHazards/mRID` (`PROB <n>`), `TroubleTickets/mRID` | 523, 732 | 180, 352 | 0 | `mrid` (objetos de negócio do incidente) |
+| `Vehicle/mRID` | 189 | 46 | 46 (`mrid` e `vehicle`) | `mrid` + `vehicle` |
+| `ResourceDescription/id/@gid` (delta, publicação; `0x` + 16 hex) | 3.982 | 1.400 | 25 após hex → decimal (`gid`) | `gid` em decimal |
+| `Property SM_COMMANDING_MODEL_CUSTOMID` (publicação) | 2.097 | — | 1.668 ocorrências (`mrid`) | `mrid` |
+| `IncidentId` (WFM-S121) | 64 | 57 | 57 (`incident_gid`, WFM-124B), 3 (`gid`, OSR) | `gid` + `incident_gid` |
+| `ServiceAssignmentId` (WFM-120) | 345 | 153 | 44 (`incident_gid`), 29 (`gid`): coincidência parcial, ver abaixo | só `gid` |
+| `CrewId` (WFM-120, WFM-S121) | 409 | 106 | 0 | `gid` (GID do DMS) |
+| `Equipments/mRID`, `RequestedEquipment/mRID` | 2.981 | 736 | 0 | fora (equipamento; o FTS acha) |
+| `UsagePoint/mRID`, `UsagePoint/meterId` | 729, 366 | 249, 207 | 0 | fora (cliente/medidor) |
+| `Substation`, `Zones`, `Region`, `PSRType` `/mRID` | 5.519 | 3–72 | 0 | fora (classificação, baixa cardinalidade) |
+| nomes, endereços, `comment`, datas, demais `Property` | — | — | — | fora (texto livre ou sensível) |
+
+**`IncidentId` × `ServiceAssignmentId` (domínio, informado pelo Jefferson em 2026-10-12).** `IncidentId` (conteúdo ao IMS) é o ID do incidente no cache do IMS (Incident Management Service): vira `incident_gid`, o tipo com que o WFM-124B registra o `Incident Gid` do pedido ao IMS, e também `gid`, o tipo com que OSR-024/025 registram o `incidentId` do IMS. `ServiceAssignmentId` (conteúdo ao CRS) **não** é ID de incidente: é o ID do Assignment de uma equipe no cache do CRS (Crew Service). O Assignment pode estar ligado a um incidente (daí a coincidência parcial medida acima) ou a outros documentos do ADMS (SwitchingSteps, SwitchingPlans, WorkRequests, com IDs no cache do WMS/WOM, vistos no Smn). Gravá-lo como `incident_gid` faria a busca ligar um Assignment a um incidente que não é o dele; por isso é só `gid`. Não foi criado tipo `assignment_gid`: nenhum template do catálogo registra o GID do Assignment, então um tipo próprio só juntaria payloads WFM-120 entre si, o que `gid` já faz; fica para quando surgir uma linha de log com esse ID. O catálogo foi conferido: WFM-124B guarda em `incident_gid` o `Incident Gid` do pedido ao IMS (é de fato incidente) e em `gid` o `OMS_REQUEST`; OSR-024/025 guardam em `gid` o `incidentId` do IMS; nenhum template usa `incident_gid` para um Assignment.
+
+Resultado gravado no mesmo ERS: 30.794 linhas novas em `entry_key` (`mrid` 15.661, `msgid` 10.082, `gid` 4.798, `incident_gid` 64, `vehicle` 189; 2,7% das 1.147.495 de template), banco ≈ +5 MB (+0,27%), tempo de ingestão igual dentro do ruído. Distintos que passam a encontrar linhas de log pela mesma chave: `msgid` 6.582 de 7.256, `mrid` 903 de 2.535, `incident_gid` 57 de 57, `gid` 54 de 1.569, `vehicle` 46 de 46. (Contagens recalculadas a partir da medição, retirando as 345 linhas `incident_gid` do `ServiceAssignmentId`.) Regras de normalização, limites e a separação da derivação (`entry_key.origin`): ARQUITETURA, seção 6.6, "Chaves do payload".
+
 ## 7. Tamanho
 
 Caracteres do XML (do `<` inicial ao fim, sem o `.`), por tipo:

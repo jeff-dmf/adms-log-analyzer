@@ -371,9 +371,12 @@ def _keyed_rows(
             (tpl_id,),
         )
         return
+    # template keys only (origin 0): payload keys serve the search, never the links; the index is named
+    # because reading origin makes it non-covering and the planner would then scan the whole key type
     cur = conn.execute(
-        f"SELECT e.ts, e.id, k.value{op_cols} FROM entry e JOIN entry_key k ON k.entry_id = e.id"
-        f" AND k.key_type = ?{op_join} WHERE {where} ORDER BY e.ts, e.id",
+        f"SELECT e.ts, e.id, k.value{op_cols} FROM entry e JOIN entry_key k INDEXED BY ix_key_entry"
+        f" ON k.entry_id = e.id AND k.key_type = ? AND k.origin = 0{op_join}"
+        f" WHERE {where} ORDER BY e.ts, e.id",
         (key, tpl_id),
     )
     found = False

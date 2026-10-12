@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from dmslog.parse.payload import extract_payload
+from dmslog.parse.payload import extract_payload, payload_keys
 from dmslog.parse.records import Record
 from dmslog.parse.signature import signature
 from dmslog.store import bookmarks
@@ -55,6 +55,10 @@ _ENTRY_SQL = (
     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 )
 _KEY_SQL = "INSERT OR IGNORE INTO entry_key(key_type, value, entry_id) VALUES (?,?,?)"
+# Keys read from a payload (origin 1), written after the template keys: a pair both give stays origin 0.
+_PAYLOAD_KEY_SQL = "INSERT OR IGNORE INTO entry_key(key_type, value, entry_id, origin) VALUES (?,?,?,1)"
+KEY_ORIGIN_PAYLOAD = 1
+_XML_FORMATS = ("xml", "xml_seq")
 _UNKNOWN_SQL = (
     "INSERT INTO unknown_sig(family, signature, n, first_entry_id) VALUES (?,?,?,?)"
     " ON CONFLICT(family, signature) DO UPDATE SET n = n + excluded.n,"
@@ -186,6 +190,7 @@ class IndexWriter:
         self._bodies: list[tuple[int, str]] = []
         self._buckets: dict[tuple[int, int, int, int], int] = {}
         self._keys: list[tuple[str, str, int]] = []
+        self._payload_keys: list[tuple[str, str, int]] = []  # entry_key rows read from payloads (origin 1)
         self._unknown: dict[tuple[str, str], list[int]] = {}  # (family, signature) -> [n, first_entry_id]
         self._config: list[tuple[Any, ...]] = []  # config_observed rows of the open batch
         self._payloads: list[tuple[Any, ...]] = []  # payload rows of the open batch (entry_id first)
@@ -219,6 +224,7 @@ class IndexWriter:
         self._bodies.clear()
         self._buckets.clear()
         self._keys.clear()
+        self._payload_keys.clear()
         self._unknown.clear()
         self._config.clear()
         self._payloads.clear()
@@ -553,6 +559,43 @@ class IndexWriter:
             self._repair_unknown_first(stale)
         return int(first[1])
 
+    def refresh_payload_keys(self, source_id: int) -> int:
+        """Rewrite the payload keys (``entry_key`` origin 1) of the records of one source from its stored
+        payloads, without reindexing it; returns the number of key rows written.
+
+        Used once per source when only the key extraction changed (``ingest/pipeline.py``,
+        ``KEY_ONLY_UPGRADES``). Reads the ``payload`` rows of the source (offsets) and the text of their
+        records; linear in the payloads of the source, in batches. Template keys (origin 0) stay.
+        """
+        self.flush()
+        self.begin()
+        conn = self.conn
+        conn.execute(
+            "DELETE FROM entry_key WHERE origin = ? AND entry_id IN"
+            " (SELECT p.entry_id FROM payload p JOIN entry e ON e.id = p.entry_id WHERE e.source_id = ?)",
+            (KEY_ORIGIN_PAYLOAD, source_id),
+        )
+        cur = conn.execute(
+            "SELECT p.entry_id, p.char_off, p.char_len, p.fmt, e.msg, b.cont FROM payload p"
+            " JOIN entry e ON e.id = p.entry_id LEFT JOIN entry_body b ON b.entry_id = e.id"
+            " WHERE e.source_id = ? ORDER BY p.id",
+            (source_id,),
+        )
+        written = 0
+        while True:
+            rows = cur.fetchmany(1000)
+            if not rows:
+                break
+            batch: list[tuple[str, str, int]] = []
+            for entry_id, off, length, fmt, msg, cont in rows:
+                if fmt not in _XML_FORMATS or off is None or length is None:
+                    continue
+                text = f"{msg}\n{cont}" if cont is not None else msg
+                batch.extend((k, v, entry_id) for k, v in payload_keys(text, off, off + length))
+            if batch:
+                written += conn.executemany(_PAYLOAD_KEY_SQL, batch).rowcount
+        return written
+
     def _delete_payloads(self, ids: str, params: list[Any]) -> None:
         """Remove the payload rows of the removed records and the references other rows hold to them.
 
@@ -665,6 +708,7 @@ class IndexWriter:
         payloads_out = self._payloads
         family = self._family
         keys_out = self._keys
+        payload_keys_out = self._payload_keys
         unknown = self._unknown
         dumps = json.dumps
         prev_ts = self.prev_ts
@@ -702,6 +746,8 @@ class IndexWriter:
                     if info is not None:
                         flags |= FLAG_HAS_PAYLOAD
                         payloads_out.append((next_id, *info.row()))
+                        for key_type, value in info.keys:
+                            payload_keys_out.append((key_type, value, next_id))
             else:
                 sev = infer(None, r) if infer is not None else severity(r.level, r.msg)
                 if family is not None:
@@ -741,6 +787,8 @@ class IndexWriter:
         conn.execute(_FTS_INSERT_SQL, (self._batch_first_id, self._next_id))
         if self._keys:
             conn.executemany(_KEY_SQL, self._keys)
+        if self._payload_keys:
+            conn.executemany(_PAYLOAD_KEY_SQL, self._payload_keys)
         if self._config:
             conn.executemany(_CONFIG_OBSERVED_SQL, self._config)
         if self._payloads:
@@ -761,6 +809,7 @@ class IndexWriter:
         self._bodies.clear()
         self._buckets.clear()
         self._keys.clear()
+        self._payload_keys.clear()
         self._unknown.clear()
         self._config.clear()
         self._payloads.clear()

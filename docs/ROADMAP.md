@@ -245,6 +245,7 @@ Aceite:
 - Teste manual no PC Windows: copiar a pasta, executar o `.bat`, abrir um ERS local no Edge e no Chrome, nenhuma conexão de rede além de loopback.
 - Nenhum achado alto/crítico aberto na revisão de segurança.
 - U18 (issue #61): exportação (CLI, API e UI) sai com o texto original por padrão, sem legenda de redação e sem ler o perfil; a anonimização só atua com a opção explícita (`--anonymize`, `options.anonymize: true`, seletor "On"); `--redaction-mode` ou perfil sem a opção é erro; com a opção, strict continua o padrão e mantém a rede padrão-nega mesmo com todas as categorias desligadas (ARQUITETURA 1a e 10.2).
+- Issue #67 (chaves de payload em `entry_key`, deixada fora do M6; entra na 0.1.0 por decisão de 2026-10-11): **feito**. `msgid`, `mrid`, `vehicle`, `gid` e `incident_gid` lidos do XML na ingestão (`entry_key.origin = 1`, esquema v5), fora da derivação; casos existentes ganham as chaves sem reindexar. ERS Verbose: +30.794 linhas (+2,7%), banco +0,27%, tempo igual dentro do ruído (ARQUITETURA 6.6, "Chaves do payload"; `docs/formato/payloads.md`, 6.1).
 - `CustomAdapterChangeIncidentDevice`: base de conhecimento incorporada e análise específica com templates e eventos validada (2.11, 3.10 e 4.8); suporte apenas genérico não atende ao aceite da 1.0.
 
 ## Pós-1.0
