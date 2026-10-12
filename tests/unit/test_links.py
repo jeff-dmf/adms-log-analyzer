@@ -761,3 +761,252 @@ def test_origin_links_survive_the_payload_recomputation(make):
     assert s.errors == [] and s.groups == 1
     assert c.links("normal_sensitive") == []  # its own stale pair is gone
     assert c.links("callback") == [(start, b, "callback", 2)]
+
+
+# --------------------------------------------------------------------------- window origin (issue #66)
+
+WINDOW_ORIGIN = """
+[[link_rule]]
+kind = "callback"
+a = "TST-001"
+b = "TST-002"
+window_only = true
+origin = "operation"
+max_dt_ms = 5000
+"""
+WINDOW_LABEL = "AWFM/callback:TST-001>TST-002@operation-end"
+
+
+def hazard_op(c, ts, dur=16, tid=1, close=True, stream=None):
+    """A request whose start record is TST-001 and whose operation ends ``dur`` ms later (open: no end)."""
+    sid = stream or c.stream()
+    start = c.add("TST-001", ts, tid=tid, stream=sid)
+    end = c.add("TST-004", ts + dur, tid=tid, stream=sid) if close else None
+    ev = add_operation(c, start, end, [], stream=sid, tid=tid)
+    if close:
+        c.conn.execute("UPDATE event SET ts_end = ? WHERE id = ?", (ts + dur, ev))
+    return start
+
+
+def counts(s):
+    return (s.links, s.ambiguous, s.unmatched, s.no_operation, s.out_of_window, s.dropped)
+
+
+def test_window_origin_unique_both_ways_links_with_confidence_zero(make):
+    c = make(WINDOW_ORIGIN)
+    start = hazard_op(c, 1000)
+    b = c.add("TST-002", 3000, tid=9)
+    s = c.run()
+    assert c.links() == [(start, b, "callback", 0)]
+    assert counts(s) == (1, 0, 0, 0, 0, 0)
+    assert links_mod.link_stats(c.conn, 1) == {WINDOW_LABEL: {"linked": 1}}
+
+
+def test_window_origin_two_requests_in_the_window_link_nothing(make):
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000)
+    hazard_op(c, 1000, tid=2)  # same ms, as in the samples
+    c.add("TST-002", 2700, tid=9)
+    c.add("TST-002", 2700, tid=9)
+    s = c.run()
+    assert c.links() == []
+    assert counts(s) == (0, 2, 0, 0, 0, 0)
+
+
+def test_window_origin_two_callbacks_after_one_request_link_nothing(make):
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000)
+    c.add("TST-002", 2000, tid=9)
+    c.add("TST-002", 2500, tid=8)  # a foreign callback in the window: neither is trusted
+    s = c.run()
+    assert c.links() == []
+    assert counts(s) == (0, 2, 0, 0, 0, 0)
+
+
+def test_window_origin_absent_request_counts_unmatched(make):
+    c = make(WINDOW_ORIGIN)
+    c.add("TST-002", 2000, tid=9)
+    s = c.run()
+    assert c.links() == [] and counts(s) == (0, 0, 1, 0, 0, 0)
+
+
+def test_window_origin_callback_before_the_request_or_too_late(make):
+    c = make(WINDOW_ORIGIN)
+    c.add("TST-002", 500, tid=9)  # before the request
+    start = hazard_op(c, 1000)  # ends at 1016
+    c.add("TST-002", 1008, tid=9)  # during the operation (before its end): not a candidate
+    b = c.add("TST-002", 6016, tid=9)  # exactly max_dt after the end: linked
+    hazard_op(c, 20_000)  # ends at 20016
+    c.add("TST-002", 25_017, tid=9)  # 1 ms too late
+    s = c.run()
+    assert c.links() == [(start, b, "callback", 0)]
+    assert counts(s) == (1, 0, 0, 0, 3, 0)
+
+
+def test_window_origin_anchor_is_the_operation_end(make):
+    c = make(WINDOW_ORIGIN)
+    start = hazard_op(c, 1000, dur=20_000)  # a long request: the callback comes after its end
+    b = c.add("TST-002", 22_000, tid=9)
+    c.run()
+    assert c.links() == [(start, b, "callback", 0)]
+
+
+def test_window_origin_open_or_missing_operation_is_not_linked(make):
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000, close=False)  # truncated: anchored at its start, blocks but never links
+    c.add("TST-002", 2000, tid=9)
+    c.add("TST-001", 10_000)  # a start record outside any operation
+    c.add("TST-002", 11_000, tid=9)
+    s = c.run()
+    assert c.links() == [] and counts(s) == (0, 0, 0, 2, 0, 0)
+
+
+def test_window_origin_open_operation_still_makes_a_neighbour_ambiguous(make):
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000, close=False)
+    hazard_op(c, 1500)
+    c.add("TST-002", 3000, tid=9)
+    s = c.run()
+    assert c.links() == [] and s.ambiguous == 1
+
+
+def test_window_origin_sequence_of_requests(make):
+    c = make(WINDOW_ORIGIN)
+    s1 = hazard_op(c, 1000)
+    b1 = c.add("TST-002", 2500, tid=9)
+    s2 = hazard_op(c, 30_000)
+    b2 = c.add("TST-002", 33_000, tid=8)
+    s = c.run()
+    assert c.links() == [(s1, b1, "callback", 0), (s2, b2, "callback", 0)]
+    assert counts(s) == (2, 0, 0, 0, 0, 0)
+
+
+def test_window_origin_rerun_idempotent_and_incremental(make):
+    c = make(WINDOW_ORIGIN)
+    start = hazard_op(c, 1000)
+    b1 = c.add("TST-002", 2000, tid=9)
+    c.run()
+    assert c.links() == [(start, b1, "callback", 0)]
+    before = c.conn.total_changes
+    assert (c.run().groups, c.conn.total_changes) == (0, before)
+    # the next cycle brings a second callback inside the same window: the first link is withdrawn
+    c.add("TST-002", 4000, tid=8)
+    c.touch(c.stream())
+    s = c.run()
+    assert s.groups == 1 and c.links() == [] and s.ambiguous == 2
+    assert c.run().groups == 0
+
+
+def test_window_origin_follows_an_operation_end_change(make):
+    """Re-derivation that only moves the end of the operation (no source change) recomputes the group."""
+    c = make(WINDOW_ORIGIN)
+    start = hazard_op(c, 1000)
+    b = c.add("TST-002", 3000, tid=9)
+    c.run()
+    assert c.links() == [(start, b, "callback", 0)]
+    c.conn.execute("UPDATE event SET ts_end = 3500")  # now the callback arrives before the end
+    s = c.run()
+    assert s.groups == 1 and c.links() == [] and s.out_of_window == 1
+
+
+def test_window_origin_links_survive_normal_sensitive_and_payload_recomputation(make):
+    from dmslog.derive.correlate import correlate_pending
+    from dmslog.derive.payloads import link_payloads
+
+    pair = '\n[[sensitive_pair]]\nnormal = "TST-002"\nsensitive = "TST-002"\nmatch = ["pid", "tid"]\n'
+    c = make(WINDOW_ORIGIN + pair)
+    normal = c.stream(sensitive=0)
+    sens = c.stream(sensitive=1)
+    start = hazard_op(c, 1000, stream=normal)
+    b = c.add("TST-002", 2000, stream=normal, tid=9)
+    c.add("TST-002", 2000, stream=sens, tid=9)
+    c.run()
+    correlate_pending(c.conn, c.cat)
+    c.touch(normal)
+    c.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('entries_epoch', '7')")
+    correlate_pending(c.conn, c.cat)
+    assert len(c.links("normal_sensitive")) == 1
+    assert link_payloads(c.conn, c.cat).errors == []
+    assert c.links("callback") == [(start, b, "callback", 0)]
+
+
+def test_window_origin_bound_is_counted_and_never_guesses(make, monkeypatch):
+    monkeypatch.setattr(links_mod, "MAX_OPEN_KEYS", 1)
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000)
+    c.add("TST-002", 1500, tid=9)  # pending on the first request
+    hazard_op(c, 2000)  # evicts the first request (bound): its pending callback is dropped
+    s = c.run()
+    assert c.links() == [] and s.dropped == 1
+
+
+def test_window_origin_eviction_keeps_later_callbacks_ambiguous(make, monkeypatch):
+    """Review of PR #91: a callback arriving AFTER the eviction must not link to the surviving request."""
+    monkeypatch.setattr(links_mod, "MAX_OPEN_KEYS", 1)
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000)  # ends at 1016
+    hazard_op(c, 2000)  # ends at 2016: evicts the first one
+    c.add("TST-002", 3000, tid=9)  # both requests are in its window
+    late = hazard_op(c, 30_000)  # far away: the bound no longer matters
+    b = c.add("TST-002", 31_000, tid=9)
+    s = c.run()
+    assert c.links() == [(late, b, "callback", 0)]
+    assert counts(s) == (1, 0, 0, 0, 0, 1)
+
+
+def test_window_origin_overflow_of_requests_in_flight_stops_linking(make, monkeypatch):
+    monkeypatch.setattr(links_mod, "MAX_OPEN_KEYS", 1)
+    c = make(WINDOW_ORIGIN)
+    first = hazard_op(c, 1000)
+    b = c.add("TST-002", 2000, tid=9)
+    hazard_op(c, 10_000, dur=8000)  # two long requests in flight at once: more than the bound
+    hazard_op(c, 10_001, dur=8000, tid=2)
+    c.add("TST-002", 19_000, tid=9)
+    c.add("TST-002", 40_000, tid=9)
+    s = c.run()
+    assert c.links() == [(first, b, "callback", 0)]  # decided before the overflow, still exact
+    assert s.dropped == 2 and s.errors == []
+
+
+def test_window_origin_overflow_before_any_anchor_keeps_out_of_window(make, monkeypatch):
+    """Re-review of PR #91: the overflow hides every anchor, but requests exist: not ``unmatched``."""
+    monkeypatch.setattr(links_mod, "MAX_OPEN_KEYS", 1)
+    c = make(WINDOW_ORIGIN)
+    c.add("TST-002", 500, tid=9)  # before every request
+    hazard_op(c, 1000, dur=8000)
+    hazard_op(c, 1001, dur=8000, tid=2)  # two in flight: overflow before the first anchor is emitted
+    c.add("TST-002", 9500, tid=9)
+    s = c.run()
+    assert c.links() == []
+    assert counts(s) == (0, 0, 0, 0, 1, 1)
+
+
+def test_window_origin_queries_never_sort_in_a_temp_btree(make):
+    """Review of PR #91: anchors and callbacks are read in index order (ix_entry_tpl_ts), no ORDER BY sort."""
+    c = make(WINDOW_ORIGIN)
+    hazard_op(c, 1000)
+    c.add("TST-002", 2000, tid=9)
+    sid = c.stream()
+    plans = [c.conn.execute("EXPLAIN QUERY PLAN " + links_mod._anchor_sql([sid]), (1,)).fetchall()]
+    rows = list(links_mod._keyed_rows(c.conn, c.cat.tpl_id("TST-002"), [sid], None))
+    assert rows
+    traced: list[str] = []
+    c.conn.set_trace_callback(traced.append)
+    list(links_mod._keyed_rows(c.conn, c.cat.tpl_id("TST-002"), [sid], None))
+    c.conn.set_trace_callback(None)
+    sql = next(q for q in traced if q.lstrip().upper().startswith("SELECT"))
+    plans.append(c.conn.execute("EXPLAIN QUERY PLAN " + sql).fetchall())
+    for plan in plans:
+        text = " | ".join(str(r[-1]) for r in plan)
+        assert "TEMP B-TREE" not in text.upper(), text
+        assert "ix_entry_tpl_ts" in text, text
+
+
+def test_window_origin_rule_problems():
+    p = links_mod._rule_problem
+    base = {"kind": "callback", "a": "X", "b": "Y", "window_only": True, "origin": "operation"}
+    assert p(base) is None
+    assert p({**base, "kind": "response"}) is None
+    assert p({**base, "kind": "retry"}) is not None
+    assert p({**base, "key": "gid"}) is not None
+    assert p({**base, "b": ["X", "Y"]}) is not None
