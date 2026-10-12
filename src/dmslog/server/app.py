@@ -24,7 +24,7 @@ from .. import __version__, messages
 from ..buildinfo import get_commit
 from ..paths import check_sqlite_fts5, resolve_data_dir
 from . import sse
-from .api import Api, ApiError, Stream, body_limit
+from .api import Api, ApiError, Download, Stream, body_limit
 
 LOOPBACK_HOST = "127.0.0.1"
 COOKIE_NAME = "dmslog_session"
@@ -250,6 +250,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         result = self.server.api.dispatch(self.command, path, params, self._read_json_body)
         if isinstance(result, Stream):
             self._stream_progress(result)
+        elif isinstance(result, Download):
+            self._stream_download(result)
         elif result.body is None:
             self._send(HTTPStatus(result.status), b"", "application/json; charset=utf-8")
         else:
@@ -337,6 +339,36 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         sse.stream(result.hub, write, self._client_gone, self.server.api.jobs.stopping)
+
+    def _stream_download(self, result: Download) -> None:
+        """Send a generated file with chunked transfer encoding (never held in memory). A failure while
+        generating ends the connection without the closing chunk, so the client sees an aborted download
+        instead of a file that looks complete."""
+        self.close_connection = True
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", result.content_type)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        for name, value in result.headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        try:
+            if self.command != "HEAD":
+                for chunk in result.chunks:
+                    if chunk:
+                        self.wfile.write(f"{len(chunk):x}\r\n".encode("ascii") + chunk + b"\r\n")
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+        except Exception:  # noqa: BLE001  (client gone or a read error: abort the connection)
+            pass
+        finally:
+            close = getattr(result.chunks, "close", None)
+            if close is not None:
+                close()
 
     def _serve_static(self, path: str) -> None:
         resource = find_web_resource(path)

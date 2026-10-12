@@ -1041,6 +1041,21 @@ Dentro da redação pedida, o padrão é o modo **strict** (`--redaction-mode st
 
 **Testes.** Perfil `dmslog-redact` do hypothesis (determinístico, sem banco de exemplos, sem deadline) para comportar-se igual no CI e local; exploração local com `DMSLOG_HYPOTHESIS_SEED=<n>` e `DMSLOG_HYPOTHESIS_SCALE=<k>`. Os testes de tempo verificam sobretudo a linearidade (razão entre tamanhos, melhor de 3 execuções) e mantêm apenas um teto absoluto generoso (15 s, escalado pela velocidade da máquina) para pegar explosões.
 
+### 10.3 Copiar e exportar a visão (9.4, issue #101)
+
+`POST /api/export/view` (corpo JSON, `case` obrigatório) responde um **arquivo em streaming** (`Transfer-Encoding: chunked`, `Cache-Control: no-store`), gerado por `report/viewexport.py` sobre o mesmo caminho de paginação por keyset do grid (`query.page`, 500 por página, nunca OFFSET): a memória fica constante, qualquer que seja o número de linhas. Os cabeçalhos `X-Dmslog-Rows` (linhas enviadas) e `X-Dmslog-Truncated` (`1` quando o `max_rows` cortou a visão) são calculados **antes** do envio por uma contagem limitada a `max_rows + 1`; o cliente avisa na UI quando truncou. Um erro durante o envio encerra a conexão sem o chunk final (o `fetch` falha; nunca fica um arquivo incompleto com cara de completo).
+
+| `kind` | Campos | Saída |
+|---|---|---|
+| `values` | `column` (`ts`, `pid`, `tid`, `level`, `template`, `source`, `msg` ou `fields.<nome>`) **ou** `key` (tipo de chave de `entry_key`), `separator` (`newline`\|`comma`), `quote` (`none`\|`double`\|`single`, aspas internas dobradas), `unique` | texto simples; vazios saem |
+| `lines` | , | cabeçalho (`ts [PID][TID] NÍVEL - `, como no `.txt` da 10.1), primeira linha e continuação; um registro é cortado em 200 000 caracteres com aviso visível |
+| `view_csv` | `columns` (as colunas visíveis + `fields.<nome>`, até 24) | CSV; primeira coluna sempre `Record` (id) |
+| `events_csv` | `events` (`kind` padrão `operation`, `name`, `status`, `stream`, `source`, `q`, `from`, `to`: os mesmos parâmetros de `GET /api/events`) | CSV: id, operação, tipo, status, duração (ms), início, fim, chave, chave da operação, TID, família, processo, fonte, registros |
+
+Comuns: `filter` (a árvore de filtros do grid, parametrizada), `max_rows` (padrão 100 000, máximo 1 000 000), `bom`. CSV: UTF-8, CRLF, vírgula, aspas dobradas (RFC 4180), BOM opcional para o Excel do Windows. **Injeção de fórmula:** célula de texto que começa com `=`, `+`, `-`, `@`, TAB ou CR ganha um apóstrofo na frente (isso também altera texto legítimo como `-5` ou `+55 11...`; números gravados pelo módulo, como ids e durações, não são texto e ficam intactos). Listas e linhas originais são texto para colar em outra ferramenta e **não** levam essa proteção. O texto sai original (U18). Limites conhecidos: a mensagem na lista de valores e no CSV da visão é o preview do grid (até 4096 caracteres); o cabeçalho das linhas é reconstruído do envelope (o texto cru do envelope não é guardado).
+
+No viewer, o menu **Copy as** (`web/js/copy-export.js` + `copy-export-model.js`) escolhe o tipo, copia (listas, linhas e o registro selecionado, este só no cliente) ou baixa (Blob) o arquivo; a seleção é a visão atual (o filtro composto), sem precisar selecionar linhas.
+
 ## 11. Viewer: funcionalidades × LogViewPlus, por marco
 
 | Funcionalidade | Conceito LogViewPlus | Marco |
@@ -1166,3 +1181,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-12 | Issue #67 (chaves de payload em `entry_key`, entra na 0.1.0): esquema **v5** = `entry_key.origin` (0 template, 1 payload) + índice parcial `ix_key_payload`; `ix_key_entry` inalterado (o planejador depende dele nas buscas por registro e tipo); chaves `msgid`, `mrid`, `vehicle`, `gid`, `incident_gid` lidas na ingestão por tokenizador linear com limites (seção 6.6, "Chaves do payload"); derivação e ligação de payloads leem só `origin = 0`; `PAYLOAD_EXTRACTION_VERSION` 2 com `KEY_ONLY_UPGRADES` {(1, 2)}: casos existentes ganham as chaves sem reindexação. Custo medido: +2,7% de linhas em `entry_key`, +0,27% de banco no ERS Verbose | Opus |
 | 2026-10-12 | Revisão de segurança 8.2 (P1, S1, S2, S3, S5): mapas de anonimização em `cases/<id>/redaction-maps/` (apagados com o caso; antigos removidos no apagar); varredura só de arquivo regular; teto agregado de 8 GiB para membros isentos da razão e espaço livre ≥ 3× os bytes a indexar; pastas de dados 0700 em POSIX; `is_reserved_case_name` único para CLI e API (seção 9.2) | Sonnet (sessão principal) |
 | 2026-10-12 | Python embeddable do portátil atualizado de 3.13.7 para **3.13.16** (3.13.16, 2026-09-30, corrige CVEs de `zipfile`, `tarfile` e `urllib`); SHA-256 conferido contra a página oficial da release (`97dae527…`); o FTS5 e o `trigram` seguem validados pelo smoke do job `portable-windows` do CI. |
+| 2026-10-12 | Tarefa 9.4 (#101, copiar e exportar a visão): nova rota `POST /api/export/view` (arquivo em streaming chunked; `Download` em `server/api.py`, `_stream_download` em `server/app.py`), módulo `report/viewexport.py` (listas, linhas originais, CSV da visão e de eventos) e menu "Copy as" no viewer; seção 10.3. |
