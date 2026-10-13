@@ -1,16 +1,6 @@
-/* Template column, quick toggles, parsed fields and the extra host panels. Theme tokens only. */
-.col-template {
-  width: 150px;
-}
-
+/* Quick toggles, parsed fields and the extra host panels. Theme tokens only. */
 .col-field {
   width: 140px;
-}
-
-.tpl-link {
-  cursor: pointer;
-  color: var(--accent);
-  text-decoration: underline;
 }
 
 .tpl-link-button {

@@ -14,6 +14,7 @@ import { initTimeline } from "./timeline.js";
 import { COLUMNS, Grid } from "./grid.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { searchTerms } from "./search.js";
+import { SourceFilter } from "./source-filter.js";
 import { SourcesPanel } from "./sources.js";
 import { S, format } from "./strings.js";
 import { applyTheme, currentTheme, toggleTheme } from "./theme.js";
@@ -162,7 +163,7 @@ function start() {
   let userFilter = null; // the filter tree's filter (plus timeline range and template clicks)
   let toggles = { hideNoise: false, unclassified: false };
   let currentFilter = null; // what the grid and the timeline use: the ONE composed filter
-  let templateCodes = new Map();
+  let templateLabels = new Map(); // template id -> readable title (code when the catalogue has none)
   let filterTree = null;
   let timeline = null;
   let unknownPanel = null;
@@ -232,15 +233,13 @@ function start() {
 
   const loadTemplates = async (forCase) => {
     if (forCase === null) {
-      templateCodes = new Map();
-      grid.setTemplateCodes(templateCodes);
+      templateLabels = new Map();
       return;
     }
     try {
       const data = await api.templates(forCase, null);
       if (forCase === caseId) {
-        templateCodes = new Map((data.templates || []).map((t) => [t.id, t.code]));
-        grid.setTemplateCodes(templateCodes);
+        templateLabels = new Map((data.templates || []).map((t) => [t.id, t.title || t.code]));
         if (detail.entry) {
           detail.renderTemplate(detail.entry);
         }
@@ -262,7 +261,6 @@ function start() {
       byId("grid-status").textContent = text;
     },
     onError: showError,
-    onTemplate: (tplId) => addTemplateFilter(tplId),
     getMark: (id) => bookmarkStore.get(id),
     onVisible: (ids) => bookmarkStore.ensure(ids),
     onView: () => followTail && followTail.viewChanged(),
@@ -296,7 +294,7 @@ function start() {
       }
       paintCompareButton(entry);
     },
-    getTemplateCode: (id) => templateCodes.get(id) || "",
+    getTemplateCode: (id) => templateLabels.get(id) || "",
     onTemplate: (tplId) => addTemplateFilter(tplId),
     onFields: (names) => {
       let added = false;
@@ -421,6 +419,7 @@ function start() {
     },
     onMessage: showMessage,
   });
+  new SourceFilter({ host: byId("source-filter-host"), panel });
 
   byId("search-form").addEventListener("submit", (event) => {
     event.preventDefault();
