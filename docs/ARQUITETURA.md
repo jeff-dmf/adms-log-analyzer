@@ -1072,6 +1072,7 @@ No viewer, o menu **Copy as** (`web/js/copy-export.js` + `copy-export-model.js`)
 | Merge de fontes numa timeline única com indicador de origem | Merge Files | M2 |
 | Árvore de filtros AND/OR/NOT, exclusões, filtros salvos | Filter tree | M2 |
 | Colunas dinâmicas a partir dos campos do template (op, msgId, GID, código) | Dynamic columns | M2 |
+| Colunas do grid redimensionáveis (9.18): arrastar a borda direita do cabeçalho, duplo clique ou Enter ajusta ao conteúdo renderizado, setas (Shift = passo maior), largura 40–1200 px (ajuste ao conteúdo até 800), lembrada por nome de coluna e por usuário em `localStorage` (`dmslog.columnWidths`; indisponível = valores padrão na sessão), botão de redefinir no seletor Columns, rolagem horizontal com cabeçalho sincronizado | `web/js/column-resize-model.js` (puro, testado), `column-resize.js`, `css/column-resize.css` | M9 |
 | Timeline (histograma) com seleção de intervalo, empilhado por severidade/fonte | Graph Reports | M2 |
 | Painel "templates desconhecidos" (assinatura, contagem, exemplo) | — (necessário para adapters novos) | M2 |
 | Códigos de erro e templates com explicação, severidade do ERS e do vault, link para nota; painel de configuração efetiva (LogLevel, MessageLogLevel, timeouts) | — (diferencial do projeto) | M3 |
@@ -1189,4 +1190,5 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-12 | U19: a 0.1.0 só sai depois do novo marco **M9** (15 tarefas 9.1 a 9.15, ver ROADMAP); a pré-release `v0.1.0` não foi criada; M8 concluído em desenvolvimento. |
 | 2026-10-12 | U20: quatro ajustes de UI de uso entram no M9 (tarefas 9.16 a 9.19: seletor de arquivos nativo com navegador de pastas embutido, criação de caso com seleção múltipla, colunas redimensionáveis, coluna Source e filtro lateral); U19 reestruturada nas quatro colunas. |
 | 2026-10-12 | Tarefa 9.4 (#101, copiar e exportar a visão): nova rota `POST /api/export/view` (arquivo em streaming chunked; `Download` em `server/api.py`, `_stream_download` em `server/app.py`), módulo `report/viewexport.py` (listas, linhas originais, CSV da visão e de eventos) e menu "Copy as" no viewer; seção 10.3. |
+| 2026-10-13 | 9.18 (U20): colunas do grid redimensionáveis; módulos `column-resize-model.js`/`column-resize.js`/`column-resize.css`, o grid só monta o `ColumnResizer`; larguras em `localStorage` (`dmslog.columnWidths`), `overflow-x` do viewport passa a `auto` com o cabeçalho sincronizado por `scrollLeft`. |
 | 2026-10-13 | Tarefa 9.3 (issue #100): presets de filtro por família, curados (`store/presets_builtin.toml`) e do usuário (`<dados>/presets.toml`, `schema = 1`), rotas `/api/presets*` e painel Presets no editor de filtros (seção 10) | Sonnet |

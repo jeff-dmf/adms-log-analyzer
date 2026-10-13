@@ -873,6 +873,9 @@ export const S = {
   cxError: "Could not export the view",
   cxBadLimit: "The row limit must be a whole number from 1 to {max}.",
   cxEventsAnyStatus: "Any",
+  // Resizable grid columns
+  columnResizeLabel: "Resize column {name}",
+  columnsResetWidths: "Reset column widths",
   // View presets (curated and the user's own, per family)
   prTitle: "Presets",
   prIntro: "Shortcuts for the adapters in this case. Applying one fills the filter tree; nothing is applied on its own.",

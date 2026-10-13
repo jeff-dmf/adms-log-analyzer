@@ -519,6 +519,12 @@ function start() {
         grid.setFieldColumns(fieldColumns).catch(showError);
       }));
     }
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "menu-action";
+    reset.textContent = S.columnsResetWidths;
+    reset.addEventListener("click", () => grid.resetColumnWidths());
+    menu.appendChild(reset);
   }
   buildColumnMenu();
   columnsButton.addEventListener("click", () => {
