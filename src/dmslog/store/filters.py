@@ -18,6 +18,7 @@ Grammar (each node is an object with exactly one key)::
                | {"field": {"name": field_name, "eq": str | int | float | null}}
                | {"payload": {"role"|"roles"|"direction"|"peer"|"operation"|"fmt"|"msg_id"|"corr_id"
                               |"root": strs, "orphan": bool}}
+               | {"collection": ids}        (collection GROUP ids: one ERS capture, folder or file; U21)
     ids       := int | [int, ...]
     strs      := str | [str, ...]
     tpls      := (str code | int id) | [...]
@@ -362,7 +363,9 @@ class _Incompatible(Exception):
 
 # Bucket table (per-minute counts): minute = ts // BUCKET_MS (ARQUITETURA 5, 9.4).
 BUCKET_MS = 60_000
-_BUCKET_OPS = frozenset({"and", "or", "not", "source", "stream", "family", "sensitive", "sev", "tpl", "ts"})
+_BUCKET_OPS = frozenset(
+    {"and", "or", "not", "source", "stream", "family", "sensitive", "sev", "tpl", "ts", "collection"}
+)
 _BUCKET_COLUMNS = {"source_id": "b.source_id", "sev": "b.sev", "tpl_id": "b.tpl_id"}
 
 
@@ -429,6 +432,15 @@ class _Compiler:
         self.bind(*values)
         column = self.col("source_id")
         return f"{column} IN (SELECT id FROM source WHERE stream_id IN ({_placeholders(len(values))}))"
+
+    def collection(self, arg: Any, path: str) -> str:
+        """Records of the given collection groups (``collection.ers_group``; ARQUITETURA 10)."""
+        values = [_int(v, f"{path}[{k}]") for k, v in enumerate(_as_list(arg, path))]
+        self.bind(*values)
+        return (
+            f"{self.col('source_id')} IN (SELECT s.id FROM source s JOIN collection c"
+            f" ON c.id = s.collection_id WHERE c.ers_group IN ({_placeholders(len(values))}))"
+        )
 
     def family(self, arg: Any, path: str) -> str:
         values = [_str(v, f"{path}[{k}]") for k, v in enumerate(_as_list(arg, path))]
@@ -666,6 +678,7 @@ _LEAVES = {
     "event_status": _Compiler.event_status,
     "flags": _Compiler.flags,
     "payload": _Compiler.payload,
+    "collection": _Compiler.collection,
     "field": _Compiler.field,
 }
 LEAF_OPERATORS = frozenset(_LEAVES)

@@ -32,9 +32,9 @@ from ..ingest.ers import (
     KIND_FILE,
     KIND_FOLDER,
     CollectionConflictError,
-    ErsIdentity,
-    check_can_add,
+    classify_add,
     parse_ers_name,
+    refuse_duplicate,
 )
 from ..ingest.reader import ReadLimitError
 from ..ingest.watch import MAX_BACKOFF_S, CycleReport, Watcher, backoff_delay
@@ -55,9 +55,10 @@ from ..store import (
     query,
     views,
 )
+from ..store import collections as collections_store
 from ..store import config as config_store
 from ..store.filters import QueryInputError, compile_filter
-from ..store.writer import IndexWriter
+from ..store.writer import CollectionRow, IndexWriter
 from . import filepick
 from .sse import ProgressHub
 
@@ -285,6 +286,7 @@ class IngestJobs:
         self._hubs: dict[str, ProgressHub] = {}
         self._threads: set[threading.Thread] = set()
         self.stopping = threading.Event()
+        self._watched: dict[str, str] = {}  # case -> resolved folder followed by ``serve --watch``
 
     def _describe(self, error: BaseException) -> str:
         """Safe error text (fixed description plus alias-normalized components)."""
@@ -294,6 +296,11 @@ class IngestJobs:
         case_id = self._store.canonical_case_id(case_id)
         with self._lock:
             return self._hubs.setdefault(case_id, ProgressHub())
+
+    def followed(self, case_id: str) -> str | None:
+        """Resolved path of the folder ``serve --watch`` follows into the case, if any."""
+        with self._lock:
+            return self._watched.get(case_id)
 
     def is_running(self, case_id: str) -> bool:
         try:
@@ -402,15 +409,17 @@ class IngestJobs:
             path,
             pipeline.IngestOptions(scope=scope, case_name=cid, aliases=aliases.get(self._store.data_dir)),
         )
+        folder = str(Path(path).resolve())
         thread = threading.Thread(
-            target=self._watch, args=(cid, watcher, interval), name=f"watch-{cid}", daemon=True
+            target=self._watch, args=(cid, watcher, interval, folder), name=f"watch-{cid}", daemon=True
         )
         with self._lock:
             self._threads.add(thread)
+            self._watched[cid] = folder
         thread.start()
         return cid
 
-    def _watch(self, cid: str, watcher: Watcher, interval: float) -> None:
+    def _watch(self, cid: str, watcher: Watcher, interval: float, folder: str) -> None:
         hub = self.hub(cid)
         failures = 0
         try:
@@ -440,6 +449,8 @@ class IngestJobs:
         finally:
             with self._lock:
                 self._threads.discard(threading.current_thread())
+                if self._watched.get(cid) == folder:  # a newer watcher of the same case keeps its own entry
+                    del self._watched[cid]
 
     def _watch_cycle(self, cid: str, watcher: Watcher, hub: ProgressHub) -> CycleReport | None:
         """Ingest what ``watcher.poll`` found, publishing progress; always finishes the hub's job."""
@@ -518,17 +529,14 @@ def watch_payload(report: CycleReport) -> dict[str, Any]:
     }
 
 
-def _identity_of_row(kind: str, guid: str | None, stamp: str | None, variant: str | None, label: str | None,
-                     path: str) -> ErsIdentity | None:  # fmt: skip
-    if kind != KIND_ERS_ZIP or not guid or not stamp:
-        return None
-    return ErsIdentity(guid, stamp, variant or "enterprise", "Enterprise", label or "", Path(path).name)
-
-
 def precheck_conflict(conn: sqlite3.Connection, path: Path) -> None:
-    """Raise CollectionConflictError synchronously (the ingest repeats the same rule)."""
+    """Raise CollectionConflictError synchronously: a second copy of an ERS half the case holds (U21).
+
+    Another ERS (any server, GUID or capture), a folder or a file is a new collection group; the other half of
+    a held capture joins its group; the same path is a re-ingest (``ers.classify_add``).
+    """
     rows = conn.execute(
-        "SELECT kind, path, ers_guid, ers_ts, ers_variant, label FROM collection ORDER BY id"
+        "SELECT id, kind, path, ers_guid, ers_ts, ers_variant, ers_group, label FROM collection ORDER BY id"
     ).fetchall()
     if not rows:
         return
@@ -539,13 +547,9 @@ def precheck_conflict(conn: sqlite3.Connection, path: Path) -> None:
     else:
         kind = KIND_FILE
     ident = parse_ers_name(path.name) if kind == KIND_ERS_ZIP else None
+    held = pipeline.held_collections([CollectionRow(*r) for r in rows])
     resolved = str(path.resolve())
-    for r_kind, r_path, guid, stamp, variant, _label in rows:
-        if r_path == resolved and r_kind == kind:
-            return
-        if ident is not None and (guid, stamp, variant) == (ident.guid, ident.timestamp, ident.variant):
-            return
-    check_can_add([_identity_of_row(r[0], r[2], r[3], r[4], r[5], r[1]) for r in rows], ident)
+    refuse_duplicate(held, classify_add(held, kind, resolved, ident), resolved)
 
 
 def _query_int(request: Request, name: str, default: int) -> int:
@@ -649,6 +653,7 @@ def _event_filter(request: Request, default_kinds: tuple[str, ...] = ()) -> even
         key_query=key_query or None,
         ts_from=_time_param(request, "from"),
         ts_to=_time_param(request, "to"),
+        collection=_id_param(request, "collection"),
     )
 
 
@@ -885,6 +890,11 @@ class Api:
             ("GET", re.compile(r"/api/presets/export\Z"), self.export_presets),
             ("POST", re.compile(r"/api/presets/import\Z"), self.import_presets),
         ]
+        self._routes += [
+            ("GET", re.compile(r"/api/cases/(?P<case>[^/]+)/collections\Z"), self.list_collections),
+            ("DELETE", re.compile(r"/api/cases/(?P<case>[^/]+)/collections/(?P<group>[^/]+)\Z"),
+             self.remove_collection),
+        ]  # fmt: skip
 
     def shutdown(self) -> None:
         self.picker.close()
@@ -998,7 +1008,8 @@ class Api:
                 "SELECT s.id, s.file_name, s.member, t.family, t.process, t.pid, t.sensitive, s.rotation,"
                 " s.status, s.error, s.n_entries, s.first_ts, s.last_ts, s.size,"
                 " (SELECT e.line_no + e.nlines - 1 FROM entry e WHERE e.source_id = s.id"
-                "  ORDER BY e.id DESC LIMIT 1)"
+                "  ORDER BY e.id DESC LIMIT 1),"
+                " (SELECT c.ers_group FROM collection c WHERE c.id = s.collection_id)"
                 " FROM source s LEFT JOIN stream t ON t.id = s.stream_id ORDER BY s.id"
             ).fetchall()
         sources = [
@@ -1006,6 +1017,7 @@ class Api:
                 "id": r[0], "name": r[1], "member": r[2], "family": r[3], "process": r[4], "pid": r[5],
                 "sensitive": bool(r[6]), "rotation": r[7], "status": r[8], "error": r[9],
                 "records": r[10], "lines": r[14] or 0, "ts_min": r[11], "ts_max": r[12], "size": r[13],
+                "collection": r[15],
             }
             for r in rows
         ]  # fmt: skip
@@ -1361,7 +1373,9 @@ class Api:
             if after is None or not (-_INT64 <= after.ts < _INT64 and 0 <= after.id < _INT64):
                 raise _bad(messages.API_BAD_CURSOR)
         with self.store.reader(cid) as conn:
-            records, nxt = keys.records_with_key(conn, key_type, value, limit, after)
+            records, nxt = keys.records_with_key(
+                conn, key_type, value, limit, after, _id_param(request, "collection")
+            )
         return Response(200, {"records": records, "next": nxt})
 
     def _require_entry(self, conn: sqlite3.Connection, entry_id: int, cid: str) -> None:
@@ -1860,6 +1874,68 @@ class Api:
             lambda: presets.import_presets(self.data_dir, body.get("format"), body.get("data"))
         )
         return Response(200, report)
+
+    # -- collections of a case (U21; store/collections.py has the contract)
+
+    def list_collections(self, request: Request) -> Response:
+        cid = self.store.require(request.match["case"])
+        with self.store.reader(cid) as conn:
+            groups = collections_store.list_collections(conn)
+        return Response(
+            200, {"case": cid, "ordering": collections_store.ordering(groups), "collections": groups}
+        )
+
+    def remove_collection(self, request: Request) -> Response:
+        """Remove one collection group and everything derived from it in one transaction (``remove_group``).
+
+        409 ``job_running`` while the case indexes, 409 ``collection_followed`` for the folder that
+        ``serve --watch`` follows, 404 ``collection_not_found``. The case's progress stream gets a ``done``
+        event with ``removed`` so open viewers refresh.
+        """
+        cid = self.store.require(request.match["case"])
+        raw = request.match["group"]
+        if not _ENTRY_ID.match(raw):
+            raise ApiError(400, "invalid_field", messages.API_BAD_INT.format(field="collection"))
+        group = int(raw)
+        with self.store.reader(cid) as conn:
+            paths = [r[0] for r in conn.execute("SELECT path FROM collection WHERE ers_group = ?", (group,))]
+        if not paths:
+            raise ApiError(404, "collection_not_found", messages.API_COLLECTION_NOT_FOUND.format(group=group))
+        if self.jobs.followed(cid) in paths:
+            raise ApiError(409, "collection_followed", messages.API_COLLECTION_FOLLOWED)
+        hub = self.jobs.hub(cid)
+        job_id = uuid.uuid4().hex[:12]
+        if self.jobs.stopping.is_set() or not hub.try_begin(job_id):
+            raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
+        done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
+        try:
+            conn = db.connect(self.store.db_path(cid))
+            with closing(conn):
+                removed = IndexWriter(conn).remove_group(group)
+            if removed is None:  # removed by someone else since the check
+                raise ApiError(
+                    404, "collection_not_found", messages.API_COLLECTION_NOT_FOUND.format(group=group)
+                )
+            body = {
+                "group": removed.group, "collections": removed.collections, "sources": removed.sources,
+                "records": removed.records, "bookmarks": removed.bookmarks,
+            }  # fmt: skip
+            done.update(
+                status="ok",
+                removed=body,
+                message=messages.API_COLLECTION_REMOVED.format(
+                    records=removed.records, sources=removed.sources
+                ),
+            )
+        except ApiError as exc:
+            done.update(code=exc.code, message=exc.message)
+            raise
+        except sqlite3.Error:
+            done.update(code="database_error", message=messages.API_DATABASE_ERROR)
+            raise
+        finally:
+            hub.finish(done)
+        return Response(200, body)
 
     # -- file picker and folder browser (9.16, ARQUITETURA 10.4)
 

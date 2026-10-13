@@ -71,6 +71,11 @@ EXTRA_COLUMNS = {
     "byte_off": "e.byte_off",
     "tpl": "(SELECT t.code FROM template t WHERE t.id = e.tpl_id)",
     "has_body": "((e.flags & 2) <> 0)",
+    # collection group of the record (U21): times of different groups come from different clocks
+    "collection": (
+        "(SELECT c.ers_group FROM source s JOIN collection c ON c.id = s.collection_id"
+        " WHERE s.id = e.source_id)"
+    ),
 }
 _FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 

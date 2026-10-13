@@ -257,4 +257,9 @@ export const api = {
     next: (caseId, filter, rules, cursor, dir, signal) =>
       request("POST", "/api/entries/highlight/next", { case: caseId, filter, rules, cursor, dir }, signal),
   },
+  // Collections of a case (U21): one group per ERS capture, folder or file; list and remove one group.
+  collections: (caseId, signal) =>
+    request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/collections", undefined, signal),
+  removeCollection: (caseId, group) =>
+    request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group)),
 };

@@ -436,7 +436,9 @@ def test_writer_deletion_removes_incident_links_and_bumps_the_epoch(conn):
     w.delete_source_entries(c.streams[0])  # the normal side goes away (reindex)
     w.commit()
     assert links(conn) == []
-    assert int(conn.execute("SELECT value FROM meta WHERE key = 'entries_epoch'").fetchone()[0]) == 1
+    # the epoch of the group that lost entries (U21: other groups keep their signatures)
+    assert int(conn.execute("SELECT value FROM meta WHERE key = 'entries_epoch.1'").fetchone()[0]) == 1
+    assert conn.execute("SELECT 1 FROM meta WHERE key = 'entries_epoch'").fetchone() is None
     # the sensitive side too: links where the removed record is endpoint b
     n2 = c.normal(8000)
     s2 = c.sensitive(8000)

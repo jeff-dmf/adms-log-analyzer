@@ -326,6 +326,26 @@ def test_serve_watch_publishes_one_watch_event_per_change(tmp_path):
         assert conn.execute("SELECT count(*) FROM entry").fetchone()[0] > 20
 
 
+def test_the_followed_folder_is_released_when_the_watcher_ends(tmp_path):
+    root = tp.write_folder(tmp_path / "Log", {WFM: tp.make_log(20)})
+    api = Api(tmp_path / "data")
+    try:
+        case = api.jobs.start_watch("followed", root, "default", 0.05)
+        wait_for(api.jobs.hub(case), "watch")
+        assert api.jobs.followed(case) == str(root.resolve())
+        api.store.delete(case)  # the watcher notices the deleted case and ends
+        deadline = time.monotonic() + 10
+        while api.jobs.followed(case) is not None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert api.jobs.followed(case) is None
+        # the same case and folder again: the old registration cannot linger or be confused with the new one
+        again = api.jobs.start_watch("followed", root, "default", 0.05)
+        assert again == case and api.jobs.followed(case) == str(root.resolve())
+    finally:
+        api.shutdown()
+    assert api.jobs.followed(case) is None
+
+
 # --------------------------------------------------------------------------- review fixes
 
 

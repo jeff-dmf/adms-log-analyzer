@@ -139,6 +139,7 @@ class EventFilter:
     # events whose start record satisfies it (used by the view export).
     entry_sql: str | None = None
     entry_params: tuple[Any, ...] = ()
+    collection: int | None = None  # collection group (U21): events of that group only; None = every group
 
 
 def _where(flt: EventFilter, after: Cursor | None = None) -> tuple[str, list[Any]]:
@@ -155,6 +156,9 @@ def _where(flt: EventFilter, after: Cursor | None = None) -> tuple[str, list[Any
     if flt.source_id is not None:
         parts.append("EXISTS (SELECT 1 FROM entry n WHERE n.id = ev.start_entry_id AND n.source_id = ?)")
         params.append(flt.source_id)
+    if flt.collection is not None:
+        parts.append("ev.stream_id IN (SELECT id FROM stream WHERE collection_group = ?)")
+        params.append(flt.collection)
     if flt.entry_sql:
         parts.append(f"EXISTS (SELECT 1 FROM entry e WHERE e.id = ev.start_entry_id AND ({flt.entry_sql}))")
         params.extend(flt.entry_params)

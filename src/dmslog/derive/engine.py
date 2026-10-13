@@ -384,7 +384,14 @@ class _Writer:
     def __init__(self, conn: sqlite3.Connection, stream_id: int) -> None:
         self.conn = conn
         self.stream_id = stream_id
-        self.next_id = conn.execute("SELECT coalesce(max(id), 0) FROM event").fetchone()[0] + 1
+        # above every live event and every event of a removed collection group (store/writer.py, id_floor)
+        self.next_id = (
+            conn.execute(
+                "SELECT max(coalesce((SELECT max(id) FROM event), 0),"
+                " coalesce((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'id_floor.event'), 0))"
+            ).fetchone()[0]
+            + 1
+        )
         self.events = 0
         self.samples = 0
         self.ranges: list[tuple[int, int, int]] = []  # ``(source_id, min_id, max_id)`` of the chain, in order
@@ -498,6 +505,18 @@ def _reset(
             conn.execute("DELETE FROM stat_sample WHERE stream_id = ?", (stream_id,))
         else:
             conn.execute("DELETE FROM stat_sample WHERE stream_id = ? AND ts > ?", (stream_id, ts_cut))
+
+
+def group_epoch(conn: sqlite3.Connection, legacy: Any, group: int) -> Any:
+    """The entries epoch a correlation signature of ``group`` carries (ARQUITETURA 5, "Chaves de meta").
+
+    The writer bumps ``meta['entries_epoch.<group>']`` when it deletes entries of the group, so a deletion in
+    one collection group never recomputes the others (U21). ``legacy`` is the value the engine used before
+    (from the global ``entries_epoch`` of older cases): returned unchanged while the group has no counter of
+    its own, so a case indexed before the per-group counter keeps its stored signatures.
+    """
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"entries_epoch.{int(group)}",)).fetchone()
+    return legacy if row is None else f"{legacy}|{row[0]}"
 
 
 def _undo(conn: sqlite3.Connection, savepoint: str, own_tx: bool) -> None:

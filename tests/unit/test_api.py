@@ -258,17 +258,27 @@ def test_entry_errors(client, case):
     assert client.get("/api/entries/1")[0] == 400  # no case
 
 
-def test_second_collection_with_other_capture_is_409(client, case, tmp_path):
-    other_guid = mf.build_ers_zip(tmp_path / "g", guid=OTHER_GUID)
-    status, body, _ = client.post("/api/cases/demo/collections", {"path": str(other_guid)})
-    assert status == 409 and body["error"] == "different_guid"
-    other_ts = mf.build_ers_zip(tmp_path / "t", stamp="20300116103000")
-    status, body, _ = client.post("/api/cases/demo/collections", {"path": str(other_ts)})
-    assert status == 409 and body["error"] == "different_capture"
+def test_other_captures_folders_and_files_join_the_case_and_copies_are_409(client, case, zip_path, tmp_path):
+    for path in (
+        mf.build_ers_zip(tmp_path / "g", guid=OTHER_GUID),  # another server
+        mf.build_ers_zip(tmp_path / "t", stamp="20300116103000"),  # another capture of the same GUID
+    ):
+        assert client.post("/api/cases/demo/collections", {"path": str(path)})[0] == 202
+        client.wait_done("demo")
     folder = tmp_path / "plain"
     folder.mkdir()
-    status, body, _ = client.post("/api/cases/demo/collections", {"path": str(folder)})
-    assert status == 409 and body["error"] == "not_an_ers"
+    assert client.post("/api/cases/demo/collections", {"path": str(folder)})[0] == 202
+    client.wait_done("demo")
+    _, body, _ = client.get("/api/cases/demo/collections")
+    assert [g["kind"] for g in body["collections"]] == ["ers", "ers", "ers", "folder"]
+    assert body["ordering"] == "approximate"
+    copy = tmp_path / "copy" / zip_path.name  # the same ERS half from another file: refused
+    copy.parent.mkdir()
+    copy.write_bytes(zip_path.read_bytes())
+    status, body, _ = client.post("/api/cases/demo/collections", {"path": str(copy)})
+    assert status == 409 and body["error"] == "duplicate_collection"
+    assert client.post("/api/cases/demo/collections", {"path": str(zip_path)})[0] == 202  # same file: resume
+    client.wait_done("demo")
 
 
 def test_other_half_of_the_pair_is_accepted(client, case, tmp_path):

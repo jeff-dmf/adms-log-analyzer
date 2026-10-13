@@ -7,11 +7,16 @@ from ers_helpers import GUID, OTHER_GUID, ers_name, make_folder, make_pair, make
 from dmslog import aliases as aliases_mod
 from dmslog.ingest.discover import discover
 from dmslog.ingest.ers import (
+    ADD_NEW,
+    ADD_PAIR,
+    ADD_SAME,
     CollectionConflictError,
-    check_can_add,
+    HeldCollection,
+    classify_add,
     ers_group_for,
     parse_ers_name,
     plan_collection,
+    refuse_duplicate,
     same_capture,
     select_sources,
 )
@@ -61,41 +66,63 @@ def test_two_halves_share_the_group_key():
     assert not same_capture(enterprise, later)
 
 
-def test_one_ers_per_case_accepts_the_other_half_in_any_order():
-    enterprise = parse_ers_name(ers_name())
-    sensitive = parse_ers_name(ers_name(sensitive=True))
-    check_can_add([], enterprise)
-    check_can_add([enterprise], sensitive)
-    check_can_add([sensitive], enterprise)
-    check_can_add([enterprise, sensitive], enterprise)  # re-ingesting the same zip
+def held(cid, name, group=None, kind="ers_zip", path=None):
+    """A collection already in the case, named like an ERS zip (or a folder/file)."""
+    ident = parse_ers_name(name) if kind == "ers_zip" else None
+    return HeldCollection(cid, kind, path or f"/cases/in/{name}", ident, group or cid)
 
 
-def test_second_collection_with_another_guid_is_a_typed_conflict():
-    enterprise = parse_ers_name(ers_name())
-    other = parse_ers_name(ers_name(OTHER_GUID))
+def add(holds, name, kind="ers_zip", path=None):
+    ident = parse_ers_name(name) if kind == "ers_zip" else None
+    return classify_add(holds, kind, path or f"/new/{name}", ident)
+
+
+def test_empty_case_takes_anything_as_a_new_group():
+    assert add([], ers_name()).action == ADD_NEW
+    assert add([], "Log", kind="folder").action == ADD_NEW
+
+
+def test_the_other_half_joins_the_group_in_any_order():
+    for first, second in ((False, True), (True, False)):
+        holds = [held(7, ers_name(sensitive=first))]
+        decision = add(holds, ers_name(sensitive=second))
+        assert (decision.action, decision.group, decision.collection_id) == (ADD_PAIR, 7, None)
+
+
+def test_same_half_is_the_same_collection_by_path_or_identity():
+    holds = [held(3, ers_name()), held(4, ers_name(sensitive=True), group=3)]
+    same_path = classify_add(holds, "ers_zip", holds[1].path, holds[1].identity)
+    assert (same_path.action, same_path.collection_id, same_path.group) == (ADD_SAME, 4, 3)
+    copy = add(holds, ers_name())  # the same half under another path
+    assert (copy.action, copy.collection_id) == (ADD_SAME, 3)
+
+
+def test_other_servers_captures_folders_and_files_are_new_groups():
+    holds = [held(1, ers_name()), held(2, ers_name(sensitive=True), group=1)]
+    assert add(holds, ers_name(OTHER_GUID)).action == ADD_NEW  # another server
+    assert add(holds, ers_name(ts="20261008145350")).action == ADD_NEW  # another capture, same GUID
+    assert add(holds, ers_name(OTHER_GUID, sensitive=True)).action == ADD_NEW  # a lone sensitive half
+    assert add(holds, "Log", kind="folder").action == ADD_NEW
+    assert add(holds, "report.zip").action == ADD_NEW  # a zip that is not named like an ERS
+    folder = [held(5, "Log", kind="folder", path="/srv/Log")]
+    assert classify_add(folder, "folder", "/srv/Log", None).action == ADD_SAME
+    assert classify_add(folder, "folder", "/srv/Other", None).action == ADD_NEW
+
+
+def test_a_second_copy_of_a_held_half_is_a_typed_conflict(tmp_path):
+    (tmp_path / "a").mkdir()
+    original = make_zip(tmp_path / "a" / ers_name(), ["x"])
+    holds = [HeldCollection(1, "ers_zip", str(original), parse_ers_name(original.name), 1)]
+    copy = str(tmp_path / "b" / original.name)
+    decision = classify_add(holds, "ers_zip", copy, parse_ers_name(original.name))
     with pytest.raises(CollectionConflictError) as caught:
-        check_can_add([enterprise], other)
-    assert caught.value.reason == "different_guid" and OTHER_GUID in str(caught.value)
+        refuse_duplicate(holds, decision, copy)
+    assert caught.value.reason == "duplicate_collection" and GUID in str(caught.value)
     assert isinstance(caught.value, ValueError)
-
-
-def test_new_capture_of_the_same_server_is_also_a_conflict():
-    first = parse_ers_name(ers_name())
-    second = parse_ers_name(ers_name(ts="20261008145350"))
-    with pytest.raises(CollectionConflictError) as caught:
-        check_can_add([first], second)
-    assert caught.value.reason == "different_capture"
-
-
-def test_folders_and_files_do_not_mix_with_another_collection():
-    ers = parse_ers_name(ers_name())
-    with pytest.raises(CollectionConflictError) as first:
-        check_can_add([ers], None)
-    assert first.value.reason == "not_an_ers"
-    with pytest.raises(CollectionConflictError) as second:
-        check_can_add([None], ers)
-    assert second.value.reason == "case_has_folder"
-    check_can_add([], None)
+    refuse_duplicate(holds, decision, str(original))  # the same file: a re-ingest
+    original.unlink()
+    refuse_duplicate(holds, decision, copy)  # the recorded file is gone: the zip was moved
+    refuse_duplicate(holds, add(holds, ers_name(OTHER_GUID)), "/x")  # new groups are never refused
 
 
 def test_plan_collection_for_a_zip_pair(tmp_path):
@@ -148,11 +175,11 @@ def test_select_sources_scope_include_and_exclude(tmp_path):
         select_sources(sources, "everything")
 
 
-def test_two_different_zips_in_one_case_raise_through_the_plan_identities(tmp_path):
+def test_two_different_zips_become_two_groups_through_the_plan_identities(tmp_path):
     first = plan_collection(make_zip(tmp_path / ers_name(), ["a/WfmAdapter_1.log"]))
     second = plan_collection(make_zip(tmp_path / ers_name(OTHER_GUID), ["a/WfmAdapter_1.log"]))
-    with pytest.raises(CollectionConflictError):
-        check_can_add([first.identity], second.identity)
+    holds = [HeldCollection(1, first.kind, str(first.path), first.identity, 1)]
+    assert classify_add(holds, second.kind, str(second.path), second.identity).action == ADD_NEW
 
 
 # ---------------------------------------------------------------- real zips (names only)

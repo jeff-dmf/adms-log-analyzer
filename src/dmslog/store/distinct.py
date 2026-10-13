@@ -9,6 +9,8 @@ function: the API route (``POST /api/entries/distinct``) and later panels only c
 Fields (``field``), all checked against fixed tables before any SQL is built:
 
 * ``tpl``, ``source``, ``sev``, ``level``, ``tid``, ``pid``: columns of ``entry``;
+* ``collection``: the collection group of the entry's source (U21; ``collection.ers_group``), labelled
+  ``C<n>`` as the collections route numbers it; drill-down leaf ``{"collection": [group]}``;
 * ``fields.<name>``: a parsed field (``<name>`` matches ``[A-Za-z_][A-Za-z0-9_]{0,63}`` and reaches
   SQL only as the bound JSON path ``$.<name>``, as the grid's dynamic columns do);
 * ``key.<type>``: values of ``entry_key`` of that type, both origins (template and payload keys),
@@ -50,6 +52,7 @@ from typing import Any, Literal
 
 from .. import messages
 from . import query as Q
+from .collections import group_tags
 from .filters import (
     BUCKET_MS,
     INT64_MAX,
@@ -82,8 +85,15 @@ COLUMN_FIELDS: dict[str, tuple[str, str | None]] = {
     "level": ("e.level", None),
     "tid": ("e.tid", None),
     "pid": ("e.pid", None),
+    # collection group of the source (U21): derived from source_id, so bucket and bucket_sev hold it too
+    "collection": (
+        "(SELECT c.ers_group FROM source s JOIN collection c ON c.id = s.collection_id"
+        " WHERE s.id = e.source_id)",
+        "(SELECT c.ers_group FROM source s JOIN collection c ON c.id = s.collection_id"
+        " WHERE s.id = b.source_id)",
+    ),
 }
-_ROLLUP_FIELDS = frozenset({"source", "sev"})  # bucket_sev holds them (no template)
+_ROLLUP_FIELDS = frozenset({"source", "sev", "collection"})  # bucket_sev holds them (no template)
 
 Method = Literal["bucket", "exact", "bucket_estimate", "sample", "none"]
 
@@ -574,16 +584,23 @@ def distinct(
         return _empty(spec)
 
 
+_LABELLED = ("tpl", "source", "collection")  # columns whose values get a label
+
+
 def _empty(spec: FieldSpec) -> Distinct:
     return Distinct(spec.name, [], 0, 0, None, 0, False, "none")
 
 
 def _labels(conn: sqlite3.Connection, spec: FieldSpec, values: list[Any]) -> dict[Any, tuple[str, str]]:
-    """``{id: (label, code)}``: a template's readable title (its code when it has none) and code, or a
-    source's file name (twice)."""
+    """``{id: (label, code)}``: a template's readable title (its code when it has none) and code, a
+    source's file name (twice), or a collection group's tag ``C<n>`` (twice)."""
     ids = [v for v in values if isinstance(v, int)]
-    if spec.kind != "column" or spec.arg not in ("tpl", "source") or not ids:
+    if spec.kind != "column" or spec.arg not in _LABELLED or not ids:
         return {}
+    if spec.arg == "collection":
+        with Q.read_guard(conn, Q.PAGE_TIMEOUT_S):
+            tags = group_tags(conn)
+        return {g: (tags[g], tags[g]) for g in ids if g in tags}
     marks = ",".join("?" * len(ids))
     if spec.arg == "tpl":
         sql = f"SELECT id, coalesce(nullif(title, ''), code), code FROM template WHERE id IN ({marks})"
@@ -612,7 +629,7 @@ def _result(
             "pct": round(100.0 * n / total, 2) if total else 0.0,
             "leaf": drill_leaf(spec, g),
         }
-        if spec.kind == "column" and spec.arg in ("tpl", "source"):
+        if spec.kind == "column" and spec.arg in _LABELLED:
             label, code = labels.get(g, (None, None))
             item["label"] = label
             if spec.arg == "tpl":

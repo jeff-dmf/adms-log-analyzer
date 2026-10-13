@@ -380,13 +380,26 @@ VIEWEXPORT_CSV_HEADERS = {
     "level": "Level",
     "template": "Template",
     "source": "Source",
+    "collection": "Collection",
     "msg": "Message",
 }
 VIEWEXPORT_EVENT_HEADERS = (
     "Event", "Operation", "Kind", "Status", "Duration (ms)", "Start", "End", "Key", "Operation key",
-    "TID", "Family", "Process", "Source", "Records",
+    "TID", "Family", "Process", "Source", "Collection", "Records",
 )  # fmt: skip
 
+# Collections of a case (U21: a case groups ERS captures, folders and files; store/collections.py)
+COLLECTION_DUPLICATE = (
+    "this ERS ({guid}, captured {capture}) is already in the case from another file; "
+    "add the same file again to resume or refresh it"
+)
+API_COLLECTION_NOT_FOUND = "Collection {group} does not exist in this case"
+API_COLLECTION_FOLLOWED = "This folder is being followed (serve --watch); stop following it first"
+API_COLLECTION_REMOVED = "Removed the collection: {records} records from {sources} sources"
+EXPORT_SOURCE_MULTI = "Sources: {count} collections"
+EXPORT_COLLECTION_ERS = "  {tag}: ERS {ers_ts} ({machine}) - {variant} - GUID {guid}"
+EXPORT_COLLECTION_PLAIN = "  {tag}: {kind} ({machine})"
+EXPORT_TIME_NOTE_MULTI = "Each collection keeps its own clock: the order across collections is approximate."
 # File picker and folder browser (server/filepick.py, /api/fs/*)
 FS_BAD_PATH = "path must be a non-empty text of at most {limit} characters"
 FS_PATH_NOT_TEXT = "The path contains control characters or bytes that are not valid text"
@@ -414,7 +427,8 @@ FS_DIALOG_FILTER_ALL = "All files"
 # Distinct values of a field (store/distinct.py, POST /api/entries/distinct).
 DISTINCT_ERRORS = {
     "bad_field": (
-        "unknown field {name!r} (expected tpl, source, sev, level, tid, pid, fields.<name> or key.<type>)"
+        "unknown field {name!r} (expected tpl, source, sev, level, tid, pid, collection, "
+        "fields.<name> or key.<type>)"
     ),
     "bad_top": "limit must be an integer from 1 to {limit}",
     "bad_span": "span must be true or false",
