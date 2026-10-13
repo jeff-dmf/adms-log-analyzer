@@ -92,6 +92,17 @@ python3 dmslog.pyz export --case my-case --filter-json @filter.json --out report
   30000) limits one part; larger reports are split into numbered parts (`report-part1of3.txt`, ...).
 - With `--anonymize`, a value map is saved in the case folder (`cases/<case>/redaction-maps/`, local only, never share it; deleting the case deletes it).
 
+## Copy as (viewer)
+
+The **Copy as** menu in the toolbar copies or downloads what the current view shows, with the original
+text (no anonymization): a list of the values of a column or key (one per line or comma separated,
+optional quotes, distinct only), the original lines of the view, the selected record, a CSV of the
+view (visible columns plus extracted fields) and a CSV of the operations (duration, status,
+operation, keys, time, source). CSV is UTF-8 with CRLF line ends and RFC 4180 quoting, with an optional
+BOM for Excel on Windows; text cells that start with `=`, `+`, `-`, `@` or a tab get a leading
+apostrophe so spreadsheets do not run them as formulas. Files are limited to 100,000 rows by default
+(configurable); the menu warns when the view had more rows.
+
 ## Data directory
 
 Cases and indexes live in the user's data directory, one folder per case (deleting the case deletes

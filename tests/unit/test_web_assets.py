@@ -64,6 +64,8 @@ EXPECTED_MODULES = {
     "saved-views-model.js",
     "follow-tail-model.js",
     "follow-tail.js",
+    "copy-export-model.js",
+    "copy-export.js",
     "column-resize-model.js",
     "column-resize.js",
 }
