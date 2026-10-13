@@ -1,0 +1,42 @@
+/* Chained views: breadcrumbs and buttons above the filter bar. Colours come from app.css tokens. */
+.vs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+.vs-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+}
+
+.vs-crumb {
+  max-width: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vs-crumb.is-active {
+  font-weight: bold;
+}
+
+.vs-crumb.is-future {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.vs-sep {
+  color: var(--muted);
+}
+
+.vs-rename-form {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
