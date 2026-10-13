@@ -517,6 +517,32 @@ class _CaseInfo:
     machine: str | None
     variants: set[str]
     accounts: set[str]
+    # more than one collection group (U21): one header line per group and a tag (C1, C2...) on every record
+    collections: list[tuple[str, str, str | None, str | None, list[str], str | None]] = field(
+        default_factory=list
+    )  # (tag, kind, ers_ts, guid, variants, machine or zone)
+    source_tags: dict[int, str] = field(default_factory=dict)  # source id -> tag
+
+
+def _collections(conn: sqlite3.Connection) -> tuple[list[Any], dict[int, str]]:
+    """Groups of a case with more than one collection group, in the numbering of the collections route."""
+    rows = conn.execute(
+        "SELECT coalesce(ers_group, id), kind, ers_ts, ers_guid, ers_variant, coalesce(machine, system)"
+        " FROM collection ORDER BY coalesce(ers_group, id), id"
+    ).fetchall()
+    groups: dict[int, list[Any]] = {}
+    for group, kind, stamp, guid, variant, host in rows:
+        item = groups.setdefault(group, [f"C{len(groups) + 1}", kind, stamp, guid, [], host])
+        if variant and variant not in item[4]:
+            item[4].append(variant)
+        item[5] = item[5] or host
+    if len(groups) < 2:
+        return [], {}
+    tags = {group: item[0] for group, item in groups.items()}
+    sources = conn.execute(
+        "SELECT s.id, coalesce(c.ers_group, c.id) FROM source s JOIN collection c ON c.id = s.collection_id"
+    )
+    return [tuple(item) for item in groups.values()], {sid: tags[g] for sid, g in sources}
 
 
 def _case_info(conn: sqlite3.Connection) -> _CaseInfo:
@@ -525,6 +551,7 @@ def _case_info(conn: sqlite3.Connection) -> _CaseInfo:
     variants = {r[0] for r in conn.execute("SELECT DISTINCT ers_variant FROM collection") if r[0]}
     accounts = {r[0] for r in conn.execute("SELECT DISTINCT account FROM stream") if r[0]}
     machines = [r[0] for r in conn.execute("SELECT DISTINCT machine FROM collection") if r[0]]
+    groups, tags = _collections(conn)
     return _CaseInfo(
         label=meta.get("name") or "case",
         pack_version=meta.get("pack_version"),
@@ -533,6 +560,8 @@ def _case_info(conn: sqlite3.Connection) -> _CaseInfo:
         machine=", ".join(machines) if machines else None,
         variants=variants,
         accounts=accounts,
+        collections=groups,
+        source_tags=tags,
     )
 
 
@@ -585,6 +614,8 @@ class _Builder:
         self._profile_text = ""
         self._kind_text = ""
         self._pack_text = "n/a"
+        self._collection_lines: list[str] = []  # header lines of a case with several collection groups
+        self._source_tags: dict[int, str] = {}
 
     def R(self, text: str, *, payload: bool = False, spans: Any = None, identifier: bool = False) -> str:
         """Anonymize a text taken from the case (identity when anonymization is off). ``spans`` are the
@@ -784,6 +815,24 @@ class _Builder:
         self._kind_text = self.R(_clean(info.kind).replace("\n", " ")) if shown_kind else ""
         pack = self.pack_override or info.pack_version
         self._pack_text = self.R(_clean(pack).replace("\n", " ")) if pack else "n/a"
+        self._source_tags = info.source_tags
+        self._collection_lines = []
+        for tag, kind, stamp, guid, group_variants, host in info.collections:
+            shown_host = messages.EXPORT_UNKNOWN_VALUE
+            if host:
+                shown_host = self.R(_clean(host).replace("\n", " "), identifier=True)
+            if kind == "ers_zip" and guid:
+                names = sorted(group_variants, key=lambda v: (v != "enterprise", v))
+                shown = "+".join(dict.fromkeys(_VARIANT_NAMES.get(v, "Other") for v in names))
+                line = messages.EXPORT_COLLECTION_ERS.format(
+                    tag=tag, ers_ts=_format_ers_ts(stamp), machine=shown_host,
+                    guid=self.R(_clean(guid), identifier=True), variant=shown or "Enterprise",
+                )  # fmt: skip
+            else:
+                line = messages.EXPORT_COLLECTION_PLAIN.format(
+                    tag=tag, kind=self.R(_clean(kind).replace("\n", " ")), machine=shown_host
+                )
+            self._collection_lines.append(line)
 
     # -- sections
 
@@ -872,7 +921,7 @@ class _Builder:
         head = messages.EXPORT_RECORD_HEAD.format(
             n=number,
             when=format_ts(first.ts),
-            source=self.R(first.file_name) or "-",
+            source=self._source_text(first),
             line=first.line_no,
             event=suffix,
         )
@@ -890,7 +939,7 @@ class _Builder:
             out.append(
                 EXCERPT_INDENT
                 + messages.EXPORT_EXCERPT_HEAD.format(
-                    file=self.R(rows[0].file_name) or "-",
+                    file=self._source_text(rows[0]),
                     first=rows[0].line_no,
                     last=last.line_no + max(last.nlines, 1) - 1,
                 )
@@ -1109,6 +1158,19 @@ class _Builder:
         if part > 1:
             return [self._title(part, total), messages.EXPORT_CONTINUES, ""]
         pack = self._pack_text
+        if self._collection_lines:
+            return [
+                self._title(part, total),
+                messages.EXPORT_GENERATED.format(
+                    when=self.now.strftime("%Y-%m-%d %H:%M:%S"), version=self.version, pack=pack
+                ),
+                messages.EXPORT_SOURCE_MULTI.format(count=len(self._collection_lines)),
+                *self._collection_lines,
+                self._redaction_line(),
+                messages.EXPORT_TIME_NOTE,
+                messages.EXPORT_TIME_NOTE_MULTI,
+                "",
+            ]
         if info.kind == "ers_zip" or info.variants:
             names = sorted(info.variants, key=lambda v: (v != "enterprise", v))
             source = messages.EXPORT_SOURCE.format(
@@ -1121,23 +1183,29 @@ class _Builder:
             source = messages.EXPORT_SOURCE_PLAIN.format(kind=self._kind_text, machine=self._machine_text)
         else:
             source = messages.EXPORT_SOURCE_UNKNOWN
-        profile = self.options.profile or default_profile()
-        mode = profile.mode if profile.mode in ("strict", "standard") else "strict"
-        redaction = (
-            messages.EXPORT_REDACTION_ON_MODE.format(profile=self._profile_text, mode=mode)
-            if self.options.anonymize
-            else messages.EXPORT_REDACTION_OFF
-        )
         return [
             self._title(part, total),
             messages.EXPORT_GENERATED.format(
                 when=self.now.strftime("%Y-%m-%d %H:%M:%S"), version=self.version, pack=pack
             ),
             source,
-            redaction,
+            self._redaction_line(),
             messages.EXPORT_TIME_NOTE,
             "",
         ]
+
+    def _redaction_line(self) -> str:
+        profile = self.options.profile or default_profile()
+        mode = profile.mode if profile.mode in ("strict", "standard") else "strict"
+        if self.options.anonymize:
+            return messages.EXPORT_REDACTION_ON_MODE.format(profile=self._profile_text, mode=mode)
+        return messages.EXPORT_REDACTION_OFF
+
+    def _source_text(self, row: _Row) -> str:
+        """File name of a record, with the tag of its collection group when the case has several (U21)."""
+        name = self.R(row.file_name) or "-"
+        tag = self._source_tags.get(row.source_id)
+        return f"{tag} {name}" if tag else name
 
     def _pack(self, info: _CaseInfo, body: list[str], tail: list[str]) -> list[Part]:
         limit = self.options.max_bytes

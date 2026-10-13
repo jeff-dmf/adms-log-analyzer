@@ -920,6 +920,26 @@ export const S = {
   prImportBadFile: "Choose a .json or .toml file.",
   prImported: "Import finished: {added} added, {updated} updated, {ignored} ignored.",
   prImportIgnoredItem: "{name}: {message}",
+
+  // Collections of a case (U21; the list UI comes with the follow-up task)
+  colTitle: "Collections",
+  colTag: "C{number}",
+  colErs: "ERS {capture} ({server})",
+  colFolder: "Folder {name}",
+  colFile: "File {name}",
+  colMissingEnterprise: "Enterprise zip not added yet",
+  colMissingSensitive: "Sensitive zip not added yet",
+  colRecords: "{records} records in {sources} sources",
+  colIndexing: "Indexing...",
+  colError: "Some sources failed",
+  colRemove: "Remove collection",
+  colRemoveConfirm: "Remove {tag} and everything indexed from it (records, events, links, bookmarks)? The other collections stay as they are.",
+  colRemoved: "Removed {tag}: {records} records.",
+  colFilter: "Collection",
+  colAll: "All collections",
+  colApproxOrder: "Each collection keeps its own clock: the order across collections is approximate.",
+  colDuplicate: "This ERS is already in the case from another file.",
+  colFollowed: "This folder is being followed; it cannot be removed while the viewer follows it.",
 };
 
 export function format(template, values) {

@@ -82,14 +82,12 @@ def test_explicit_case_name_and_folder_input(tmp_path, data_dir, capsys):
     assert "into case my-case" in capsys.readouterr().out
 
 
-def test_second_ers_in_the_same_case_exits_with_a_conflict(tmp_path, data_dir, capsys):
+def test_second_ers_joins_the_same_case_as_another_collection(tmp_path, data_dir, capsys):
     run(data_dir, str(mf.build_ers_zip(tmp_path / "a")), "--case", "c")
-    capsys.readouterr()
     other = mf.build_ers_zip(tmp_path / "b", guid=mf.synth_guid(2))
-    assert run(data_dir, str(other), "--case", "c") == 3
-    err = capsys.readouterr().err
-    assert "cannot add this collection to case c" in err and "open a new case" in err
-    assert count(case_db(data_dir, "c"), "collection") == 1
+    assert run(data_dir, str(other), "--case", "c") == 0
+    db = case_db(data_dir, "c")
+    assert count(db, "collection") == 2
 
 
 def test_other_half_of_the_pair_joins_the_same_default_case(tmp_path, data_dir, capsys):

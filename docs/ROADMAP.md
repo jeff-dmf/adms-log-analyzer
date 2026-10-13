@@ -7,7 +7,7 @@ Regras que valem para todas as tarefas:
 - Só stdlib em runtime; pytest/hypothesis/ruff só em dev.
 - Fixtures sintéticas e anonimizadas; nada de log real em `tests/`. Fixtures de payload são sempre sintéticas.
 - Os ERS de `local-samples/` servem para conferir formato, nunca para diagnosticar aqueles ambientes; são lidos por script (`python3 -I`), como dado não confiável.
-- Escopo da 1.0 (U4, U5, U8, U11): **um ERS por caso**, de um servidor; adapters Wfm, Ont, AVL, Osr, Smn, SiteSwitch, Crm, Ami, Smr, WDI, ClaimCheck, FileUpload, FileMonitor, `CustomAdapterChangeIncidentDevice` + BLTHost com templates e eventos; todos os demais logs do ERS navegáveis em nível genérico (ARQUITETURA, seção 9.1a). Horário dos logs preservado, sem conversão (U6).
+- Escopo da 1.0 (U4, U5 revista pela U21, U8, U11): o caso **agrupa coletas** (vários ERS, de servidores diferentes, cada um com seu par Enterprise + Sensitive); adapters Wfm, Ont, AVL, Osr, Smn, SiteSwitch, Crm, Ami, Smr, WDI, ClaimCheck, FileUpload, FileMonitor, `CustomAdapterChangeIncidentDevice` + BLTHost com templates e eventos; todos os demais logs do ERS navegáveis em nível genérico (ARQUITETURA, seção 9.1a). Horário dos logs preservado, sem conversão (U6).
 - Repositório público (U1, revista em 2026-10-11): o pack do vault é documentação Schneider e fica fora do repositório e dos artefatos públicos (só existe localmente; o CI tem uma guarda).
 
 Modelos: **haiku** = varredura mecânica barata; **sonnet** = implementação rotineira seguindo a arquitetura; **opus** = decisão, algoritmo difícil, desenho de regra, revisão final.
@@ -257,7 +257,7 @@ Ordem e paralelismo (Opus uma tarefa por vez; Sonnet em paralelo com arquivos di
 
 - **Onda 1 (P0):** 9.2 abre (o endpoint `distinct` é base de 9.1, 9.5, 9.6 e 9.8); depois 9.1 e 9.3; 9.4 é independente e roda em paralelo. A frente de **UI de uso (9.16 a 9.19)** anda em paralelo: 9.16 antes de 9.17, 9.18 antes de 9.19.
 - **Onda 2 (P1):** 9.5 antes de 9.7; 9.6 e 9.8 dependem de 9.2; 9.9 depende só do M8; 9.10 depende de 9.1 e 9.3.
-- **Onda 3 (P2):** 9.11 depende de 9.6; 9.13 depende de 9.3; 9.12 e 9.14 são independentes; 9.15 (offset entre coletas) depende da decisão sobre vários ERS por caso (U5/P2) e fica `aguarda-decisao`, fora da execução enquanto isso.
+- **Onda 3 (P2):** 9.11 depende de 9.6; 9.13 depende de 9.3; 9.12 e 9.14 são independentes; 9.15 (offset entre coletas) dependia da decisão sobre vários ERS por caso: decidida na U21 (2026-10-12), entra depois da 9.20.
 
 | # | Tarefa | Modelo | Depende de |
 |---|---|---|---|
@@ -275,11 +275,12 @@ Ordem e paralelismo (Opus uma tarefa por vez; Sonnet em paralelo com arquivos di
 | 9.12 | **Duplicados e sequências esperadas** (P2): marcar repetidos por (template, campos-chave) em janela; passos do ciclo de vida que faltaram | opus | M4 |
 | 9.13 | **Alertas locais no `watch`** (P2): banner e notificação opcional do navegador quando um filtro/preset casa registros novos; sem SMTP | sonnet | 9.3 |
 | 9.14 | **Detecção automática de formato** para logs fora do escopo (P2, liga ao P1 do pós-1.0): envelope genérico parametrizado em `families.toml` | opus | M8 |
-| 9.15 | **Offset de relógio entre coletas** (P2, liga ao P2 do pós-1.0): offset por coleção a partir de dois registros correlatos; **depende da decisão sobre vários ERS por caso** | opus | decisão U5/P2 |
+| 9.15 | **Offset de relógio entre coletas** (P2, liga ao P2 do pós-1.0): offset por coleção a partir de dois registros correlatos; a decisão sobre vários ERS por caso saiu (U21) | opus | 9.20 |
 | 9.16 | **Seletor de arquivos nativo e navegador de pastas embutido** (UI de uso): botão ao lado do caminho dos ZIPs que abre o seletor do sistema (Windows e Linux) via servidor local, e navegador de pastas embutido (lista diretórios e `.zip` do usuário local, seleção múltipla) quando não houver diálogo nativo; caminhos sempre validados | opus (desenho e segurança) + sonnet | M7 |
 | 9.17 | **Criar caso com um ou vários ZIPs, de forma clara**: texto "1 ou mais ZIPs", seleção múltipla, lista escolhida com nome, tamanho e tipo, remover itens, criar só com pelo menos 1, erros por arquivo | sonnet | 9.16 |
 | 9.18 | **Colunas do grid redimensionáveis**: arrastar a borda do cabeçalho, duplo clique ajusta ao conteúdo, largura mínima e máxima, largura lembrada por usuário, sem quebrar a virtualização | sonnet | M7 |
 | 9.19 | **Coluna Source com o nome do arquivo e filtro de Source na lateral**: o template deixa de ser coluna padrão (fica opcional no seletor de colunas, com o título legível no lugar do código); filtro dinâmico por substring sem diferenciar maiúsculas e minúsculas, com contagem por fonte | sonnet | 9.18 |
+| 9.20 | **Casos com vários ERS de servidores diferentes** (U21, issue #123): o caso agrupa coletas (par Enterprise + Sensitive em qualquer ordem, pasta ou arquivo), cópia recusada, remoção transacional de uma coleta, filtro/coluna/parâmetro `collection`, rotas `GET/DELETE /api/cases/{id}/collections`, exportação com a coleta de cada registro (ARQUITETURA 9.1b). **Backend e testes feitos; falta a UI da lista de coletas** (especificação na 9.1b) | opus (desenho + backend) + sonnet (UI) | M8 |
 
 Aceite do M9:
 - Cada tarefa tem testes unitários (e de propriedade onde houver algoritmo), UAT novo ou atualizado em `uat`, documentação em `docs/ARQUITETURA.md` e revisão cruzada pelo nível T0/T1/T2 do `docs/REVISAO-CRUZADA.md`.
@@ -294,6 +295,6 @@ Aceite do M9:
 |---|---|---|
 | P1 | Templates e eventos para os demais logs do ERS (NMC, PSengine, arbIP, outros processos `UNKNOWN`, ...) | Só dados (`families.toml` + TOML) e derivadores novos; esquema e descoberta já preparados (ARQUITETURA, 9.1a) |
 | P1a | **Feito (PR #77):** criar `tools/mine_templates.py` (dev, sonnet): agrupa registros desconhecidos pela `signature` e propõe esboço de TOML com exemplos; vem antes de minerar os demais logs do P1 | Decisão de 2026-10-11. A assinatura (`parse/signature.py`) e a tabela `unknown_sig` já existem; ver ARQUITETURA 6.7 e `docs/FAMILIA-NOVA.md` |
-| P2 | Vários ERS por caso, correlação entre máquinas, ajuste de relógio (`clock_offset_ms`) | Esquema já comporta (`collection_group`, `clock_offset_ms`); falta UI, regra de 409 e correlação por tempo entre coletas |
+| P2 | Vários ERS por caso, correlação entre máquinas, ajuste de relógio (`clock_offset_ms`) | Vários ERS por caso entraram no M9 (U21, 9.20); seguem pendentes o ajuste de relógio (9.15) e a correlação por tempo entre coletas |
 | P3 | **Proposta, aguarda decisão do Jefferson:** bancos `LocalPersistenceStore/*.db3` do ERS (fila/cache de mensagens dos adapters) como fonte opcional: painel de itens pendentes/não enviados e ligação ao evento do log por MessageId | Fora da 1.0. Sensível, nunca indexado por padrão, sem o corpo; desenho na ARQUITETURA, seção 15 (`payloads.md`, seção 10) |
 | — | Adapters do vault sem amostra | Fora do escopo (não existem no ambiente produtivo, U8); entram só se surgirem amostras, pelo mesmo processo do P1 |

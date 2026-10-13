@@ -232,4 +232,9 @@ export const api = {
     export: (format) => request("GET", "/api/presets/export" + query({ format })),
     import: (format, data) => request("POST", "/api/presets/import", { format, data }),
   },
+  // Collections of a case (U21): one group per ERS capture, folder or file; list and remove one group.
+  collections: (caseId, signal) =>
+    request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/collections", undefined, signal),
+  removeCollection: (caseId, group) =>
+    request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group)),
 };

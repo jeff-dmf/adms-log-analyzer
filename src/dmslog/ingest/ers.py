@@ -1,8 +1,9 @@
-"""ERS identity, Enterprise/Sensitive pairing and the "one ERS per case" rule.
+"""ERS identity, Enterprise/Sensitive pairing and the rules that group collections in a case.
 
 An ERS capture is a pair of zips named
 `ERS_CL_<GUID>_<yyyymmddHHMMSS>_[Sensitive_]Enterprise_<description>.zip` (docs/ERS.md).
-The two halves of the same capture share the GUID and the timestamp.
+The two halves of the same capture share the GUID and the timestamp and form one collection group;
+a case holds any number of groups (captures of different servers, folders, files: decision U21).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from dmslog import messages
 from dmslog.aliases import Aliases
 from dmslog.ingest.discover import SourceInfo, discover
 
@@ -33,9 +35,9 @@ KIND_FILE = "file"
 
 
 class CollectionConflictError(ValueError):
-    """The case already holds a different collection (the API turns this into HTTP 409).
+    """The input cannot be added to the case (the API turns this into HTTP 409).
 
-    `reason` is one of: "different_guid", "different_capture", "not_an_ers", "case_has_folder".
+    `reason`: "duplicate_collection" (a second copy of an ERS half the case already holds).
     """
 
     diag_safe = True  # messages hold GUIDs, capture times and fixed words only
@@ -92,35 +94,94 @@ def same_capture(a: ErsIdentity, b: ErsIdentity) -> bool:
     return a.group_key == b.group_key
 
 
-def check_can_add(existing: Iterable[ErsIdentity | None], new: ErsIdentity | None) -> None:
-    """Enforce "one ERS per case" (decision U5).
+ADD_SAME = "same"  # the collection is already in the case: re-ingest it (resume, growth, upgrade)
+ADD_PAIR = "pair"  # the other half (Enterprise <-> Sensitive) of a capture in the case: joins its group
+ADD_NEW = "new"  # another capture, server, folder or file: a collection group of its own (U21)
 
-    `existing` has one entry per collection already in the case: its ErsIdentity, or None for
-    a folder or single file. Accepted: an empty case, the other half of the same capture
-    (same GUID and timestamp) and the very same zip again (re-ingestion). Anything else
-    raises CollectionConflictError.
+
+@dataclass(frozen=True)
+class HeldCollection:
+    """A collection already in the case, as the add rules see it."""
+
+    id: int
+    kind: str
+    path: str  # resolved absolute path recorded at ingestion
+    identity: ErsIdentity | None
+    group: int  # collection.ers_group
+
+
+@dataclass(frozen=True)
+class AddDecision:
+    action: str  # ADD_SAME | ADD_PAIR | ADD_NEW
+    collection_id: int | None = None  # ADD_SAME: the collection to re-ingest
+    group: int | None = None  # ADD_SAME / ADD_PAIR: the group the collection belongs to
+
+
+def held_identity(
+    kind: str, guid: str | None, stamp: str | None, variant: str | None, label: str | None, path: str
+) -> ErsIdentity | None:
+    """The ERS identity stored in a ``collection`` row (None for folders, files and non-ERS zips)."""
+    if kind != KIND_ERS_ZIP or not guid or not stamp:
+        return None
+    return ErsIdentity(guid, stamp, variant or VARIANT_ENTERPRISE, "Enterprise", label or "", Path(path).name)
+
+
+def classify_add(
+    held: Sequence[HeldCollection], kind: str, path: str, identity: ErsIdentity | None
+) -> AddDecision:
+    """Where a new input goes in a case that groups collections (U21, ARQUITETURA 9.1).
+
+    * the same resolved path and kind, or the same ERS half (GUID, capture time and variant) under another
+      path: ``ADD_SAME`` (never a second collection);
+    * the other half of a capture held by the case, in any order: ``ADD_PAIR`` (joins that group);
+    * anything else (another GUID, another capture of the same GUID, a folder, a loose file, a zip whose
+      name is not an ERS name): ``ADD_NEW``.
+
+    Pure: the caller decides about duplicates (``refuse_duplicate``) and writes the rows.
     """
-    held = list(existing)
-    if not held:
+    for c in held:
+        if c.path == path and c.kind == kind:
+            return AddDecision(ADD_SAME, c.id, c.group)
+    if identity is None:
+        return AddDecision(ADD_NEW)
+    for c in held:
+        if c.identity is not None and c.identity.group_key == identity.group_key:
+            if c.identity.variant == identity.variant:
+                return AddDecision(ADD_SAME, c.id, c.group)
+    for c in held:
+        if c.identity is not None and c.identity.group_key == identity.group_key:
+            return AddDecision(ADD_PAIR, None, c.group)
+    return AddDecision(ADD_NEW)
+
+
+def refuse_duplicate(held: Sequence[HeldCollection], decision: AddDecision, path: str) -> None:
+    """Refuse a second copy of a collection the case already holds (HTTP 409 ``duplicate_collection``).
+
+    A copy is the same ERS half (GUID, capture time and variant) under another path while the recorded file
+    still exists. The same path is a re-ingest (resume, growth, extraction upgrade) and a half whose recorded
+    file is gone was moved: both are accepted (the ingest re-points the path).
+    """
+    if decision.action != ADD_SAME:
         return
-    if new is None:
-        raise CollectionConflictError("not_an_ers", "the case already has a collection; open a new case")
-    for current in held:
-        if current is None:
-            raise CollectionConflictError(
-                "case_has_folder", "the case holds a folder or file collection; open a new case"
-            )
-        if current.guid != new.guid:
-            raise CollectionConflictError(
-                "different_guid",
-                f"ERS {new.guid} differs from the case's ERS {current.guid}; open a new case",
-            )
-        if current.timestamp != new.timestamp:
-            raise CollectionConflictError(
-                "different_capture",
-                f"capture {new.timestamp} differs from the case's capture {current.timestamp}; "
-                "open a new case",
-            )
+    current = next((c for c in held if c.id == decision.collection_id), None)
+    if current is None or current.path == path:
+        return
+    try:
+        still_there = Path(current.path).exists()
+    except OSError:
+        still_there = False
+    try:
+        same_file = still_there and os.path.samefile(current.path, path)  # another spelling of one file
+    except OSError:
+        same_file = False
+    if still_there and not same_file:
+        ident = current.identity
+        raise CollectionConflictError(
+            "duplicate_collection",
+            messages.COLLECTION_DUPLICATE.format(
+                guid=ident.guid if ident else "-", capture=ident.timestamp if ident else "-"
+            ),
+        )
 
 
 def ers_group_for(identity: ErsIdentity) -> str:

@@ -898,16 +898,32 @@ def export_bookmarks(conn: sqlite3.Connection) -> dict[str, Any]:
     return {"format": EXPORT_FORMAT, "version": EXPORT_VERSION, "truncated": truncated, "bookmarks": out}
 
 
-def _collection_for(conn: sqlite3.Connection, guid: str | None, stamp: str | None) -> int | None:
-    """Collection of an item: by ERS identity when it has one, else the case's only collection."""
+def _collection_for(conn: sqlite3.Connection, guid: str | None, stamp: str | None, member: str) -> int | None:
+    """Collection of an item. With an ERS identity: the collection of that capture that holds the member (the
+    Enterprise and the Sensitive zip share GUID and capture time), else its first one. Without one: the only
+    collection that holds the member, or the case's only collection (a case groups collections, U21)."""
     if guid is not None:
-        row = conn.execute(
-            "SELECT id FROM collection WHERE ers_guid = ? AND (? IS NULL OR ers_ts = ?) ORDER BY id LIMIT 1",
+        rows = conn.execute(
+            "SELECT id FROM collection WHERE ers_guid = ? AND (? IS NULL OR ers_ts = ?) ORDER BY id",
             (guid, stamp, stamp),
-        ).fetchone()
-        return None if row is None else row[0]
+        ).fetchall()
+        if not rows:
+            return None
+        ids = [r[0] for r in rows]
+        holder = next((cid for cid in ids if _holds(conn, cid, member)), None)
+        return ids[0] if holder is None else holder
     rows = conn.execute("SELECT id FROM collection").fetchall()
-    return rows[0][0] if len(rows) == 1 else None  # one ERS per case: unambiguous without identity
+    if len(rows) == 1:
+        return rows[0][0]
+    holders = [r[0] for r in rows if r[0] is not None and _holds(conn, r[0], member)]
+    return holders[0] if len(holders) == 1 else None
+
+
+def _holds(conn: sqlite3.Connection, collection_id: int, member: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM source WHERE collection_id = ? AND member = ?", (collection_id, member)
+    ).fetchone()
+    return row is not None
 
 
 # member, line_no, color, note, created_at, ers_guid, ers_ts, fp, detached, uid, orphan
@@ -993,7 +1009,7 @@ def import_bookmarks(conn: sqlite3.Connection, data: Any) -> dict[str, int]:
 def _import_one(conn: sqlite3.Connection, one: _Parsed, legacy: bool, total: int, claimed: set[int]) -> str:
     """Place one item the first pass did not resolve: its uid, if any, is not in the case."""
     member, line_no, color, note, created, guid, stamp, fp, detached, uid, _orphan = one
-    collection_id = _collection_for(conn, guid, stamp)
+    collection_id = _collection_for(conn, guid, stamp, member)
     if collection_id is None:
         return "unmatched"
     src = conn.execute(

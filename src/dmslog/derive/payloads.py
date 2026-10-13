@@ -38,7 +38,8 @@ The CRS/IMS callback by GID is a ``[[link_rule]]`` (``derive/links.py``), not a 
 
 Execution (like ``derive/links.py``): one unit of work per collection group; the signature in
 ``meta['payloads.<group>']`` covers the sources of its streams (size, mtime, CRC, hashes, counts), the events
-of its streams, ``meta['entries_epoch']``, the payload rows, the templates involved and the announcement map.
+of its streams, the group's entries epoch (``engine.group_epoch``), the payload rows, the templates involved
+and the announcement map.
 An unchanged group writes nothing. A changed group is recomputed inside one SAVEPOINT. Memory is bounded:
 at most ``MAX_PAYLOADS`` payloads per process (the rest is reported as ``too_many_payloads``), ``MAX_OPS``
 operations and ``MAX_ANNOUNCERS`` announcements held per process, at most ``MAX_SCAN`` candidates examined
@@ -56,7 +57,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmslog.derive.engine import _undo
+from dmslog.derive.engine import _undo, group_epoch
 from dmslog.parse.payload import local_name
 
 KIND = "normal_sensitive"
@@ -181,6 +182,7 @@ def _signature(
     procs: list[_Process],
     announcers: dict[str, dict[str, tuple[str, ...]]],
     templates: dict[str, tuple[int, str]],
+    group: int,
 ) -> str:
     parts: list[Any] = [_SIGNATURE_VERSION]
     for proc in procs:
@@ -211,7 +213,7 @@ def _signature(
             used.update(codes)
     parts.append({c: templates.get(c) for c in sorted(used)})
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (EPOCH_KEY,)).fetchone()
-    parts.append(row[0] if row else None)
+    parts.append(group_epoch(conn, row[0] if row else None, group))
     return _digest(*parts)
 
 
@@ -742,7 +744,7 @@ def link_payloads(conn: sqlite3.Connection, catalog: Any, kb: Any = None) -> Pay
         own_tx = not conn.in_transaction
         try:
             announcers = {fam: _announcers_of(catalog, fam) for fam in sorted({p.family for p in procs})}
-            signature = _signature(conn, procs, announcers, templates)
+            signature = _signature(conn, procs, announcers, templates, group)
             row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"{META_PREFIX}{group}",)).fetchone()
             if row is not None and row[0] == signature:
                 continue

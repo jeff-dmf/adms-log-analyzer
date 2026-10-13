@@ -25,12 +25,15 @@ from dmslog.aliases import Aliases
 from dmslog.diagnostics import component, describe_error, error_label
 from dmslog.ingest.discover import SourceInfo, discover, resolve_scope
 from dmslog.ingest.ers import (
+    ADD_PAIR,
+    ADD_SAME,
     KIND_ERS_ZIP,
     KIND_FILE,
     KIND_FOLDER,
     CollectionPlan,
-    ErsIdentity,
-    check_can_add,
+    HeldCollection,
+    classify_add,
+    held_identity,
     parse_ers_name,
     select_sources,
 )
@@ -233,17 +236,18 @@ def case_db_path(data_dir: Path, case_name: str) -> Path:
     return data_dir / "cases" / validate_case_name(case_name) / CASE_DB_FILENAME
 
 
-def _identity_of(row: CollectionRow) -> ErsIdentity | None:
-    if row.kind != KIND_ERS_ZIP or not row.ers_guid or not row.ers_ts:
-        return None
-    return ErsIdentity(
-        guid=row.ers_guid,
-        timestamp=row.ers_ts,
-        variant=row.ers_variant or "enterprise",
-        product="Enterprise",
-        description=row.label or "",
-        file_name=Path(row.path).name,
-    )
+def held_collections(rows: list[CollectionRow]) -> list[HeldCollection]:
+    """The case's ``collection`` rows as the add rules see them (``ers.classify_add``)."""
+    return [
+        HeldCollection(
+            id=r.id,
+            kind=r.kind,
+            path=r.path,
+            identity=held_identity(r.kind, r.ers_guid, r.ers_ts, r.ers_variant, r.label, r.path),
+            group=r.ers_group if r.ers_group is not None else r.id,
+        )
+        for r in rows
+    ]
 
 
 # --------------------------------------------------------------------------- severity by code
@@ -468,36 +472,26 @@ class _Run:
     # ---- collection
 
     def resolve_collection(self) -> int:
+        """The collection the run writes into: the one already in the case (same path, or the same ERS half
+        moved elsewhere: the path is re-pointed), a new one in the group of its other half, or a new one in a
+        group of its own (``ers.classify_add``, U21). Never refuses: duplicates are an API decision."""
         plan, w = self.plan, self.w
-        existing = w.collections()
+        path = str(plan.path.resolve())
+        held = held_collections(w.collections())
+        decision = classify_add(held, plan.kind, path, plan.identity)
+        if decision.action == ADD_SAME and decision.collection_id is not None:
+            current = next(c for c in held if c.id == decision.collection_id)
+            if current.path != path:
+                w.update_collection_path(current.id, path)
+            return current.id
         ident = plan.identity
-        same = next((c for c in existing if c.path == str(plan.path.resolve()) and c.kind == plan.kind), None)
-        if same is None and ident is not None:
-            same = next(
-                (
-                    c for c in existing
-                    if (c.ers_guid, c.ers_ts, c.ers_variant) == (ident.guid, ident.timestamp, ident.variant)
-                ),
-                None,
-            )  # fmt: skip
-            if same is not None and same.path != str(plan.path.resolve()):
-                w.update_collection_path(same.id, str(plan.path.resolve()))
-        if same is not None:
-            return same.id
-        check_can_add([_identity_of(c) for c in existing], ident)
-        group: int | None = None
-        if ident is not None:
-            group = next(
-                (c.ers_group for c in existing if c.ers_guid == ident.guid and c.ers_ts == ident.timestamp),
-                None,
-            )
         return w.add_collection(
             kind=plan.kind,
-            path=str(plan.path.resolve()),
+            path=path,
             ers_guid=ident.guid if ident else None,
             ers_ts=ident.timestamp if ident else None,
             ers_variant=ident.variant if ident else None,
-            ers_group=group,
+            ers_group=decision.group if decision.action == ADD_PAIR else None,
             system=plan.system,
             machine=plan.machine,
             label=plan.label,
@@ -903,8 +897,9 @@ def run_ingest(
 ) -> IngestResult:
     """Index (or re-index) ``path`` into the case database ``conn``.
 
-    Raises ``CollectionConflictError`` when the case already holds another ERS,
-    ``UnsafeArchiveError`` for unsafe zips, ``SourceNotFoundError`` for missing paths and
+    A case groups collections (U21): another ERS, folder or file becomes a collection group of its own,
+    the other half of a held capture joins its group. Raises ``UnsafeArchiveError`` for unsafe zips,
+    ``SourceNotFoundError`` for missing paths and
     ``InsufficientDiskSpaceError`` (a ``ReadLimitError``) when the disk is too full to index.
     """
     options = options or IngestOptions()

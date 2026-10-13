@@ -97,6 +97,43 @@ _SOURCE_FIELDS = frozenset(
 )  # fmt: skip
 
 
+# Removing a collection group (U21) must never let a later insert reuse a removed id: saved views, presets and
+# open UI state name sources, streams, events and collections by id. ``meta['id_floor.<table>']`` keeps the
+# highest id ever removed and every insert of these tables starts above it.
+ID_FLOOR_PREFIX = "id_floor."
+ID_FLOOR_TABLES = ("collection", "stream", "source", "entry", "event")
+# Per-group counter bumped when entries of the group are deleted (ARQUITETURA 5, "Chaves de meta"); the global
+# ``entries_epoch`` of older cases stays as it was and both go into the correlation signatures.
+EPOCH_KEY = "entries_epoch"
+
+
+def id_floor(conn: sqlite3.Connection, table: str) -> int:
+    """Highest id ever removed from ``table`` by a collection removal (0 when none)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (ID_FLOOR_PREFIX + table,)).fetchone()
+    try:
+        return int(row[0]) if row else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def next_row_id(conn: sqlite3.Connection, table: str) -> int:
+    """The id the next row of ``table`` gets: above every live row and every removed one."""
+    if table not in ID_FLOOR_TABLES:
+        raise ValueError(f"no id floor for table {table!r}")
+    top = conn.execute(f"SELECT coalesce(max(id), 0) FROM {table}").fetchone()[0]  # noqa: S608 - constant
+    return max(int(top), id_floor(conn, table)) + 1
+
+
+def bump_group_epoch(conn: sqlite3.Connection, group: int | None) -> None:
+    """Tell the correlation engines that entries of ``group`` were deleted (``entries_epoch.<group>``)."""
+    key = EPOCH_KEY if group is None else f"{EPOCH_KEY}.{int(group)}"
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES (?,"
+        " CAST(coalesce((SELECT value FROM meta WHERE key = ?), '0') AS INTEGER) + 1)",
+        (key, key),
+    )
+
+
 _DIGIT_CLASSES = str.maketrans("0123456789", "0111111111")  # keeps "0" apart: "0x1f" is hex, "5x1f" is not
 _SIG_CACHE_MAX = 200_000
 _SIG_CACHE_MAX_MSG = 2048  # signature() reads whitespace-collapsed text, so longer lines skip the cache
@@ -165,6 +202,15 @@ class LastEntry:
     line_no: int
 
 
+@dataclass(frozen=True)
+class RemovedGroup:
+    group: int
+    collections: int
+    sources: int
+    records: int
+    bookmarks: int
+
+
 @dataclass
 class BatchStats:
     records: int = 0
@@ -184,7 +230,7 @@ class IndexWriter:
         conn.isolation_level = None  # explicit transactions (begin/commit)
         self._severity: SeverityFn = severity or (lambda _level, _msg: 4)
         self._infer = infer_severity  # (TemplateMatch | None, Record) -> sev; wins over ``severity``
-        self._next_id = (conn.execute("SELECT coalesce(max(id), 0) FROM entry").fetchone()[0]) + 1
+        self._next_id = next_row_id(conn, "entry")
         self._in_tx = False
         self._rows: list[tuple[Any, ...]] = []
         self._bodies: list[tuple[int, str]] = []
@@ -231,7 +277,7 @@ class IndexWriter:
         if self._in_tx:
             self.conn.execute("ROLLBACK")
             self._in_tx = False
-        self._next_id = self.conn.execute("SELECT coalesce(max(id), 0) FROM entry").fetchone()[0] + 1
+        self._next_id = next_row_id(self.conn, "entry")
         self._batch_first_id = self._next_id
 
     # ------------------------------------------------------------------ case, collections
@@ -312,13 +358,12 @@ class IndexWriter:
     ) -> int:
         """Insert a collection; ``ers_group`` None means "its own id" (a group of one)."""
         self.begin()
-        cur = self.conn.execute(
-            "INSERT INTO collection(kind, path, ers_guid, ers_ts, ers_variant, ers_group, machine, system,"
-            " label,"
-            " added_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (kind, path, ers_guid, ers_ts, ers_variant, ers_group, machine, system, label, _now()),
+        cid = next_row_id(self.conn, "collection")
+        self.conn.execute(
+            "INSERT INTO collection(id, kind, path, ers_guid, ers_ts, ers_variant, ers_group, machine,"
+            " system, label, added_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (cid, kind, path, ers_guid, ers_ts, ers_variant, ers_group, machine, system, label, _now()),
         )
-        cid = int(cur.lastrowid or 0)
         if ers_group is None:
             self.conn.execute("UPDATE collection SET ers_group=? WHERE id=?", (cid, cid))
         return cid
@@ -353,12 +398,13 @@ class IndexWriter:
         if row:
             return int(row[0])
         self.begin()
-        cur = self.conn.execute(
-            "INSERT INTO stream(collection_group, family, process, pid, account, service, sensitive)"
-            " VALUES (?,?,?,?,?,?,?)",
-            (collection_group, family, process, pid, account, service, int(sensitive)),
+        sid = next_row_id(self.conn, "stream")
+        self.conn.execute(
+            "INSERT INTO stream(id, collection_group, family, process, pid, account, service, sensitive)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (sid, collection_group, family, process, pid, account, service, int(sensitive)),
         )
-        return int(cur.lastrowid or 0)
+        return sid
 
     def sources(self, collection_id: int) -> dict[str, SourceRow]:
         """All sources of a collection by member path."""
@@ -392,10 +438,12 @@ class IndexWriter:
         error: str | None = None,
     ) -> int:
         self.begin()
-        cur = self.conn.execute(
-            "INSERT INTO source(collection_id, stream_id, member, file_name, rotation, envelope, size, mtime,"
-            " zip_crc, status, error) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        source_id = next_row_id(self.conn, "source")
+        self.conn.execute(
+            "INSERT INTO source(id, collection_id, stream_id, member, file_name, rotation, envelope, size,"
+            " mtime, zip_crc, status, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
+                source_id,
                 collection_id,
                 stream_id,
                 member,
@@ -409,7 +457,7 @@ class IndexWriter:
                 error,
             ),
         )
-        return int(cur.lastrowid or 0)
+        return source_id
 
     def update_source(self, source_id: int, **fields: Any) -> None:
         unknown = set(fields) - _SOURCE_FIELDS
@@ -545,10 +593,11 @@ class IndexWriter:
         # entries were removed even when the sources look the same afterwards (a reindex).
         conn.execute(f"DELETE FROM link WHERE a_entry_id IN ({ids})", params)
         conn.execute(f"DELETE FROM link WHERE b_entry_id IN ({ids})", params)
-        conn.execute(
-            "INSERT OR REPLACE INTO meta(key, value) VALUES ('entries_epoch',"
-            " CAST(coalesce((SELECT value FROM meta WHERE key = 'entries_epoch'), '0') AS INTEGER) + 1)"
-        )
+        group = conn.execute(
+            "SELECT st.collection_group FROM source s JOIN stream st ON st.id = s.stream_id WHERE s.id = ?",
+            (source_id,),
+        ).fetchone()
+        bump_group_epoch(conn, group[0] if group else None)  # only this group's correlation is recomputed
         conn.execute(
             "UPDATE stream SET derive_checkpoint = ? WHERE derive_checkpoint > ?"
             " AND id = (SELECT stream_id FROM source WHERE id = ?)",
@@ -672,6 +721,78 @@ class IndexWriter:
                         break
             for sig in todo:  # defensive: counts said records remain, none were found
                 conn.execute("DELETE FROM unknown_sig WHERE family=? AND signature=?", (family, sig))
+
+    def remove_group(self, group: int) -> RemovedGroup | None:
+        """Remove one collection group (a capture: its Enterprise and Sensitive zips, or a folder or file) and
+        everything derived from it, in ONE transaction; None when the case has no such group (U21).
+
+        Gone: records (with bodies, FTS rows, keys, payloads, buckets, unknown signatures and every link that
+        touches them), events, statistics samples, observed and Registry configuration, streams, sources,
+        collections, the group's bookmarks and its ``meta`` keys (derivation checkpoints, correlation
+        signatures, epoch, payload extraction marks). The other groups are not touched: their signatures do
+        not change, so nothing of theirs is derived again. Removed ids are never reused (``id_floor``).
+        """
+        self.flush()
+        self.begin()
+        conn = self.conn
+        in_group = "SELECT id FROM collection WHERE ers_group = ?"
+        cids = [r[0] for r in conn.execute(f"{in_group} ORDER BY id", (group,))]
+        if not cids:
+            self.rollback()
+            return None
+        sources = [
+            r[0] for r in conn.execute(f"SELECT id FROM source WHERE collection_id IN ({in_group})", (group,))
+        ]
+        streams = [r[0] for r in conn.execute("SELECT id FROM stream WHERE collection_group = ?", (group,))]
+        tops = {
+            "collection": max(cids),
+            "source": max(sources, default=0),
+            "stream": max(streams, default=0),
+            "entry": conn.execute(
+                "SELECT coalesce(max(e.id), 0) FROM entry e JOIN source s ON s.id = e.source_id"
+                f" WHERE s.collection_id IN ({in_group})",
+                (group,),
+            ).fetchone()[0],
+            "event": conn.execute(
+                "SELECT coalesce(max(id), 0) FROM event"
+                " WHERE stream_id IN (SELECT id FROM stream WHERE collection_group = ?)",
+                (group,),
+            ).fetchone()[0],
+        }
+        records = 0
+        for source_id in sources:  # the regular deletion path: FTS, buckets, keys, payloads, links, unknowns
+            records += self._delete_where("source_id = ?", [source_id], source_id, 0)
+        removed_bookmarks = conn.execute(
+            f"DELETE FROM bookmark WHERE collection_id IN ({in_group})", (group,)
+        ).rowcount
+        by_stream = "SELECT id FROM stream WHERE collection_group = ?"
+        for table in ("event", "stat_sample", "config_observed"):
+            conn.execute(f"DELETE FROM {table} WHERE stream_id IN ({by_stream})", (group,))  # noqa: S608
+        by_source = f"SELECT id FROM source WHERE collection_id IN ({in_group})"
+        for table in ("bucket", "bucket_sev"):
+            conn.execute(f"DELETE FROM {table} WHERE source_id IN ({by_source})", (group,))  # noqa: S608
+        conn.execute(f"DELETE FROM source WHERE collection_id IN ({in_group})", (group,))
+        conn.execute("DELETE FROM stream WHERE collection_group = ?", (group,))
+        conn.execute("DELETE FROM config_param WHERE collection_group = ?", (group,))
+        conn.execute("DELETE FROM error_config WHERE collection_group = ?", (group,))
+        conn.execute("DELETE FROM collection WHERE ers_group = ?", (group,))
+        keys = [f"{p}{group}" for p in ("correlate.", "correlate.links.", "payloads.", f"{EPOCH_KEY}.")]
+        keys += [f"payload_extraction_version.{sid}" for sid in sources]
+        conn.executemany("DELETE FROM meta WHERE key = ?", [(k,) for k in keys])
+        for sid in streams:  # derive.<stream>.<chain>: '/' is the character after '.'
+            conn.execute("DELETE FROM meta WHERE key >= ? AND key < ?", (f"derive.{sid}.", f"derive.{sid}/"))
+        for table, top in tops.items():
+            if top > id_floor(conn, table):
+                floor = (ID_FLOOR_PREFIX + table, str(top))
+                conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", floor)
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('ingest_generation',"
+            " CAST(coalesce((SELECT value FROM meta WHERE key = 'ingest_generation'), '0') AS INTEGER) + 1)"
+        )
+        self.commit()
+        self._next_id = next_row_id(conn, "entry")
+        self._batch_first_id = self._next_id
+        return RemovedGroup(group, len(cids), len(sources), records, removed_bookmarks)
 
     # ------------------------------------------------------------------ insertion
 

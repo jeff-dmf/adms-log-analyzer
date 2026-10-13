@@ -13,7 +13,9 @@ SQL only as a bound parameter; the route percent-decodes it and limits its lengt
     source of the case, ordered by ``(ts, id)`` (records without a time first), keyset pagination
     (``after`` is the ``next`` of the previous page; never OFFSET). Default limit 200, max 1000.
     ``<record>`` = ``{id, source_id, member, family, process, sensitive, ts, tid, level, sev,
-    tpl_code, msg}`` with ``msg`` cut at 300 characters.
+    tpl_code, msg, collection}`` with ``msg`` cut at 300 characters; ``collection`` is the collection group
+    of the record. ``collection=<group>`` keeps only that group (U21: by default the search spans every
+    collection of the case and the order across collections is approximate, each has its own clock).
 
 ``GET /api/entries/<id>/links?case=``
     ``{"links": [<link>]}``: links of the entry in both directions, at most 200, ordered by the
@@ -47,7 +49,7 @@ NULL_TS = -(2**63)  # ts of a record without a time in the cursor: sorts before 
 
 _RECORD_COLUMNS = (
     "e.id, e.source_id, s.member, st.family, st.process, st.sensitive, e.ts, e.tid, e.level, e.sev,"
-    " t.code, substr(e.msg, 1, ?)"
+    " t.code, substr(e.msg, 1, ?), st.collection_group"
 )
 
 
@@ -64,11 +66,11 @@ def _sensitive(value: Any) -> bool | None:
 
 
 def _record(row: tuple[Any, ...]) -> dict[str, Any]:
-    (id_, source_id, member, family, process, sensitive, ts, tid, level, sev, code, msg) = row
+    (id_, source_id, member, family, process, sensitive, ts, tid, level, sev, code, msg, group) = row
     return {
         "id": id_, "source_id": source_id, "member": member, "family": family, "process": process,
         "sensitive": _sensitive(sensitive), "ts": ts, "tid": tid, "level": level, "sev": sev,
-        "tpl_code": code, "msg": msg,
+        "tpl_code": code, "msg": msg, "collection": group,
     }  # fmt: skip
 
 
@@ -88,12 +90,17 @@ def records_with_key(
     value: str,
     limit: int = DEFAULT_LIMIT,
     after: Cursor | None = None,
+    collection: int | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """One keyset page of the records carrying ``(key_type, value)``, ordered by ``(ts, id)``."""
+    """One keyset page of the records carrying ``(key_type, value)``, ordered by ``(ts, id)``; ``collection``
+    keeps only the records of that collection group."""
     limit = max(1, min(limit, MAX_LIMIT))
     ts_expr = f"coalesce(e.ts, {NULL_TS})"
     params: list[Any] = [MSG_CHARS, key_type, value]
     cond = ""
+    if collection is not None:
+        cond = " AND st.collection_group = ?"
+        params.append(collection)
     if after is not None:
         cond = f" AND ({ts_expr} > ? OR ({ts_expr} = ? AND e.id > ?))"
         params.extend((after.ts, after.ts, after.id))

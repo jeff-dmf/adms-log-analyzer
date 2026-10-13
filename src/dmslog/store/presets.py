@@ -47,7 +47,7 @@ MAX_EXTRA_BYTES = 8 * 1024
 MAX_FILE_BYTES = 16 * 1024 * 1024
 FAMILY_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}\Z")
 # Leaves that point at one case (ids and time of that case); a preset must work in any case.
-CASE_LEAVES = frozenset({"source", "stream", "event", "ts"})
+CASE_LEAVES = frozenset({"source", "stream", "event", "ts", "collection"})  # collection: group ids (U21)
 KNOWN_KEYS = frozenset({"name", "description", "family", "filter"})
 FORMATS = ("json", "toml")
 

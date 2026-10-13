@@ -30,8 +30,9 @@ Memory and time: both candidate sets are read by cursor in (ts, id) order and me
 in ``CorrelateSummary.dropped_by_rule``.
 
 Staleness: the signature includes every source's size/mtime/CRC/hashes/counts, the rules, the templates the
-rules use and ``meta['entries_epoch']`` (bumped by the writer when it deletes entries, which also deletes the
-links incident to them). A recompute also deletes this engine's orphan links.
+rules use and the group's entries epoch (``meta['entries_epoch.<group>']``, bumped by the writer when it
+deletes entries of the group, which also deletes the links incident to them; ``engine.group_epoch``).
+A recompute also deletes this engine's orphan links.
 """
 
 from __future__ import annotations
@@ -43,6 +44,8 @@ from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
+
+from dmslog.derive.engine import group_epoch
 
 KIND = "normal_sensitive"
 META_PREFIX = "correlate."
@@ -573,7 +576,7 @@ def _correlate_group(
 
 
 def _group_signature(
-    conn: sqlite3.Connection, catalog: Any, pairs: list[tuple[int, int, str, Any, Any]]
+    conn: sqlite3.Connection, catalog: Any, pairs: list[tuple[int, int, str, Any, Any]], group: int
 ) -> str:
     parts = []
     codes: set[str] = set()
@@ -591,7 +594,7 @@ def _group_signature(
                 [sorted((k, repr(v)) for k, v in r.items()) for r in rules],
             )
         )
-    return _digest(parts, _templates_sig(conn, codes), _entries_epoch(conn))
+    return _digest(parts, _templates_sig(conn, codes), group_epoch(conn, _entries_epoch(conn), group))
 
 
 def _delete_links(conn: sqlite3.Connection, pairs: list[tuple[int, int, str, Any, Any]]) -> None:
@@ -618,7 +621,7 @@ def correlate_group(conn: sqlite3.Connection, group: int, catalog: Any, summary:
     pairs = _stream_pairs(conn, group)
     if not pairs:
         return False
-    sig = _group_signature(conn, catalog, pairs)
+    sig = _group_signature(conn, catalog, pairs, group)
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (META_PREFIX + str(group),)).fetchone()
     if row is not None:
         try:

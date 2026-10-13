@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from dmslog.ingest.ers import CollectionConflictError, plan_collection, select_sources
+from dmslog.ingest.ers import plan_collection, select_sources
 from dmslog.ingest.pipeline import (
     IngestOptions,
     ProgressEvent,
@@ -699,33 +699,29 @@ def test_archive_declaring_too_much_data_is_refused(tmp_path, db):
     assert db.execute("SELECT count(*) FROM collection").fetchone()[0] == 0
 
 
-# --------------------------------------------------------------------------- one ERS per case
+# --------------------------------------------------------------------------- collections of a case (U21)
 
 
-def test_second_ers_is_refused_and_leaves_the_case_untouched(tmp_path, db):
+def test_another_ers_becomes_a_second_group_and_leaves_the_first_untouched(tmp_path, db):
     a = mf.build_ers_zip(tmp_path / "a", guid=GUID_A)
     b = mf.build_ers_zip(tmp_path / "b", guid=GUID_B)
     run_ingest(db, a)
     before = snapshot(db)
-    with pytest.raises(CollectionConflictError) as exc:
-        run_ingest(db, b)
-    assert exc.value.reason == "different_guid"
-    assert snapshot(db) == before
-    assert db.execute("SELECT count(*) FROM collection").fetchone()[0] == 1
+    run_ingest(db, b)
+    groups = db.execute("SELECT ers_guid, ers_group, id FROM collection ORDER BY id").fetchall()
+    assert [(g[0], g[1] == g[2]) for g in groups] == [(GUID_A, True), (GUID_B, True)]
+    first = snapshot(db)["entries"]
+    assert [e for e in before["entries"] if e in first] == before["entries"]  # nothing of A changed
+    assert_consistent(db)
 
 
-def test_another_capture_of_the_same_ers_is_refused(tmp_path, db):
+def test_another_capture_and_a_folder_are_groups_of_their_own(tmp_path, db):
     run_ingest(db, mf.build_ers_zip(tmp_path / "a", stamp="20300115103000"))
-    with pytest.raises(CollectionConflictError) as exc:
-        run_ingest(db, mf.build_ers_zip(tmp_path / "b", stamp="20300116103000"))
-    assert exc.value.reason == "different_capture"
-
-
-def test_folder_is_refused_in_a_case_with_an_ers(tmp_path, db):
-    run_ingest(db, mf.build_ers_zip(tmp_path / "a"))
-    root = write_folder(tmp_path / "Log", {WFM: make_log(5)})
-    with pytest.raises(CollectionConflictError):
-        run_ingest(db, root)
+    run_ingest(db, mf.build_ers_zip(tmp_path / "b", stamp="20300116103000"))
+    run_ingest(db, write_folder(tmp_path / "Log", {WFM: make_log(5)}))
+    rows = db.execute("SELECT kind, ers_ts, ers_group = id FROM collection ORDER BY id").fetchall()
+    assert rows == [("ers_zip", "20300115103000", 1), ("ers_zip", "20300116103000", 1), ("folder", None, 1)]
+    assert db.execute("SELECT count(DISTINCT collection_group) FROM stream").fetchone()[0] == 3
 
 
 @pytest.mark.parametrize("order", [("enterprise", "sensitive"), ("sensitive", "enterprise")])

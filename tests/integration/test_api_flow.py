@@ -149,11 +149,14 @@ def test_reingest_same_zip_is_accepted(session, tmp_path):
 
 def test_conflict_reported_before_any_job_starts(session, tmp_path):
     session.call("POST", "/api/cases", {"name": "c409"})
-    session.call("POST", "/api/cases/c409/collections", {"path": str(mf.build_ers_zip(tmp_path / "a"))})
+    first = mf.build_ers_zip(tmp_path / "a")
+    session.call("POST", "/api/cases/c409/collections", {"path": str(first)})
     session.events_until_done("c409")
-    other = mf.build_ers_zip(tmp_path / "b", stamp="20300116103000")
-    status, body = session.call("POST", "/api/cases/c409/collections", {"path": str(other)})
-    assert status == 409 and body["error"] == "different_capture"
+    copy = tmp_path / "b" / first.name  # a second copy of the same ERS half (U21)
+    copy.parent.mkdir()
+    copy.write_bytes(first.read_bytes())
+    status, body = session.call("POST", "/api/cases/c409/collections", {"path": str(copy)})
+    assert status == 409 and body["error"] == "duplicate_collection"
 
 
 def test_failed_ingest_ends_with_error_done(session, tmp_path):

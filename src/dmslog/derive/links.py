@@ -117,7 +117,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmslog.derive.engine import _undo
+from dmslog.derive.engine import _undo, group_epoch
 
 KINDS = ("callback", "retry", "response")
 DEFAULT_MAX_DT_MS = 60000
@@ -265,7 +265,11 @@ def _template_ids(conn: sqlite3.Connection) -> dict[str, int]:
 
 
 def _signature(
-    conn: sqlite3.Connection, streams: list[_Stream], rules: dict[str, list[Any]], ids: dict[str, int]
+    conn: sqlite3.Connection,
+    streams: list[_Stream],
+    rules: dict[str, list[Any]],
+    ids: dict[str, int],
+    group: int,
 ) -> str:
     parts: list[Any] = [_SIGNATURE_VERSION]
     for st in streams:
@@ -302,7 +306,7 @@ def _signature(
     defs = dict(conn.execute("SELECT code, def_version FROM template").fetchall())
     parts.append({c: [ids.get(c), defs.get(c)] for c in sorted(used)})
     row = conn.execute("SELECT value FROM meta WHERE key = 'entries_epoch'").fetchone()
-    parts.append(row[0] if row else None)
+    parts.append(group_epoch(conn, row[0] if row else None, group))
     return _digest(*parts)
 
 
@@ -837,7 +841,7 @@ def link_pending(conn: sqlite3.Connection, catalog: Any, kb: Any = None) -> Link
         savepoint = f"correlate_links_{group}"
         own_tx = not conn.in_transaction
         try:
-            signature = _signature(conn, streams, rules, ids)
+            signature = _signature(conn, streams, rules, ids, group)
             row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"{META_PREFIX}{group}",)).fetchone()
             if row is not None and _stored(row[0]).get("sig") == signature:
                 continue

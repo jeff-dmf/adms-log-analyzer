@@ -386,3 +386,16 @@ VIEWEXPORT_EVENT_HEADERS = (
     "Event", "Operation", "Kind", "Status", "Duration (ms)", "Start", "End", "Key", "Operation key",
     "TID", "Family", "Process", "Source", "Records",
 )  # fmt: skip
+
+# Collections of a case (U21: a case groups ERS captures, folders and files; store/collections.py)
+COLLECTION_DUPLICATE = (
+    "this ERS ({guid}, captured {capture}) is already in the case from another file; "
+    "add the same file again to resume or refresh it"
+)
+API_COLLECTION_NOT_FOUND = "Collection {group} does not exist in this case"
+API_COLLECTION_FOLLOWED = "This folder is being followed (serve --watch); stop following it first"
+API_COLLECTION_REMOVED = "Removed the collection: {records} records from {sources} sources"
+EXPORT_SOURCE_MULTI = "Sources: {count} collections"
+EXPORT_COLLECTION_ERS = "  {tag}: ERS {ers_ts} ({machine}) - {variant} - GUID {guid}"
+EXPORT_COLLECTION_PLAIN = "  {tag}: {kind} ({machine})"
+EXPORT_TIME_NOTE_MULTI = "Each collection keeps its own clock: the order across collections is approximate."
