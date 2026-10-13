@@ -48,8 +48,12 @@ function statusLabel(item) {
 
 export class CaseFiles {
   // host: element that receives the UI; nameInput: the case name field; onMessage(text, isError).
-  constructor({ host, nameInput, onMessage, fs, storage }) {
+  // mode "add": the list adds files to the case that is already open (no name field, no new case);
+  // `onAdd` runs when its button is pressed (it calls submitAdd()).
+  constructor({ host, nameInput, onMessage, fs, storage, mode, onAdd }) {
     this.host = host;
+    this.mode = mode === "add" ? "add" : "create";
+    this.onAdd = onAdd || (() => {});
     this.nameInput = nameInput;
     this.onMessage = onMessage;
     this.fs = fs || api.fs;
@@ -66,10 +70,11 @@ export class CaseFiles {
     const host = this.host;
     host.textContent = "";
     host.className = "case-files";
-    const title = el("h3", "cf-title", S.cfTitle);
-    title.id = "cf-title";
-    this.help = el("p", "cf-help", S.cfHelp);
-    this.help.id = "cf-help";
+    const adding = this.mode === "add";
+    const title = el("h3", "cf-title", adding ? S.cfAddTitle : S.cfTitle);
+    title.id = adding ? "cf-add-title" : "cf-title";
+    this.help = el("p", "cf-help", adding ? S.cfAddHelp : S.cfHelp);
+    this.help.id = adding ? "cf-add-help" : "cf-help";
 
     const pathRow = el("div", "cf-path-row");
     this.pathInput = el("input", "cf-path");
@@ -110,10 +115,14 @@ export class CaseFiles {
 
     this.list = el("ul", "cf-list");
     this.list.setAttribute("aria-label", S.cfListLabel);
-    this.list.setAttribute("aria-describedby", "cf-help");
+    this.list.setAttribute("aria-describedby", this.help.id);
 
     this.createButton = el("button", "primary cf-create");
-    this.createButton.type = "submit";
+    // Create mode submits the new-case form; add mode sits inside the open form and must not submit it.
+    this.createButton.type = adding ? "button" : "submit";
+    if (adding) {
+      this.createButton.addEventListener("click", () => this.onAdd());
+    }
 
     for (const node of [title, this.help, pathRow, this.waitBox, this.notices, head, this.list, this.createButton]) {
       host.appendChild(node);
@@ -217,6 +226,23 @@ export class CaseFiles {
     return result;
   }
 
+  // Adds the chosen files to the open case. deps: {openPath}; see CaseFilesState.addAll.
+  async submitAdd(deps) {
+    if (this.state.items.length === 0) {
+      this.onMessage(S.cfAddNeedFiles, true);
+      return null;
+    }
+    const result = await this.state.addAll(deps);
+    if (result.state === "ok") {
+      this.onMessage(format(S.cfAddedAll, { total: result.total }), false);
+    } else if (result.state === "partial") {
+      this.onMessage(format(S.cfAddPartial, { ok: result.ok, total: result.total }), true);
+    } else if (result.reason === "busy") {
+      this.onMessage(S.cfQueueBusy, true);
+    }
+    return result;
+  }
+
   // -- rendering ----------------------------------------------------------------------------
 
   render() {
@@ -230,10 +256,19 @@ export class CaseFiles {
     this.clearButton.disabled = state.busy || state.items.length === 0;
     this.clearButton.hidden = state.items.length === 0;
     this.createButton.disabled = !state.canCreate;
-    this.createButton.textContent = state.items.length > 0
-      ? format(S.cfCreateWith, { n: state.items.length })
-      : S.cfCreate;
-    this.count.textContent = state.items.length > 0 ? format(S.cfCount, { n: state.items.length }) : S.cfEmpty;
+    const adding = this.mode === "add";
+    if (adding) {
+      this.createButton.textContent = state.items.length > 0
+        ? format(S.cfAddWith, { n: state.items.length })
+        : S.cfAddFiles;
+    } else {
+      this.createButton.textContent = state.items.length > 0
+        ? format(S.cfCreateWith, { n: state.items.length })
+        : S.cfCreate;
+    }
+    this.count.textContent = state.items.length > 0
+      ? format(S.cfCount, { n: state.items.length })
+      : (adding ? S.cfAddEmpty : S.cfEmpty);
 
     this.notices.textContent = "";
     for (const notice of state.notices) {

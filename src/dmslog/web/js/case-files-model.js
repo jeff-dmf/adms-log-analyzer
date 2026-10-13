@@ -162,6 +162,51 @@ export class CaseFilesState {
     return !this.busy && this.items.length > 0;
   }
 
+  // Adds every file of the list to the case that is already open (no case is created).
+  // deps: {openPath(path) -> {status, code?, message?}}. Same per-file results as create(); resolves to
+  // {state: "ok"|"partial"|"blocked", ok, total}.
+  async addAll(deps) {
+    if (this.busy) {
+      return { state: "blocked", reason: "busy" };
+    }
+    if (this.items.length === 0) {
+      return { state: "blocked", reason: "files" };
+    }
+    this.busy = true;
+    this.notices = [];
+    this.changed();
+    await this.openEach(deps);
+    this.busy = false;
+    const total = this.items.length;
+    const ok = this.items.filter((item) => item.status === STATUS_OK).length;
+    if (ok === total) {
+      this.items = [];
+    }
+    this.changed();
+    return { state: ok === total ? "ok" : "partial", ok, total };
+  }
+
+  async openEach(deps) {
+    for (const item of this.items) {
+      if (item.status === STATUS_OK) {
+        continue;
+      }
+      item.status = STATUS_WORKING;
+      item.message = "";
+      this.changed();
+      let result;
+      try {
+        result = await deps.openPath(item.path);
+      } catch (err) {
+        result = { status: STATUS_FAILED, message: String(err && err.message ? err.message : err) };
+      }
+      item.status = result.status === STATUS_OK || result.status === STATUS_REFUSED ? result.status : STATUS_FAILED;
+      item.code = result.code || "";
+      item.message = result.message || "";
+      this.changed();
+    }
+  }
+
   // deps: {createCase(name) -> {id}, selectCase(id), openPath(path) -> {status: "ok"|"failed"|"refused", code?, message?}}
   // Creates the case (once: a retry with the same name reuses it) and opens each ZIP in sequence;
   // one file failing never stops the others nor empties the list. Resolves to
@@ -203,24 +248,7 @@ export class CaseFilesState {
       this.changed();
       return { state: "blocked", reason: "case" };
     }
-    for (const item of this.items) {
-      if (item.status === STATUS_OK) {
-        continue;
-      }
-      item.status = STATUS_WORKING;
-      item.message = "";
-      this.changed();
-      let result;
-      try {
-        result = await deps.openPath(item.path);
-      } catch (err) {
-        result = { status: STATUS_FAILED, message: String(err && err.message ? err.message : err) };
-      }
-      item.status = result.status === STATUS_OK || result.status === STATUS_REFUSED ? result.status : STATUS_FAILED;
-      item.code = result.code || "";
-      item.message = result.message || "";
-      this.changed();
-    }
+    await this.openEach(deps);
     this.busy = false;
     const total = this.items.length;
     const ok = this.items.filter((item) => item.status === STATUS_OK).length;
@@ -241,10 +269,8 @@ export class CaseFilesState {
 export function refusalResult(error, text) {
   const code = error && error.code ? String(error.code) : "";
   let message;
-  if (code === "different_guid") {
-    message = text.conflictServer;
-  } else if (code === "different_capture") {
-    message = text.conflictCapture;
+  if (code === "duplicate_collection") {
+    message = text.duplicate;
   } else if (code === "job_running") {
     message = text.busy;
   } else {

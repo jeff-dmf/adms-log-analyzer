@@ -202,11 +202,11 @@ test("runCollection reports an error job as failed and a 409 as refused", async 
   FakeEventSource.instances[0].emit("done", { job_id: "j1", status: "error", message: "Corrupt archive", code: "unsafe_archive" });
   assert.deepEqual(await pending, { status: "failed", code: "unsafe_archive", message: "Corrupt archive" });
 
-  api.addCollection = async () => { throw Object.assign(new Error("server text"), { status: 409, code: "different_guid" }); };
+  api.addCollection = async () => { throw Object.assign(new Error("server text"), { status: 409, code: "duplicate_collection" }); };
   ({ panel } = panelSetup());
   const refused = await panel.runCollection(SENS, "default");
   assert.equal(refused.status, "refused");
-  assert.match(refused.message, /different server/);
+  assert.match(refused.message, /already has this ERS file from another location/);
   assert.equal(panel.waiter, null);
 });
 

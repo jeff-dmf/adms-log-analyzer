@@ -13,8 +13,12 @@ const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const KEY_TYPE = /^[A-Za-z0-9_.-]{1,64}$/;
 
 // Options of the field chooser: {value, label, group} with group "column" | "key" | "field".
-export function fieldOptions(keyTypes, fieldNames) {
+// `withCollection`: the case has more than one collection, so "Collection" (C<n>) is offered too.
+export function fieldOptions(keyTypes, fieldNames, withCollection = false) {
   const options = COLUMN_FIELDS.map((name) => ({ value: name, label: S.dstColumnNames[name], group: "column" }));
+  if (withCollection) {
+    options.push({ value: "collection", label: S.dstColumnNames.collection, group: "column" });
+  }
   for (const type of Array.from(new Set(keyTypes || [])).sort()) {
     if (typeof type === "string" && KEY_TYPE.test(type)) {
       options.push({ value: "key." + type, label: type, group: "key" });
@@ -42,6 +46,9 @@ export function valueText(field, value, label) {
   }
   if (field === "tpl") {
     return value === 0 ? S.dstUnclassified : label || String(value);
+  }
+  if (field === "collection") {
+    return label || String(value); // the server labels a collection group with its tag, C<n>
   }
   if (field === "source") {
     return label ? format(S.dstSourceValue, { name: label, id: value }) : String(value);

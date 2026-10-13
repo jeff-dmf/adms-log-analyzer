@@ -3,6 +3,7 @@ import { parseTs } from "./time.js";
 
 export const EMPTY_FILTER_STATE = Object.freeze({
   sourceIds: [],
+  collectionIds: [],
   sevMax: null,
   levelMax: null,
   from: null,
@@ -10,12 +11,15 @@ export const EMPTY_FILTER_STATE = Object.freeze({
   text: "",
 });
 
-// state: {sourceIds: int[], sevMax: 1..5|null, levelMax: 1..8|null, from: ms|null, to: ms|null,
+// state: {sourceIds: int[], collectionIds?: int[] (collection groups, U21), sevMax: 1..5|null, levelMax: 1..8|null, from: ms|null, to: ms|null,
 //         text: string}. Returns the tree, or null when nothing narrows the view.
 export function buildFilter(state) {
   const nodes = [];
   if (state.sourceIds && state.sourceIds.length > 0) {
     nodes.push({ source: state.sourceIds.slice() });
+  }
+  if (state.collectionIds && state.collectionIds.length > 0) {
+    nodes.push({ collection: state.collectionIds.slice() });
   }
   if (state.sevMax !== null && state.sevMax !== undefined) {
     nodes.push({ sev: { le: state.sevMax } });

@@ -14,6 +14,10 @@ import { registerLeafType } from "./filter-tree-model.js";
 import { initFilterTree, registerLeafEditor } from "./filter-tree.js";
 import { initTimeline } from "./timeline.js";
 import { COLUMNS, Grid } from "./grid.js";
+import { CollectionsPanel } from "./collections-panel.js";
+import {
+  columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref,
+} from "./collections-model.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { searchTerms } from "./search.js";
 import { SourceFilter } from "./source-filter.js";
@@ -72,6 +76,14 @@ function writeList(key, list) {
     window.localStorage.setItem(key, JSON.stringify(list));
   } catch (err) {
     // Not persisted; the view still works.
+  }
+}
+
+function safeLocalStorage() {
+  try {
+    return window.localStorage;
+  } catch (err) {
+    return null;
   }
 }
 
@@ -191,6 +203,10 @@ function start() {
   let detailBookmark = null;
   let compare = null;
   let distinctUi = null; // "Distinct values" and "Group by template" (distinct-panel.js)
+  let collectionsPanel = null; // the Collections panel (collections-panel.js)
+  let collections = []; // collections of the open case (GET /collections)
+  let collectionColumnPref = loadColumnPref(safeLocalStorage());
+  let applyPending = false; // a full view reload follows: the Collection column need not reload the grid itself
   const compareSelection = createCompareSelection();
   const compareButton = byId("compare-button");
   function paintCompareButton(entry) {
@@ -345,9 +361,10 @@ function start() {
 
   const applyView = () => {
     const ids = panel.selectedIds();
-    const filter = composeFilter({ sourceIds: ids, text: searchText, ...formState }, userFilter, toggles);
+    const groups = collectionsPanel ? collectionsPanel.selectedGroups() : [];
+    const filter = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
     currentFilter = filter;
-    const range = timeSpan(sources, ids, formState.from, formState.to);
+    const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
     detail.setTerms(terms);
@@ -375,6 +392,11 @@ function start() {
   }, {
     onCase: (id) => {
       caseId = id;
+      applyPending = true; // refreshSources() follows and rebuilds the view
+      if (collectionsPanel) {
+        collectionsPanel.setCase();
+      }
+      byId("add-files-host").hidden = id === null;
       detail.clear(); // drop the old case's entry right away, before /sources answers
       bookmarkStore.reset();
       compareSelection.reset();
@@ -422,8 +444,14 @@ function start() {
       sourceNames = new Map(list.map((s) => [s.id, s.name]));
       sourceFamilies = new Map(list.map((s) => [s.id, s.family || ""]));
       grid.setSourceNames(sourceNames);
+      // The collections load first so the Collection column and the filter are right in the first load.
+      const listed = collectionsPanel ? collectionsPanel.refresh() : Promise.resolve();
       if (!quiet) {
-        applyView();
+        applyPending = true;
+        listed.then(() => {
+          applyPending = false;
+          return applyView();
+        });
       }
     },
     onSelection: () => applyView(),
@@ -447,10 +475,42 @@ function start() {
     onMessage: showMessage,
   });
   new SourceFilter({ host: byId("source-filter-host"), panel });
+  const syncCollectionColumn = () =>
+    grid.setCollectionColumn(columnShown(collections, collectionColumnPref), !applyPending).catch(showError);
+  collectionsPanel = new CollectionsPanel({
+    host: byId("collections-host"),
+    note: byId("collections-note"),
+    api,
+    getCase: () => caseId,
+    onSelection: () => applyView(),
+    onList: (list) => {
+      const multiChanged = isMulti(list) !== isMulti(collections);
+      collections = list;
+      grid.setCollectionTags(gridTags(list));
+      syncCollectionColumn();
+      if (multiChanged) {
+        buildColumnMenu(); // the menu is rebuilt only when it gains or loses the Collection item
+      }
+    },
+    // A collection was removed: sources, records, links, bookmarks and the panels fed by them reload.
+    onRemoved: async () => {
+      await panel.refreshSources(true);
+      await panel.handlers.onDone();
+    },
+    onMessage: showMessage,
+  });
   panel.caseFiles = new CaseFiles({
     host: byId("case-files-host"),
     nameInput: byId("new-case-name"),
     onMessage: showMessage,
+  });
+  byId("add-files-host").hidden = true; // until a case is open
+  panel.addFiles = new CaseFiles({
+    host: byId("add-files-host"),
+    nameInput: null,
+    onMessage: showMessage,
+    mode: "add",
+    onAdd: () => panel.addFilesToCase(),
   });
 
   byId("search-form").addEventListener("submit", (event) => {
@@ -530,6 +590,13 @@ function start() {
         visibleColumns = keys;
         saveColumns(keys);
         grid.setColumns(keys);
+      }));
+    }
+    if (isMulti(collections)) {
+      menu.appendChild(checkbox(S.columnCollection, collectionColumnPref, (box) => {
+        collectionColumnPref = box.checked;
+        saveColumnPref(collectionColumnPref, safeLocalStorage());
+        syncCollectionColumn();
       }));
     }
     const names = Array.from(new Set([...seenFields, ...fieldColumns])).sort();
@@ -783,6 +850,7 @@ function start() {
       getCase: () => caseId,
       getFilter: () => currentFilter,
       getFieldNames: () => Array.from(seenFields),
+      hasCollections: () => isMulti(collections),
       getSourceName: (id) => sourceNames.get(id) || String(id),
       onDrill: (leaf, exclude) => setUserFilter(model.drillFilter(userFilter, leaf, exclude)),
       onReveal: revealEntry,
