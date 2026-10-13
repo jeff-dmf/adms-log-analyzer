@@ -43,7 +43,7 @@ from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
 from ..report import export as report_export
 from ..report import redact
-from ..store import bookmarks, db, events, keys, payloads, query, views
+from ..store import bookmarks, db, events, keys, payloads, presets, query, views
 from ..store import config as config_store
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
@@ -839,6 +839,14 @@ class Api:
             ("GET", re.compile(r"/api/redaction\Z"), self.get_redaction),
             ("PUT", re.compile(r"/api/redaction\Z"), self.put_redaction),
             ("POST", re.compile(r"/api/export\Z"), self.export_report),
+        ]
+        self._routes += [
+            ("GET", re.compile(r"/api/presets\Z"), self.list_presets),
+            ("POST", re.compile(r"/api/presets\Z"), self.create_preset),
+            ("PUT", re.compile(r"/api/presets\Z"), self.update_preset),
+            ("DELETE", re.compile(r"/api/presets\Z"), self.delete_preset),
+            ("GET", re.compile(r"/api/presets/export\Z"), self.export_presets),
+            ("POST", re.compile(r"/api/presets/import\Z"), self.import_presets),
         ]
 
     def shutdown(self) -> None:
@@ -1691,3 +1699,67 @@ class Api:
         conn = db.connect(self.store.db_path(cid))
         with closing(conn):
             yield conn
+
+    # -- view presets (per user, <data dir>/presets.toml, plus the curated ones)
+
+    def _presets_call(self, call: Callable[[], Any]) -> Any:
+        try:
+            return call()
+        except presets.PresetError as exc:
+            status = _PRESET_STATUS.get(exc.code, 400)
+            raise ApiError(status, exc.code, str(exc)) from None
+
+    def list_presets(self, request: Request) -> Response:
+        """Presets that apply to a case (curated + user, filtered by the families present); without
+        ``case`` every preset is listed (settings, export)."""
+        families: set[str] | None = None
+        if request.query.get("case"):
+            cid = _case_from_query(self.store, request)
+            with self.store.reader(cid) as conn:
+                families = {r[0] for r in conn.execute("SELECT DISTINCT family FROM stream") if r[0]}
+        body = self._presets_call(lambda: presets.list_presets(self.data_dir, families))
+        if families is not None:
+            body["families"] = sorted(families)
+        return Response(200, body)
+
+    def create_preset(self, request: Request) -> Response:
+        body = request.read_body()
+        created = self._presets_call(lambda: presets.create(self.data_dir, body))
+        return Response(201, created)
+
+    def update_preset(self, request: Request) -> Response:
+        """Body: ``{"match": {"name", "family"}, "preset": {...}}`` (rename and/or new filter)."""
+        body = request.read_body()
+        match = body.get("match")
+        if not isinstance(match, dict) or not isinstance(match.get("name"), str):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="match"))
+        updated = self._presets_call(
+            lambda: presets.update(self.data_dir, match["name"], match.get("family"), body.get("preset"))
+        )
+        return Response(200, updated)
+
+    def delete_preset(self, request: Request) -> Response:
+        name = request.query.get("name")
+        if not name:
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="name"))
+        self._presets_call(lambda: presets.delete(self.data_dir, name, request.query.get("family")))
+        return Response(204)
+
+    def export_presets(self, request: Request) -> Response:
+        fmt = request.query.get("format", "json")
+        return Response(200, self._presets_call(lambda: presets.export_user(self.data_dir, fmt)))
+
+    def import_presets(self, request: Request) -> Response:
+        """Body: ``{"format": "json" | "toml", "data": <object or text>}``; report added/updated/ignored."""
+        body = request.read_body()
+        report = self._presets_call(
+            lambda: presets.import_presets(self.data_dir, body.get("format"), body.get("data"))
+        )
+        return Response(200, report)
+
+
+_PRESET_STATUS = {
+    "duplicate_name": 409, "reserved_name": 409, "too_many_presets": 409, "not_found": 404,
+    "builtin": 403, "import_too_large": 413, "file_invalid": 409, "save_failed": 500,
+}  # fmt: skip
+_BODY_LIMITS["/api/presets/import"] = presets.MAX_IMPORT_BYTES + 64 * 1024

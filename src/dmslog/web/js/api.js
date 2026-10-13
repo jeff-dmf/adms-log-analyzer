@@ -167,5 +167,13 @@ export const api = {
   redaction: (signal) => request("GET", "/api/redaction", undefined, signal),
   saveRedaction: (profile, signal) => request("PUT", "/api/redaction", profile, signal),
   exportReport: (caseId, selection, options, signal) =>
-    request("POST", "/api/export", { case: caseId, selection, options }, signal),
+    request("POST", "/api/export", { case: caseId, selection, options }, signal),  // View presets (curated + the user's file): list for a case, create, update, delete, export, import.
+  presets: {
+    list: (caseId, signal) => request("GET", "/api/presets" + query({ case: caseId }), undefined, signal),
+    create: (preset) => request("POST", "/api/presets", preset),
+    update: (match, preset) => request("PUT", "/api/presets", { match, preset }),
+    remove: (name, family) => request("DELETE", "/api/presets" + query({ name, family })),
+    export: (format) => request("GET", "/api/presets/export" + query({ format })),
+    import: (format, data) => request("POST", "/api/presets/import", { format, data }),
+  },
 };

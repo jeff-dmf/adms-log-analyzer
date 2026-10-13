@@ -101,6 +101,15 @@ its index):
 - Linux: `${XDG_DATA_HOME:-~/.local/share}/dmslog`
 - Anywhere else: `--data-dir DIR` (for example an encrypted USB drive).
 
+## Filter presets
+
+The filter editor has a **Presets** panel: shortcuts for the adapters present in the open case
+(for example "Errors and exceptions", "Failed operations"). Nothing is applied on its own; picking a
+preset fills the filter tree. You can save the current tree as your own preset (for one adapter family
+or for all), rename or delete it, and export or import presets as JSON or TOML. Your presets live in
+`presets.toml` in the data directory and never contain paths or log data; the curated ones ship with
+the app.
+
 ## Local aliases
 
 The repository uses the neutral token `Custom` where a customer-specific adapter name used to be.
