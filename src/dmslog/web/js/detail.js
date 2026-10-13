@@ -105,6 +105,7 @@ export class Detail {
     const known = entry.tpl_id > 0;
     button.hidden = !known;
     button.textContent = known ? this.getTemplateCode(entry.tpl_id) || String(entry.tpl || entry.tpl_id) : "";
+    button.title = known && entry.tpl ? String(entry.tpl) : ""; // the code stays as technical detail
   }
 
   // Parsed fields as a name/value table; every value is placed as a text node.
