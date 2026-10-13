@@ -873,6 +873,9 @@ export const S = {
   cxError: "Could not export the view",
   cxBadLimit: "The row limit must be a whole number from 1 to {max}.",
   cxEventsAnyStatus: "Any",
+  // Resizable grid columns
+  columnResizeLabel: "Resize column {name}",
+  columnsResetWidths: "Reset column widths",
 };
 
 export function format(template, values) {

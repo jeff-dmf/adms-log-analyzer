@@ -1,0 +1,47 @@
+/* Resizable grid columns: the separator, the horizontal scroll and the truncation. Theme tokens only. */
+.grid-header {
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.grid-viewport {
+  overflow-x: auto;
+}
+
+.grid-header .grid-cell {
+  position: relative;
+}
+
+.grid-header .col-msg,
+.grid-row .col-msg {
+  flex: 1 0 auto;
+}
+
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  border-right: 2px solid var(--border);
+  box-sizing: border-box;
+}
+
+.col-resizer:hover,
+.col-resizer.dragging,
+.col-resizer:focus-visible {
+  border-right-color: var(--accent);
+  background: var(--selected);
+  outline: none;
+}
+
+.col-resizer:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.menu-action {
+  display: block;
+  margin-top: 6px;
+}
