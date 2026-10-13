@@ -21,6 +21,10 @@ export const COLUMNS = [
   { key: "msg", label: () => S.columnMessage },
 ];
 
+// Shown only for a case with more than one collection (main.js decides); never part of COLUMNS, so the
+// stored column choice and the Columns menu of the fixed columns do not depend on it.
+export const COLLECTION_COLUMN = { key: "collection", label: () => S.columnCollection };
+
 function cellClass(column) {
   return column.field === undefined ? "col-" + column.key : "col-field";
 }
@@ -55,6 +59,8 @@ export class Grid {
     this.window = new RowWindow();
     this.visibleColumns = COLUMNS.map((c) => c.key);
     this.sourceNames = new Map();
+    this.collectionColumn = false; // the Collection column (C<n>) is shown
+    this.collectionTags = new Map(); // collection group -> {tag, color}
     this.terms = [];
     this.caseId = null;
     this.filter = null;
@@ -135,9 +141,41 @@ export class Grid {
     return this.caseId === null ? Promise.resolve() : this.reload();
   }
 
-  // The visible columns in order: the fixed ones, then one per chosen parsed field.
+  // Shows or hides the Collection column; it needs a reload because the page request names it.
+  setCollectionColumn(on, reload = true) {
+    const next = Boolean(on);
+    if (next === this.collectionColumn) {
+      return Promise.resolve();
+    }
+    this.collectionColumn = next;
+    this.pool = [];
+    this.rowsLayer.textContent = "";
+    this.renderHeader();
+    return this.caseId === null || !reload ? Promise.resolve() : this.reload();
+  }
+
+  // tags: Map group id -> {tag: "C2", color: 2}
+  setCollectionTags(tags) {
+    this.collectionTags = tags;
+    this.render();
+  }
+
+  // The visible columns in order: the fixed ones (the Collection column right after Source), then one
+  // per chosen parsed field.
   columnDefs() {
-    const defs = COLUMNS.filter((c) => this.visibleColumns.includes(c.key));
+    const defs = [];
+    for (const column of COLUMNS) {
+      if (!this.visibleColumns.includes(column.key)) {
+        continue;
+      }
+      defs.push(column);
+      if (column.key === "source" && this.collectionColumn) {
+        defs.push(COLLECTION_COLUMN);
+      }
+    }
+    if (this.collectionColumn && !defs.includes(COLLECTION_COLUMN)) {
+      defs.splice(Math.max(0, defs.length - 1), 0, COLLECTION_COLUMN);
+    }
     for (const name of this.fieldColumns) {
       defs.push({ key: "fields." + name, label: () => name, field: name });
     }
@@ -145,7 +183,8 @@ export class Grid {
   }
 
   columnNames() {
-    return this.fieldColumns.map((n) => "fields." + n);
+    const names = this.fieldColumns.map((n) => "fields." + n);
+    return this.collectionColumn ? ["collection", ...names] : names;
   }
 
   selectedRow() {
@@ -539,6 +578,15 @@ export class Grid {
     if (cells.source) {
       const name = this.sourceNames.get(row.source_id);
       cells.source.textContent = name === undefined ? String(row.source_id) : baseName(name);
+    }
+    if (cells.collection) {
+      const info = this.collectionTags.get(row.collection);
+      cells.collection.textContent = info ? info.tag : row.collection === null || row.collection === undefined ? "" : String(row.collection);
+      if (info) {
+        cells.collection.dataset.tag = String(info.color);
+      } else {
+        delete cells.collection.dataset.tag;
+      }
     }
     if (cells.msg) {
       renderHighlighted(cells.msg, row.msg === null || row.msg === undefined ? "" : String(row.msg), this.terms);

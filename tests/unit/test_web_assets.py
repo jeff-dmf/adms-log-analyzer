@@ -82,6 +82,8 @@ EXPECTED_MODULES = {
     "case-files.js",
     "folder-browser-model.js",
     "folder-browser.js",
+    "collections-model.js",
+    "collections-panel.js",
     "alerts-model.js",
     "alerts-panel.js",
 }

@@ -45,9 +45,12 @@ python -m dmslog serve
   folder browser opens instead), or paste a full path and press Enter. Each file shows its name, folder,
   size and whether the name says Enterprise or Sensitive; **Remove** drops one, **Clear all** drops
   all. The files are opened one after the other; a file the case cannot take (for example a capture
-  from a different server) is marked in the list and does not stop the others. Today a case holds one
-  ERS (the Enterprise and Sensitive halves of the same capture go together). To add a path to the
-  selected case afterwards, use the path field under the case list and **Open**.
+  that was refused or failed is marked in the list and does not stop the others.
+- A case can hold several **collections**: an ERS capture (its Enterprise and Sensitive zips go
+  together, in any order), an installation `Log` folder or a loose file, each possibly from a
+  different server. To add more to the open case, use **Add ERS files to this case** (same Browse and
+  list as above) or the path field with **Open**. A copy of an ERS file already in the case from another
+  location is refused; opening the same file again just refreshes it.
 - From the command line (indexes without opening the viewer):
 
 ```bash
@@ -58,6 +61,21 @@ python3 dmslog.pyz serve        # then open the case
 
 Ingesting the same ERS again is safe and fast: unchanged files are not read again. The zip is read
 in place (never extracted) and log files are opened, read and closed on every cycle, never held open.
+
+## Collections (viewer)
+
+- The **Collections** panel (left column) lists the collections of the case as `C1`, `C2`, ...
+  with the kind (ERS capture, folder or file), server, GUID, record and source counts, first and last
+  time, and a note when one half of an ERS capture is still missing. **+** shows the files of a
+  collection.
+- Tick one or more collections to show only their records (**All collections** clears the choice). The
+  **Collection** column (`C<n>`) appears in the grid when the case has more than one collection; hide or
+  show it in the **Columns** menu. **Distinct values** can also group by Collection.
+- Each collection keeps its own server clock, so the order of records across collections is only
+  approximate; the viewer says so above the grid.
+- **Remove collection** asks for a second confirmation, then deletes that collection's records and
+  its bookmarks (the other collections stay). It is refused while the case is indexing or while the
+  viewer follows the collection's folder.
 
 ## Commands
 
