@@ -1,0 +1,306 @@
+/* Files of the new case and the built-in folder browser. Colors come from the app theme variables. */
+.case-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cf-title {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.cf-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cf-path-row {
+  display: flex;
+  gap: 6px;
+}
+
+.cf-path {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cf-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--info-bg);
+  color: var(--info-text);
+  border-radius: 4px;
+}
+
+.cf-notices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.cf-notice-duplicate,
+.cf-notice-info {
+  color: var(--info-text);
+}
+
+.cf-notice-error,
+.cf-notice-limit {
+  color: var(--error-text);
+}
+
+.cf-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.cf-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.cf-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cf-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cf-meta,
+.cf-dir {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cf-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-result {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.cf-result-refused,
+.cf-result-failed {
+  color: var(--error-text);
+}
+
+.cf-ok {
+  border-color: var(--accent);
+}
+
+.cf-create.primary,
+.fb-footer .primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.cf-create:disabled,
+.fb-footer .primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Folder browser */
+.fb-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.fb-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(760px, 94vw);
+  max-height: 88vh;
+  padding: 12px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.fb-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.fb-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.fb-path {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fb-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.fb-crumb {
+  min-height: 24px;
+  padding: 0 6px;
+}
+
+.fb-crumb[aria-current="location"] {
+  font-weight: 700;
+}
+
+.fb-body {
+  display: flex;
+  gap: 8px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.fb-places {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 150px;
+  overflow-y: auto;
+}
+
+.fb-place {
+  width: 100%;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.fb-list:focus-visible {
+  outline: 2px solid var(--focus);
+}
+
+.fb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  cursor: default;
+}
+
+.fb-dir {
+  font-weight: 600;
+}
+
+.fb-row.selected {
+  background: var(--selected);
+}
+
+.fb-row.active {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.fb-row.disabled {
+  opacity: 0.55;
+}
+
+.fb-icon {
+  width: 16px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.fb-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fb-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fb-status {
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 16px;
+}
+
+.fb-error {
+  color: var(--error-text);
+}
+
+.fb-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.fb-count {
+  margin-right: auto;
+}
