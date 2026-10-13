@@ -125,6 +125,12 @@ def compile_conditions(rules: Any, *, rowwise: bool) -> list[CompiledFilter]:
         if not isinstance(tree, dict) or not tree:
             raise HighlightError("bad_rules", limit=MAX_RULES)
         try:
+            size = len(json.dumps(tree, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+        except (TypeError, ValueError, RecursionError):
+            raise HighlightError("bad_rules", limit=MAX_RULES) from None
+        if size > MAX_JSON_BYTES:
+            raise FilterError("too_large", f"$.rules[{k}]", limit=MAX_JSON_BYTES)
+        try:
             compiled.append(compile_filter(tree, rowwise=rowwise))
         except FilterError as exc:
             raise FilterError(exc.code, f"$.rules[{k}]{exc.path[1:]}", **exc.params) from None
@@ -323,8 +329,16 @@ def highlight_key(
     hue = clean_color(DEFAULT_COLOR if color is None else color)
     name = clean_name(f"{key_type} = {value}"[:MAX_NAME_CHARS])
     with _Write(conn) as w:
-        found = w.execute("SELECT id FROM highlight_rule WHERE cond = ? ORDER BY pos LIMIT 1", (text,))
-        row = found.fetchone()
+        wanted = json.loads(text)
+        row = None
+        for rid, raw in w.execute("SELECT id, cond FROM highlight_rule ORDER BY pos"):
+            try:
+                same = json.loads(raw) == wanted  # trees compared, not text: property order is irrelevant
+            except ValueError:
+                same = False
+            if same:
+                row = (rid,)
+                break
         if row is not None:
             w.execute("UPDATE highlight_rule SET color = ?, enabled = 1 WHERE id = ?", (hue, row[0]))
             rule_id, created = row[0], False

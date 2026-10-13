@@ -81,12 +81,15 @@ const { S } = await import("../../src/dmslog/web/js/strings.js");
 const tick = async () => { for (let i = 0; i < 10; i += 1) { await Promise.resolve(); } };
 const HOSTILE = "<img src=x onerror=alert(1)>";
 
-function setup() {
+function setup(extraRules = 0) {
   const calls = { create: [], key: [], next: [], update: [], order: [], remove: [], reveal: [], messages: [] };
   let rules = [
     { id: 1, pos: 0, name: HOSTILE, color: "red", enabled: true, cond: { text: { substr: HOSTILE } } },
     { id: 2, pos: 1, name: "gid", color: "blue", enabled: false, cond: { key: { type: "gid", eq: "7" } } },
   ];
+  for (let k = 0; k < extraRules; k += 1) {
+    rules.push({ id: 100 + k, pos: 2 + k, name: "r" + k, color: "red", enabled: true, cond: { sev: 1 } });
+  }
   const api = {
     highlights: {
       list: async () => ({ rules: rules.slice() }),
@@ -205,6 +208,20 @@ test("detail offers Highlight this key per key and tells which rule colors the r
   assert.deepEqual(calls.create.at(-1), { name: "TST-001", color: "yellow", cond: { tpl: [1] }, enabled: true });
   ui.showEntry(null);
   assert.equal(section.hidden, true);
+});
+
+test("Highlight this key at the rule limit still asks the server, and shows the limit only when it answers so", async () => {
+  const { calls, store, ui, detailParent } = setup(18); // 20 rules: the limit
+  await store.load();
+  assert.equal(store.rules().length, 20);
+  const section = detailParent.children[1];
+  ui.showEntry({ id: 5, tpl_id: 0, keys: [{ key_type: "gid", value: "7" }] });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  await tick();
+  section.byClass("hl-chip")[0].click(); // the key already has a rule: the server recolors it
+  await tick();
+  assert.deepEqual(calls.key[0], ["gid", "7", "yellow"]);
+  assert.equal(calls.messages.some(([text]) => text === S.hlLimit.replace("{max}", "20")), false);
 });
 
 test("footer documents ] and [, and the keys walk the highlighted records", async () => {

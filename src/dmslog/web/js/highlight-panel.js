@@ -306,13 +306,11 @@ export function mountHighlights(options) {
       seen.add(id);
       const chip = button("hl-chip", format(S.hlKeyChip, { type: key.key_type, value: key.value }));
       chip.addEventListener("click", () => {
-        if (full()) {
-          showMessage(format(S.hlLimit, { max: MAX_RULES }), true);
-          return;
-        }
         store.highlightKey(key.key_type, key.value).then(
           () => showMessage(format(S.hlKeyDone, { type: key.key_type, value: key.value }), false),
-          (error) => showMessage(errorText(error), true),
+          (error) => showMessage(
+            error && error.code === "too_many_rules" ? format(S.hlLimit, { max: MAX_RULES }) : errorText(error), true,
+          ),
         );
       });
       detail.appendChild(chip);

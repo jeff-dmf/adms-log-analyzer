@@ -148,3 +148,15 @@ def test_mark_limits_over_http(client, case):  # noqa: F811
     )
     assert status == 200 and body == {"marks": {}}
     assert client.post("/api/entries/count", {"case": case, "filter": None})[1]["count"] > 0
+
+
+def test_mark_and_next_reject_an_oversized_condition_with_its_index(client, case):  # noqa: F811
+    huge = {"text": {"fts": "x" * 70_000}}
+    status, body, _ = client.post(
+        "/api/entries/highlight", {"case": case, "rules": [{"sev": 1}, huge], "ids": [1]}
+    )
+    assert status == 400 and body["error"] == "too_large" and body["path"] == "$.rules[1]"
+    status, body, _ = client.post(
+        "/api/entries/highlight/next", {"case": case, "rules": [huge], "dir": "fwd"}
+    )
+    assert status == 400 and body["error"] == "too_large" and body["path"] == "$.rules[0]"

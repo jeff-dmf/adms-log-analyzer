@@ -115,6 +115,20 @@ def test_highlight_key_creates_then_recolors_the_same_rule(rw):
         assert err.value.code == "bad_key"
 
 
+def test_highlight_key_matches_the_condition_whatever_the_property_order(rw):
+    original = H.create_rule(rw, "mine", "red", {"key": {"eq": "g-9", "type": "gid"}})
+    rule, created = H.highlight_key(rw, "gid", "g-9", "blue")
+    assert not created and rule["id"] == original["id"] and rule["color"] == "blue"
+    assert len(H.list_rules(rw)) == 1
+
+
+def test_compile_conditions_applies_the_size_limit_with_the_index(rw):
+    huge = {"text": {"fts": "x" * (H.MAX_JSON_BYTES + 1)}}
+    with pytest.raises(H.FilterError) as err:
+        H.compile_conditions([{"sev": 1}, huge], rowwise=True)
+    assert err.value.code == "too_large" and err.value.path == "$.rules[1]"
+
+
 def test_rules_store_only_what_was_typed(rw, case_path):
     _, rows = case_path
     H.highlight_key(rw, "gid", "g-9")
