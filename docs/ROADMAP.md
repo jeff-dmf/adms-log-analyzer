@@ -24,7 +24,8 @@ Modelos: **haiku** = varredura mecânica barata; **sonnet** = implementação ro
 | M5 | Correlação normal↔sensitive, callbacks, retries, busca por chave entre as fontes do caso | M4 |
 | M6 | **Payloads** (request/response): descoberta de formato (6.1 concluída), templates Info/Verbose, extração, visualização XML, ligação ao evento | M5 (amostras Verbose recebidas em 2026-10-08) |
 | M7 | Incremental ao vivo (pasta de instalação), bookmarks, exportação `.txt` anonimizada para chamado | M5 (payload na exportação: M6) |
-| M8 | **desenvolvimento concluído (2026-10-12)**; faltam a tag `v0.1.0` (publicada como **pré-release** pelo workflow `release.yml`, que só deixa de ser pré-release quando o app estiver 100% pronto), os UAT e o teste manual em um PC Windows (`docs/CHECKLIST-WINDOWS.md`), ambos do Jefferson e só depois da pré-release. Feito: 8.1 medição do pior caso (`docs/notas/medicao-8-1.md`; decisões do Jefferson registradas), 8.2 revisão de segurança e privacidade (`docs/notas/revisao-seguranca-8-2.md`; 0 críticos e 0 altos; achados P1, S1, S2, S3 e S5 corrigidos; S4 aceito), 8.3 e 8.4 (README, README.txt do portátil e doc de família nova), 8.5 workflow de release (ensaio por `workflow_dispatch` na `main` passou), U18 (export íntegro por padrão, anonimização opção explícita), #65 (WFM-030 por GID), #66 (callback do Osr, heurística de confiança 0), #67 (chaves de payload em `entry_key`, esquema v5) e business_error do Crm (#84) | PRs #75, #77, #78, #80, #81, #82, #84, #85, #88, #89, #91, #92, #94, #95 |
+| M8 | Endurecimento: desempenho no pior caso (8.1), revisão de segurança e privacidade (8.2), docs (8.3, 8.4) e workflow de release (8.5). **Desenvolvimento concluído (2026-10-12)**; o teste manual no Windows e a tag `v0.1.0` ficam **depois do M9** (decisão de 2026-10-12, U19) | M7 |
+| M9 | **Features do estudo de referência (U19) e ajustes de UI de uso (U20):** destaques e regras de cor, valores distintos e agrupamento, presets por família, copiar/exportar a visão, visões encadeadas, agregação declarativa, comparação por template, extrator ad hoc, abertura parcial, preferências versionadas e os itens P2 (painéis, duplicados e sequências, alertas locais, detecção de formato, offset entre coletas). A **0.1.0 só sai com o M9 concluído** | M8 |
 | Pós-1.0 | P1: templates/eventos para os demais logs do ERS. P2: múltiplos ERS por caso, correlação entre máquinas, ajuste de relógio | M8 |
 
 M6 e M7 podem andar em paralelo.
@@ -247,6 +248,45 @@ Aceite:
 - U18 (issue #61): exportação (CLI, API e UI) sai com o texto original por padrão, sem legenda de redação e sem ler o perfil; a anonimização só atua com a opção explícita (`--anonymize`, `options.anonymize: true`, seletor "On"); `--redaction-mode` ou perfil sem a opção é erro; com a opção, strict continua o padrão e mantém a rede padrão-nega mesmo com todas as categorias desligadas (ARQUITETURA 1a e 10.2).
 - Issue #67 (chaves de payload em `entry_key`, deixada fora do M6; entra na 0.1.0 por decisão de 2026-10-11): **feito**. `msgid`, `mrid`, `vehicle`, `gid` e `incident_gid` lidos do XML na ingestão (`entry_key.origin = 1`, esquema v5), fora da derivação; casos existentes ganham as chaves sem reindexar. ERS Verbose: +30.794 linhas (+2,7%), banco +0,27%, tempo igual dentro do ruído (ARQUITETURA 6.6, "Chaves do payload"; `docs/formato/payloads.md`, 6.1).
 - `CustomAdapterChangeIncidentDevice`: base de conhecimento incorporada e análise específica com templates e eventos validada (2.11, 3.10 e 4.8); suporte apenas genérico não atende ao aceite da 1.0.
+
+## M9: features do estudo de referência (0.1.0 só depois deste marco)
+
+Origem: estudo de funcionalidades de visualizadores de log (conceitos de uso; a nota de análise é local e não é versionada: repo público). Decisão do Jefferson em 2026-10-12 (U19): **a 0.1.0 só sai depois de implantar tudo o que o estudo encontrou**. Todas as features seguem as regras do projeto: stdlib, web local sem build, UI em inglês com textos centralizados, conteúdo de log só por `textContent`, filtros e consultas sempre parametrizados, nada de rede, desempenho dentro das metas do M8 e implementação própria. O que **não** entra (decidido): atualização/licença/telemetria pela internet, SQL livre do usuário, apagar pastas de trabalho, tudo em memória.
+
+Ordem e paralelismo (Opus uma tarefa por vez; Sonnet em paralelo com arquivos disjuntos; um PR por vez na revisão):
+
+- **Onda 1 (P0):** 9.2 abre (o endpoint `distinct` é base de 9.1, 9.5, 9.6 e 9.8); depois 9.1 e 9.3; 9.4 é independente e roda em paralelo. A frente de **UI de uso (9.16 a 9.19)** anda em paralelo: 9.16 antes de 9.17, 9.18 antes de 9.19.
+- **Onda 2 (P1):** 9.5 antes de 9.7; 9.6 e 9.8 dependem de 9.2; 9.9 depende só do M8; 9.10 depende de 9.1 e 9.3.
+- **Onda 3 (P2):** 9.11 depende de 9.6; 9.13 depende de 9.3; 9.12 e 9.14 são independentes; 9.15 (offset entre coletas) depende da decisão sobre vários ERS por caso (U5/P2) e fica `aguarda-decisao`, fora da execução enquanto isso.
+
+| # | Tarefa | Modelo | Depende de |
+|---|---|---|---|
+| 9.1 | **Destaques e regras de cor do usuário** (P0): regras por caso, ordenadas, com a mesma linguagem da árvore de filtros, paleta fixa com contraste nos dois temas, ação "highlight this key" (GID/MessageID no normal e no sensitive) e navegação `n`/`N` por keyset no servidor | opus (desenho curto) + sonnet | 9.2 |
+| 9.2 | **Valores distintos e agrupamento** (P0): endpoint `distinct` (campo, chave, template, TID, fonte) com top N, outros, total e drill-down que vira filtro; "agrupar por template" no grid | opus (SQL e política de contagem) + sonnet | M7 |
+| 9.3 | **Presets de filtro por família** (P0): arquivo do usuário `presets.toml` versionado, presets curados por família, import/export, oferecidos ao abrir o caso | sonnet | M7 |
+| 9.4 | **Copiar e exportar a visão** (P0): valores de uma coluna/chave, linhas originais, CSV da visão e CSV de eventos, com limites e aviso | sonnet | M7 |
+| 9.5 | **Visões encadeadas** (P1): pilha de visões (filho filtra o pai), migalhas, voltar/avançar, "mostrar no pai/na raiz" | sonnet | 9.2 |
+| 9.6 | **Agregação declarativa segura** (P1): construtor em JSON (filtro, group_by, medidas count/min/max/avg/p50/p90/p99/distinct), compilado para SQL parametrizado com colunas permitidas, timeout e limite; pack de conhecimento como tabela de consulta; saída em tabela, gráfico e CSV | opus | 9.2 |
+| 9.7 | **Comparação de visões por template** (P1): alinhamento (LCS/Myers) sobre IDs de template, modos janela, operação e processo, limite de tamanho | opus | 9.5 |
+| 9.8 | **Extrator ad hoc por regex** (P1): colunas temporárias sob o filtro, validador de regex por orçamento de passos, "promote to template" | opus | 9.2 |
+| 9.9 | **Abertura parcial por janela de tempo e por fonte** (P1): indexar só o escolhido primeiro e o resto em segundo plano; reabrir continua rápido | opus | M8 |
+| 9.10 | **Preferências versionadas** (P1): pacote de preferências (presets, regras, painéis) com `schema`, migração, import/export com relatório, escrita atômica | sonnet | 9.1, 9.3 |
+| 9.11 | **Painéis montáveis pelo usuário** (P2): lista de consultas de 9.6 com tipo de gráfico, JSON versionado, atualização pelo SSE do `watch` | sonnet | 9.6 |
+| 9.12 | **Duplicados e sequências esperadas** (P2): marcar repetidos por (template, campos-chave) em janela; passos do ciclo de vida que faltaram | opus | M4 |
+| 9.13 | **Alertas locais no `watch`** (P2): banner e notificação opcional do navegador quando um filtro/preset casa registros novos; sem SMTP | sonnet | 9.3 |
+| 9.14 | **Detecção automática de formato** para logs fora do escopo (P2, liga ao P1 do pós-1.0): envelope genérico parametrizado em `families.toml` | opus | M8 |
+| 9.15 | **Offset de relógio entre coletas** (P2, liga ao P2 do pós-1.0): offset por coleção a partir de dois registros correlatos; **depende da decisão sobre vários ERS por caso** | opus | decisão U5/P2 |
+| 9.16 | **Seletor de arquivos nativo e navegador de pastas embutido** (UI de uso): botão ao lado do caminho dos ZIPs que abre o seletor do sistema (Windows e Linux) via servidor local, e navegador de pastas embutido (lista diretórios e `.zip` do usuário local, seleção múltipla) quando não houver diálogo nativo; caminhos sempre validados | opus (desenho e segurança) + sonnet | M7 |
+| 9.17 | **Criar caso com um ou vários ZIPs, de forma clara**: texto "1 ou mais ZIPs", seleção múltipla, lista escolhida com nome, tamanho e tipo, remover itens, criar só com pelo menos 1, erros por arquivo | sonnet | 9.16 |
+| 9.18 | **Colunas do grid redimensionáveis**: arrastar a borda do cabeçalho, duplo clique ajusta ao conteúdo, largura mínima e máxima, largura lembrada por usuário, sem quebrar a virtualização | sonnet | M7 |
+| 9.19 | **Coluna Source com o nome do arquivo e filtro de Source na lateral**: o template deixa de ser coluna padrão (fica opcional no seletor de colunas, com o título legível no lugar do código); filtro dinâmico por substring sem diferenciar maiúsculas e minúsculas, com contagem por fonte | sonnet | 9.18 |
+
+Aceite do M9:
+- Cada tarefa tem testes unitários (e de propriedade onde houver algoritmo), UAT novo ou atualizado em `uat`, documentação em `docs/ARQUITETURA.md` e revisão cruzada pelo nível T0/T1/T2 do `docs/REVISAO-CRUZADA.md`.
+- Nenhuma consulta nova monta SQL com texto do usuário; nenhuma tela nova usa `innerHTML` com conteúdo de log; nenhuma conexão de rede nova.
+- As metas do M8 (desempenho no pior caso e responsividade) continuam valendo com as features ligadas; revisão de segurança e privacidade (8.2) refeita sobre o que o M9 acrescentou.
+- UI de uso (9.16 a 9.19): em Windows e Linux o botão abre o seletor do sistema (ou o navegador de pastas embutido quando não houver diálogo), a seleção múltipla de ZIPs aparece como lista clara, as colunas do grid se redimensionam e a largura persiste, e a coluna Source mostra o nome do arquivo com filtro lateral que não diferencia maiúsculas e minúsculas.
+- Só então: teste manual no Windows, UAT do Jefferson e a tag `v0.1.0` (pré-release).
 
 ## Pós-1.0
 
