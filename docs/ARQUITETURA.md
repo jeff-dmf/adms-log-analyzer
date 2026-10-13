@@ -1046,6 +1046,21 @@ Dentro da redação pedida, o padrão é o modo **strict** (`--redaction-mode st
 
 **Testes.** Perfil `dmslog-redact` do hypothesis (determinístico, sem banco de exemplos, sem deadline) para comportar-se igual no CI e local; exploração local com `DMSLOG_HYPOTHESIS_SEED=<n>` e `DMSLOG_HYPOTHESIS_SCALE=<k>`. Os testes de tempo verificam sobretudo a linearidade (razão entre tamanhos, melhor de 3 execuções) e mantêm apenas um teto absoluto generoso (15 s, escalado pela velocidade da máquina) para pegar explosões.
 
+### 10.3 Copiar e exportar a visão (9.4, issue #101)
+
+`POST /api/export/view` (corpo JSON, `case` obrigatório) responde um **arquivo em streaming** (`Transfer-Encoding: chunked`, `Cache-Control: no-store`), gerado por `report/viewexport.py` sobre o mesmo caminho de paginação por keyset do grid (`query.page`, 500 por página, nunca OFFSET): a memória fica constante, qualquer que seja o número de linhas. Os cabeçalhos `X-Dmslog-Rows` (linhas enviadas) e `X-Dmslog-Truncated` (`1` quando o `max_rows` cortou a visão) são calculados **antes** do envio por uma contagem limitada a `max_rows + 1`; o cliente avisa na UI quando truncou. Um erro durante o envio encerra a conexão sem o chunk final (o `fetch` falha; nunca fica um arquivo incompleto com cara de completo).
+
+| `kind` | Campos | Saída |
+|---|---|---|
+| `values` | `column` (`ts`, `pid`, `tid`, `level`, `template`, `source`, `msg` ou `fields.<nome>`) **ou** `key` (tipo de chave de `entry_key`), `separator` (`newline`\|`comma`), `quote` (`none`\|`double`\|`single`, aspas internas dobradas), `unique` (deduplica em arquivo SQLite temporário em disco, apagado ao fim, com memória constante) | texto simples; vazios saem |
+| `lines` | , | cabeçalho (`ts [PID][TID] NÍVEL - `, como no `.txt` da 10.1), primeira linha e continuação; um registro (mensagem + continuação, **um só orçamento**) é cortado em 200 000 caracteres, com aviso visível que informa o total omitido |
+| `view_csv` | `columns` (as colunas visíveis + `fields.<nome>`, até 24; o nome precisa existir no catálogo de templates, senão `unknown_column`/400 antes do envio) | CSV; primeira coluna sempre `Record` (id) |
+| `events_csv` | `events` (`kind` padrão `operation`, `name`, `status`, `stream`, `source`, `q`, `from`, `to`: os mesmos parâmetros de `GET /api/events`; o `filter` comum também vale: só entram eventos cujo registro inicial satisfaz a árvore, e árvore inválida é 400) | CSV: id, operação, tipo, status, duração (ms), início, fim, chave, chave da operação, TID, família, processo, fonte, registros |
+
+Comuns: `filter` (a árvore de filtros do grid, parametrizada), `max_rows` (padrão 100 000, máximo 1 000 000), `bom`. CSV: UTF-8, CRLF, vírgula, aspas dobradas (RFC 4180), BOM opcional para o Excel do Windows. **Injeção de fórmula:** célula de texto que começa com `=`, `+`, `-`, `@`, TAB ou CR ganha um apóstrofo na frente (isso também altera texto legítimo como `-5` ou `+55 11...`; números gravados pelo módulo, como ids e durações, não são texto e ficam intactos). Listas e linhas originais são texto para colar em outra ferramenta e **não** levam essa proteção. O texto sai original (U18). Limites conhecidos: a mensagem na lista de valores e no CSV da visão é o preview do grid (até 4096 caracteres); o cabeçalho das linhas é reconstruído do envelope (o texto cru do envelope não é guardado).
+
+No viewer, o menu **Copy as** (`web/js/copy-export.js` + `copy-export-model.js`) escolhe o tipo, copia (listas, linhas e o registro selecionado, este só no cliente) ou baixa (Blob) o arquivo; a seleção é a visão atual (o filtro composto), sem precisar selecionar linhas.
+
 ## 11. Viewer: funcionalidades × LogViewPlus, por marco
 
 | Funcionalidade | Conceito LogViewPlus | Marco |
@@ -1173,4 +1188,5 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-12 | Python embeddable do portátil atualizado de 3.13.7 para **3.13.16** (3.13.16, 2026-09-30, corrige CVEs de `zipfile`, `tarfile` e `urllib`); SHA-256 conferido contra a página oficial da release (`97dae527…`); o FTS5 e o `trigram` seguem validados pelo smoke do job `portable-windows` do CI. |
 | 2026-10-12 | U19: a 0.1.0 só sai depois do novo marco **M9** (15 tarefas 9.1 a 9.15, ver ROADMAP); a pré-release `v0.1.0` não foi criada; M8 concluído em desenvolvimento. |
 | 2026-10-12 | U20: quatro ajustes de UI de uso entram no M9 (tarefas 9.16 a 9.19: seletor de arquivos nativo com navegador de pastas embutido, criação de caso com seleção múltipla, colunas redimensionáveis, coluna Source e filtro lateral); U19 reestruturada nas quatro colunas. |
+| 2026-10-12 | Tarefa 9.4 (#101, copiar e exportar a visão): nova rota `POST /api/export/view` (arquivo em streaming chunked; `Download` em `server/api.py`, `_stream_download` em `server/app.py`), módulo `report/viewexport.py` (listas, linhas originais, CSV da visão e de eventos) e menu "Copy as" no viewer; seção 10.3. |
 | 2026-10-13 | Tarefa 9.3 (issue #100): presets de filtro por família, curados (`store/presets_builtin.toml`) e do usuário (`<dados>/presets.toml`, `schema = 1`), rotas `/api/presets*` e painel Presets no editor de filtros (seção 10) | Sonnet |

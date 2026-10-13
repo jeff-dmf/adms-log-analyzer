@@ -66,6 +66,8 @@ EXPECTED_MODULES = {
     "presets-model.js",
     "follow-tail-model.js",
     "follow-tail.js",
+    "copy-export-model.js",
+    "copy-export.js",
 }
 
 FORBIDDEN_JS = [

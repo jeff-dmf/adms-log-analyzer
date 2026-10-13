@@ -42,7 +42,7 @@ from ..knowledge.installation import read_installation
 from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
 from ..report import export as report_export
-from ..report import redact
+from ..report import redact, viewexport
 from ..store import bookmarks, db, events, keys, payloads, presets, query, views
 from ..store import config as config_store
 from ..store.filters import QueryInputError, compile_filter
@@ -100,6 +100,15 @@ class Stream:
     """Marker for an SSE response; the HTTP layer drives ``sse.stream`` with this hub."""
 
     hub: ProgressHub
+
+
+@dataclass(slots=True)
+class Download:
+    """A streamed file answer: the HTTP layer sends ``chunks`` with chunked transfer encoding."""
+
+    content_type: str
+    chunks: Iterator[bytes]
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -793,7 +802,7 @@ class Api:
         self._knowledge_lock = threading.Lock()
         self._pack_knowledge: Knowledge | None = None
         self._case_knowledge: dict[str, tuple[Any, Knowledge]] = {}
-        self._routes: list[tuple[str, re.Pattern[str], Callable[[Request], Response | Stream]]] = [
+        self._routes: list[tuple[str, re.Pattern[str], Callable[[Request], Response | Stream | Download]]] = [
             ("GET", re.compile(r"/api/cases\Z"), self.list_cases),
             ("POST", re.compile(r"/api/cases\Z"), self.create_case),
             ("DELETE", re.compile(r"/api/cases/(?P<case>[^/]+)\Z"), self.delete_case),
@@ -839,6 +848,7 @@ class Api:
             ("GET", re.compile(r"/api/redaction\Z"), self.get_redaction),
             ("PUT", re.compile(r"/api/redaction\Z"), self.put_redaction),
             ("POST", re.compile(r"/api/export\Z"), self.export_report),
+            ("POST", re.compile(r"/api/export/view\Z"), self.export_view),
         ]
         self._routes += [
             ("GET", re.compile(r"/api/presets\Z"), self.list_presets),
@@ -855,7 +865,7 @@ class Api:
     # -- dispatch
 
     def dispatch(self, method: str, path: str, query_params: dict[str, str],
-                 read_body: Callable[[], dict[str, Any]]) -> Response | Stream:  # fmt: skip
+                 read_body: Callable[[], dict[str, Any]]) -> Response | Stream | Download:  # fmt: skip
         try:
             allowed = False
             for route_method, pattern, handler in self._routes:
@@ -1699,6 +1709,56 @@ class Api:
         conn = db.connect(self.store.db_path(cid))
         with closing(conn):
             yield conn
+
+    # -- copy / export of the view (report/viewexport.py): streamed text, never held in memory
+
+    _VIEW_EVENT_PARAMS = ("kind", "name", "status", "stream", "source", "q", "from", "to")
+
+    def export_view(self, request: Request) -> Download:
+        """Value list, original lines or CSV of the view; ``X-Dmslog-Rows`` and ``X-Dmslog-Truncated``
+        tell how many rows are sent and whether ``max_rows`` cut the view."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        try:
+            req = viewexport.parse_request(body)
+        except viewexport.ViewExportError as exc:
+            raise ApiError(400, exc.code, exc.message) from None
+        evflt = None
+        if req.kind == "events_csv":
+            params: dict[str, str] = {}
+            for name in self._VIEW_EVENT_PARAMS:
+                value = req.events.get(name)
+                if isinstance(value, list):
+                    value = ",".join(str(v) for v in value)
+                if value is not None and value != "":
+                    params[name] = str(value)
+            evflt = _event_filter(Request("GET", request.path, params, request.read_body), ("operation",))
+            _check_scan_filter(req.filter)  # an invalid tree is a bad request here too
+            if req.filter:
+                cf = compile_filter(req.filter)
+                evflt = replace(evflt, entry_sql=cf.sql, entry_params=cf.params)
+        else:
+            _check_scan_filter(req.filter)
+        with self.store.reader(cid) as conn:
+            if evflt is not None:
+                total = viewexport.event_total(conn, evflt, req.max_rows)
+            else:
+                total = viewexport.entry_total(conn, req.filter, req.max_rows)
+
+        def chunks() -> Iterator[bytes]:
+            with self.store.reader(cid) as conn:
+                for text in viewexport.stream_view(conn, req, evflt):
+                    yield text.encode("utf-8", "replace")
+
+        csv = req.kind.endswith("_csv")
+        return Download(
+            "text/csv; charset=utf-8" if csv else "text/plain; charset=utf-8",
+            chunks(),
+            {
+                "X-Dmslog-Rows": str(min(total, req.max_rows)),
+                "X-Dmslog-Truncated": "1" if total > req.max_rows else "0",
+            },
+        )
 
     # -- view presets (per user, <data dir>/presets.toml, plus the curated ones)
 
