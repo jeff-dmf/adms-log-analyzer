@@ -54,6 +54,58 @@ async function request(method, url, body, signal) {
   return data;
 }
 
+// POST that answers with a file (streamed by the server): `as` is "text" or "blob". Resolves to
+// { data, rows, truncated } from the X-Dmslog-* headers; errors are the usual JSON ones.
+async function requestFile(url, body, as, signal) {
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      throw err;
+    }
+    throw new ApiError(0, "network", S.errorNetwork);
+  }
+  if (response.status === 403) {
+    if (forbiddenHandler) {
+      forbiddenHandler();
+    }
+    throw new ApiError(403, "forbidden", S.errorForbidden);
+  }
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (err) {
+      data = null;
+    }
+    const code = data && data.error ? String(data.error) : "http_" + response.status;
+    const message = data && data.message ? String(data.message) : S.errorGeneric + " (" + response.status + ")";
+    throw new ApiError(response.status, code, message);
+  }
+  let data;
+  try {
+    data = as === "blob" ? await response.blob() : await response.text();
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      throw err;
+    }
+    throw new ApiError(0, "network", S.errorNetwork); // the stream broke: never a half file
+  }
+  const rows = Number(response.headers.get("X-Dmslog-Rows"));
+  return {
+    data,
+    rows: Number.isFinite(rows) ? rows : 0,
+    truncated: response.headers.get("X-Dmslog-Truncated") === "1",
+  };
+}
+
 function query(params) {
   const parts = [];
   for (const [key, value] of Object.entries(params)) {
@@ -171,4 +223,7 @@ export const api = {
   saveRedaction: (profile, signal) => request("PUT", "/api/redaction", profile, signal),
   exportReport: (caseId, selection, options, signal) =>
     request("POST", "/api/export", { case: caseId, selection, options }, signal),
+  // Copy as / export of the view (lists, original lines, CSV); see report/viewexport.py.
+  exportView: (caseId, body, as, signal) =>
+    requestFile("/api/export/view", { ...body, case: caseId }, as, signal),
 };

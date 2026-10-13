@@ -361,6 +361,31 @@ WATCH_STOPPED = "Stopped watching."
 SERVE_WATCHING = "Following {path} into case {case} every {interval:g} s"
 API_WATCH_DONE = "Followed {records} new records"
 
+# Copy / export of the view (report/viewexport.py, POST /api/export/view)
+VIEWEXPORT_BAD_KIND = "kind must be one of: {kinds}"
+VIEWEXPORT_BAD_FIELD = "Invalid or missing field: {field}"
+VIEWEXPORT_BAD_LIMIT = "max_rows must be an integer from 1 to {limit}"
+VIEWEXPORT_BAD_COLUMN = "Unknown column: {name}"
+VIEWEXPORT_TOO_MANY_COLUMNS = "At most {limit} columns can be exported"
+VIEWEXPORT_BAD_CHOICE = "{field} must be one of: {choices}"
+VIEWEXPORT_BAD_KEY_TYPE = "Invalid key type"
+VIEWEXPORT_VALUES_NEED_SOURCE = "values needs exactly one of 'column' or 'key'"
+VIEWEXPORT_BAD_EVENT_FILTER = "events must be an object with the event list parameters"
+VIEWEXPORT_CUT_NOTICE = "[... {count} more characters of this record are not exported]"
+VIEWEXPORT_CSV_HEADERS = {
+    "id": "Record",
+    "ts": "Time",
+    "pid": "PID",
+    "tid": "TID",
+    "level": "Level",
+    "template": "Template",
+    "source": "Source",
+    "msg": "Message",
+}
+VIEWEXPORT_EVENT_HEADERS = (
+    "Event", "Operation", "Kind", "Status", "Duration (ms)", "Start", "End", "Key", "Operation key",
+    "TID", "Family", "Process", "Source", "Records",
+)  # fmt: skip
 # Distinct values of a field (store/distinct.py, POST /api/entries/distinct).
 DISTINCT_ERRORS = {
     "bad_field": (
