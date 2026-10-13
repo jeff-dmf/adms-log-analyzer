@@ -920,6 +920,14 @@ export const S = {
   prImportBadFile: "Choose a .json or .toml file.",
   prImported: "Import finished: {added} added, {updated} updated, {ignored} ignored.",
   prImportIgnoredItem: "{name}: {message}",
+
+  // Source filter (left panel)
+  sourceFilterLabel: "Filter sources by file name",
+  sourceFilterPlaceholder: "Filter sources...",
+  sourceFilterClear: "Clear the source filter",
+  sourceFilterAll: "{total} sources",
+  sourceFilterCount: "{visible} of {total} sources",
+  sourceFilterNone: "No source matches the filter.",
 };
 
 export function format(template, values) {
