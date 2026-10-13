@@ -185,3 +185,54 @@ test("flow: one request at a time, stale answers dropped, exact re-run, CSV of t
   flow.cancel();
   assert.equal(flow.state.request, null);
 });
+
+test("chart: series are told apart by group values, not by their label", () => {
+  const time = chartData({
+    columns: [{ id: "source", role: "group" }, { id: "bucket:1m", role: "group" }, { id: "count", role: "measure" }],
+    rows: [
+      { values: [1, 60_000, 10], labels: ["a.log", null] },
+      { values: [2, 60_000, 20], labels: ["a.log", null] },
+    ],
+  });
+  assert.equal(time.series.length, 2);
+  assert.deepEqual(time.series.map((s) => [s.label, s.values]), [["a.log", [20]], ["a.log", [10]]]);
+});
+
+test("flow: a view or case change drops the pending answer; CSV and drill stay bound to the result's case", async () => {
+  const pending = [];
+  const csvCalls = [];
+  const api = {
+    aggregate: (caseId, body, signal) => {
+      const d = deferred();
+      pending.push({ caseId, d });
+      signal.addEventListener("abort", () => d.reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+      return d.promise;
+    },
+    aggregateCsv: async (caseId, body) => { csvCalls.push([caseId, body]); return { data: "csv" }; },
+  };
+  let caseId = "A";
+  const flow = createAggregateFlow({ api, getCase: () => caseId, onState: () => {} });
+  const running = flow.run({ group_by: ["tpl"] });
+  caseId = "B";
+  flow.markStale(); // A -> B while A's request is pending
+  pending[0].d.resolve({ columns: [], rows: [], groups: 0, exact: true });
+  await running;
+  assert.equal(flow.state.status, "idle");
+  assert.equal(flow.state.data, null);
+  assert.equal(flow.state.caseId, null);
+  await assert.rejects(flow.csv(), /Run the aggregation first/);
+  // a ready result of A, then the case becomes B: the result is cleared
+  caseId = "A";
+  const again = flow.run({ group_by: ["sev"] });
+  pending[1].d.resolve({ columns: [], rows: [], groups: 0, exact: true });
+  await again;
+  assert.equal(flow.state.caseId, "A");
+  flow.markStale(); // same case, other view: kept, marked stale, CSV still of case A
+  assert.equal(flow.state.stale, true);
+  caseId = "B";
+  assert.equal(await flow.csv(), "csv");
+  assert.deepEqual(csvCalls.at(-1), ["A", { group_by: ["sev"] }]);
+  flow.markStale();
+  assert.equal(flow.state.status, "idle");
+  assert.equal(flow.state.data, null);
+});

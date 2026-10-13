@@ -835,6 +835,8 @@ def _drill(req: AggRequest, values: Sequence[Any]) -> dict[str, Any] | None:
     leaves = [drill_leaf(req.rows, d, values[i]) for i, d in enumerate(req.dims)]
     if any(leaf is None for leaf in leaves):
         return None
+    # the event conditions of the request belong to the group too (records of those events only)
+    leaves = [{_EVENT_LEAVES[name]: list(vals)} for name, vals in req.events] + leaves
     return leaves[0] if len(leaves) == 1 else {"and": leaves}
 
 

@@ -621,3 +621,23 @@ def test_events_direct_sample_and_access_paths(case, monkeypatch):
     exact = A.aggregate(full, {**req, "filter": {"sev": {"le": 4}}})
     assert exact.method == "exact"
     same(as_map(exact), ref_events(rows, events, {"sev": {"le": 4}}, {}, ["name"], req["measures"]))
+
+
+@pytest.mark.parametrize(
+    "conds",
+    [{"status": ["fail"]}, {"kind": ["retry_seq"]}, {"name": ["SendWorks"], "status": ["ok", "timeout"]}],
+)
+def test_event_drill_down_keeps_the_event_conditions(case, conds):
+    """Each row's drill selects exactly the records of the events counted in it (conditions included)."""
+    _, full, rows, events = case
+    result = A.aggregate(full, {"rows": "events", "events": conds, "group_by": ["name"], "limit": 1000})
+    assert result.rows
+    for row in result.rows:
+        name = row["values"][0]
+        ids = {
+            ev["id"] for ev in events
+            if ev["name"] == name and all(ev[k] in v for k, v in conds.items())
+        }  # fmt: skip
+        assert row["values"][1] == len(ids)
+        want = sum(1 for r in rows if r.get("event_id") in ids)
+        assert Q.count(full, row["drill"]).n == want, (conds, name)

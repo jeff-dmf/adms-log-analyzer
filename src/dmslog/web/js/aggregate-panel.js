@@ -397,7 +397,8 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
     chartHost.appendChild(legend);
   }
 
-  function renderTable(view) {
+  // live: the result belongs to the current case and view; otherwise drilling down is disabled
+  function renderTable(view, live) {
     tableHost.textContent = "";
     if (view.rows.length === 0) {
       tableHost.appendChild(element("div", "agg-empty", S.aggEmpty));
@@ -428,11 +429,17 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
       const cell = element("td", "agg-actions-cell");
       const drill = button("agg-drill", S.aggFilterRow);
       drill.setAttribute("aria-label", format(S.aggFilterRowLabel, { row: row.title || S.aggTitle }));
-      drill.disabled = !row.drill;
+      drill.disabled = !row.drill || !live;
       if (!row.drill) {
         drill.title = S.aggNoDrill;
+      } else if (!live) {
+        drill.title = S.aggStale;
       }
-      drill.addEventListener("click", () => onDrill(row.drill));
+      drill.addEventListener("click", () => {
+        if (row.drill && !flow.state.stale && flow.state.caseId === getCase()) {
+          onDrill(row.drill);
+        }
+      });
       cell.appendChild(drill);
       tr.appendChild(cell);
       body.appendChild(tr);
@@ -468,13 +475,14 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
     for (const text of view.notices) {
       notices.appendChild(element("div", "agg-notice", text));
     }
-    if (view.canComputeExactly) {
+    if (view.canComputeExactly && !state.stale) {
       const exact = button("agg-exact", S.aggComputeExactly);
       exact.addEventListener("click", () => flow.run(state.request, { exact: true }));
       notices.appendChild(exact);
     }
+    const live = !state.stale && state.caseId === getCase();
+    renderTable(view, live);
     if (!state.stale) {
-      renderTable(view);
       drawChart(state.data);
     }
   }

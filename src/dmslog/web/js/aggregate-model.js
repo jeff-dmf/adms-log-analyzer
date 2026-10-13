@@ -391,11 +391,14 @@ export function chartData(data) {
     if (!index.has(t)) {
       continue;
     }
-    const name = others.length ? others.map((i) => textOf(row, i)).join(" · ") : label;
-    if (!series.has(name)) {
-      series.set(name, { label: name, values: new Array(times.length).fill(null), sum: 0 });
+    // a series is one combination of the other groups' VALUES (two sources named a.log stay apart);
+    // the text is only its label
+    const key = JSON.stringify(others.map((i) => row.values[i]));
+    if (!series.has(key)) {
+      const name = others.length ? others.map((i) => textOf(row, i)).join(" · ") : label;
+      series.set(key, { label: name, values: new Array(times.length).fill(null), sum: 0 });
     }
-    const s = series.get(name);
+    const s = series.get(key);
     const v = numberOrNull(row.values[measureAt]);
     s.values[index.get(t)] = v;
     s.sum += v || 0;
@@ -428,7 +431,8 @@ export function csvFileName(caseId, now = new Date()) {
 // Request flow: one request at a time, stale answers dropped.
 // api.aggregate(caseId, body, signal); api.aggregateCsv(caseId, body, signal) -> {data}.
 export function createAggregateFlow({ api, getCase, onState }) {
-  const state = { status: "idle", data: null, error: "", exact: false, request: null, stale: false };
+  // caseId: the case the request and the result belong to (CSV and drill-down stay bound to it)
+  const state = { status: "idle", data: null, error: "", exact: false, request: null, stale: false, caseId: null };
   let controller = null;
   let seq = 0;
   const emit = () => onState && onState(state);
@@ -442,12 +446,12 @@ export function createAggregateFlow({ api, getCase, onState }) {
     const caseId = getCase();
     if (!caseId) {
       controller = null;
-      Object.assign(state, { status: "idle", data: null, error: S.aggNoCase, request: null });
+      Object.assign(state, { status: "idle", data: null, error: S.aggNoCase, request: null, caseId: null });
       emit();
       return;
     }
     controller = new AbortController();
-    Object.assign(state, { status: "loading", error: "", exact: Boolean(exact), request, stale: false });
+    Object.assign(state, { status: "loading", data: null, error: "", exact: Boolean(exact), request, stale: false, caseId });
     emit();
     try {
       const body = exact ? { ...request, exact: true } : request;
@@ -471,12 +475,25 @@ export function createAggregateFlow({ api, getCase, onState }) {
       throw new Error(S.aggRunFirst);
     }
     const body = state.exact ? { ...state.request, exact: true } : state.request;
-    const result = await api.aggregateCsv(getCase(), body);
+    const result = await api.aggregateCsv(state.caseId, body);
     return result.data;
   }
 
+  // The view or the case changed: a pending answer is dropped (it belongs to the old view); a ready
+  // result stays visible as stale for the same case, and is cleared for another case.
   function markStale() {
-    if (state.status === "ready") {
+    if (state.status === "loading") {
+      seq += 1;
+      if (controller) {
+        controller.abort();
+        controller = null;
+      }
+      Object.assign(state, { status: "idle", data: null, error: S.aggStale, request: null, caseId: null });
+      emit();
+    } else if (state.status === "ready" && getCase() !== state.caseId) {
+      Object.assign(state, { status: "idle", data: null, error: "", request: null, stale: false, caseId: null });
+      emit();
+    } else if (state.status === "ready") {
       state.stale = true;
       emit();
     }
@@ -488,7 +505,7 @@ export function createAggregateFlow({ api, getCase, onState }) {
       controller.abort();
       controller = null;
     }
-    Object.assign(state, { status: "idle", data: null, error: "", request: null, stale: false });
+    Object.assign(state, { status: "idle", data: null, error: "", request: null, stale: false, caseId: null });
     emit();
   }
 

@@ -204,3 +204,44 @@ test("aggregate panel: an estimate offers 'Compute exactly' once", async () => {
   assert.equal(calls.aggregate.at(-1)[1].exact, true);
   assert.equal(host.byClass("agg-exact").length, 0);
 });
+
+test("aggregate panel: after the case changes, an old result cannot drill into the new case", async () => {
+  const toolbar = new FakeElement("div");
+  const theme = toolbar.appendChild(new FakeElement("button"));
+  const panelParent = new FakeElement("div");
+  const drills = [];
+  let caseId = "A";
+  let release;
+  const api = {
+    aggregate: (cid, body) => new Promise((resolve) => { release = () => resolve(answer(body)); }),
+    aggregateCsv: async () => ({ data: "" }),
+    keyTypes: async () => ({ types: [] }),
+  };
+  const ui = mountAggregate({
+    toolbar, beforeButton: theme, panelParent, beforePanel: null, api,
+    getCase: () => caseId, getFilter: () => null, getFieldNames: () => [], onDrill: (d) => drills.push(d),
+  });
+  const host = panelParent.byId("aggregate-host");
+  toolbar.byId("aggregate-button").click();
+  await tick();
+  host.byClass("agg-run")[0].click();
+  await tick();
+  caseId = "B";
+  ui.viewChanged(); // case A -> B while A is pending: A's answer is dropped
+  release();
+  await tick();
+  assert.equal(host.byClass("agg-table").length, 0);
+  assert.equal(host.byClass("agg-status")[0].textContent, S.aggStale);
+  // a result of B, then the view changes: the table stays, but drill-down is disabled
+  host.byClass("agg-run")[0].click();
+  await tick();
+  release();
+  await tick();
+  assert.equal(host.byClass("agg-drill")[0].disabled, false);
+  ui.viewChanged();
+  await tick();
+  const button = host.byClass("agg-drill")[0];
+  assert.equal(button.disabled, true);
+  button.click();
+  assert.deepEqual(drills, []);
+});
