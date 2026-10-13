@@ -172,6 +172,25 @@ export function effectiveSourceIds(sources, sourceIds, collectionGroups) {
     .map((s) => s.id);
 }
 
+// ---- panels that query by collection ---------------------------------------------------------
+
+// The events and stats routes take ONE `collection` group. With exactly one collection chosen the
+// queries carry it; with none (all) or several they carry nothing (the panels show every collection).
+export function collectionParam(groups, params) {
+  return groups && groups.length === 1 ? { ...params, collection: groups[0] } : params;
+}
+
+// A copy of `api` whose event and stats queries follow the chosen collection; getGroups() is read per call.
+export function scopeApi(api, getGroups) {
+  const scoped = { ...api };
+  for (const name of ["events", "eventStats", "eventHistogram", "statsMethods", "statsSeries"]) {
+    if (typeof api[name] === "function") {
+      scoped[name] = (caseId, params, signal) => api[name](caseId, collectionParam(getGroups(), params || {}), signal);
+    }
+  }
+  return scoped;
+}
+
 // ---- removal -----------------------------------------------------------------------------------
 
 // Text of the second step, naming the collection and what goes with it.

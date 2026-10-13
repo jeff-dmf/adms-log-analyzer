@@ -83,7 +83,21 @@ export class CaseFilesState {
     this.busy = false;
     this.createdCaseId = null;
     this.createdName = null;
+    this.addCase = null; // case the results of addAll() belong to
     this.nextId = 1;
+  }
+
+  // Forgets every per-file result (the list stays): used when another case is opened, because a file
+  // that went into case A has not been added to case B.
+  resetResults() {
+    for (const item of this.items) {
+      item.status = STATUS_PENDING;
+      item.code = "";
+      item.message = "";
+    }
+    this.notices = [];
+    this.addCase = null;
+    this.changed();
   }
 
   changed() {
@@ -163,14 +177,19 @@ export class CaseFilesState {
   }
 
   // Adds every file of the list to the case that is already open (no case is created).
-  // deps: {openPath(path) -> {status, code?, message?}}. Same per-file results as create(); resolves to
+  // deps: {openPath(path) -> {status, code?, message?}}; caseId: the case the files go into (results are
+  // tied to it: another case starts from a clean list). Same per-file results as create(); resolves to
   // {state: "ok"|"partial"|"blocked", ok, total}.
-  async addAll(deps) {
+  async addAll(deps, caseId = null) {
     if (this.busy) {
       return { state: "blocked", reason: "busy" };
     }
     if (this.items.length === 0) {
       return { state: "blocked", reason: "files" };
+    }
+    if (this.addCase !== caseId) {
+      this.resetResults();
+      this.addCase = caseId;
     }
     this.busy = true;
     this.notices = [];

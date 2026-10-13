@@ -45,6 +45,8 @@ export class CollectionsPanel {
     this.expanded = new Set();
     this.confirming = null; // group waiting for the second step
     this.removing = null; // group being removed
+    this.gen = 0; // case generation: answers of an older case never touch the current state
+    this.wanted = null; // {group, act}: where the focus goes on the next render
     this.seq = 0;
     this.controller = null;
     this.build();
@@ -57,6 +59,7 @@ export class CollectionsPanel {
     host.className = "collections-panel";
     this.heading = el("h3", "col-title", S.colTitle);
     this.heading.id = "collections-title";
+    this.heading.setAttribute("tabindex", "-1");
     host.setAttribute("aria-labelledby", this.heading.id);
     this.list = el("ul", "col-list");
     this.list.setAttribute("aria-label", S.colListLabel);
@@ -84,6 +87,8 @@ export class CollectionsPanel {
   // The case changed (or none): forget the list and the selection. The list of the new case is loaded by
   // refresh(), which the owner calls once the sources of the case are known.
   setCase() {
+    this.gen += 1;
+    this.wanted = null;
     this.seq += 1;
     if (this.controller) {
       this.controller.abort();
@@ -163,21 +168,18 @@ export class CollectionsPanel {
   // -- removal ------------------------------------------------------------------------------
 
   askRemove(group) {
-    this.confirming = group;
-    this.render();
-    const cancel = this.list.querySelector(".col-cancel");
-    if (cancel) {
-      cancel.focus();
+    if (this.removing !== null) {
+      return;
     }
+    this.confirming = group;
+    this.wanted = { group, act: "cancel" };
+    this.render();
   }
 
   cancelRemove(group) {
     this.confirming = null;
+    this.wanted = { group, act: "remove" };
     this.render();
-    const open = this.list.querySelector('[data-group="' + group + '"] .col-remove');
-    if (open) {
-      open.focus();
-    }
   }
 
   async remove(item) {
@@ -186,40 +188,85 @@ export class CollectionsPanel {
       return;
     }
     const tag = describe(item).tag;
+    const gen = this.gen;
+    const index = this.collections.findIndex((c) => c.group === item.group);
     this.removing = item.group;
     this.confirming = null;
+    this.wanted = { group: item.group, act: "remove" };
     this.render();
     this.onMessage(format(S.colRemoving, { tag }), false);
     try {
       const summary = await this.api.removeCollection(caseId, item.group);
-      if (caseId !== this.getCase()) {
-        return;
+      if (gen !== this.gen) {
+        return; // another case is open now: this answer is not about it
       }
       this.removing = null;
       this.expanded.delete(item.group);
       this.selected.delete(item.group);
       this.onMessage(removedMessage(tag, summary), false);
+      // The removed row is gone: the focus goes to the next collection (or the previous, or the heading).
+      const rest = this.collections.filter((c) => c.group !== item.group);
+      const next = rest[Math.min(Math.max(index, 0), rest.length - 1)];
+      this.wanted = next ? { group: next.group, act: "remove" } : { group: null, act: "heading" };
       await this.refresh();
       await this.onRemoved(summary); // reloads sources, grid and panels (the grid reads selectedGroups())
     } catch (err) {
+      if (gen !== this.gen) {
+        return;
+      }
       this.removing = null;
-      if (caseId === this.getCase()) {
-        const notFound = err instanceof ApiError && err.code === "collection_not_found";
-        this.onMessage(removeErrorMessage(err, tag), true);
-        this.render();
-        if (notFound) {
-          await this.refresh();
-        }
+      const notFound = err instanceof ApiError && err.code === "collection_not_found";
+      this.onMessage(removeErrorMessage(err, tag), true);
+      this.wanted = { group: item.group, act: "remove" };
+      this.render();
+      if (notFound) {
+        await this.refresh();
       }
     } finally {
-      this.removing = null;
-      this.render();
+      if (gen === this.gen) {
+        this.removing = null;
+        this.render();
+      }
     }
   }
 
   // -- rendering ----------------------------------------------------------------------------
 
+  // The focused control of the list as {group, act}, so a re-render can give the focus back.
+  captureFocus() {
+    const active = typeof document !== "undefined" ? document.activeElement : null;
+    if (!active || !active.dataset || active.dataset.act === undefined) {
+      return null;
+    }
+    return { group: active.dataset.group === undefined ? null : Number(active.dataset.group), act: active.dataset.act };
+  }
+
+  applyFocus(want) {
+    let target = null;
+    if (want.act !== "heading" && want.group !== null) {
+      target = this.list.querySelector('[data-group="' + want.group + '"][data-act="' + want.act + '"]');
+      if (!target && want.act === "cancel") {
+        target = this.list.querySelector('[data-group="' + want.group + '"][data-act="remove"]');
+      }
+    }
+    if (!target && want.act !== "pick") {
+      target = this.heading;
+    }
+    if (target && !target.disabled) {
+      target.focus();
+    }
+  }
+
   render() {
+    const want = this.wanted || this.captureFocus();
+    this.wanted = null;
+    this.renderList();
+    if (want) {
+      this.applyFocus(want);
+    }
+  }
+
+  renderList() {
     const multi = this.collections.length > 1;
     this.host.hidden = this.collections.length === 0;
     this.note.hidden = !(this.ordering === "approximate" && multi);
@@ -247,6 +294,8 @@ export class CollectionsPanel {
     box.type = "checkbox";
     box.checked = this.selected.has(item.group);
     box.setAttribute("aria-label", format(S.colSelectLabel, { tag: d.tag }));
+    box.dataset.group = String(item.group);
+    box.dataset.act = "pick";
     box.addEventListener("change", () => this.toggle(item.group, box.checked));
     const chip = el("span", "col-tag col-tag-" + d.color, d.tag);
     const text = el("span", "col-text");
@@ -278,12 +327,11 @@ export class CollectionsPanel {
       } else {
         this.expanded.add(item.group);
       }
+      this.wanted = { group: item.group, act: "expand" };
       this.render();
-      const again = this.list.querySelector('[data-group="' + item.group + '"] .col-expand');
-      if (again) {
-        again.focus();
-      }
     }, "col-expand");
+    toggle.dataset.group = String(item.group);
+    toggle.dataset.act = "expand";
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
     toggle.setAttribute("aria-label", format(open ? S.colCollapseLabel : S.colExpandLabel, { tag: d.tag }));
     row.appendChild(toggle);
@@ -309,6 +357,9 @@ export class CollectionsPanel {
       confirm.appendChild(el("p", "col-confirm-text", removeConfirmText(item)));
       const yes = button(format(S.colRemoveYes, { tag: d.tag }), () => this.remove(item), "col-yes");
       const cancel = button(S.colRemoveCancel, () => this.cancelRemove(item.group), "col-cancel");
+      yes.dataset.group = cancel.dataset.group = String(item.group);
+      yes.dataset.act = "yes";
+      cancel.dataset.act = "cancel";
       confirm.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -321,6 +372,8 @@ export class CollectionsPanel {
     } else {
       const remove = button(S.colRemove, () => this.askRemove(item.group), "col-remove");
       remove.setAttribute("aria-label", format(S.colRemoveLabel, { tag: d.tag }));
+      remove.dataset.group = String(item.group);
+      remove.dataset.act = "remove";
       remove.disabled = this.removing !== null;
       actions.appendChild(remove);
     }

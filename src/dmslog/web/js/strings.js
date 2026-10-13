@@ -1149,6 +1149,7 @@ export const S = {
   colFollowedTag: "Cannot remove {tag}: the viewer is following this folder. Stop following it first.",
   colGone: "{tag} is no longer in the case; the list was reloaded.",
   columnCollection: "Collection",
+  colPanelsOne: "Operations, Dashboard and the clock banner filter by one collection at a time; while several are chosen they show all collections.",
   cfAddTitle: "Add ERS files to this case",
   cfAddHelp: "Add more ERS ZIPs to the open case. A file from another server or another capture becomes a new collection; the Enterprise and Sensitive zips of one capture join the same collection. Use Browse to pick them in a file dialog.",
   cfAddEmpty: "No file chosen yet.",

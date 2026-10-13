@@ -16,7 +16,7 @@ import { initTimeline } from "./timeline.js";
 import { COLUMNS, Grid } from "./grid.js";
 import { CollectionsPanel } from "./collections-panel.js";
 import {
-  columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref,
+  columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi,
 } from "./collections-model.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { searchTerms } from "./search.js";
@@ -196,6 +196,8 @@ function start() {
   let exportPanel = null;
   let copyExport = null;
   let sourceFamilies = new Map();
+  // API for the panels fed by derived events: their queries carry the chosen collection.
+  const derivedApi = scopeApi(api, () => (collectionsPanel ? collectionsPanel.selectedGroups() : []));
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
   const navRequests = createLatestRequest(); // n/N/t/T lookups; a view change makes them stale
@@ -526,7 +528,13 @@ function start() {
     note: byId("collections-note"),
     api,
     getCase: () => caseId,
-    onSelection: () => applyView(),
+    onSelection: (groups) => {
+      if (groups.length > 1) {
+        showMessage(S.colPanelsOne, false);
+      }
+      refreshDerived(); // Operations, Dashboard and the clock banner follow the chosen collection
+      return applyView();
+    },
     onList: (list) => {
       const multiChanged = isMulti(list) !== isMulti(collections);
       collections = list;
@@ -1050,7 +1058,7 @@ function start() {
     const ensureEventsPanel = () => {
       if (!eventsPanel) {
         eventsPanel = module.initEventsPanel(eventsHost, {
-          api,
+          api: derivedApi,
           getCase: () => caseId,
           onShowInGrid: showEventInGrid,
         });
@@ -1153,7 +1161,7 @@ function start() {
       if (!dashboardHost.hidden) {
         if (!dashboard) {
           dashboard = module.initDashboard(dashboardHost, {
-            api,
+            api: derivedApi,
             getCase: () => caseId,
             onShowInGrid: showEventInGrid,
           });
@@ -1170,7 +1178,7 @@ function start() {
       return;
     }
     clockBanner = module.initClockBanner(byId("clock-banner"), {
-      api,
+      api: derivedApi,
       getCase: () => caseId,
       onShowInGrid: showEventInGrid,
     });

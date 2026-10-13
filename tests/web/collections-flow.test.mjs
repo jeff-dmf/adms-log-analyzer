@@ -43,8 +43,13 @@ class FakeNode {
   setAttribute(name, value) { this.attrs[name] = String(value); }
   removeAttribute(name) { delete this.attrs[name]; }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
-  querySelector() { return null; }
-  focus() {}
+  querySelector(selector) {
+    const pairs = [...selector.matchAll(/\[data-(\w+)="([^"]*)"\]/g)];
+    const found = this.find((n) => n !== this && pairs.length > 0 && pairs.every(([, k, v]) => n.dataset[k] === v));
+    return found.length > 0 ? found[0] : null;
+  }
+
+  focus() { document.activeElement = this; }
   get classList() {
     return { toggle() {}, add() {} };
   }
@@ -67,6 +72,7 @@ class FakeNode {
 }
 
 globalThis.document = {
+  activeElement: null,
   createElement: (tag) => new FakeNode(tag),
   createTextNode: (text) => Object.assign(new FakeNode("#text"), { _text: text }),
 };
@@ -339,4 +345,125 @@ test("SourcesPanel.addFilesToCase opens every file in the open case and unblocks
   await panel.addFilesToCase();
   assert.equal(panel.queueBusy, false);
   assert.equal(noFiles.state.items.length, 0);
+});
+
+// -- review fixes ----------------------------------------------------------------------------
+
+const { collectionParam, scopeApi } = await import("../../src/dmslog/web/js/collections-model.js");
+
+test("add: results belong to the case; trying again in another case opens every file", async () => {
+  const files = new CaseFiles({ host: new FakeNode("div"), nameInput: null, fs: {}, storage: null, mode: "add", onMessage() {} });
+  files.state.add([ENT, OTHER]);
+  const opened = [];
+  const open = (refuse) => async (path) => {
+    opened.push(path);
+    return path === OTHER && refuse ? { status: "failed", message: "boom" } : { status: "ok" };
+  };
+  const first = await files.submitAdd({ openPath: open(true) }, "A");
+  assert.equal(first.state, "partial");
+  assert.deepEqual(opened, [ENT, OTHER]);
+  const second = await files.submitAdd({ openPath: open(false) }, "B"); // another case: both go in again
+  assert.deepEqual(opened.slice(2), [ENT, OTHER]);
+  assert.deepEqual([second.state, second.ok, second.total], ["ok", 2, 2]);
+  // Same case again after a partial result keeps the ones that already went in.
+  files.state.add([ENT, OTHER]);
+  await files.submitAdd({ openPath: open(true) }, "C");
+  const before = opened.length;
+  await files.submitAdd({ openPath: open(false) }, "C");
+  assert.deepEqual(opened.slice(before), [OTHER]);
+  // Selecting a case resets the results of the list.
+  files.state.resetResults();
+  assert.equal(files.state.items.every((i) => i.status === "pending"), true);
+});
+
+test("panels fed by events carry the chosen collection (one at a time)", async () => {
+  const seen = [];
+  const base = {
+    events: async (c, p) => seen.push(["events", p]),
+    eventStats: async (c, p) => seen.push(["eventStats", p]),
+    eventHistogram: async (c, p) => seen.push(["eventHistogram", p]),
+    statsMethods: async (c, p) => seen.push(["statsMethods", p]),
+    statsSeries: async (c, p) => seen.push(["statsSeries", p]),
+    event: async () => null,
+  };
+  let groups = [];
+  const scoped = scopeApi(base, () => groups);
+  await scoped.events("c", { kind: "gap" });
+  assert.deepEqual(seen.pop(), ["events", { kind: "gap" }]);
+  groups = [9];
+  for (const name of ["events", "eventStats", "eventHistogram", "statsMethods", "statsSeries"]) {
+    await scoped[name]("c", { kind: "operation" });
+    assert.deepEqual(seen.pop(), [name, { kind: "operation", collection: 9 }]);
+  }
+  await scoped.statsMethods("c", undefined);
+  assert.deepEqual(seen.pop(), ["statsMethods", { collection: 9 }]);
+  groups = [4, 9]; // the routes take one group: several chosen means no narrowing
+  assert.deepEqual(collectionParam(groups, { a: 1 }), { a: 1 });
+  assert.equal(scoped.event, base.event);
+});
+
+test("an old removal answer does not free the removal lock of the new case", async () => {
+  const pending = [];
+  const list = [group(4, 1), group(9, 2)];
+  const calls = { removed: 0, messages: [], removedCb: 0 };
+  let caseId = "A";
+  const fakeApi = {
+    collections: async () => ({ ordering: "approximate", collections: list }),
+    removeCollection: () => new Promise((resolve, reject) => {
+      calls.removed += 1;
+      pending.push({ resolve, reject });
+    }),
+  };
+  const host = new FakeNode("section");
+  const panel = new CollectionsPanel({
+    host, note: new FakeNode("div"), api: fakeApi, getCase: () => caseId,
+    onMessage: (t, e) => calls.messages.push([t, e]), onRemoved: async () => { calls.removedCb += 1; },
+  });
+  await panel.refresh();
+  byClass(host, "col-remove")[0].fire("click");
+  byClass(host, "col-yes")[0].fire("click"); // DELETE in case A starts
+  assert.equal(calls.removed, 1);
+  caseId = "B";
+  panel.setCase();
+  await panel.refresh();
+  byClass(host, "col-remove")[0].fire("click");
+  byClass(host, "col-yes")[0].fire("click"); // DELETE in case B starts
+  assert.equal(calls.removed, 2);
+  pending[0].resolve({ sources: 1, records: 1, bookmarks: 0 }); // the old answer arrives
+  await tick();
+  await tick();
+  assert.notEqual(panel.removing, null); // still locked by B's removal
+  assert.equal(calls.removedCb, 0);
+  assert.equal(calls.messages.some(([t]) => /Removed/.test(t)), false);
+  byClass(host, "col-remove")[0].fire("click"); // disabled while B's removal runs
+  assert.equal(byClass(host, "col-confirm").length, 0);
+  pending[1].resolve({ sources: 1, records: 1, bookmarks: 0 });
+  await tick();
+  await tick();
+  assert.equal(panel.removing, null);
+  assert.equal(calls.removedCb, 1);
+});
+
+test("a refresh keeps the focus on the same control; removal moves it to the next row", async () => {
+  const { host, panel } = setup([group(4, 1), group(9, 2), group(12, 3)]);
+  await panel.refresh();
+  byClass(host, "col-remove")[1].fire("click"); // asks: focus goes to Cancel of C2
+  assert.equal(document.activeElement.dataset.act, "cancel");
+  assert.equal(document.activeElement.dataset.group, "9");
+  await panel.refresh(); // an update during indexing re-renders the list
+  assert.equal(document.activeElement.dataset.act, "cancel");
+  assert.equal(document.activeElement.dataset.group, "9");
+  byClass(host, "col-confirm")[0].fire("keydown", { key: "Escape" }); // Esc still cancels after the refresh
+  assert.equal(byClass(host, "col-confirm").length, 0);
+  assert.equal(document.activeElement.dataset.act, "remove");
+  assert.equal(document.activeElement.dataset.group, "9");
+  byClass(host, "col-expand")[0].fire("click");
+  assert.equal(document.activeElement.dataset.act, "expand");
+  assert.equal(document.activeElement.dataset.group, "4");
+  byClass(host, "col-remove")[1].fire("click");
+  byClass(host, "col-yes")[0].fire("click");
+  await tick();
+  await tick();
+  assert.equal(document.activeElement.dataset.act, "remove"); // C2 is gone: the next row (C3) gets it
+  assert.equal(document.activeElement.dataset.group, "12");
 });

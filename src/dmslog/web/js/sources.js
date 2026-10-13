@@ -89,6 +89,9 @@ export class SourcesPanel {
       this.cancelWaiter(S.cfCaseChanged);
     }
     this.closeEvents();
+    if (this.addFiles && caseId !== this.caseId) {
+      this.addFiles.state.resetResults(); // results belong to the case they were opened in
+    }
     this.caseId = caseId;
     this.selected.clear();
     this.refs.caseSelect.value = caseId || "";
@@ -147,7 +150,9 @@ export class SourcesPanel {
     const boundCase = this.caseId;
     this.setQueueBusy(true);
     try {
-      await this.addFiles.submitAdd({ openPath: (path) => this.runCollection(path, this.currentScope(), boundCase) });
+      await this.addFiles.submitAdd({
+        openPath: (path) => this.runCollection(path, this.currentScope(), boundCase),
+      }, boundCase);
     } finally {
       this.setQueueBusy(false);
     }

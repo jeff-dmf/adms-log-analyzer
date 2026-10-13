@@ -227,12 +227,12 @@ export class CaseFiles {
   }
 
   // Adds the chosen files to the open case. deps: {openPath}; see CaseFilesState.addAll.
-  async submitAdd(deps) {
+  async submitAdd(deps, caseId = null) {
     if (this.state.items.length === 0) {
       this.onMessage(S.cfAddNeedFiles, true);
       return null;
     }
-    const result = await this.state.addAll(deps);
+    const result = await this.state.addAll(deps, caseId);
     if (result.state === "ok") {
       this.onMessage(format(S.cfAddedAll, { total: result.total }), false);
     } else if (result.state === "partial") {
