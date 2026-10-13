@@ -76,3 +76,14 @@ test("persistence tolerates blocked storage", () => {
   assert.equal(loadQuery(broken), "");
   saveQuery("a", broken);
 });
+
+test("whole-string folding: Greek final sigma matches", () => {
+  assert.deepEqual(filterSources([{ id: 1, name: "\u039f\u03a3-1.log" }], "\u039f\u03a3").map((m) => m.source.id), [1]);
+  assert.deepEqual(matchRange("\u039f\u03a3-1.log", "\u039f\u03a3"), { start: 0, end: 2 });
+});
+
+test("ranges cover whole code points (surrogate pairs)", () => {
+  assert.deepEqual(matchRange("a\u{1F600}.log", "\u{1F600}"), { start: 1, end: 3 });
+  const parts = highlightParts("a\u{1F600}.log", { start: 1, end: 3 });
+  assert.equal(parts[1].text, "\u{1F600}");
+});

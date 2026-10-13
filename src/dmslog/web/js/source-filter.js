@@ -88,8 +88,6 @@ export class SourceFilter {
   showCount(visible, total) {
     if (!isFiltering(this.input.value) || total === 0) {
       this.status.textContent = total === 0 ? "" : format(S.sourceFilterAll, { total });
-    } else if (visible === 0) {
-      this.status.textContent = S.sourceFilterNone;
     } else {
       this.status.textContent = format(S.sourceFilterCount, { visible, total });
     }

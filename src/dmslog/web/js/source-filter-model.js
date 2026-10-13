@@ -17,22 +17,28 @@ export function fold(text) {
   return String(text).normalize("NFC").toLocaleLowerCase("en-US");
 }
 
-// Folds `text` per code point and remembers where each folded unit came from, so a match found in
-// the folded text maps back to a range of the original (folding may change the length: "İ").
+// Folds the WHOLE string (context rules such as the Greek final sigma apply, exactly as in fold())
+// and maps every folded unit to the start and end of the original code point it came from, so a
+// match maps back to whole characters (never half a surrogate pair). Folding may change lengths ("İ").
 function foldWithMap(text) {
-  let folded = "";
-  const origin = []; // folded index -> original index
+  const normal = String(text).normalize("NFC");
+  const folded = normal.toLocaleLowerCase("en-US");
+  const start = []; // folded index -> start of its original code point
+  const end = [];   // folded index -> end of its original code point
   let index = 0;
-  for (const ch of String(text).normalize("NFC")) {
-    const piece = ch.toLocaleLowerCase("en-US");
-    for (let k = 0; k < piece.length; k += 1) {
-      origin.push(index);
+  for (const ch of normal) {
+    const units = ch.toLocaleLowerCase("en-US").length;
+    for (let k = 0; k < units; k += 1) {
+      start.push(index);
+      end.push(index + ch.length);
     }
-    folded += piece;
     index += ch.length;
   }
-  origin.push(index);
-  return { folded, origin, length: index };
+  if (start.length !== folded.length) {
+    // Unexpected length change: map every unit to the whole name (still a correct match).
+    return { folded, start: Array(folded.length).fill(0), end: Array(folded.length).fill(normal.length) };
+  }
+  return { folded, start, end };
 }
 
 // {start, end} of the first case-insensitive occurrence of `query` in `name` (indexes into the
@@ -42,12 +48,12 @@ export function matchRange(name, query) {
   if (needle === "") {
     return { start: 0, end: 0 };
   }
-  const { folded, origin } = foldWithMap(name);
+  const { folded, start, end } = foldWithMap(name);
   const at = folded.indexOf(needle); // plain substring: regex characters are literals
   if (at < 0) {
     return null;
   }
-  return { start: origin[at], end: origin[at + needle.length - 1] + 1 };
+  return { start: start[at], end: end[at + needle.length - 1] };
 }
 
 // Sources whose file name contains the query, in the original order: [{source, name, range}].
