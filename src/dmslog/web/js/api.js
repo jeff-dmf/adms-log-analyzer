@@ -226,4 +226,13 @@ export const api = {
   // Copy as / export of the view (lists, original lines, CSV); see report/viewexport.py.
   exportView: (caseId, body, as, signal) =>
     requestFile("/api/export/view", { ...body, case: caseId }, as, signal),
+  // View presets (curated + the user's file): list for a case, create, update, delete, export, import.
+  presets: {
+    list: (caseId, signal) => request("GET", "/api/presets" + query({ case: caseId }), undefined, signal),
+    create: (preset) => request("POST", "/api/presets", preset),
+    update: (match, preset) => request("PUT", "/api/presets", { match, preset }),
+    remove: (name, family) => request("DELETE", "/api/presets" + query({ name, family })),
+    export: (format) => request("GET", "/api/presets/export" + query({ format })),
+    import: (format, data) => request("POST", "/api/presets/import", { format, data }),
+  },
 };

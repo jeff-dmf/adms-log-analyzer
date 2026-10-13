@@ -1,0 +1,82 @@
+.pr-panel {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.pr-title {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.pr-intro,
+.pr-description,
+.pr-empty {
+  margin: 4px 0;
+  color: var(--muted);
+}
+
+.pr-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pr-group-title {
+  margin: 4px 0;
+  font-size: 0.9em;
+}
+
+.pr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pr-item,
+.pr-form,
+.pr-io {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pr-form,
+.pr-io {
+  margin-top: 6px;
+}
+
+.pr-apply {
+  max-width: 24em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-badge {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 0.8em;
+}
+
+.pr-message {
+  min-height: 1.2em;
+}
+
+.pr-message.pr-error,
+.pr-danger {
+  color: var(--error-text);
+}
+
+.pr-panel summary:focus-visible,
+.pr-panel button:focus-visible,
+.pr-panel select:focus-visible,
+.pr-panel input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}

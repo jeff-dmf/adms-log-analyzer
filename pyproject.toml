@@ -20,7 +20,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-dmslog = ["families.toml", "store/*.sql", "web/**/*", "adapters/*.toml", "knowledge/curated/*"]
+dmslog = ["families.toml", "store/*.sql", "store/*.toml", "web/**/*", "adapters/*.toml", "knowledge/curated/*"]
 
 [tool.ruff]
 line-length = 110

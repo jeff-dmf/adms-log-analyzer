@@ -1,0 +1,166 @@
+# Curated filter presets shipped with the app (schema 1). Filters use only template codes of the
+# catalog and structural fields (severity, level, event status); never text taken from logs.
+# tests/unit/test_presets.py checks every code against the real catalog and every tree against
+# the filter validator. One [[preset]] per family and purpose; no family = applies to every case.
+
+schema = 1
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records, unhandled exceptions and schema validation errors."
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of AWFM."
+family = "AWFM"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["WFM-060", "WFM-063", "WFM-064", "WFM-066A", "WFM-066B", "WFM-070A", "WFM-070B", "WFM-070C", "WFM-080", "WFM-081", "WFM-130A", "WFM-130B", "WFM-130C", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of AONT."
+family = "AONT"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["ONT-020", "ONT-S020", "ONT-021", "ONT-022", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of AOSR."
+family = "AOSR"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["OSR-007", "OSR-022", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of ASMN."
+family = "ASMN"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["SMN-015", "SMN-017", "SMN-018", "SMN-019", "SMN-S019", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of ASMR."
+family = "ASMR"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["SMR-006", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of ACRM."
+family = "ACRM"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["CRM-004", "CRM-014", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of ACLC."
+family = "ACLC"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["CLC-010", "CLC-011", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of AAVL."
+family = "AAVL"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["AVL-008", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of AFMO."
+family = "AFMO"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["FMO-001", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of AEDP."
+family = "AEDP"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["AEDP-003", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the error templates of BLTHOST."
+family = "BLTHOST"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["BLT-005", "GEN-EXC-01", "GEN-XSD-02"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of AWFM that failed, timed out or ended in a business error, and the records that close them as failed."
+family = "AWFM"
+filter = { or = [{ event_status = ["fail", "timeout", "business_error"] }, { tpl = ["WFM-081"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of AONT that failed, timed out or ended in a business error, and the records that close them as failed."
+family = "AONT"
+filter = { or = [{ event_status = ["fail", "timeout", "business_error"] }, { tpl = ["ONT-021", "ONT-022"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of AOSR that failed, timed out or ended in a business error, and the records that close them as failed."
+family = "AOSR"
+filter = { or = [{ event_status = ["fail", "timeout", "business_error"] }, { tpl = ["OSR-004", "OSR-032", "OSR-022"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of ASMN that failed, timed out or ended in a business error, and the records that close them as failed."
+family = "ASMN"
+filter = { or = [{ event_status = ["fail", "timeout", "business_error"] }, { tpl = ["SMN-016", "SMN-S016"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of ASMR that failed, timed out or ended in a business error, and the records that close them as failed."
+family = "ASMR"
+filter = { or = [{ event_status = ["fail", "timeout", "business_error"] }, { tpl = ["SMR-006", "SMR-007"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of ACRM that failed, timed out or ended in a business error, and the records that close them as failed."
+family = "ACRM"
+filter = { or = [{ event_status = ["fail", "timeout", "business_error"] }, { tpl = ["CRM-004", "CRM-014"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of ACLC that failed, timed out or ended in a business error, and the records that close them as failed."
+family = "ACLC"
+filter = { or = [{ event_status = ["fail", "timeout", "business_error"] }, { tpl = ["CLC-010"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of AAVL that failed, timed out or ended in a business error."
+family = "AAVL"
+filter = { event_status = ["fail", "timeout", "business_error"] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of AEDP that failed, timed out or ended in a business error."
+family = "AEDP"
+filter = { event_status = ["fail", "timeout", "business_error"] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of AAMI that failed, timed out or ended in a business error, and the records that close them as failed."
+family = "AAMI"
+filter = { or = [{ event_status = ["fail", "timeout", "business_error"] }, { tpl = ["AMI-007"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of AFUP that failed, timed out or ended in a business error."
+family = "AFUP"
+filter = { event_status = ["fail", "timeout", "business_error"] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of BLTHOST that failed, timed out or ended in a business error."
+family = "BLTHOST"
+filter = { event_status = ["fail", "timeout", "business_error"] }
+
+[[preset]]
+name = "Callbacks without response"
+description = "Records about a callback that was not received: the timeout template and operations that timed out."
+family = "AWFM"
+filter = { or = [{ tpl = ["WFM-080"] }, { event_status = ["timeout"] }] }
+
+[[preset]]
+name = "Callbacks without response"
+description = "Records about a callback that was not received in time: the template and operations that timed out."
+family = "ACRM"
+filter = { or = [{ tpl = ["CRM-014"] }, { event_status = ["timeout"] }] }
+
+[[preset]]
+name = "Log level windows (Info/Verbose)"
+description = "Debug level changes and the Verbose records, to see the windows in which the payload is logged."
+filter = { or = [{ tpl = ["GEN-DBG-01"] }, { level = "verbose" }] }
