@@ -7,7 +7,7 @@ import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
 import { Detail } from "./detail.js";
 import {
-  NAV_ERROR_FILTER, TPL_LEAF, bookmarkKey, composeFilter, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
+  NAV_ERROR_FILTER, TPL_LEAF, andFilters, bookmarkKey, composeFilter, createLatestRequest, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { registerLeafType } from "./filter-tree-model.js";
@@ -198,7 +198,7 @@ function start() {
   let sourceFamilies = new Map();
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
-  let navSeq = 0;
+  const navRequests = createLatestRequest(); // n/N/t/T lookups; a view change makes them stale
   let bookmarksPanel = null;
   let detailBookmark = null;
   let compare = null;
@@ -207,6 +207,8 @@ function start() {
   let collections = []; // collections of the open case (GET /collections)
   let collectionColumnPref = loadColumnPref(safeLocalStorage());
   let applyPending = false; // a full view reload follows: the Collection column need not reload the grid itself
+  let viewsStack = null; // chained views: model (views-stack-model.js) and UI (views-stack.js)
+  let viewsUi = null;
   const compareSelection = createCompareSelection();
   const compareButton = byId("compare-button");
   function paintCompareButton(entry) {
@@ -359,11 +361,44 @@ function start() {
     onError: showError,
   });
 
+  // Live conditions of the active view (toolbar + filter tree), for the stack of chained views.
+  const captureLive = () => ({
+    searchText,
+    form: {
+      sev: byId("sev-select").value, level: byId("level-select").value,
+      from: byId("from-input").value, to: byId("to-input").value,
+    },
+    formState: { ...formState },
+    toggles: { ...toggles },
+    userFilter,
+  });
+  const restoreLive = (state) => {
+    searchText = state.searchText;
+    byId("search-input").value = state.searchText;
+    byId("sev-select").value = state.form.sev;
+    byId("level-select").value = state.form.level;
+    byId("from-input").value = state.form.from;
+    byId("to-input").value = state.form.to;
+    formState = { ...state.formState };
+    toggles = { ...state.toggles };
+    byId("hide-noise").checked = toggles.hideNoise;
+    byId("unclassified-only").checked = toggles.unclassified;
+    userFilter = state.userFilter;
+    if (filterTree) {
+      filterTree.setFilter(userFilter);
+    }
+  };
+  const ownFilterOf = (state) =>
+    composeFilter({ sourceIds: [], text: state.searchText, ...state.formState }, state.userFilter, state.toggles);
+
   const applyView = () => {
     const ids = panel.selectedIds();
     const groups = collectionsPanel ? collectionsPanel.selectedGroups() : [];
-    const filter = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
+    const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
+    // The effective view: the ancestors' filters AND the active view's own.
+    const filter = viewsStack ? andFilters(viewsStack.parentsFilter(), own) : own;
     currentFilter = filter;
+    navRequests.invalidate();
     const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
@@ -375,6 +410,9 @@ function start() {
     }
     if (distinctUi) {
       distinctUi.viewChanged();
+    }
+    if (viewsUi) {
+      viewsUi.changed();
     }
     return loaded;
   };
@@ -410,6 +448,12 @@ function start() {
       if (filterTree) {
         filterTree.setCase(id);
         filterTree.setFilter(null);
+      }
+      if (viewsUi) {
+        const saved = viewsUi.onCase(id);
+        if (saved) {
+          restoreLive(saved);
+        }
       }
       loadTemplates(id);
       knowledge.reset();
@@ -858,6 +902,38 @@ function start() {
   }).catch(() => {
     // Module missing or failing: no buttons.
   });
+  // Chained views (breadcrumbs, Narrow this view, Show in parent/root): optional modules.
+  Promise.all([import("./views-stack.js"), import("./views-stack-model.js")]).then(([uiModule, model]) => {
+    viewsStack = model.createViewsStack({ ownFilter: ownFilterOf, getLive: captureLive });
+    viewsUi = uiModule.mountViewsStack({
+      parent: byId("grid-panel"),
+      beforePanel: byId("filter-form"),
+      footer: document.querySelector(".shortcuts-help"),
+      stack: viewsStack,
+      storage: (() => {
+        try {
+          return window.sessionStorage;
+        } catch (err) {
+          return null;
+        }
+      })(),
+      getCase: () => caseId,
+      restoreState: restoreLive,
+      applyView: () => applyView(),
+      getSelectedRow: () => grid.selectedRow(),
+      reveal: (row) => grid.revealRow(row),
+      showMessage,
+    });
+    if (caseId !== null) {
+      const saved = viewsUi.onCase(caseId);
+      if (saved) {
+        restoreLive(saved);
+        applyView();
+      }
+    }
+  }).catch(() => {
+    // Module missing or failing: no chained views.
+  });
   // Bookmarks (detail section, panel, shortcuts) and "Compare with...": optional modules.
   const bookmarksHost = byId("bookmarks-host");
   const bookmarksButton = byId("bookmarks-button");
@@ -1121,12 +1197,11 @@ function start() {
     event.preventDefault();
     const extra = nav.kind === "error" ? NAV_ERROR_FILTER : { tpl: [row.tpl_id] };
     const request = navRequest(currentFilter, extra, row, nav.dir);
-    navSeq += 1;
-    const seq = navSeq;
+    const { seq, signal } = navRequests.begin();
     const forCase = caseId;
     try {
-      const page = await api.page(forCase, request.filter, request.cursor, request.dir, request.limit);
-      if (seq !== navSeq || forCase !== caseId) {
+      const page = await api.page(forCase, request.filter, request.cursor, request.dir, request.limit, signal);
+      if (!navRequests.isCurrent(seq) || forCase !== caseId) {
         return;
       }
       const found = page.rows && page.rows[0];
@@ -1137,7 +1212,9 @@ function start() {
       showMessage("", false);
       await grid.revealRow(found);
     } catch (err) {
-      showError(err);
+      if (!(err && err.name === "AbortError") && navRequests.isCurrent(seq)) {
+        showError(err);
+      }
     }
   });
 

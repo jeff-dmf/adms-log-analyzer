@@ -182,6 +182,32 @@ export function navRequest(filter, extra, row, dir) {
   return { filter: andFilters(filter, extra), cursor, dir, limit: 1 };
 }
 
+// Latest-request guard for the keyboard navigation: begin() aborts the previous request and
+// returns {seq, signal}; invalidate() (a view change) aborts it and makes its answer stale.
+export function createLatestRequest() {
+  let seq = 0;
+  let controller = null;
+  const abort = () => {
+    if (controller) {
+      controller.abort();
+      controller = null;
+    }
+  };
+  return {
+    begin() {
+      abort();
+      seq += 1;
+      controller = new AbortController();
+      return { seq, signal: controller.signal };
+    },
+    invalidate() {
+      abort();
+      seq += 1;
+    },
+    isCurrent: (mine) => mine === seq,
+  };
+}
+
 // "n"/"N"/"t"/"T" -> {kind: "error"|"template", dir} | null. Ignores modified keys.
 export function navKey(event) {
   if (event.ctrlKey || event.metaKey || event.altKey) {

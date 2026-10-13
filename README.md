@@ -138,6 +138,16 @@ In the record detail, **Highlight type = value** colors every record with that k
 in the sensitive logs. Press `]` and `[` to go to the next and previous highlighted record of the view.
 Rules are saved in the case and hold only what you typed.
 
+## Chained views (viewer)
+
+**Narrow this view** (above the filter bar) turns the current filters into the parent view and starts
+a new view with an empty filter; the view you see is always the parent's filters AND its own. The
+breadcrumbs show the stack (up to 10 views, each named after its last filter; **Rename** changes the
+name). Click a breadcrumb, use **Back** / **Forward** or press `Alt+Left` / `Alt+Right` to move
+between views; the child views stay available until you narrow again from an earlier view. **Show in
+parent** and **Show in root** leave the current view and keep the selected record selected. The stack
+lives in the browser tab (session storage), never on the server.
+
 ## Data directory
 
 Cases and indexes live in the user's data directory, one folder per case (deleting the case deletes
