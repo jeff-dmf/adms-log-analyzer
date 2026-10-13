@@ -80,6 +80,8 @@ EXPECTED_MODULES = {
     "case-files.js",
     "folder-browser-model.js",
     "folder-browser.js",
+    "aggregate-model.js",
+    "aggregate-panel.js",
 }
 
 FORBIDDEN_JS = [

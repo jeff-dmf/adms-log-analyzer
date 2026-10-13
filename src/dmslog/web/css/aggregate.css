@@ -1,0 +1,174 @@
+/* "Aggregate" panel. Colours come from the tokens of app.css; series colours are a colour-blind safe
+   palette (Okabe-Ito) with lighter variants for the dark theme. */
+:root {
+  --agg-c0: #0072b2;
+  --agg-c1: #e69f00;
+  --agg-c2: #009e73;
+  --agg-c3: #cc79a7;
+  --agg-c4: #d55e00;
+  --agg-c5: #56b4e9;
+  --agg-c6: #7a6fc9;
+  --agg-c7: #6b8e23;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --agg-c0: #4da3e0;
+    --agg-c1: #f0b847;
+    --agg-c2: #3cc49a;
+    --agg-c3: #e09ac4;
+    --agg-c4: #f08a4b;
+    --agg-c5: #8ccdf2;
+    --agg-c6: #a79cf0;
+    --agg-c7: #9cc25a;
+  }
+}
+
+:root[data-theme="dark"] {
+  --agg-c0: #4da3e0;
+  --agg-c1: #f0b847;
+  --agg-c2: #3cc49a;
+  --agg-c3: #e09ac4;
+  --agg-c4: #f08a4b;
+  --agg-c5: #8ccdf2;
+  --agg-c6: #a79cf0;
+  --agg-c7: #9cc25a;
+}
+
+.agg-head,
+.agg-line,
+.agg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.agg-title {
+  margin: 0 8px 0 0;
+  font-size: 1em;
+}
+
+.agg-field {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.agg-label {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.agg-group,
+.agg-measure {
+  max-width: 16em;
+}
+
+.agg-limit {
+  width: 5em;
+}
+
+.agg-event-input {
+  width: 14em;
+}
+
+.agg-status,
+.agg-empty,
+.agg-note {
+  color: var(--muted);
+  font-size: 0.9em;
+  margin: 4px 0;
+}
+
+.agg-status.is-error {
+  color: var(--error-text);
+}
+
+.agg-notice {
+  font-size: 0.9em;
+  margin: 4px 0;
+  font-style: italic;
+}
+
+.agg-chart {
+  margin: 6px 0;
+}
+
+.agg-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 4px 0;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+.agg-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 28em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agg-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.agg-c0 { background: var(--agg-c0); }
+.agg-c1 { background: var(--agg-c1); }
+.agg-c2 { background: var(--agg-c2); }
+.agg-c3 { background: var(--agg-c3); }
+.agg-c4 { background: var(--agg-c4); }
+.agg-c5 { background: var(--agg-c5); }
+.agg-c6 { background: var(--agg-c6); }
+.agg-c7 { background: var(--agg-c7); }
+
+.agg-table-host {
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.agg-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.agg-table th,
+.agg-table td {
+  text-align: left;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.agg-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+
+.agg-table .agg-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.agg-text {
+  max-width: 32em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agg-actions-cell {
+  white-space: nowrap;
+}

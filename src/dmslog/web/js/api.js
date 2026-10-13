@@ -262,4 +262,8 @@ export const api = {
     request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/collections", undefined, signal),
   removeCollection: (caseId, group) =>
     request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group)),
+  // Declarative aggregation (store/aggregate.py): JSON result, or the same result as CSV text.
+  aggregate: (caseId, body, signal) => request("POST", "/api/entries/aggregate", { ...body, case: caseId }, signal),
+  aggregateCsv: (caseId, body, signal) =>
+    requestFile("/api/entries/aggregate", { ...body, case: caseId, format: "csv" }, "text", signal),
 };

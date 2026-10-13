@@ -439,3 +439,56 @@ API_BAD_HIGHLIGHT_ID = "Invalid highlight rule id"
 API_HIGHLIGHT_NEXT_TIMEOUT = (
     "No highlighted record was found in time; narrow the view (sources or time) and try again"
 )
+# Declarative aggregation (store/aggregate.py, POST /api/entries/aggregate; ARQUITETURA 10.6).
+AGGREGATE_ERRORS = {
+    "bad_type": "expected {expected}",
+    "bad_rows": "rows must be 'entries' or 'events'",
+    "bad_dimension": "unknown dimension {name!r} for these rows",
+    "bad_bucket": "unknown time bucket {name!r} (expected bucket:<width>, width one of {widths})",
+    "bad_measure": "unknown measure {name!r} (expected count, distinct:<dimension> or <function>:<value>)",
+    "bad_value": "unknown value {name!r} for these rows (expected {values})",
+    "needs_events": "{name!r} needs rows = 'events'",
+    "too_many_dims": "group_by takes at most {limit} dimensions",
+    "too_many_measures": "measures takes at most {limit} items",
+    "no_measure": "give at least one measure",
+    "duplicate": "{name!r} appears more than once",
+    "one_bucket": "group_by takes at most one time bucket",
+    "too_many_keys": "at most {limit} key types per request part",
+    "key_with_numeric": "distinct of a key cannot be combined with numeric measures",
+    "bad_order": "order.by must be a dimension or a measure of the request, not {name!r}",
+    "bad_direction": "order.dir must be 'asc' or 'desc'",
+    "bad_limit": "limit must be an integer from 1 to {limit}",
+    "bad_lookup": "unknown lookup {name!r} (expected one of {lookups})",
+    "lookup_needs": "lookup {name!r} needs the dimension {dim!r}",
+    "too_many_lookups": "lookups takes at most {limit} items",
+    "bad_exact": "exact must be true or false",
+    "events_needs_events": "events conditions need rows = 'events'",
+    "bad_events": "unknown event condition {name!r} (expected kind, name or status)",
+    "bad_events_list": "an event condition takes 1 to {limit} values",
+    "bad_events_value": "an event condition value is printable text of 1 to 200 characters",
+    "bad_format": "format must be 'json' or 'csv'",
+    "bad_bom": "bom must be true or false",
+}
+API_AGGREGATE_TIMEOUT = (
+    "The aggregation did not finish in time, not even as an estimate; narrow the filter (sources or time)"
+    " and try again"
+)
+API_AGGREGATE_TIMEOUT_ROWS = (
+    "The aggregation did not finish in time, not even as an estimate (up to about {rows} rows to"
+    " aggregate); narrow the filter (sources or time) and try again"
+)
+AGGREGATE_CSV_DIMS = {
+    "tpl": "Message type", "source": "Source", "collection": "Collection", "family": "Family",
+    "sev": "Severity", "level": "Level", "tid": "TID", "pid": "PID", "name": "Operation", "kind": "Kind",
+    "status": "Status", "key": "Event key", "bucket": "Time ({width})",
+}  # fmt: skip
+AGGREGATE_CSV_MEASURES = {
+    "count": "Count", "distinct": "Distinct {arg}", "min": "Min {arg}", "max": "Max {arg}",
+    "avg": "Average {arg}", "sum": "Sum {arg}", "p50": "p50 {arg}", "p90": "p90 {arg}", "p95": "p95 {arg}",
+    "p99": "p99 {arg}",
+}  # fmt: skip
+AGGREGATE_CSV_VALUES = {"duration": "duration (ms)", "entries": "records"}
+AGGREGATE_CSV_LOOKUPS = {
+    "error.reason": "Error reason (pack)", "error.severity": "Error severity (pack)",
+    "operation.direction": "Operation direction (pack)", "operation.service": "Operation service (pack)",
+}  # fmt: skip

@@ -191,6 +191,7 @@ function start() {
   let detailBookmark = null;
   let compare = null;
   let distinctUi = null; // "Distinct values" and "Group by template" (distinct-panel.js)
+  let aggregateUi = null; // "Aggregate" panel (aggregate-panel.js)
   const compareSelection = createCompareSelection();
   const compareButton = byId("compare-button");
   function paintCompareButton(entry) {
@@ -358,6 +359,9 @@ function start() {
     }
     if (distinctUi) {
       distinctUi.viewChanged();
+    }
+    if (aggregateUi) {
+      aggregateUi.viewChanged();
     }
     return loaded;
   };
@@ -789,6 +793,22 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: no buttons.
+  });
+  // Declarative aggregation over the view (table, chart, CSV, drill-down): optional module.
+  Promise.all([import("./aggregate-panel.js"), import("./aggregate-model.js")]).then(([panelModule, model]) => {
+    aggregateUi = panelModule.mountAggregate({
+      toolbar: byId("toolbar"),
+      beforeButton: byId("theme-button"),
+      panelParent: byId("grid-panel"),
+      beforePanel: byId("filter-form"),
+      api,
+      getCase: () => caseId,
+      getFilter: () => currentFilter,
+      getFieldNames: () => Array.from(seenFields),
+      onDrill: (drill) => setUserFilter(model.drillFilter(userFilter, drill)),
+    });
+  }).catch(() => {
+    // Module missing or failing: no Aggregate button.
   });
   // Bookmarks (detail section, panel, shortcuts) and "Compare with...": optional modules.
   const bookmarksHost = byId("bookmarks-host");

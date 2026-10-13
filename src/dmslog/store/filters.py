@@ -14,7 +14,8 @@ Grammar (each node is an object with exactly one key)::
                | {"tid": ids} | {"pid": ids} | {"event": ids}
                | {"tpl": tpls} | {"text": {"fts": str} | {"substr": str} | {"regex": str}}
                | {"key": {"type": str, "eq": str} | {"type": str, "in": [str, ...]} | {"type": str}}
-               | {"event_status": strs} | {"flags": flag | [flag, ...]}
+               | {"event_status": strs} | {"event_name": strs} | {"event_kind": strs}
+               | {"flags": flag | [flag, ...]}
                | {"field": {"name": field_name, "eq": str | int | float | null}}
                | {"payload": {"role"|"roles"|"direction"|"peer"|"operation"|"fmt"|"msg_id"|"corr_id"
                               |"root": strs, "orphan": bool}}
@@ -540,6 +541,17 @@ class _Compiler:
             )
         return _guard("e.event_id", f"e.event_id IN (SELECT id FROM event WHERE status IN ({statuses}))")
 
+    def event_attr(self, column: str, arg: Any, path: str) -> str:
+        """``event_name`` / ``event_kind``: records of events with that name or kind (aggregation
+        drill-down, ARQUITETURA 10.6). ``column`` is a constant of :data:`_LEAVES`, never user text."""
+        values = [_str(v, f"{path}[{k}]") for k, v in enumerate(_as_list(arg, path))]
+        self.bind(*values)
+        marks = _placeholders(len(values))
+        if self.rowwise:
+            lookup = f"EXISTS (SELECT 1 FROM event WHERE {column} IN ({marks}) AND id = e.event_id)"
+            return _guard("e.event_id", lookup)
+        return _guard("e.event_id", f"e.event_id IN (SELECT id FROM event WHERE {column} IN ({marks}))")
+
     def flags(self, arg: Any, path: str) -> str:
         mask = 0
         for k, v in enumerate(_as_list(arg, path)):
@@ -680,5 +692,7 @@ _LEAVES = {
     "payload": _Compiler.payload,
     "collection": _Compiler.collection,
     "field": _Compiler.field,
+    "event_name": lambda compiler, arg, path: compiler.event_attr("name", arg, path),
+    "event_kind": lambda compiler, arg, path: compiler.event_attr("kind", arg, path),
 }
 LEAF_OPERATORS = frozenset(_LEAVES)
