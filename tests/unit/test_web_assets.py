@@ -62,12 +62,16 @@ EXPECTED_MODULES = {
     "compare-model.js",
     "compare.js",
     "saved-views-model.js",
+    "presets.js",
+    "presets-model.js",
     "follow-tail-model.js",
     "follow-tail.js",
     "copy-export-model.js",
     "copy-export.js",
     "column-resize-model.js",
     "column-resize.js",
+    "source-filter-model.js",
+    "source-filter.js",
 }
 
 FORBIDDEN_JS = [
@@ -314,6 +318,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         "/css/export.css",
         "/css/bookmarks.css",
         "/css/column-resize.css",
+        "/css/bookmarks.css", "/css/presets.css",
         "/vendor/uplot/uPlot.esm.js", "/vendor/uplot/uPlot.min.css",
         *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),
     ]  # fmt: skip
