@@ -13,6 +13,7 @@ import {
   findNode, findParent, fromJson, leafTypeNames, makeGroup, makeLeaf, moveNode, removeNode, setGroupOp,
   ungroup, updateLeaf, wrapNode,
 } from "./filter-tree-model.js";
+import { initPresets } from "./presets.js";
 import { initSavedViews } from "./saved-views.js";
 import { S, format } from "./strings.js";
 import { formatTs, parseTs } from "./time.js";
@@ -251,6 +252,7 @@ export function initFilterTree(container, { api, caseId, onChange, initial, getE
   let errorEls = new Map();
   let focusRequest = null;
   let savedViews = null;
+  let presetsPanel = null;
 
   container.classList.add("filter-tree");
   const heading = el("h3", "ft-title", S.ftTitle);
@@ -270,7 +272,8 @@ export function initFilterTree(container, { api, caseId, onChange, initial, getE
   treeHost.setAttribute("role", "group");
   treeHost.setAttribute("aria-label", S.ftTreeLabel);
   const viewsHost = el("div");
-  container.append(heading, bar, status, treeHost, viewsHost);
+  const presetsHost = el("div");
+  container.append(heading, presetsHost, bar, status, treeHost, viewsHost);
 
   const root = () => history.present;
   const ctxFor = (id) => ({
@@ -563,6 +566,20 @@ export function initFilterTree(container, { api, caseId, onChange, initial, getE
     },
   });
 
+  // Preset shortcuts of the case's adapters; a preset only fills the tree when the user picks it.
+  presetsPanel = initPresets(presetsHost, {
+    api,
+    caseId: currentCase,
+    getFilter: () => buildFilter(root()).filter,
+    onApply: (filter) => {
+      if (onSavedApplied) {
+        onSavedApplied();
+      }
+      commit(fromJson(filter), null);
+      apply();
+    },
+  });
+
   render();
   loadSources();
 
@@ -576,6 +593,7 @@ export function initFilterTree(container, { api, caseId, onChange, initial, getE
     setCase(next) {
       currentCase = next;
       savedViews.setCase(next);
+      presetsPanel.setCase(next);
       loadSources();
       refresh();
     },
@@ -590,6 +608,7 @@ export function initFilterTree(container, { api, caseId, onChange, initial, getE
       }
       container.removeEventListener("keydown", onKeydown);
       savedViews.destroy();
+      presetsPanel.destroy();
       container.replaceChildren();
     },
   };
