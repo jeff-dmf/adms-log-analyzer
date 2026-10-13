@@ -997,6 +997,7 @@ export const S = {
   cfQueueBusy: "The case is being created and its files are still opening. Wait until it finishes before switching case or opening another collection.",
   cfCaseChanged: "The case changed while the file was opening; it was not opened here.",
   cfNewCaseRestart: "A new case is being created with this name, so every file in the list is opened again in it.",
+  cfStreamClosed: "The progress connection to the server was closed, so the result of this file is unknown. Check the source list and press Create again.",
   cfDialogBusy: "A file dialog is already open (it may be behind another window).",
   cfDialogTimeout: "The file dialog was closed after {minutes} minutes.",
   cfNoNative: "No native file dialog here; using the built-in browser.",

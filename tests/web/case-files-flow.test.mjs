@@ -277,3 +277,66 @@ test("a case change cancels the waiting run with a clear error, without a pendin
   const late = await panel.runCollection(ENT, "default", "C"); // the bound case is no longer current
   assert.match(late.message, /case changed/);
 });
+
+// -- progress stream closing ---------------------------------------------------------------
+
+test("a definitively closed stream releases the waiting run and the queue with a clear error", async () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.sources = async () => ({ sources: [] });
+  api.progressUrl = () => "/p";
+  api.addCollection = async () => ({ job_id: "j" });
+  const { panel } = panelSetup();
+  const pending = panel.runCollection(ENT, "default", "C");
+  await new Promise((r) => setTimeout(r, 0));
+  const stream = FakeEventSource.instances[0];
+  stream.readyState = 2;
+  stream.emit("error", {});
+  const result = await pending;
+  assert.equal(result.status, "failed");
+  assert.match(result.message, /connection .* closed/);
+  assert.equal(panel.waiter, null);
+});
+
+test("CONNECTING keeps waiting and a later done resolves", async () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.sources = async () => ({ sources: [] });
+  api.progressUrl = () => "/p";
+  api.addCollection = async () => ({ job_id: "j" });
+  const { panel } = panelSetup();
+  const pending = panel.runCollection(ENT, "default", "C");
+  await new Promise((r) => setTimeout(r, 0));
+  const stream = FakeEventSource.instances[0];
+  stream.readyState = 0;
+  stream.emit("error", {});
+  let settled = false;
+  pending.then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(settled, false);
+  stream.readyState = 1;
+  stream.emit("done", { job_id: "j", status: "ok" });
+  assert.deepEqual(await pending, { status: "ok" });
+});
+
+test("an old stream closing does not affect the waiter of the current job", async () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.sources = async () => ({ sources: [] });
+  api.progressUrl = () => "/p";
+  api.addCollection = async () => ({ job_id: "j" });
+  const { panel } = panelSetup();
+  panel.watchProgress("C"); // an older stream
+  const old = FakeEventSource.instances[0];
+  const pending = panel.runCollection(ENT, "default", "C"); // closes the old one, opens a new one
+  await new Promise((r) => setTimeout(r, 0));
+  old.readyState = 2;
+  old.emit("error", {});
+  let settled = false;
+  pending.then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(settled, false);
+  assert.notEqual(panel.waiter, null);
+  FakeEventSource.instances.at(-1).emit("done", { job_id: "j", status: "ok" });
+  assert.deepEqual(await pending, { status: "ok" });
+});

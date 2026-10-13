@@ -395,6 +395,11 @@ export class SourcesPanel {
       // The browser retries by itself; a closed stream just stops the bar.
       if (events.readyState === 2) {
         bar.hidden = true;
+        // Only the current stream matters; CONNECTING (0) keeps the automatic reconnection.
+        if (this.events === events) {
+          this.events = null;
+          this.cancelWaiter(S.cfStreamClosed);
+        }
       }
     });
   }
