@@ -35,6 +35,20 @@ function button(className, text) {
   return node;
 }
 
+// Estimate notice ("rare values may be missing") with the "Count exactly" button when offered.
+function warningNote(view, onExact) {
+  if (!view.warning) {
+    return null;
+  }
+  const note = element("div", "dst-warning", view.warning);
+  if (view.canCountExactly) {
+    const exactButton = button("dst-exact", S.dstCountExactly);
+    exactButton.addEventListener("click", onExact);
+    note.append(" ", exactButton);
+  }
+  return note;
+}
+
 // -- Distinct values ----------------------------------------------------------------------------
 
 function initDistinct(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
@@ -125,13 +139,8 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, onDrill })
     }
     const view = buildView(state.field, state.data, state.exact);
     setStatus(view.summary, false);
-    if (view.warning) {
-      const note = element("div", "dst-warning", view.warning);
-      if (view.canCountExactly) {
-        const exactButton = button("dst-exact", S.dstCountExactly);
-        exactButton.addEventListener("click", () => reload(true));
-        note.append(" ", exactButton);
-      }
+    const note = warningNote(view, () => reload(true));
+    if (note) {
       tableHost.appendChild(note);
     }
     if (view.rows.length === 0) {
@@ -238,9 +247,10 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
   const status = element("div", "dst-status");
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
+  const notice = element("div", "grp-notice");
   const list = element("ul", "grp-list");
   const others = element("div", "dst-others");
-  host.append(head, status, list, others);
+  host.append(head, status, notice, list, others);
 
   function setStatus(text, isError) {
     status.textContent = text;
@@ -285,6 +295,7 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
     const focusedId = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.tpl : undefined;
     list.textContent = "";
     others.textContent = "";
+    notice.textContent = "";
     if (state.status === "idle") {
       setStatus(getCase() ? "" : S.dstNoCase, false);
       return;
@@ -297,8 +308,12 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
       setStatus(format(S.dstError, { error: state.error }), true);
       return;
     }
-    const view = buildView("tpl", state.data);
+    const view = buildView("tpl", state.data, state.exact);
     setStatus(view.summary, false);
+    const note = warningNote(view, () => flow.load({ exact: true }));
+    if (note) {
+      notice.appendChild(note);
+    }
     others.textContent = view.others;
     for (const row of view.rows) {
       const item = element("li", "grp-item");

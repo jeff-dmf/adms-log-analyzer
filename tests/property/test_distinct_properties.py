@@ -93,3 +93,14 @@ def test_time_window_split_matches_reference(tree, bounds, field, top, span):
     assert result.exact and result.method in ("bucket", "exact")
     counts, spans = reference(rows, flt, field)
     check(result, counts, spans, top, span)
+
+
+@SETTINGS
+@given(trees(leaf))
+def test_bucket_bound_is_a_superset_of_the_filter(tree):
+    """The bound that decides the direct sample never undercounts (review of PR #127: ts under OR)."""
+    if _compile(tree) is None:
+        return
+    _, full, _ = _cases()
+    bound = D._bucket_bound(full, tree, None)
+    assert bound is None or bound >= Q.count(full, tree).n

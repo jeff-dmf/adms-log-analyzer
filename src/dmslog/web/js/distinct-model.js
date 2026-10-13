@@ -176,12 +176,14 @@ export function createDistinctFlow({ api, getCase, getFilter, onState }) {
 // "Group by template": the template list (with first/last time) and, per expanded template, its
 // rows through the grid's keyset pages. api.page(caseId, filter, cursor, dir, limit, signal).
 export function createGroupFlow({ api, getCase, getFilter, onState, pageLimit = GROUP_PAGE }) {
-  const state = { status: "idle", data: null, error: "", groups: new Map() };
+  const state = { status: "idle", data: null, error: "", groups: new Map(), exact: false };
   let controller = null;
   let seq = 0;
   const emit = () => onState && onState(state);
 
-  async function load() {
+  // `exact`: "Count exactly" (skip the server's direct sample); any other reload is the default.
+  async function load({ exact = false } = {}) {
+    state.exact = Boolean(exact);
     seq += 1;
     const mine = seq;
     if (controller) {
@@ -205,7 +207,7 @@ export function createGroupFlow({ api, getCase, getFilter, onState, pageLimit = 
     Object.assign(state, { status: "loading", error: "" });
     emit();
     try {
-      const data = await api.distinct(caseId, getFilter(), "tpl", GROUP_TOP, true, signal);
+      const data = await api.distinct(caseId, getFilter(), "tpl", GROUP_TOP, true, signal, state.exact);
       if (mine !== seq) {
         return;
       }

@@ -12,7 +12,7 @@ from query_helpers import KEYS, build_case, open_ro, py_match
 from dmslog.store import distinct as D
 from dmslog.store import keys as K
 from dmslog.store import query as Q
-from dmslog.store.filters import FilterError, compile_filter
+from dmslog.store.filters import INT64_MAX, INT64_MIN, FilterError, compile_filter
 
 COLUMN = {"tpl": "tpl_id", "source": "source_id", "sev": "sev", "level": "level", "tid": "tid", "pid": "pid"}
 FILTERS = [
@@ -295,6 +295,15 @@ def test_key_paths_agree(cases):
     assert in_window <= D._bucket_bound(full, window, 1.0) <= len(rows)
     assert D._bucket_bound(full, None, 1.0) == len(rows)
     assert D._bucket_bound(full, {"tid": 16}, 1.0) is None  # bucket cannot express it
+    # Review of PR #127: a ts only under OR leaves the entries without ts free to match the other branch.
+    for tree in (
+        {"or": [{"ts": {"ge": 1_000_100}}, {"source": [3]}]},
+        {"or": [{"ts": [1_000_100]}, {"sev": {"le": 5}}]},
+        {"and": [{"sev": {"le": 5}}, {"or": [{"ts": {"lt": 0}}, {"source": [3]}]}]},
+    ):
+        real = sum(1 for r in rows if py_match(tree, r))
+        assert D._bucket_bound(full, tree, 1.0) >= real, tree
+    assert D._bucket_bound(full, {"and": [{"ts": {"lt": 0}}, {"source": [3]}]}, 1.0) == 0
     assert D._bucket_bound(plain, None, 1.0) is None  # bucket empty
 
 
@@ -392,6 +401,45 @@ def test_unknown_fields_are_rejected(cases, name):
     with pytest.raises(D.DistinctError) as info:
         D.distinct(plain, None, name)
     assert info.value.code == "bad_field" and info.value.path == "$.field"
+
+
+def test_well_formed_but_unknown_fields_are_rejected(cases, monkeypatch):
+    """Review of PR #127: names must exist in the template catalog (fields) or be a key type of the
+    catalog or of this case; well-formed strangers are 400 bad_field, not a 100% NULL group."""
+    plain, full, _ = cases
+    for conn in (plain, full):
+        for name in ("fields.not_in_catalog", "key.not_a_known_type"):
+            with pytest.raises(D.DistinctError) as info:
+                D.distinct(conn, None, name)
+            assert info.value.code == "bad_field"
+    fields, key_types = D.catalog_names()
+    assert {"op", "n"} <= fields and {"msgid", "gid", "mrid"} <= key_types
+    # A key type outside the catalog is accepted where the case holds it (payload keys).
+    monkeypatch.setattr(D, "catalog_names", lambda: (fields, key_types - {"mrid"}))
+    assert D.distinct(full, None, "key.mrid").total == 2
+    with pytest.raises(D.DistinctError):
+        D.distinct(plain, None, "key.mrid")
+
+
+def test_int64_time_bounds_do_not_overflow(cases, wide):
+    """Review of PR #127: le INT64_MAX made the edge bound INT64_MAX + 1 (OverflowError)."""
+    _, full, rows = cases
+    wconn, wrows = wide
+    for conn, data in ((full, rows), (wconn, wrows)):
+        for tree in (
+            {"ts": {"le": INT64_MAX}},
+            {"ts": {"lt": INT64_MAX}},
+            {"ts": {"ge": INT64_MIN}},
+            {"ts": {"gt": INT64_MIN, "le": INT64_MAX}},
+            {"ts": {"gt": INT64_MAX}},
+            {"ts": {"lt": INT64_MIN}},
+            {"ts": {"ge": INT64_MAX}},
+            {"ts": {"le": INT64_MIN}},
+            {"and": [{"source": [1]}, {"ts": {"ge": 2_030_123, "le": INT64_MAX}}]},
+        ):
+            for field in ("tpl", "source", "level"):
+                counts, span = reference(data, tree, field)
+                check(D.distinct(conn, tree, field, 20, span=True), counts, span, 20, True)
 
 
 @pytest.mark.parametrize("top", [0, D.MAX_TOP + 1, True, "5", 2.0])

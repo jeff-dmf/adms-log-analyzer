@@ -202,3 +202,25 @@ test("an estimate warns and 'Count exactly' repeats the request with exact: true
   assert.equal(calls.distinct[2][6], false);
   assert.equal(host.byClass("dst-warning").length, 0); // exact answer: no warning
 });
+
+test("group view: an estimate warns and 'Count exactly' repeats the request with exact: true", async () => {
+  const answers = [{ exact: false, method: "bucket_estimate" }, { exact: true, method: "bucket" }];
+  const { toolbar, panelParent, calls } = setup({
+    distinctAnswer: ([, , field]) => ({
+      field, total: 5, groups: 1, others: { count: 0, groups: 0 },
+      values: [{ value: 7, count: 5, pct: 100, leaf: { tpl: 7 }, label: "Request sent", code: "WFM-010" }],
+      ...answers[calls.distinct.length - 1],
+    }),
+    pageAnswer: () => ({ rows: [], next: null }),
+  });
+  toolbar.find((n) => n.id === "group-template-button")[0].click();
+  await tick();
+  const [host] = panelParent.find((n) => n.id === "group-template-host");
+  assert.equal(calls.distinct[0][6], false);
+  assert.equal(host.byClass("dst-warning")[0].textContent, S.dstEstimateWarning + " " + S.dstCountExactly);
+  host.byClass("dst-exact")[0].click();
+  await tick();
+  assert.deepEqual(calls.distinct[1].slice(2, 5).concat(calls.distinct[1][6]), ["tpl", 200, true, true]);
+  assert.equal(host.byClass("dst-warning").length, 0); // exact answer: no notice
+  assert.equal(host.byClass("grp-name")[0].textContent, "Request sent");
+});

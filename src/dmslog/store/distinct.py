@@ -45,6 +45,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
+from functools import cache
 from typing import Any, Literal
 
 from .. import messages
@@ -110,6 +111,33 @@ class Distinct:
     groups: int  # distinct values (seen in the sample when method == "sample")
     exact: bool
     method: Method
+
+
+@cache
+def catalog_names() -> tuple[frozenset[str], frozenset[str]]:
+    """(field names, key types) the packaged adapter templates can produce."""
+    from ..parse.templates import load_catalog
+
+    fields: set[str] = set()
+    key_types: set[str] = set()
+    for tpl in load_catalog().templates():
+        fields |= tpl.field_names
+        key_types |= {k.type for k in tpl.keys}
+    return frozenset(fields), frozenset(key_types)
+
+
+def check_known(conn: sqlite3.Connection, spec: FieldSpec) -> None:
+    """Reject a well-formed but unknown field: ``fields.<name>`` must be a field of the template
+    catalog, ``key.<type>`` a key type of the catalog or present in this case (payload keys)."""
+    fields, key_types = catalog_names()
+    if spec.kind == "field" and spec.arg not in fields:
+        raise DistinctError("bad_field", "$.field", name=spec.name[:64])
+    if spec.kind == "key" and spec.arg not in key_types:
+        with Q.read_guard(conn, Q.PAGE_TIMEOUT_S):
+            sql = "SELECT EXISTS(SELECT 1 FROM entry_key WHERE key_type = ?)"
+            present = conn.execute(sql, (spec.arg,)).fetchone()[0]
+        if not present:
+            raise DistinctError("bad_field", "$.field", name=spec.name[:64])
 
 
 def parse_field(name: Any) -> FieldSpec:
@@ -239,20 +267,32 @@ def _bucket_group_sql(
     return sql, params
 
 
-def _ts_window(tree: Any) -> tuple[list[Any], int | None, int | None] | None:
-    """``(other conjuncts, lo, hi)`` when the (validated) tree is an AND of ``ts`` comparisons
-    (``ge``/``gt``/``le``/``lt``) and of nodes without ``ts``: the window is ``lo <= ts < hi``
-    (``None`` = open). None for any other use of ``ts`` (lists, ``eq``, ``ne``, under or/not)."""
-    conjuncts: list[Any] = []
+def _conjuncts(tree: Any) -> list[Any]:
+    """Top-level AND members of a (validated) tree, nested ANDs flattened."""
+    out: list[Any] = []
 
     def flatten(node: Any) -> None:
         if isinstance(node, dict) and len(node) == 1 and isinstance(node.get("and"), list):
             for child in node["and"]:
                 flatten(child)
         else:
-            conjuncts.append(node)
+            out.append(node)
 
     flatten(tree)
+    return out
+
+
+def _excludes_null_ts(tree: Any) -> bool:
+    """True when no entry without ts can match: a ``ts`` leaf is a top-level conjunct (leaves are
+    false on NULL). A ``ts`` only under or/not leaves the other branches free to match them."""
+    return any(isinstance(n, dict) and len(n) == 1 and "ts" in n for n in _conjuncts(tree))
+
+
+def _ts_window(tree: Any) -> tuple[list[Any], int | None, int | None] | None:
+    """``(other conjuncts, lo, hi)`` when the (validated) tree is an AND of ``ts`` comparisons
+    (``ge``/``gt``/``le``/``lt``) and of nodes without ``ts``: the window is ``lo <= ts < hi``
+    (``None`` = open). None for any other use of ``ts`` (lists, ``eq``, ``ne``, under or/not)."""
+    conjuncts = _conjuncts(tree)
     lo: int | None = None
     hi: int | None = None
     rest: list[Any] = []
@@ -297,6 +337,10 @@ def _bucket_plan(tree: Any, cf: CompiledFilter) -> BucketPlan | None:
     if window is None:
         return None
     rest, lo, hi = window
+    if hi is not None and hi > INT64_MAX:
+        hi = None  # le INT64_MAX: no upper bound (every ts is at most INT64_MAX)
+    if lo is not None and lo > INT64_MAX:
+        return None  # gt INT64_MAX: an empty window, which the entry path answers at once
     inner_lo = None if lo is None else -(-lo // BUCKET_MS) * BUCKET_MS
     inner_hi = None if hi is None else hi // BUCKET_MS * BUCKET_MS
     bounds = [b for b in (inner_lo, inner_hi) if b is not None]
@@ -309,6 +353,8 @@ def _bucket_plan(tree: Any, cf: CompiledFilter) -> BucketPlan | None:
         whole["ge"] = inner_lo
     if inner_hi is not None:
         whole["lt"] = inner_hi
+    if not whole:
+        whole["ge"] = INT64_MIN  # only "ts is set" (le INT64_MAX): every bucket minute
     bf = compile_bucket_filter({"and": [*rest, {"ts": whole}]})
     if bf is None:
         return None
@@ -365,8 +411,9 @@ def _refine_span(
 
 def _bucket_bound(conn: sqlite3.Connection, tree: Any, timeout_s: float | None) -> int | None:
     """Entries the filter can keep at most, from the bucket table (``ts`` rounded to whole minutes,
-    so a superset) plus the entries without ts; None when bucket is empty, cannot express the
-    filter or does not answer in time."""
+    so a superset) plus the entries without ts unless a top-level ts condition excludes them (a ts
+    under or/not does not); None when bucket is empty, cannot express the filter or does not answer
+    in time."""
     if isinstance(tree, CompiledFilter):
         return None
     bf = compile_bucket_filter(tree)
@@ -380,7 +427,7 @@ def _bucket_bound(conn: sqlite3.Connection, tree: Any, timeout_s: float | None) 
             n = conn.execute(
                 f"SELECT coalesce(sum(b.n), 0) FROM {table} b WHERE {bf.sql}", bf.params
             ).fetchone()[0]
-            if not Q._uses_ts(tree):  # noqa: SLF001 - same package
+            if not _excludes_null_ts(tree):
                 n += conn.execute("SELECT count(*) FROM entry WHERE ts IS NULL").fetchone()[0]
     except Q.QueryTimeout:
         return None
@@ -455,6 +502,7 @@ def distinct(
         raise DistinctError("bad_span", "$.span")
     if not isinstance(exact, bool):
         raise DistinctError("bad_exact", "$.exact")
+    check_known(conn, spec)
     tree = flt
     cf = compile_filter(tree) if not isinstance(tree, CompiledFilter) else tree
     has_bucket_column = spec.kind == "column" and COLUMN_FIELDS[spec.arg][1] is not None
@@ -495,7 +543,7 @@ def distinct(
     # 3a. estimate from bucket (whole minutes: a superset when the filter has a ts condition).
     bf = compile_bucket_filter(tree) if bucket_filled else None
     if bf is not None:
-        edges = [] if Q._uses_ts(tree) else [_null_ts_edge(cf)]  # noqa: SLF001 - same package
+        edges = [] if _excludes_null_ts(tree) else [_null_ts_edge(cf)]
         try:
             with Q.read_guard(conn, estimate_timeout_s):
                 table = _bucket_table(conn, spec, bf)

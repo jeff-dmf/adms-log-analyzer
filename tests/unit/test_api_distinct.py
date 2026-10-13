@@ -38,7 +38,15 @@ def test_distinct_inside_a_filter_and_default_limit(client, case):  # noqa: F811
 
 
 def test_distinct_validation(client, case):  # noqa: F811
-    for field in (None, "msg", "fields.a-b", "key.a b", "tpl; DROP TABLE entry"):
+    for field in (
+        None,
+        "msg",
+        "fields.a-b",
+        "key.a b",
+        "tpl; DROP TABLE entry",
+        "fields.not_in_catalog",
+        "key.not_a_known_type",
+    ):
         status, body, _ = post(client, {"case": case, "field": field})
         assert status == 400 and body["error"] == "bad_field" and body["path"] == "$.field", field
     for limit in (0, 501, "5", True):
