@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/css/source-filter.css">
   <link rel="stylesheet" href="/css/filter-tree.css">
   <link rel="stylesheet" href="/css/bookmarks.css">
+  <link rel="stylesheet" href="/css/case-files.css">
   <script type="module" src="/js/main.js"></script>
 </head>
 <body>
@@ -53,10 +54,10 @@
           <label for="case-select" data-i18n="caseLabel"></label>
           <select id="case-select"></select>
         </div>
-        <form id="new-case-form" class="inline-form">
+        <form id="new-case-form" class="stack-form">
           <label for="new-case-name" class="visually-hidden" data-i18n="newCaseLabel"></label>
           <input id="new-case-name" type="text" autocomplete="off" data-i18n-placeholder="newCaseLabel">
-          <button type="submit" data-i18n="newCaseButton"></button>
+          <div id="case-files-host"></div>
         </form>
         <form id="open-form" class="stack-form">
           <label for="path-input" class="visually-hidden" data-i18n="pathLabel"></label>

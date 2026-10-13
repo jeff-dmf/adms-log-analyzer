@@ -1,6 +1,7 @@
 // Sources panel: case selection, opening a collection with live progress (SSE), source list.
 import { ApiError, api } from "./api.js";
 import { filterSources, highlightParts, isFiltering } from "./source-filter-model.js";
+import { refusalResult } from "./case-files-model.js";
 import { S, format } from "./strings.js";
 
 export function conflictMessage(error) {
@@ -18,7 +19,17 @@ export class SourcesPanel {
     this.events = null;
     this.query = ""; // source filter text (see source-filter.js)
     this.onRendered = null; // (visible, total) after each render of the list
-    refs.caseSelect.addEventListener("change", () => this.selectCase(refs.caseSelect.value || null));
+    this.caseFiles = null; // set by main.js: the "files of the new case" list (case-files.js)
+    this.queueBusy = false; // the files of a new case are being opened: case switch and Open form are blocked
+    this.waiter = null; // {jobId, caseId, resolve, seen}: a runCollection() waiting for its job's done event
+    refs.caseSelect.addEventListener("change", () => {
+      if (this.queueBusy) {
+        refs.caseSelect.value = this.caseId || "";
+        this.handlers.onMessage(S.cfQueueBusy, true);
+        return;
+      }
+      this.selectCase(refs.caseSelect.value || null);
+    });
     refs.newCaseForm.addEventListener("submit", (event) => {
       event.preventDefault();
       this.createCase();
@@ -50,7 +61,32 @@ export class SourcesPanel {
     await this.selectCase(wanted || null);
   }
 
+  setQueueBusy(busy) {
+    this.queueBusy = busy;
+    for (const node of [this.refs.caseSelect, this.refs.openForm]) {
+      if (busy) {
+        node.setAttribute("aria-disabled", "true");
+      } else {
+        node.removeAttribute("aria-disabled");
+      }
+    }
+  }
+
+  // A waiting runCollection() belongs to one case: if the case changes, it ends with an error.
+  cancelWaiter(message) {
+    const waiter = this.waiter;
+    if (!waiter) {
+      return;
+    }
+    this.waiter = null;
+    waiter.cancelled = true;
+    waiter.resolve({ status: "failed", message });
+  }
+
   async selectCase(caseId) {
+    if (this.waiter && this.waiter.caseId !== caseId) {
+      this.cancelWaiter(S.cfCaseChanged);
+    }
     this.closeEvents();
     this.caseId = caseId;
     this.selected.clear();
@@ -60,6 +96,27 @@ export class SourcesPanel {
   }
 
   async createCase() {
+    if (this.caseFiles) {
+      if (this.queueBusy) {
+        this.handlers.onMessage(S.cfQueueBusy, true);
+        return;
+      }
+      let boundCase = null;
+      this.setQueueBusy(true);
+      try {
+        await this.caseFiles.submit({
+          createCase: (name) => api.createCase(name),
+          selectCase: async (id) => {
+            await this.loadCases(id);
+            boundCase = id;
+          },
+          openPath: (path) => this.runCollection(path, this.currentScope(), boundCase),
+        });
+      } finally {
+        this.setQueueBusy(false);
+      }
+      return;
+    }
     const name = this.refs.newCaseName.value.trim();
     if (name === "") {
       return;
@@ -205,9 +262,73 @@ export class SourcesPanel {
     }
   }
 
+  currentScope() {
+    return this.refs.scopeSelect.value === "all" ? "all" : "default";
+  }
+
+  // Opens one path in the current case and resolves when its job ends (one job per case at a time):
+  // {status: "ok"|"failed"|"refused", code?, message?}.
+  // expectedCaseId (optional) ties the run to the case it was created for.
+  runCollection(path, scope, expectedCaseId) {
+    return new Promise((resolve) => {
+      if (this.caseId === null) {
+        resolve({ status: "failed", message: S.needCase });
+        return;
+      }
+      if (expectedCaseId !== undefined && expectedCaseId !== null && expectedCaseId !== this.caseId) {
+        resolve({ status: "failed", message: S.cfCaseChanged });
+        return;
+      }
+      const waiter = { jobId: null, caseId: this.caseId, resolve, seen: new Map() };
+      this.waiter = waiter;
+      this.watchProgress(this.caseId);
+      api.addCollection(waiter.caseId, path, scope).then((started) => {
+        if (waiter.cancelled) {
+          return;
+        }
+        this.handlers.onMessage(S.collectionStarted, false);
+        waiter.jobId = started ? started.job_id : null;
+        if (waiter.jobId !== null && waiter.seen.has(waiter.jobId)) {
+          this.finishJob(waiter.seen.get(waiter.jobId));
+        }
+      }).catch((err) => {
+        if (waiter.cancelled) {
+          return;
+        }
+        this.waiter = null;
+        this.closeEvents();
+        resolve(refusalResult(err, {
+          conflictServer: S.cfConflictServer, conflictCapture: S.cfConflictCapture, busy: S.cfBusy,
+        }));
+      });
+    });
+  }
+
+  async finishJob(data) {
+    const waiter = this.waiter;
+    this.waiter = null;
+    this.closeEvents();
+    if (data.status === "error") {
+      this.handlers.onMessage(S.progressFailed + (data.message ? ": " + data.message : ""), true);
+    } else {
+      this.handlers.onMessage(S.progressDone, false);
+    }
+    await this.refreshSources();
+    this.handlers.onDone();
+    if (waiter) {
+      waiter.resolve(data.status === "error"
+        ? { status: "failed", code: data.code || "", message: data.message || S.progressFailed }
+        : { status: "ok" });
+    }
+  }
+
   // -- collections and progress -------------------------------------------------------------
 
   async openCollection() {
+    if (this.queueBusy) {
+      this.handlers.onMessage(S.cfQueueBusy, true);
+      return;
+    }
     if (this.caseId === null) {
       this.handlers.onMessage(S.needCase, true);
       return;
@@ -260,20 +381,25 @@ export class SourcesPanel {
     });
     events.addEventListener("done", async (event) => {
       const data = parseEvent(event) || {};
-      this.closeEvents();
-      bar.hidden = true;
-      if (data.status === "error") {
-        this.handlers.onMessage(S.progressFailed + (data.message ? ": " + data.message : ""), true);
-      } else {
-        this.handlers.onMessage(S.progressDone, false);
+      if (this.waiter) {
+        // A replayed done of the previous job may arrive first: only this job's counts.
+        this.waiter.seen.set(data.job_id, data);
+        if (this.waiter.jobId !== null && this.waiter.jobId === data.job_id) {
+          await this.finishJob(data);
+        }
+        return;
       }
-      await this.refreshSources();
-      this.handlers.onDone();
+      await this.finishJob(data);
     });
     events.addEventListener("error", () => {
       // The browser retries by itself; a closed stream just stops the bar.
       if (events.readyState === 2) {
         bar.hidden = true;
+        // Only the current stream matters; CONNECTING (0) keeps the automatic reconnection.
+        if (this.events === events) {
+          this.events = null;
+          this.cancelWaiter(S.cfStreamClosed);
+        }
       }
     });
   }
