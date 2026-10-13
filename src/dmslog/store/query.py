@@ -33,6 +33,7 @@ from .filters import (
     QueryInputError,
     compile_bucket_filter,
     compile_filter,
+    set_regex_deadline,
 )
 
 DEFAULT_LIMIT = 200
@@ -184,13 +185,15 @@ def read_guard(conn: sqlite3.Connection, timeout_s: float | None) -> Iterator[Ca
 
     conn.set_authorizer(_authorizer)
     conn.set_progress_handler(progress, PROGRESS_OPS)
+    previous_regex_deadline = set_regex_deadline(deadline)  # the text.regex function checks it per row
     try:
         yield lambda: expired
     except sqlite3.OperationalError as exc:
-        if expired:
+        if expired or (deadline is not None and time.monotonic() >= deadline):
             raise QueryTimeout(f"query interrupted after {timeout_s} s") from exc
         raise
     finally:
+        set_regex_deadline(previous_regex_deadline)
         conn.set_progress_handler(None, 0)
         conn.set_authorizer(None)
 

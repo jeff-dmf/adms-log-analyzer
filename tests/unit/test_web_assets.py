@@ -74,6 +74,8 @@ EXPECTED_MODULES = {
     "source-filter.js",
     "distinct-model.js",
     "distinct-panel.js",
+    "highlight-model.js",
+    "highlight-panel.js",
 }
 
 FORBIDDEN_JS = [
