@@ -131,9 +131,26 @@ def _check_windows(raw: str, allow_unc: bool) -> str:
             continue
         if ":" in part or any(ch in _WINDOWS_BAD_CHARS for ch in part):
             raise PathRejectedError("invalid_path", messages.FS_PATH_BAD_CHARS)
-        if is_reserved_case_name(part.rstrip(" .")):
+        if is_reserved_windows_name(part):
             raise PathRejectedError("reserved_name", messages.FS_RESERVED_NAME)
+        if part[-1] in " .":  # Windows drops them: "a.zip." names another file than the one shown
+            raise PathRejectedError("invalid_path", messages.FS_PATH_TRAILING_DOT)
     return path
+
+
+# Device names beyond ingest's WINDOWS_RESERVED, as in ``ntpath.isreserved`` (Python 3.13+, absent in 3.11):
+# console buffers and COM/LPT with the superscript digits 1, 2, 3.
+_EXTRA_RESERVED = frozenset(
+    {"conin$", "conout$", *(f"{p}{d}" for p in ("com", "lpt") for d in "\u00b9\u00b2\u00b3")}
+)
+
+
+def is_reserved_windows_name(name: str) -> bool:
+    """True for a path component Windows maps to a device: ``CON``, ``nul.txt``, ``NUL .zip``,
+    ``COM\u00b9.zip``, ``CONIN$``... The stem (up to the first dot, trailing spaces removed) is compared
+    without case, as ``ntpath.isreserved`` does; ``console`` and ``com10`` are ordinary names."""
+    stem = name.partition(".")[0].rstrip(" ")
+    return is_reserved_case_name(stem) or stem.lower() in _EXTRA_RESERVED
 
 
 # --------------------------------------------------------------------------- folder browser
@@ -536,7 +553,12 @@ def build_command(tool: NativeTool, kind: str, multiple: bool) -> list[str]:
 
 
 def parse_comdlg_buffer(buffer: str) -> list[str]:
-    """``GetOpenFileNameW`` answer up to the double NUL: one full path, or a folder then file names."""
+    """``GetOpenFileNameW`` answer up to the double NUL: one full path, or a folder then file names.
+
+    Anything after the first double NUL is not part of the answer and is ignored."""
+    end = buffer.find("\0\0")
+    if end >= 0:
+        buffer = buffer[:end]
     parts = [part for part in buffer.split("\0") if part]
     if len(parts) <= 1:
         return parts
@@ -547,11 +569,12 @@ def parse_comdlg_buffer(buffer: str) -> list[str]:
 def parse_lines(stdout: bytes) -> list[str]:
     """One path per line (zenity with ``--separator=\\n``, kdialog with ``--separate-output``).
 
-    Decoded with the file system encoding (undecodable bytes stay as surrogates and are refused by
-    validation). A trailing CR is dropped; empty lines are ignored."""
+    Only the tool's line delimiter (one LF) is removed: every other byte, a CR included, stays in the
+    path so that validation refuses it (stripping it could name another, existing file). Decoded with
+    the file system encoding (undecodable bytes stay as surrogates and are refused by validation).
+    Empty lines are ignored."""
     paths = []
     for line in stdout.split(b"\n"):
-        line = line.rstrip(b"\r")
         if line:
             paths.append(os.fsdecode(line))
     return paths

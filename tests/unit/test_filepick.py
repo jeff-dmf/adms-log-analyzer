@@ -111,6 +111,16 @@ def test_windows_paths_are_normalized(raw, expected):
         ("C:\\Logs\\nul.txt", "reserved_name"),
         ("C:\\Logs\\com1 \\x", "reserved_name"),
         ("C:\\Logs\\LPT9.", "reserved_name"),
+        ("C:\\Logs\\COM\u00b9.zip", "reserved_name"),
+        ("C:\\Logs\\LPT\u00b2.zip", "reserved_name"),
+        ("C:\\Logs\\com\u00b3", "reserved_name"),
+        ("C:\\Logs\\NUL .zip", "reserved_name"),
+        ("C:\\Logs\\aux  .tar.gz", "reserved_name"),
+        ("C:\\Logs\\CONIN$", "reserved_name"),
+        ("C:\\Logs\\conout$.txt", "reserved_name"),
+        ("C:\\Logs\\a.zip.", "invalid_path"),
+        ("C:\\Logs\\a.zip ", "invalid_path"),
+        ("C:\\Logs\\dir \\a.zip", "invalid_path"),
         ("C:\\Logs\\aux.tar.gz", "reserved_name"),
         ("C:\\Logs\\a.zip:stream", "invalid_path"),
         ("C:\\Logs\\a<b", "invalid_path"),
@@ -122,6 +132,58 @@ def test_windows_paths_are_normalized(raw, expected):
 )
 def test_windows_bad_paths_are_refused(raw, code):
     assert rejected(raw, windows=True) == code
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "CON",
+        "nul.txt",
+        "NUL .zip",
+        "COM1",
+        "lpt9.log",
+        "COM\u00b9.zip",
+        "LPT\u00b2.zip",
+        "com\u00b3",
+        "CONIN$",
+        "conout$.x",
+    ],
+)
+def test_reserved_windows_names(name):
+    assert fp.is_reserved_windows_name(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["console", "com10", "com0", "lpt", "nul_file", "comma", "a.con", "COM\u00b9x", "CONIN", "ERS.zip"],
+)
+def test_ordinary_windows_names(name):
+    assert not fp.is_reserved_windows_name(name)
+    assert fp.check_path(f"C:\\Logs\\{name}", windows=True) == f"C:\\Logs\\{name}"
+
+
+@pytest.mark.skipif(
+    not hasattr(__import__("ntpath"), "isreserved"), reason="ntpath.isreserved is Python 3.13+"
+)
+@pytest.mark.parametrize(
+    "name",
+    [
+        "CON",
+        "nul.txt",
+        "NUL .zip",
+        "COM\u00b9.zip",
+        "LPT\u00b2.zip",
+        "CONIN$",
+        "console",
+        "com10",
+        "a.con",
+        "ERS.zip",
+    ],
+)
+def test_reserved_rule_matches_ntpath(name):
+    import ntpath
+
+    assert fp.is_reserved_windows_name(name) == ntpath.isreserved(name)
 
 
 def test_windows_unc_only_when_allowed():
@@ -407,6 +469,10 @@ def test_build_command_refuses_unknown_kind():
      ["D:\\A\u00e7\u00e3o\\\u00fc.zip", "D:\\A\u00e7\u00e3o\\日本.zip"]),
     ("\\\\srv\\share\\ERS\0a.zip\0b.zip", ["\\\\srv\\share\\ERS\\a.zip", "\\\\srv\\share\\ERS\\b.zip"]),
     ("", []),
+    ("C:\\ERS\0a.zip\0b.zip\0\0", ["C:\\ERS\\a.zip", "C:\\ERS\\b.zip"]),
+    ("C:\\ERS\\a.zip\0\0", ["C:\\ERS\\a.zip"]),
+    ("C:\\ERS\0a.zip\0\0stale.zip\0\0", ["C:\\ERS\\a.zip"]),
+    ("C:\\ERS\\a.zip\0\0C:\\old\0x.zip\0", ["C:\\ERS\\a.zip"]),
 ])  # fmt: skip
 def test_parse_comdlg_buffer(buffer, expected):
     assert fp.parse_comdlg_buffer(buffer) == expected
@@ -420,7 +486,9 @@ def test_parse_comdlg_buffer_long_paths():
 @posix_only
 def test_parse_lines():
     assert fp.parse_lines(b"/a/b.zip\n/c d/e.zip\n") == ["/a/b.zip", "/c d/e.zip"]
-    assert fp.parse_lines(b"/a.zip\r\n\r\n/b.zip") == ["/a.zip", "/b.zip"]
+    assert fp.parse_lines(b"/a.zip\r\n\r\n/b.zip") == ["/a.zip\r", "\r", "/b.zip"]
+    assert fp.parse_lines(b"/a.zip\n\n/b.zip\n") == ["/a.zip", "/b.zip"]
+    assert fp.parse_lines(b" /a.zip \n") == [" /a.zip "]
     assert fp.parse_lines("/A\u00e7\u00e3o/\u00fc.zip\n".encode()) == ["/A\u00e7\u00e3o/\u00fc.zip"]
     assert fp.parse_lines(b"") == []
     (bad,) = fp.parse_lines(b"/x/bad\xff.zip\n")
@@ -720,3 +788,20 @@ def test_windows_helper_structures_match_the_api():
 def test_windows_detection_uses_this_python():
     tool = fp.detect_native()
     assert tool is not None and tool.kind == "windows-comdlg" and tool.executable == sys.executable
+
+
+@posix_only
+def test_a_chosen_name_with_cr_is_never_turned_into_another_file(tmp_path):
+    plain = tmp_path / "a.zip"
+    plain.write_bytes(b"PK")
+    try:
+        (tmp_path / "a.zip\r").write_bytes(b"PK")
+    except OSError:
+        pytest.skip("file system refuses CR in names")
+    chosen = fp.parse_lines(bytes(tmp_path / "a.zip\r") + b"\n")
+    assert chosen == [str(tmp_path / "a.zip\r")]
+    ok, errors = fp.validate_picked(chosen, "zip", windows=False)
+    assert ok == [] and [e["error"] for e in errors] == ["invalid_path"]
+    picker, _ = fake_picker(FakeProc(0, bytes(tmp_path / "a.zip\r") + b"\n"))
+    result = picker.pick("zip", True)
+    assert result["paths"] == [] and result["errors"][0]["error"] == "invalid_path"

@@ -394,6 +394,7 @@ FS_PATH_NOT_ABSOLUTE = "The path must be absolute (for example C:\\Logs or /home
 FS_DEVICE_PATH = "Device and extended-length paths (\\\\?\\, \\\\.\\) are not supported"
 FS_UNC_PATH = "Network paths (\\\\server\\share) cannot be browsed; map the share to a drive letter"
 FS_PATH_BAD_CHARS = "The path contains characters that Windows does not allow in names"
+FS_PATH_TRAILING_DOT = "A name in the path ends with a space or a dot, which Windows does not keep"
 FS_RESERVED_NAME = "The path contains a name Windows reserves for devices (CON, NUL, COM1...)"
 FS_NOT_FOUND = "The path does not exist"
 FS_NOT_A_DIRECTORY = "The path is not a folder"
