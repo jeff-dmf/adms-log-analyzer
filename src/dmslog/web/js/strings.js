@@ -829,6 +829,10 @@ export const S = {
 
   // Keyboard shortcuts
   shortcutsHelp: "Shortcuts: n/N next/previous error, t/T next/previous record of the template, b bookmark the selected record, B open the bookmarks, c compare two records.",
+
+  // Resizable grid columns
+  columnResizeLabel: "Resize column {name}",
+  columnsResetWidths: "Reset column widths",
 };
 
 export function format(template, values) {
