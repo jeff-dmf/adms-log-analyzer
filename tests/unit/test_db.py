@@ -32,6 +32,7 @@ TABLES = {
     "error_config",
     "bookmark",
     "saved_view",
+    "highlight_rule",
     "entry_fts",
 }
 INDEXES = {
@@ -85,7 +86,7 @@ def test_schema_objects_exist(conn):
     assert names(conn, "table") >= TABLES
     assert INDEXES <= names(conn, "index")
     assert names(conn, "view") == {"entry_text"}
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 6
 
 
 def test_pragmas(conn):
@@ -445,7 +446,7 @@ def make_v4(path):
 
 def test_migration_5_adds_the_key_origin_and_a_covering_index(tmp_path):
     conn = make_v4(tmp_path / "v4.sqlite")
-    assert migrate(conn) == SCHEMA_VERSION == 5
+    assert migrate(conn) == SCHEMA_VERSION >= 5
     assert [r[1] for r in conn.execute("PRAGMA table_info(entry_key)")] == [
         "key_type", "value", "entry_id", "origin",
     ]  # fmt: skip

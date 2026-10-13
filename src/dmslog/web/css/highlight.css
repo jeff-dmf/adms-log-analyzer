@@ -1,0 +1,185 @@
+/* Highlight rules (ROADMAP 9.1): fixed palette of row backgrounds, a light and a dark variant (explicit
+   data-theme wins over the OS setting). Every text color a highlighted row can show (--text, --sev-1,
+   --sev-2, --muted) keeps a contrast of at least 4.5:1 on every color in both themes; the check is
+   tests/web/highlight-contrast.test.mjs. The rule name is always given as text too (row label, detail). */
+:root {
+  --hl-yellow: #fff1a8;
+  --hl-orange: #ffe8d4;
+  --hl-red: #ffe4e4;
+  --hl-pink: #fde4f2;
+  --hl-purple: #efe8ff;
+  --hl-blue: #e1ecff;
+  --hl-cyan: #d4f3f3;
+  --hl-green: #dcf5dc;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --hl-yellow: #332c00;
+    --hl-orange: #43290d;
+    --hl-red: #3f1d24;
+    --hl-pink: #3d1a33;
+    --hl-purple: #2e2550;
+    --hl-blue: #192f4f;
+    --hl-cyan: #0d343a;
+    --hl-green: #173520;
+  }
+}
+
+:root[data-theme="dark"] {
+  --hl-yellow: #332c00;
+  --hl-orange: #43290d;
+  --hl-red: #3f1d24;
+  --hl-pink: #3d1a33;
+  --hl-purple: #2e2550;
+  --hl-blue: #192f4f;
+  --hl-cyan: #0d343a;
+  --hl-green: #173520;
+}
+
+/* Grid rows: background of the rule, a neutral edge, and the normal text color (the pale noise and
+   warning colors would lose contrast); errors keep their color. */
+.grid-row[data-hl] {
+  box-shadow: inset 4px 0 0 var(--muted);
+}
+
+.grid-row[data-hl] .grid-cell {
+  color: var(--text);
+}
+
+.grid-row[data-hl][data-sev="1"] .col-level,
+.grid-row[data-hl][data-sev="1"] .col-msg {
+  color: var(--sev-1);
+}
+
+.grid-row[data-hl][data-sev="2"] .col-level,
+.grid-row[data-hl][data-sev="2"] .col-msg {
+  color: var(--sev-2);
+}
+
+.grid-row.selected[data-hl] {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.grid-row[data-hl="yellow"], .hl-c-yellow { background: var(--hl-yellow); }
+.grid-row[data-hl="orange"], .hl-c-orange { background: var(--hl-orange); }
+.grid-row[data-hl="red"], .hl-c-red { background: var(--hl-red); }
+.grid-row[data-hl="pink"], .hl-c-pink { background: var(--hl-pink); }
+.grid-row[data-hl="purple"], .hl-c-purple { background: var(--hl-purple); }
+.grid-row[data-hl="blue"], .hl-c-blue { background: var(--hl-blue); }
+.grid-row[data-hl="cyan"], .hl-c-cyan { background: var(--hl-cyan); }
+.grid-row[data-hl="green"], .hl-c-green { background: var(--hl-green); }
+
+/* Panel */
+.hl-panel {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 6px 8px;
+  margin: 4px 0;
+}
+
+.hl-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hl-title {
+  font-size: 1em;
+  margin: 0;
+}
+
+.hl-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.hl-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hl-rule.is-off .hl-name,
+.hl-rule.is-off .hl-desc {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.hl-swatch {
+  display: inline-block;
+  min-width: 2.2em;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 0.85em;
+  text-align: center;
+}
+
+.hl-name {
+  font-weight: 600;
+}
+
+.hl-desc {
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.hl-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hl-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.hl-status {
+  min-height: 1.2em;
+  font-size: 0.9em;
+  color: var(--muted);
+}
+
+.hl-status.is-error {
+  color: var(--error-text);
+}
+
+.hl-empty {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.detail-highlight {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.detail-highlight .hl-by {
+  flex-basis: 100%;
+}
+
+.hl-chip {
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}

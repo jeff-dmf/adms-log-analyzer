@@ -434,3 +434,8 @@ DISTINCT_ERRORS = {
     "bad_span": "span must be true or false",
     "bad_exact": "exact must be true or false",
 }
+# Highlight rules (store/highlights.py, /api/highlights and /api/entries/highlight).
+API_BAD_HIGHLIGHT_ID = "Invalid highlight rule id"
+API_HIGHLIGHT_NEXT_TIMEOUT = (
+    "No highlighted record was found in time; narrow the view (sources or time) and try again"
+)

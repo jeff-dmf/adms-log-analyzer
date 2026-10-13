@@ -35,6 +35,7 @@ function fieldText(value) {
 export class Grid {
   constructor({
     viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, getMark, onVisible, onView,
+    getHighlight,
   }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
@@ -44,6 +45,7 @@ export class Grid {
     this.onStatus = onStatus;
     this.onError = onError;
     this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
+    this.getHighlight = getHighlight || (() => null); // highlight rule of a record id: {color, label} | null
     this.onVisible = onVisible || (() => {}); // ids of the rendered rows (bookmark lookup)
     this.onView = onView || (() => {});
     this.countGeneration = 0;
@@ -492,11 +494,18 @@ export class Grid {
       slot.el.classList.toggle("selected", selected);
       slot.el.setAttribute("aria-selected", selected ? "true" : "false");
       const mark = this.getMark(row.id);
-      slot.el.setAttribute("aria-label", format(S.rowLabel, { id: row.id }) + (mark ? ", " + markerLabel(mark) : ""));
+      const hl = this.getHighlight(row.id);
+      slot.el.setAttribute("aria-label", format(S.rowLabel, { id: row.id }) + (mark ? ", " + markerLabel(mark) : "") +
+        (hl ? ", " + hl.label : ""));
       if (mark) {
         slot.el.dataset.bm = mark.color;
       } else {
         delete slot.el.dataset.bm;
+      }
+      if (hl) {
+        slot.el.dataset.hl = hl.color;
+      } else {
+        delete slot.el.dataset.hl;
       }
       shown.push(row.id);
       slot.el.dataset.sev = String(row.sev);

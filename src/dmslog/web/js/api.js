@@ -243,6 +243,20 @@ export const api = {
     export: (format) => request("GET", "/api/presets/export" + query({ format })),
     import: (format, data) => request("POST", "/api/presets/import", { format, data }),
   },
+  // Highlight rules of the case (store/highlights.py), batch marking of rows and the ]/[ navigation.
+  highlights: {
+    list: (caseId, signal) => request("GET", "/api/highlights" + query({ case: caseId }), undefined, signal),
+    create: (caseId, rule) => request("POST", "/api/highlights", { ...rule, case: caseId }),
+    update: (caseId, id, changes) =>
+      request("PATCH", "/api/highlights/" + encodeURIComponent(id), { ...changes, case: caseId }),
+    remove: (caseId, id) => request("DELETE", "/api/highlights/" + encodeURIComponent(id) + query({ case: caseId })),
+    order: (caseId, ids) => request("PUT", "/api/highlights/order", { case: caseId, ids }),
+    key: (caseId, type, value, color) => request("POST", "/api/highlights/key", { case: caseId, type, value, color }),
+    mark: (caseId, rules, ids, signal) =>
+      request("POST", "/api/entries/highlight", { case: caseId, rules, ids }, signal),
+    next: (caseId, filter, rules, cursor, dir, signal) =>
+      request("POST", "/api/entries/highlight/next", { case: caseId, filter, rules, cursor, dir }, signal),
+  },
   // Collections of a case (U21): one group per ERS capture, folder or file; list and remove one group.
   collections: (caseId, signal) =>
     request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/collections", undefined, signal),
