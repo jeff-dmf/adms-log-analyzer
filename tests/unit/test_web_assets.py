@@ -72,6 +72,8 @@ EXPECTED_MODULES = {
     "column-resize.js",
     "source-filter-model.js",
     "source-filter.js",
+    "distinct-model.js",
+    "distinct-panel.js",
 }
 
 FORBIDDEN_JS = [
