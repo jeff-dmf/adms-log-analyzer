@@ -1,0 +1,204 @@
+/* Collections panel, Collection grid column and the approximate-order note. Theme tokens only:
+   the tag colors are fixed per collection number and keep their contrast in both themes. */
+:root {
+  --col-1-bg: #d4e5ff; --col-2-bg: #ffe0c2; --col-3-bg: #d3f0da; --col-4-bg: #f1d8f6;
+  --col-5-bg: #fff0b0; --col-6-bg: #cdeeee; --col-7-bg: #ffd6d6; --col-8-bg: #e0e3ea;
+}
+
+:root[data-theme="dark"] {
+  --col-1-bg: #21447a; --col-2-bg: #6a4215; --col-3-bg: #1f5530; --col-4-bg: #57305f;
+  --col-5-bg: #675710; --col-6-bg: #1b5656; --col-7-bg: #692525; --col-8-bg: #404756;
+}
+
+.col-tag {
+  display: inline-block;
+  min-width: 2.2em;
+  padding: 0 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+}
+
+.col-tag-1, .col-tag[data-tag="1"] { background: var(--col-1-bg); }
+.col-tag-2, .col-tag[data-tag="2"] { background: var(--col-2-bg); }
+.col-tag-3, .col-tag[data-tag="3"] { background: var(--col-3-bg); }
+.col-tag-4, .col-tag[data-tag="4"] { background: var(--col-4-bg); }
+.col-tag-5, .col-tag[data-tag="5"] { background: var(--col-5-bg); }
+.col-tag-6, .col-tag[data-tag="6"] { background: var(--col-6-bg); }
+.col-tag-7, .col-tag[data-tag="7"] { background: var(--col-7-bg); }
+.col-tag-8, .col-tag[data-tag="8"] { background: var(--col-8-bg); }
+
+.collections-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.col-title {
+  margin: 0;
+  font-size: 13px;
+}
+
+.col-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.col-item {
+  padding: 4px 6px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.col-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.col-pick {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.col-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.col-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.col-missing {
+  color: var(--info-text);
+  font-size: 12px;
+}
+
+.col-state {
+  font-size: 12px;
+}
+
+.col-state-error {
+  color: var(--error-text);
+}
+
+.col-state-indexing {
+  color: var(--info-text);
+}
+
+.col-expand {
+  min-width: 24px;
+  padding: 0 6px;
+}
+
+.col-members {
+  list-style: none;
+  margin: 4px 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.col-member {
+  display: flex;
+  flex-direction: column;
+}
+
+.col-member-name {
+  overflow-wrap: anywhere;
+}
+
+.col-actions {
+  margin-top: 4px;
+}
+
+.col-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px;
+  background: var(--error-bg);
+  color: var(--error-text);
+  border-radius: 4px;
+}
+
+.col-confirm-text {
+  margin: 0;
+  flex: 1 1 100%;
+  font-size: 12px;
+}
+
+.col-yes {
+  background: var(--error-text);
+  color: var(--error-bg);
+  border-color: var(--error-text);
+}
+
+.col-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.col-order-more {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.col-order-note {
+  padding: 4px 8px;
+  background: var(--info-bg);
+  color: var(--info-text);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.col-order-note[hidden] {
+  display: none;
+}
+
+/* Grid column */
+.col-collection {
+  width: 90px;
+  text-align: center;
+}
+
+.grid-row .col-collection[data-tag] {
+  color: var(--text);
+}
+
+.grid-row .col-collection[data-tag="1"] { background: var(--col-1-bg); }
+.grid-row .col-collection[data-tag="2"] { background: var(--col-2-bg); }
+.grid-row .col-collection[data-tag="3"] { background: var(--col-3-bg); }
+.grid-row .col-collection[data-tag="4"] { background: var(--col-4-bg); }
+.grid-row .col-collection[data-tag="5"] { background: var(--col-5-bg); }
+.grid-row .col-collection[data-tag="6"] { background: var(--col-6-bg); }
+.grid-row .col-collection[data-tag="7"] { background: var(--col-7-bg); }
+.grid-row .col-collection[data-tag="8"] { background: var(--col-8-bg); }
+
+/* Add files to the open case */
+#add-files-host {
+  margin-top: 6px;
+}

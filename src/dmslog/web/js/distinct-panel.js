@@ -51,7 +51,7 @@ function warningNote(view, onExact) {
 
 // -- Distinct values ----------------------------------------------------------------------------
 
-function initDistinct(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
+function initDistinct(host, { api, getCase, getFilter, getFieldNames, hasCollections, onDrill }) {
   host.textContent = "";
   const head = element("div", "dst-head");
   const title = element("h3", "dst-title", S.dstTitle);
@@ -85,7 +85,7 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, onDrill })
     fieldSelect.textContent = "";
     const groups = { column: S.dstGroupColumns, key: S.dstGroupKeys, field: S.dstGroupFields };
     const parents = {};
-    for (const option of fieldOptions(keyTypes, getFieldNames())) {
+    for (const option of fieldOptions(keyTypes, getFieldNames(), Boolean(hasCollections && hasCollections()))) {
       if (!parents[option.group]) {
         parents[option.group] = element("optgroup");
         parents[option.group].label = groups[option.group];
@@ -358,6 +358,7 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
 //   toolbar, beforeButton    where the buttons go; panelParent, beforePanel  where the panels go
 //   api, getCase(), getFilter()   the current case and the ONE composed filter of the grid
 //   getFieldNames()          parsed-field names seen so far; getSourceName(id)
+//   hasCollections()         the case has more than one collection (offers the "Collection" field)
 //   onDrill(leaf, exclude)   add the leaf (or its negation) to the user filter
 //   onReveal({id, ts})       select a record in the grid
 // Returns { viewChanged() } to call whenever the case or the filter changed.

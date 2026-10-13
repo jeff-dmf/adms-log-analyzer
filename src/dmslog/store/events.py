@@ -364,8 +364,11 @@ def stat_series(
     method: str | None = None,
     ts_from: int | None = None,
     ts_to: int | None = None,
+    collection: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Statistics samples ordered by ``(ts, stream_id, side, method)``; second item: truncated."""
+    """Statistics samples ordered by ``(ts, stream_id, side, method)``; second item: truncated.
+
+    ``collection``: only the samples of the streams of that collection group (U21)."""
     parts: list[str] = []
     params: list[Any] = []
     for sql, value in (
@@ -374,6 +377,7 @@ def stat_series(
         ("method = ?", method),
         ("ts >= ?", ts_from),
         ("ts <= ?", ts_to),
+        ("stream_id IN (SELECT id FROM stream WHERE collection_group = ?)", collection),
     ):
         if value is not None:
             parts.append(sql)
@@ -390,9 +394,22 @@ def stat_series(
     return [dict(zip(names, r, strict=True)) for r in rows[:SERIES_LIMIT]], len(rows) > SERIES_LIMIT
 
 
-def stat_methods(conn: sqlite3.Connection, stream_id: int | None = None) -> list[dict[str, Any]]:
-    """One row per ``(stream, side, method)`` with the last cumulative call count."""
-    where, params = ("WHERE stream_id = ?", [stream_id]) if stream_id is not None else ("", [])
+def stat_methods(
+    conn: sqlite3.Connection, stream_id: int | None = None, collection: int | None = None
+) -> list[dict[str, Any]]:
+    """One row per ``(stream, side, method)`` with the last cumulative call count.
+
+    ``collection``: only the streams of that collection group (U21)."""
+    parts: list[str] = []
+    params: list[Any] = []
+    for sql, value in (
+        ("stream_id = ?", stream_id),
+        ("stream_id IN (SELECT id FROM stream WHERE collection_group = ?)", collection),
+    ):
+        if value is not None:
+            parts.append(sql)
+            params.append(value)
+    where = "WHERE " + " AND ".join(parts) if parts else ""
     with read_guard(conn, PAGE_TIMEOUT_S):
         rows = conn.execute(
             "SELECT s.stream_id, st.family, s.side, s.method, s.calls, s.ts FROM ("
