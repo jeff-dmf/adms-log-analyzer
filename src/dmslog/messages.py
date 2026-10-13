@@ -411,3 +411,12 @@ FS_DIALOG_TITLE_ZIP = "dmslog - Select ERS archives (.zip)"
 FS_DIALOG_TITLE_FOLDER = "dmslog - Select a folder"
 FS_DIALOG_FILTER_ZIP = "ERS archives"
 FS_DIALOG_FILTER_ALL = "All files"
+# Distinct values of a field (store/distinct.py, POST /api/entries/distinct).
+DISTINCT_ERRORS = {
+    "bad_field": (
+        "unknown field {name!r} (expected tpl, source, sev, level, tid, pid, fields.<name> or key.<type>)"
+    ),
+    "bad_top": "limit must be an integer from 1 to {limit}",
+    "bad_span": "span must be true or false",
+    "bad_exact": "exact must be true or false",
+}

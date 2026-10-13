@@ -43,7 +43,7 @@ from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
 from ..report import export as report_export
 from ..report import redact, viewexport
-from ..store import bookmarks, db, events, keys, payloads, presets, query, views
+from ..store import bookmarks, db, distinct, events, keys, payloads, presets, query, views
 from ..store import config as config_store
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
@@ -855,6 +855,7 @@ class Api:
             ("GET", re.compile(r"/api/fs/list\Z"), self.fs_list),
             ("POST", re.compile(r"/api/fs/pick\Z"), self.fs_pick),
             ("DELETE", re.compile(r"/api/fs/pick\Z"), self.fs_pick_cancel),
+            ("POST", re.compile(r"/api/entries/distinct\Z"), self.entries_distinct),
         ]
         self._routes += [
             ("GET", re.compile(r"/api/presets\Z"), self.list_presets),
@@ -1542,6 +1543,22 @@ class Api:
                 "map_saved": map_saved,
             },
         )
+
+    def entries_distinct(self, request: Request) -> Response:
+        """Top values of one field inside the filter (store/distinct.py; ARQUITETURA 10)."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        flt = body.get("filter")
+        if flt is not None and not isinstance(flt, dict):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
+        _check_scan_filter(flt)
+        spec = distinct.parse_field(body.get("field"))
+        top = body.get("limit", distinct.DEFAULT_TOP)
+        with self.store.reader(cid) as conn:
+            result = distinct.distinct(
+                conn, flt, spec, top, span=body.get("span", False), exact=body.get("exact", False)
+            )
+        return Response(200, distinct.as_json(result))
 
     # -- saved filters (per case, table saved_view)
 
