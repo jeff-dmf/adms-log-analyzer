@@ -138,6 +138,16 @@ or for all), rename or delete it, and export or import presets as JSON or TOML. 
 `presets.toml` in the data directory and never contain paths or log data; the curated ones ship with
 the app.
 
+## Local alerts (follow mode)
+
+While `dmslog serve --watch` follows a folder, the **Alerts** panel can warn you when the new records
+match a rule: a banner in the viewer and, if you turn them on, browser notifications (the button
+**Enable browser notifications** is the only thing that asks the browser for permission). Rules are a
+template or a filter that matched new records, more than N matches in a time window, or an operation that
+stayed open longer than a timeout. Create them from the current filter or from a preset; they are kept in
+`alerts.toml` in the data directory (no paths or log data) and apply to every case. Nothing leaves this
+computer: no e-mail, no network calls.
+
 ## Local aliases
 
 The repository uses the neutral token `Custom` where a customer-specific adapter name used to be.

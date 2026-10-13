@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/css/filter-tree.css">
   <link rel="stylesheet" href="/css/bookmarks.css">
   <link rel="stylesheet" href="/css/case-files.css">
+  <link rel="stylesheet" href="/css/alerts.css">
   <script type="module" src="/js/main.js"></script>
 </head>
 <body>
@@ -41,11 +42,13 @@
       <button type="button" id="payload-button" aria-expanded="false" data-i18n="plgButton" hidden></button>
       <button type="button" id="dashboard-button" aria-expanded="false" data-i18n="toolbarDashboard" hidden></button>
       <button type="button" id="config-button" aria-expanded="false" data-i18n="toolbarConfig" hidden></button>
+      <button type="button" id="alerts-button" aria-expanded="false" data-i18n="alToolbar" hidden></button>
       <button type="button" id="export-button" aria-expanded="false" data-i18n="toolbarExport" hidden></button>
       <button type="button" id="theme-button" data-i18n-title="themeToggle" data-i18n-aria-label="themeToggle"></button>
     </header>
 
     <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+    <div id="alert-banner" class="al-banner" role="status" aria-live="polite" hidden></div>
 
     <main id="panels">
       <aside id="sources-panel" class="panel" aria-labelledby="sources-title">
@@ -92,6 +95,7 @@
         <section id="redaction-panel-host" class="panel host-panel" hidden></section>
         <section id="bookmarks-host" class="panel host-panel" hidden></section>
         <section id="compare-host" class="panel host-panel" hidden></section>
+        <section id="alerts-host" class="panel host-panel" hidden></section>
         <form id="filter-form" class="filter-bar">
           <div class="field">
             <label for="sev-select" data-i18n="filterSeverity"></label>

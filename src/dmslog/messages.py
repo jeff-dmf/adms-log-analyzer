@@ -439,3 +439,32 @@ API_BAD_HIGHLIGHT_ID = "Invalid highlight rule id"
 API_HIGHLIGHT_NEXT_TIMEOUT = (
     "No highlighted record was found in time; narrow the view (sources or time) and try again"
 )
+# Local alerts of the follow mode (store/alerts.py, /api/alerts/*).
+ALERT_ERRORS = {
+    "bad_rule": "an alert rule must be an object with name, kind and the fields of its kind",
+    "bad_name": "the name must be a non-empty text of at most {limit} characters",
+    "bad_kind": "the kind must be 'match', 'threshold' or 'open_operation'",
+    "bad_severity": "the severity must be 'info', 'warning' or 'critical'",
+    "bad_enabled": "enabled must be true or false",
+    "bad_interval": "min_interval_s must be an integer from {lo} to {hi}",
+    "bad_count": "the count must be an integer from {lo} to {hi}",
+    "bad_window": "window_s must be an integer from {lo} to {hi}",
+    "bad_timeout": "timeout_s must be an integer from {lo} to {hi}",
+    "bad_timeout_source": "give exactly one of timeout_s and timeout_param",
+    "bad_timeout_param": "timeout_param must be a Registry parameter name (letters, digits, underscore)",
+    "bad_operation": "operation must be a non-empty text of at most {limit} characters",
+    "bad_filter": "the filter must be a non-empty JSON object",
+    "filter_invalid": "the filter is not valid: {detail}",
+    "filter_too_large": "the filter is larger than {limit} bytes",
+    "case_specific": "the filter uses {leaf!r}, which points at one case; a rule must work in any case",
+    "extra_too_large": "the unknown fields of the rule are too large or too deeply nested",
+    "duplicate_name": "an alert rule named {name!r} already exists",
+    "too_many_rules": "at most {limit} alert rules can be kept",
+    "not_found": "alert rule {name!r} does not exist",
+    "file_invalid": "the alerts file is not valid and was left untouched; fix or remove it first",
+    "file_too_large": "the alerts file would be larger than {limit} bytes; delete some rules",
+    "save_failed": "the alerts file could not be written",
+}
+ALERT_TIMEOUT_UNAVAILABLE = (
+    "The case has no value for this timeout parameter, so the rule cannot be evaluated; use a fixed timeout"
+)
