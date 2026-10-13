@@ -179,6 +179,7 @@ function start() {
   let payloadList = null;
   let openOperation = () => {};
   let exportPanel = null;
+  let copyExport = null;
   let sourceFamilies = new Map();
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
@@ -371,6 +372,9 @@ function start() {
       }
       if (exportPanel) {
         exportPanel.reset();
+      }
+      if (copyExport) {
+        copyExport.reset();
       }
       if (sideBySide) {
         sideBySide.reset();
@@ -898,6 +902,22 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: the button stays hidden.
+  });
+
+  // "Copy as" menu (lists, original lines, CSV): optional module, the app works without it.
+  import("./copy-export.js").then((module) => {
+    copyExport = module.initCopyExport(exportButton, {
+      getContext: () => ({
+        caseId,
+        filter: currentFilter,
+        columns: grid.visibleColumns,
+        fieldColumns: grid.fieldColumns,
+        recordId: detail.entry ? detail.entry.id : null,
+        entry: detail.entry,
+      }),
+    });
+  }).catch(() => {
+    // Module missing or failing: no menu.
   });
 
   const dashboardHost = byId("dashboard-host");
