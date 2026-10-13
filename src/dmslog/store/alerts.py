@@ -32,7 +32,7 @@ import threading
 import time
 import tomllib
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,7 +64,6 @@ SEVERITIES = ("info", "warning", "critical")
 FILTER_KINDS = frozenset({"match", "threshold"})
 DEFAULT_MIN_INTERVAL_S = 30
 MAX_MIN_INTERVAL_S = 86400
-MAX_COUNT = 1_000_000
 MAX_WINDOW_S = 86400
 MAX_TIMEOUT_S = 7 * 86400
 MAX_OPERATION_CHARS = 128
@@ -76,10 +75,11 @@ KNOWN_KEYS = frozenset(
 
 # Evaluation limits.
 EVAL_TIMEOUT_S = 5.0
-ROW_LIMIT = 100_000  # rows a rule looks at in one cycle
+ROW_LIMIT = 100_000  # rows a rule looks at in one cycle; also the largest count a rule can reach
 SAMPLE_IDS = 5
 MAX_EVENT_IDS = 20
-MAX_OPEN_EVENTS = 1000
+MAX_OPEN_EVENTS = 1000  # per page
+MAX_OPEN_PAGES = 50
 HISTORY_LIMIT = 200
 SEEN_LIMIT = 10_000
 
@@ -156,9 +156,9 @@ def validate_rule(raw: Any) -> dict[str, Any]:
                 raise AlertError("case_specific", leaf=leaf)
         clean["filter"] = tree
         if kind == "match":
-            clean["min_count"] = _int_field(raw, "min_count", 1, MAX_COUNT, "bad_count", 1)
+            clean["min_count"] = _int_field(raw, "min_count", 1, ROW_LIMIT, "bad_count", 1)
         else:
-            clean["threshold"] = _int_field(raw, "threshold", 1, MAX_COUNT, "bad_count")
+            clean["threshold"] = _int_field(raw, "threshold", 1, ROW_LIMIT - 1, "bad_count")
             clean["window_s"] = _int_field(raw, "window_s", 1, MAX_WINDOW_S, "bad_window")
     else:
         timeout_s, param = raw.get("timeout_s"), raw.get("timeout_param")
@@ -474,29 +474,39 @@ def _eval_threshold(conn: sqlite3.Connection, rule: Mapping[str, Any], lo: int, 
     return Alert(rule["name"], rule["kind"], rule["severity"], n, fresh.sample_ids, start, fresh.ts_to)
 
 
+def _open_pages(conn: sqlite3.Connection, page_sql: str, extra: list[Any]) -> Iterator[tuple[Any, ...]]:
+    """Open operations oldest first, by keyset on ``(ts_start, id)`` in pages (operations already alerted
+    are skipped by the caller, so a fixed first page must not hide the ones after it)."""
+    cursor = (-(2**63), -(2**63))
+    for _ in range(MAX_OPEN_PAGES):
+        rows = conn.execute(page_sql, (*extra, *cursor, MAX_OPEN_EVENTS)).fetchall()
+        yield from rows
+        if len(rows) < MAX_OPEN_EVENTS:
+            return
+        cursor = (rows[-1][3], rows[-1][0])
+
+
 def _eval_open(
     conn: sqlite3.Connection, rule: Mapping[str, Any], seen: set[tuple[int, int, str]]
 ) -> tuple[Alert | None, list[tuple[int, int, str]]]:
     """Operations still open after the rule's timeout; ``seen`` holds the ones already alerted."""
-    sql = (
+    base = (
         "SELECT ev.id, ev.stream_id, ev.name, ev.ts_start, ev.start_entry_id, st.collection_group, st.process"
         " FROM event ev JOIN stream st ON st.id = ev.stream_id"
         " WHERE ev.kind = 'operation' AND ev.status = 'open'"
     )
-    params: list[Any] = []
+    extra: list[Any] = []
     if "operation" in rule:
-        sql += " AND ev.name = ?"
-        params.append(rule["operation"])
-    sql += " ORDER BY ev.ts_start, ev.id LIMIT ?"
-    params.append(MAX_OPEN_EVENTS)
+        base += " AND ev.name = ?"
+        extra.append(rule["operation"])
+    page_sql = base + " AND (ev.ts_start, ev.id) > (?, ?) ORDER BY ev.ts_start, ev.id LIMIT ?"
     products: dict[int, set[str]] = {}
     timeouts: dict[tuple[int, str | None], float | None] = {}
     clocks: dict[int, int | None] = {}
     found: list[tuple[int, int, int, str, int | None]] = []
     with query.read_guard(conn, EVAL_TIMEOUT_S):
-        for ev_id, stream_id, name, ts_start, start_entry, group, process in conn.execute(
-            sql, params
-        ).fetchall():
+        for row in _open_pages(conn, page_sql, extra):
+            ev_id, stream_id, name, ts_start, start_entry, group, process = row
             key = (stream_id, ts_start, name or "")
             if key in seen:
                 continue
@@ -562,7 +572,7 @@ class AlertState:
         self._last: dict[tuple[str, str], float] = {}
         self._seen: dict[tuple[str, str], dict[tuple[int, int, str], None]] = {}
         self._history: dict[str, deque[dict[str, Any]]] = {}
-        self._next_id = 0
+        self._next_id = time.time_ns() // 1_000_000  # unique across restarts (the client dedupes by id)
 
     def history(self, case_id: str) -> list[dict[str, Any]]:
         with self._lock:

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import {
   HISTORY_SHOWN, NOTIFY_KEY, connectAlertStream, createAlertsFlow, createNotifier, parseAlertEvent, recordsFilter,
-  ruleBody, validateDraft,
+  ruleBody, validateDraft, MAX_COUNT,
 } from "../../src/dmslog/web/js/alerts-model.js";
 
 const EVENT = {
@@ -261,4 +261,26 @@ test("flow: 'Show these records' filter comes from the rule listed now", async (
   await flow.refresh();
   const alert = parseAlertEvent(EVENT);
   assert.deepEqual(flow.recordsFilterFor(alert), { and: [filter, { ts: { ge: 100, le: 900 } }] });
+});
+
+test("flow: an event replayed after an SSE reconnect gives no second banner or notification", () => {
+  const fake = fakeNotification({ permission: "granted" });
+  const notifier = createNotifier({ NotificationImpl: fake.Fake, storage: memoryStorage() });
+  notifier.setWanted(true);
+  const flow = createAlertsFlow({
+    api: fakeApi(), getCase: () => "demo", notifier, describe: (a) => ({ title: a.rule, body: "" }),
+  });
+  assert.notEqual(flow.receive(EVENT), null);
+  flow.dismiss();
+  assert.equal(flow.receive(EVENT), null); // the server replays its event log to a new subscriber
+  assert.equal(flow.state.banner, null);
+  assert.equal(fake.shown.length, 1);
+  assert.equal(flow.state.history.length, 1);
+});
+
+test("validateDraft keeps counts inside what the server can reach", () => {
+  const filter = { tpl: "X" };
+  assert.equal(validateDraft({ name: "a", kind: "match", filter, minCount: String(MAX_COUNT) }).error, undefined);
+  assert.equal(validateDraft({ name: "a", kind: "match", filter, minCount: String(MAX_COUNT + 1) }).error, "count");
+  assert.equal(validateDraft({ name: "a", kind: "threshold", filter, threshold: String(MAX_COUNT), windowS: "5" }).error, "threshold");
 });

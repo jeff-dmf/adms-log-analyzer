@@ -286,13 +286,13 @@ def test_process_cycle_dedupes_cools_down_and_keeps_history(case_conn, tmp_path)
     clock = Clock()
     state = alerts.AlertState(clock)
     first = state.process_cycle(conn, data, "demo", 0)
-    assert [a["rule"] for a in first] == ["Errors"] and first[0]["case"] == "demo" and first[0]["id"] == 1
+    assert [a["rule"] for a in first] == ["Errors"] and first[0]["case"] == "demo"
     clock.now += 10
     assert state.process_cycle(conn, data, "demo", 0) == []  # minimum delay of the rule
     clock.now += 60
     again = state.process_cycle(conn, data, "demo", 0)
-    assert len(again) == 1 and again[0]["id"] == 2
-    assert [a["id"] for a in state.history("demo")] == [1, 2]
+    assert len(again) == 1 and again[0]["id"] == first[0]["id"] + 1
+    assert [a["id"] for a in state.history("demo")] == [first[0]["id"], again[0]["id"]]
     total = conn.execute("SELECT max(id) FROM entry").fetchone()[0]
     clock.now += 100
     assert state.process_cycle(conn, data, "demo", total) == []  # nothing new
@@ -335,3 +335,35 @@ def test_read_only_connection_is_enough(tmp_path):
         assert alerts.evaluate_rule(conn, rule(), 0, total)[0] is not None
     finally:
         conn.close()
+
+
+def test_open_operations_beyond_the_first_page_are_still_evaluated(case_conn, monkeypatch):
+    conn, _ = case_conn
+    add_open_operations(conn, [1_000_000 + k for k in range(5)])
+    monkeypatch.setattr(alerts, "MAX_OPEN_EVENTS", 2)
+    open_rule = {
+        "name": "slow",
+        "kind": "open_operation",
+        "severity": "warning",
+        "timeout_param": "SendTimeout",
+    }
+    seen: set = set()
+    got, keys = alerts.evaluate_rule(conn, open_rule, 0, 1, seen)
+    assert got.count == 5 and len(keys) == 5
+    seen.update(keys[:4])  # the first pages were alerted before: the last operation is still found
+    got, _ = alerts.evaluate_rule(conn, open_rule, 0, 1, seen)
+    assert got.count == 1 and got.event_ids == [104]
+
+
+def test_count_limits_match_what_a_cycle_can_reach():
+    top = alerts.ROW_LIMIT
+    assert alerts.validate_rule(rule(min_count=top))["min_count"] == top
+    for bad in (top + 1, 0):
+        with pytest.raises(alerts.AlertError):
+            alerts.validate_rule(rule(min_count=bad))
+    burst = {"name": "b", "kind": "threshold", "filter": ERRORS, "window_s": 60}
+    assert alerts.validate_rule({**burst, "threshold": top - 1})["threshold"] == top - 1
+    with pytest.raises(alerts.AlertError):
+        alerts.validate_rule(
+            {**burst, "threshold": top}
+        )  # a count of ROW_LIMIT is the most; it can never exceed it

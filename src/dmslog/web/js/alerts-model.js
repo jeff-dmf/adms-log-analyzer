@@ -10,6 +10,7 @@ export const MAX_NAME = 80; // store/views.py MAX_NAME_CHARS
 export const NOTIFY_KEY = "dmslog.alerts.notify";
 export const DEFAULT_MIN_INTERVAL = 30;
 const MAX_IDS = 20;
+export const MAX_COUNT = 100000; // store/alerts.py ROW_LIMIT: the most records a rule can count
 
 const isInt = (v) => Number.isInteger(v) && Number.isSafeInteger(v);
 const ints = (list) => (Array.isArray(list) ? list.filter(isInt).slice(0, MAX_IDS) : []);
@@ -109,14 +110,14 @@ export function validateDraft(draft, existing = []) {
   body.filter = draft.filter;
   if (draft.kind === "match") {
     const count = toInt(draft.minCount === undefined || draft.minCount === "" ? 1 : draft.minCount);
-    if (count === null || count < 1) {
+    if (count === null || count < 1 || count > MAX_COUNT) {
       return { error: "count", field: "minCount" };
     }
     body.min_count = count;
     return { body };
   }
   const threshold = toInt(draft.threshold);
-  if (threshold === null || threshold < 1) {
+  if (threshold === null || threshold < 1 || threshold >= MAX_COUNT) {
     return { error: "threshold", field: "threshold" };
   }
   const windowS = toInt(draft.windowS);
@@ -258,9 +259,10 @@ export function createAlertsFlow({ api, getCase, notifier, describe, onChange })
     if (alert === null) {
       return null;
     }
-    if (alert.id === null || !state.history.some((h) => h.id === alert.id)) {
-      state.history = [alert, ...state.history].slice(0, HISTORY_SHOWN);
+    if (alert.id !== null && state.history.some((h) => h.id === alert.id)) {
+      return null; // replayed after an SSE reconnect (or already loaded): no second banner or notification
     }
+    state.history = [alert, ...state.history].slice(0, HISTORY_SHOWN);
     state.banner = { alert, more: state.banner ? state.banner.more + 1 : 0 };
     if (notifier && describe) {
       const text = describe(alert);

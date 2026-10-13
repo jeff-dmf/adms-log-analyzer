@@ -110,3 +110,37 @@ def test_no_rules_means_no_alert_events(tmp_path):
         assert api.jobs.alerts.history(case) == []
     finally:
         api.shutdown()
+
+
+def test_the_case_stays_busy_until_the_alerts_of_a_cycle_are_out(tmp_path, monkeypatch):
+    """The job is released only after evaluation and publication: a delete cannot overlap the evaluation."""
+    import threading
+
+    root = tp.write_folder(tmp_path / "Log", {tw.WFM: tp.make_log(20)})
+    data = tmp_path / "data"
+    alerts.create(data, RULE)
+    api = Api(data)
+    inside, release = threading.Event(), threading.Event()
+    original = alerts.AlertState.process_cycle
+    seen = {}
+
+    def slow(self, conn, data_dir, case_id, baseline):
+        seen["running"] = api.jobs.hub(case_id).running
+        inside.set()
+        release.wait(10)
+        return original(self, conn, data_dir, case_id, baseline)
+
+    monkeypatch.setattr(alerts.AlertState, "process_cycle", slow)
+    try:
+        case = api.jobs.start_watch("followed", root, "default", 0.05)
+        assert inside.wait(20)
+        assert seen["running"] is True and api.jobs.is_running(case)  # delete_case answers 409 here
+        release.set()
+        wait_alert(api.jobs.hub(case))
+        deadline = time.monotonic() + 10
+        while api.jobs.is_running(case) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not api.jobs.is_running(case)
+    finally:
+        release.set()
+        api.shutdown()

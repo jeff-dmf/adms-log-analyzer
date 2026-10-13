@@ -430,11 +430,7 @@ class IngestJobs:
                 try:
                     self._store.require(cid)  # the case was deleted: stop following
                     if watcher.poll() and hub.try_begin(uuid.uuid4().hex[:12]):
-                        baseline = self._alert_baseline(cid)
                         report = self._watch_cycle(cid, watcher, hub)
-                        if report is not None and report.has_news:
-                            hub.publish("watch", watch_payload(report), coalesce=True)
-                            self._publish_alerts(cid, hub, baseline)
                         if report is not None and report.failed:
                             failures += 1  # partial failure: the change stays pending, retry with a backoff
                             delay = min(backoff_delay(interval, failures), MAX_BACKOFF_S)
@@ -464,20 +460,15 @@ class IngestJobs:
         except (ApiError, sqlite3.Error):
             return None
 
-    def _publish_alerts(self, cid: str, hub: ProgressHub, baseline: int | None) -> None:
-        """Evaluate the local alert rules over the cycle's new records; one ``alert`` event per alert.
-
-        Never raises: an alert problem must not stop the follow mode.
-        """
+    def _evaluate_alerts(self, cid: str, baseline: int | None) -> list[dict[str, Any]]:
+        """Evaluate the local alert rules over the cycle's new records (best effort: never raises)."""
         if baseline is None:
-            return
+            return []
         try:
             with self._store.reader(cid) as conn:
-                found = self.alerts.process_cycle(conn, self._store.data_dir, cid, baseline)
-        except Exception:  # noqa: BLE001 - alerts are best effort
-            return
-        for body in found:
-            hub.publish("alert", body)
+                return self.alerts.process_cycle(conn, self._store.data_dir, cid, baseline)
+        except Exception:  # noqa: BLE001 - alerts must not stop the follow mode
+            return []
 
     def _watch_cycle(self, cid: str, watcher: Watcher, hub: ProgressHub) -> CycleReport | None:
         """Ingest what ``watcher.poll`` found, publishing progress; always finishes the hub's job."""
@@ -485,6 +476,7 @@ class IngestJobs:
         done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
         conn: sqlite3.Connection | None = None
         report: CycleReport | None = None
+        baseline: int | None = None
 
         def progress(event: pipeline.ProgressEvent) -> None:
             if self.stopping.is_set():
@@ -503,6 +495,7 @@ class IngestJobs:
             )
 
         try:
+            baseline = self._alert_baseline(cid)
             conn = db.create_case_db(self._store.db_path(cid))
             watcher.conn = conn
             report = watcher.ingest(progress)
@@ -527,7 +520,18 @@ class IngestJobs:
             watcher.conn = None
             if conn is not None:
                 conn.close()
-            hub.finish(done)
+            # The job (one per case) stays held while the alerts are evaluated: a delete or another ingest
+            # cannot overlap the evaluation or recreate its state. Events go out after the release.
+            news = report is not None and report.has_news
+            found: list[dict[str, Any]] = []
+            try:
+                found = self._evaluate_alerts(cid, baseline) if news else []
+            finally:
+                hub.finish(done)
+            if news and report is not None:
+                hub.publish("watch", watch_payload(report), coalesce=True)
+                for body in found:
+                    hub.publish("alert", body)
         return report
 
 
