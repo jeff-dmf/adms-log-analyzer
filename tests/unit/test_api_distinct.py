@@ -21,7 +21,7 @@ def test_distinct_by_template_with_span(client, case):  # noqa: F811
     assert shown + body["others"]["count"] == body["total"]
     assert len(body["values"]) <= 3 and body["others"]["groups"] == body["groups"] - len(body["values"])
     for v in body["values"]:
-        assert {"value", "count", "pct", "leaf", "label", "first_ts", "last_ts"} == set(v)
+        assert {"value", "count", "pct", "leaf", "label", "code", "first_ts", "last_ts"} == set(v)
         assert v["leaf"] == {"tpl": v["value"]}
         drilled = client.post("/api/entries/count", {"case": case, "filter": v["leaf"]})[1]["count"]
         assert drilled == v["count"]
@@ -46,6 +46,11 @@ def test_distinct_validation(client, case):  # noqa: F811
         assert status == 400 and body["error"] == "bad_top"
     status, body, _ = post(client, {"case": case, "field": "tpl", "span": 1})
     assert status == 400 and body["error"] == "bad_span"
+    for exact in (1, "true", None):
+        status, body, _ = post(client, {"case": case, "field": "tpl", "exact": exact})
+        assert status == 400 and body["error"] == "bad_exact" and body["path"] == "$.exact", exact
+    status, body, _ = post(client, {"case": case, "field": "level", "exact": True})
+    assert status == 200 and body["exact"] is True and body["method"] == "exact"
     status, body, _ = post(client, {"case": case, "field": "tpl", "filter": [1]})
     assert status == 400 and body["error"] == "invalid_field"
     status, body, _ = post(client, {"case": case, "field": "tpl", "filter": {"bogus": 1}})

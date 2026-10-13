@@ -123,8 +123,17 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, onDrill })
       setStatus(format(S.dstError, { error: state.error }), true);
       return;
     }
-    const view = buildView(state.field, state.data);
+    const view = buildView(state.field, state.data, state.exact);
     setStatus(view.summary, false);
+    if (view.warning) {
+      const note = element("div", "dst-warning", view.warning);
+      if (view.canCountExactly) {
+        const exactButton = button("dst-exact", S.dstCountExactly);
+        exactButton.addEventListener("click", () => reload(true));
+        note.append(" ", exactButton);
+      }
+      tableHost.appendChild(note);
+    }
     if (view.rows.length === 0) {
       tableHost.appendChild(element("div", "dst-empty", S.dstEmptyResult));
       return;
@@ -142,7 +151,7 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, onDrill })
     for (const row of view.rows) {
       const tr = element("tr");
       const valueCell = element("td", "dst-value", row.text);
-      valueCell.title = row.text;
+      valueCell.title = row.hint;
       tr.appendChild(valueCell);
       tr.appendChild(element("td", "dst-num", row.count));
       const share = element("td", "dst-num dst-share");
@@ -175,24 +184,24 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, onDrill })
 
   const flow = createDistinctFlow({ api, getCase, getFilter, onState: render });
 
-  function reload() {
+  function reload(exact = false) {
     const top = parseTop(topInput.value);
     if (top === null) {
       setStatus(format(S.dstBadTop, { max: MAX_TOP }), true);
       return Promise.resolve();
     }
-    return flow.load({ field: fieldSelect.value || "tpl", top });
+    return flow.load({ field: fieldSelect.value || "tpl", top, exact: exact === true });
   }
 
-  fieldSelect.addEventListener("change", reload);
-  topInput.addEventListener("change", reload);
+  fieldSelect.addEventListener("change", () => reload());
+  topInput.addEventListener("change", () => reload());
   topInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       reload();
     }
   });
-  refreshButton.addEventListener("click", reload);
+  refreshButton.addEventListener("click", () => reload());
   fillFields();
 
   return {
@@ -211,6 +220,12 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, onDrill })
 }
 
 // -- Group by template --------------------------------------------------------------------------
+
+function named(row) {
+  const name = element("span", "grp-name", row.text);
+  name.title = row.hint;
+  return name;
+}
 
 function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
   host.textContent = "";
@@ -294,7 +309,7 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
       toggle.setAttribute("aria-controls", "grp-rows-" + row.value);
       toggle.append(
         element("span", "grp-caret", group ? "▾" : "▸"),
-        element("span", "grp-name", row.text),
+        named(row),
         element("span", "grp-count", format(S.grpCount, { count: row.count, pct: row.pct })),
         element("span", "grp-span", format(S.grpSpan, { first: formatTs(row.firstTs), last: formatTs(row.lastTs) })),
       );

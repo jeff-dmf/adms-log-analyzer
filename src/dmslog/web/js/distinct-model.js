@@ -34,7 +34,8 @@ export function parseTop(text) {
   return Number.isInteger(value) && value >= 1 && value <= MAX_TOP ? value : null;
 }
 
-// Display text of one value of `field`; `label` is the server label (template code, file name).
+// Display text of one value of `field`; `label` is the server label (the readable title of a
+// template, its code when it has none; the file name of a source).
 export function valueText(field, value, label) {
   if (value === null || value === undefined) {
     return S.dstEmpty;
@@ -65,8 +66,9 @@ export function formatPct(pct) {
   return Number(pct).toFixed(pct >= 10 ? 1 : 2) + "%";
 }
 
-// Rows for the table plus the summary line, from a server answer.
-export function buildView(field, data) {
+// Rows for the table plus the summary line, from a server answer. `exactRequested`: the answer is
+// the one of "Count exactly" (an estimate then means the exact count did not fit its time).
+export function buildView(field, data, exactRequested = false) {
   const values = Array.isArray(data && data.values) ? data.values : [];
   const total = data ? data.total : null;
   const rows = values.map((v) => ({
@@ -78,6 +80,8 @@ export function buildView(field, data) {
     firstTs: v.first_ts === undefined ? null : v.first_ts,
     lastTs: v.last_ts === undefined ? null : v.last_ts,
     value: v.value,
+    // Hover text: the template code next to its title, so the code stays one glance away.
+    hint: v.code && v.code !== v.label ? format(S.dstValueTitle, { text: valueText(field, v.value, v.label), code: v.code }) : valueText(field, v.value, v.label),
   }));
   const others = data && data.others ? data.others : { count: 0, groups: 0 };
   let summary;
@@ -93,6 +97,10 @@ export function buildView(field, data) {
     others: others.count > 0 ? format(S.dstOthers, { count: formatCount(others.count), groups: formatCount(others.groups) }) : "",
     summary,
     approximate: Boolean(data) && !data.exact,
+    // Estimates may miss rare values: warn, and offer the exact count unless it was just tried.
+    // ("none": the summary already says the count took too long.)
+    warning: data && !data.exact && data.method !== "none" ? (exactRequested ? S.dstExactTooSlow : S.dstEstimateWarning) : "",
+    canCountExactly: Boolean(data) && !data.exact && !exactRequested,
   };
 }
 
@@ -107,12 +115,14 @@ export function drillFilter(userFilter, leaf, exclude) {
 // Request flow of the panel: one request at a time, stale answers dropped.
 // api.distinct(caseId, filter, field, limit, span, signal); onState(state) after each change.
 export function createDistinctFlow({ api, getCase, getFilter, onState }) {
-  const state = { status: "idle", field: "tpl", top: DEFAULT_TOP, data: null, error: "" };
+  const state = { status: "idle", field: "tpl", top: DEFAULT_TOP, data: null, error: "", exact: false };
   let controller = null;
   let seq = 0;
   const emit = () => onState && onState(state);
 
-  async function load({ field, top } = {}) {
+  // `exact`: "Count exactly" (skip the server's direct sample); any other reload is the default.
+  async function load({ field, top, exact = false } = {}) {
+    state.exact = Boolean(exact);
     if (field !== undefined) {
       state.field = field;
     }
@@ -136,7 +146,7 @@ export function createDistinctFlow({ api, getCase, getFilter, onState }) {
     Object.assign(state, { status: "loading", error: "" });
     emit();
     try {
-      const data = await api.distinct(caseId, getFilter(), state.field, state.top, false, signal);
+      const data = await api.distinct(caseId, getFilter(), state.field, state.top, false, signal, state.exact);
       if (mine !== seq) {
         return;
       }

@@ -74,6 +74,34 @@ test("view: rows, shares, others and summary (exact, estimate, too slow)", () =>
   assert.equal(formatPct(3.14159), "3.14%");
 });
 
+test("estimates warn about rare values and offer the exact count once", () => {
+  const exact = { field: "level", total: 9, groups: 2, exact: true, method: "exact", values: [], others: { count: 0, groups: 0 } };
+  assert.deepEqual([buildView("level", exact).warning, buildView("level", exact).canCountExactly], ["", false]);
+  const est = { ...exact, exact: false, method: "sample" };
+  assert.deepEqual([buildView("level", est).warning, buildView("level", est).canCountExactly], [S.dstEstimateWarning, true]);
+  // The answer of "Count exactly" is still an estimate: say why, no second button.
+  assert.deepEqual([buildView("level", est, true).warning, buildView("level", est, true).canCountExactly], [S.dstExactTooSlow, false]);
+  const none = { ...est, method: "none", total: null };
+  assert.deepEqual([buildView("level", none).warning, buildView("level", none).canCountExactly], ["", true]);
+  assert.equal(S.dstCountExactly, "Count exactly");
+  assert.match(S.dstEstimateWarning, /rare values may be missing/);
+});
+
+test("message types show the readable title; the code is only in the hover text", () => {
+  const view = buildView("tpl", {
+    field: "tpl", total: 10, groups: 3, exact: true, method: "bucket", others: { count: 0, groups: 0 },
+    values: [
+      { value: 7, count: 6, pct: 60, leaf: { tpl: 7 }, label: "Request sent", code: "WFM-010" },
+      { value: 8, count: 3, pct: 30, leaf: { tpl: 8 }, label: "WFM-011", code: "WFM-011" },
+      { value: 0, count: 1, pct: 10, leaf: { tpl: 0 }, label: null, code: null },
+    ],
+  });
+  assert.deepEqual(view.rows.map((r) => [r.text, r.hint]), [
+    ["Request sent", "Request sent (WFM-010)"], ["WFM-011", "WFM-011"], [S.dstUnclassified, S.dstUnclassified],
+  ]);
+  assert.equal(S.dstColumnNames.tpl, "Message type");
+});
+
 test("drill-down ANDs the leaf or its negation into the user filter", () => {
   assert.deepEqual(drillFilter(null, { tpl: 3 }, false), { and: [{ tpl: 3 }] });
   assert.deepEqual(drillFilter(null, { tpl: 3 }, true), { and: [{ not: { tpl: 3 } }] });

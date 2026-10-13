@@ -368,4 +368,5 @@ DISTINCT_ERRORS = {
     ),
     "bad_top": "limit must be an integer from 1 to {limit}",
     "bad_span": "span must be true or false",
+    "bad_exact": "exact must be true or false",
 }

@@ -44,6 +44,7 @@ def _fill_bucket(path):
         conn.executemany(
             "INSERT INTO entry_key(key_type, value, entry_id, origin) VALUES (?,?,?,1)", PAYLOAD_KEYS
         )
+        conn.execute("UPDATE template SET title = 'Test message two' WHERE id = 2")
     conn.close()
 
 
@@ -137,11 +138,76 @@ def test_bucket_path_is_exact_and_includes_entries_without_time(cases):
     assert by_source[3] == 5
 
 
-def test_ts_condition_and_non_bucket_filters_use_the_entry_path(cases):
+def test_ts_conditions_outside_a_window_and_non_bucket_filters_use_the_entry_path(cases):
     _, full, _ = cases
-    assert D.distinct(full, {"ts": {"ge": 1_000_100}}, "tpl").method == "exact"
-    assert D.distinct(full, {"tid": 16}, "sev").method == "exact"
+    for tree in (
+        {"ts": [1_000_100, 1_000_200]},
+        {"ts": {"ne": 1_000_100}},
+        {"or": [{"ts": {"ge": 1_000_100}}, {"sev": 1}]},
+        {"not": {"ts": {"ge": 1_000_100}}},
+        {"ts": {"ge": 1_000_100, "lt": 1_000_200}},  # no whole minute inside
+        {"tid": 16},
+    ):
+        assert D.distinct(full, tree, "tpl").method == "exact", tree
     assert D.distinct(full, None, "level").method == "exact"
+
+
+# Same rows with the time stretched (x 2000) so that windows hold whole minutes and partial edges.
+def _stretch(ts):
+    return None if ts is None else (ts - 999_000) * 2000
+
+
+@pytest.fixture(scope="module")
+def wide(tmp_path_factory):
+    path = tmp_path_factory.mktemp("distinct-wide") / "wide.sqlite"
+    rows = build_case(path)
+    conn = sqlite3.connect(path)
+    with conn:
+        conn.execute("UPDATE entry SET ts = (ts - 999000) * 2000 WHERE ts IS NOT NULL")
+    conn.close()
+    _fill_bucket(path)
+    stretched = [{**r, "ts": _stretch(r["ts"])} for r in rows]
+    ro = open_ro(path)
+    yield ro, stretched
+    ro.close()
+
+
+WINDOWS = [
+    {"ts": {"ge": 2_030_123}},
+    {"ts": {"lt": 2_345_678}},
+    {"ts": {"gt": 2_030_123, "le": 3_456_789}},
+    {"ts": {"ge": 2_040_000, "lt": 3_000_000}},  # minute-aligned on both ends
+    {"and": [{"source": [1]}, {"ts": {"ge": 2_100_001}}, {"ts": {"lt": 4_000_000}}, {"sev": {"le": 4}}]},
+    {"and": [{"ts": {"ge": 2_100_001, "lt": 3_900_000}}, {"and": [{"not": {"tpl": [0]}}]}]},
+]
+
+
+@pytest.mark.parametrize("tree", WINDOWS)
+@pytest.mark.parametrize("field", ["tpl", "source", "sev"])
+def test_time_window_is_exact_from_bucket_plus_partial_minutes(wide, tree, field):
+    conn, rows = wide
+    counts, span = reference(rows, tree, field)
+    assert sum(counts.values()) > 0
+    for top in (1, 20):
+        result = D.distinct(conn, tree, field, top, span=True)
+        assert (result.method, result.exact) == ("bucket", True), tree
+        check(result, counts, span, top, True)
+    assert D.distinct(conn, tree, "level").method == "exact"  # level is not in bucket
+
+
+def test_time_window_reads_only_the_partial_minutes_of_entry(wide):
+    conn, _ = wide
+    seen: list[str] = []
+    conn.set_trace_callback(seen.append)
+    try:
+        D.distinct(conn, {"ts": {"ge": 2_030_123, "lt": 3_456_789}}, "tpl")
+    finally:
+        conn.set_trace_callback(None)
+    (sql,) = [s for s in seen if "UNION ALL" in s]
+    assert sql.count("FROM entry e") == 2
+    assert "e.ts >= 2030123 AND e.ts < 2040000" in sql and "e.ts >= 3420000 AND e.ts < 3456789" in sql
+    plan = " ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql))
+    assert "ix_entry_ts" in plan
 
 
 def test_rollup_table_is_used_for_sev_and_source_only(cases):
@@ -162,11 +228,15 @@ def test_rollup_table_is_used_for_sev_and_source_only(cases):
 
 
 def test_labels_for_templates_and_sources(cases):
-    plain, _, _ = cases
-    tpl = {v["value"]: v["label"] for v in D.distinct(plain, None, "tpl").values}
-    assert tpl == {0: None, 1: "TST-001", 2: "TST-002"}
+    plain, full, _ = cases
+    tpl = {v["value"]: (v["label"], v["code"]) for v in D.distinct(plain, None, "tpl").values}
+    assert tpl == {0: (None, None), 1: ("TST-001", "TST-001"), 2: ("TST-002", "TST-002")}
+    # The readable title is the label when the template has one; the code stays apart.
+    titled = {v["value"]: (v["label"], v["code"]) for v in D.distinct(full, None, "tpl").values}
+    assert titled[2] == ("Test message two", "TST-002") and titled[1] == ("TST-001", "TST-001")
     src = {v["value"]: v["label"] for v in D.distinct(plain, None, "source").values}
     assert src == {1: "a.log", 2: "a.log", 3: "x.txt"}
+    assert "code" not in D.distinct(plain, None, "source").values[0]
     assert "label" not in D.distinct(plain, None, "sev").values[0]
 
 
@@ -212,16 +282,62 @@ def test_payload_keys_are_counted_like_the_key_filter_and_the_key_search(cases):
 
 
 def test_key_paths_agree(cases):
-    _, full, rows = cases
+    plain, full, rows = cases
     spec = D.parse_field("key.msgid")
     cf = compile_filter({"source": [1, 2]})
     for entry_first in (False, True):
         sql, params = D._entry_group_sql(spec, cf, False, entry_first=entry_first)
         got = dict(full.execute(sql, params).fetchall())
         assert got == {"m-1": 2, "m-2": 2}
-    # A narrow filter walks the entries (bucket bound), a broad one the key type range.
-    assert D._few_entries(full, {"ts": {"ge": 1_000_100, "lt": 1_000_200}}, 1.0)
-    assert not D._few_entries(full, None, 1.0)
+    # The bucket bound (a superset: whole minutes, plus the entries without ts when ts is free).
+    window = {"ts": {"ge": 1_000_100, "lt": 1_000_200}}
+    in_window = sum(1 for r in rows if py_match(window, r))
+    assert in_window <= D._bucket_bound(full, window, 1.0) <= len(rows)
+    assert D._bucket_bound(full, None, 1.0) == len(rows)
+    assert D._bucket_bound(full, {"tid": 16}, 1.0) is None  # bucket cannot express it
+    assert D._bucket_bound(plain, None, 1.0) is None  # bucket empty
+
+
+@pytest.mark.parametrize("field", ["level", "tid", "fields.op", "key.msgid"])
+def test_large_filter_goes_directly_to_the_sample(cases, monkeypatch, field):
+    """Above DISTINCT_DIRECT_SAMPLE_ROWS (bucket bound) the exact grouping is not even tried."""
+    plain, full, rows = cases
+    monkeypatch.setattr(D, "DISTINCT_DIRECT_SAMPLE_ROWS", len(rows) - 1)
+    seen: list[str] = []
+    full.set_trace_callback(seen.append)
+    try:
+        result = D.distinct(full, None, field, 5, span=True)
+    finally:
+        full.set_trace_callback(None)
+    assert (result.method, result.exact) == ("sample", False)
+    assert result.total is not None and sum(v["count"] for v in result.values) + result.others == result.total
+    assert not any("count(*) AS n" in s for s in seen)  # no exact GROUP BY ran
+    # At or below the limit, or without a bucket bound (empty bucket, tid filter), it stays exact.
+    assert D.distinct(full, {"sev": {"le": 2}}, field).method == "exact"
+    assert D.distinct(full, {"tid": 16}, field).method == "exact"
+    assert D.distinct(plain, None, field).method == "exact"
+    # Columns in bucket keep their exact bucket path whatever the size.
+    assert D.distinct(full, None, "tpl").method == "bucket"
+
+
+@pytest.mark.parametrize("field", ["level", "fields.op", "key.msgid"])
+def test_exact_on_demand_skips_the_direct_sample(cases, monkeypatch, field):
+    """``exact=True`` ("Count exactly") tries the exact grouping even above the limit."""
+    _, full, rows = cases
+    monkeypatch.setattr(D, "DISTINCT_DIRECT_SAMPLE_ROWS", 0)
+    assert D.distinct(full, None, field).method == "sample"
+    forced = D.distinct(full, None, field, 20, span=True, exact=True)
+    assert (forced.method, forced.exact) == ("exact", True)
+    counts, span = reference(rows, None, field, payload=True)
+    check(forced, counts, span, 20, True)
+
+
+def test_exact_on_demand_still_falls_back_to_the_estimate_on_timeout(cases, monkeypatch):
+    _, full, _ = cases
+    monkeypatch.setattr(D, "DISTINCT_DIRECT_SAMPLE_ROWS", 0)
+    monkeypatch.setattr(Q, "PROGRESS_OPS", 1)
+    result = D.distinct(full, None, "level", exact=True, timeout_s=0, estimate_timeout_s=None)
+    assert (result.method, result.exact) == ("sample", False)
 
 
 # --- estimates and timeouts --------------------------------------------------------------------
@@ -234,7 +350,8 @@ def instant_timeout(monkeypatch):
 
 def test_timeout_falls_back_to_bucket_estimate_then_sample_then_none(cases, instant_timeout):
     plain, full, rows = cases
-    tree = {"and": [{"source": [1, 2]}, {"ts": {"ge": 1_000_100}}]}
+    # A ts list is not a window: no exact bucket plan, but the bucket estimate (whole minutes) holds it.
+    tree = {"and": [{"source": [1, 2]}, {"ts": [1_000_100, 1_000_200, 1_000_300]}]}
     est = D.distinct(full, tree, "tpl", 20, timeout_s=0, estimate_timeout_s=None, bucket_timeout_s=None)
     assert est.method == "bucket_estimate" and not est.exact
     exact_total = sum(reference(rows, tree, "tpl")[0].values())
@@ -289,6 +406,8 @@ def test_bad_span_and_bad_filter_are_rejected(cases):
     plain, _, _ = cases
     with pytest.raises(D.DistinctError):
         D.distinct(plain, None, "tpl", span="yes")
+    with pytest.raises(D.DistinctError):
+        D.distinct(plain, None, "tpl", exact=1)
     with pytest.raises(FilterError):
         D.distinct(plain, {"sev": "' OR 1=1"}, "tpl")
 

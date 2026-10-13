@@ -17,11 +17,18 @@ Fields (``field``), all checked against fixed tables before any SQL is built:
 
 Count policy (the same budget as :func:`query.count`):
 
-1. ``tpl``/``source``/``sev`` with a filter that the per-minute ``bucket`` table can express and no
-   ``ts`` condition: exact from ``bucket`` (``bucket_sev`` when the template is not involved) plus
-   the entries without a time, which ``bucket`` does not hold, in one statement. ``method="bucket"``.
+1. ``tpl``/``source``/``sev`` with a filter that the per-minute ``bucket`` table can express:
+   exact from ``bucket`` (``bucket_sev`` when the template is not involved), in one statement, plus
+   either the entries without a time (no ``ts`` condition; ``bucket`` does not hold them) or, when
+   the ``ts`` conditions form a window ANDed to the rest (the timeline range), the entries of the
+   partial minutes at the two ends of the window (whole minutes come from ``bucket``).
+   ``method="bucket"``.
 2. Otherwise, exact ``GROUP BY`` over ``entry`` (joined to ``entry_key`` for keys) within
-   ``timeout_s``. ``method="exact"``.
+   ``timeout_s``. ``method="exact"``. Skipped when the bucket table bounds the filter to more than
+   ``DISTINCT_DIRECT_SAMPLE_ROWS`` entries: such a grouping cannot fit the p95 target, so the
+   estimate (step 3) answers directly. ``exact=True`` (the viewer's "Count exactly", on demand)
+   always tries it within ``timeout_s`` and still falls back to the estimate on timeout. ``level``
+   has no index nor bucket column, so it has no cheaper exact path than this one.
 3. On timeout, an estimate within ``estimate_timeout_s``: the ``bucket`` table when the filter can
    be expressed on it (``ts`` rounded to whole minutes, so a superset; ``method="bucket_estimate"``),
    else a sample of ``id`` slices of ``entry`` extrapolated to the whole table (``method="sample"``;
@@ -44,6 +51,8 @@ from .. import messages
 from . import query as Q
 from .filters import (
     BUCKET_MS,
+    INT64_MAX,
+    INT64_MIN,
     MAX_STR,
     CompiledFilter,
     QueryInputError,
@@ -57,6 +66,9 @@ DISTINCT_TIMEOUT_S = Q.COUNT_TIMEOUT_S
 ESTIMATE_TIMEOUT_S = Q.ESTIMATE_TIMEOUT_S
 BUCKET_TIMEOUT_S = 2.0
 KEY_ENTRY_FIRST_MAX = 100_000  # keys: walk the entries when the filter keeps at most this many
+# Above this many entries in the filter (bucket bound) the exact grouping of a field outside bucket
+# cannot fit the p95 target (about 1 M rows/s on the 2 GB worst case): skip it and sample directly.
+DISTINCT_DIRECT_SAMPLE_ROWS = 1_000_000
 
 _FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 _KEY_TYPE = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")  # same shape the key routes accept
@@ -91,7 +103,7 @@ class FieldSpec:
 @dataclass(slots=True)
 class Distinct:
     field: str
-    values: list[dict[str, Any]]  # {value, count, pct, leaf[, label][, first_ts, last_ts]}
+    values: list[dict[str, Any]]  # {value, count, pct, leaf[, label[, code]][, first_ts, last_ts]}
     others: int  # count of the groups after the top ones
     other_groups: int
     total: int | None  # sum of every group's count; None when nothing could be computed in time
@@ -135,37 +147,37 @@ def drill_leaf(spec: FieldSpec, value: Any) -> dict[str, Any] | None:
 
 
 def _entry_group_sql(
-    spec: FieldSpec, cf: CompiledFilter, span: bool, where_extra: str = "", *, entry_first: bool = False
+    spec: FieldSpec, cf: CompiledFilter, span: bool, *, entry_first: bool = False
 ) -> tuple[str, list[Any]]:
     """``SELECT g, n[, lo, hi]`` grouped over ``entry`` (and ``entry_key``) for the filter.
 
     Keys: by default the ``key_type`` range of the primary key drives the join (values come in
     order, no temporary B-tree for the grouping; cost = rows of that type). ``entry_first`` walks
     the filtered entries instead and reads their keys through ``ix_key_entry`` (covering), which is
-    cheaper when the filter keeps few entries (ts window, sample slices)."""
+    cheaper when the filter keeps few entries (a short time window)."""
     agg = ", min(e.ts) AS lo, max(e.ts) AS hi" if span else ""
     if spec.kind == "key":
         if entry_first:
             sql = (
                 f"SELECT k.value AS g, count(*) AS n{agg} FROM entry e CROSS JOIN entry_key k "
                 "INDEXED BY ix_key_entry ON k.entry_id = e.id AND k.key_type = ? "
-                f"WHERE ({cf.sql}){where_extra} GROUP BY k.value"
+                f"WHERE ({cf.sql}) GROUP BY k.value"
             )
         else:
             sql = (
                 f"SELECT k.value AS g, count(*) AS n{agg} FROM entry_key k JOIN entry e ON e.id = k.entry_id "
-                f"WHERE k.key_type = ? AND ({cf.sql}){where_extra} GROUP BY k.value"
+                f"WHERE k.key_type = ? AND ({cf.sql}) GROUP BY k.value"
             )
         return sql, [spec.arg, *cf.params]
     if spec.kind == "field":
         sql = (
             f"SELECT json_extract(e.fields, ?) AS g, count(*) AS n{agg} FROM entry e "
-            f"WHERE ({cf.sql}){where_extra} GROUP BY g"
+            f"WHERE ({cf.sql}) GROUP BY g"
         )
         return sql, ["$." + spec.arg, *cf.params]
     column = COLUMN_FIELDS[spec.arg][0]
     return (
-        f"SELECT {column} AS g, count(*) AS n{agg} FROM entry e WHERE ({cf.sql}){where_extra} GROUP BY g",
+        f"SELECT {column} AS g, count(*) AS n{agg} FROM entry e WHERE ({cf.sql}) GROUP BY g",
         [*cf.params],
     )
 
@@ -184,17 +196,130 @@ def _run_top(conn: sqlite3.Connection, group_sql: str, params: list[Any], span: 
     return [(g, n, lo, hi) for g, n, lo, hi, _t, _c in rows], total, groups
 
 
-def _bucket_group_sql(spec: FieldSpec, bf: CompiledFilter, cf: CompiledFilter, table: str, span: bool):
-    """Exact grouping from the bucket table plus the entries without ts (one statement, one snapshot)."""
+Edge = tuple[str, list[Any]]  # extra entry branch: (complete WHERE condition over ``entry e``, params)
+
+
+def _null_ts_edge(cf: CompiledFilter) -> Edge:
+    return f"e.ts IS NULL AND ({cf.sql})", [*cf.params]
+
+
+@dataclass(frozen=True, slots=True)
+class BucketPlan:
+    """Exact answer from bucket: ``bf`` over the bucket table, ``edges`` over entry, and the filter
+    and time bounds that bound the span refinement (``rest`` has no ts condition; lo <= ts < hi)."""
+
+    bf: CompiledFilter
+    edges: list[Edge]
+    rest: CompiledFilter
+    lo: int | None = None
+    hi: int | None = None
+
+
+def _bucket_group_sql(
+    spec: FieldSpec, bf: CompiledFilter, table: str, span: bool, edges: list[Edge]
+) -> tuple[str, list[Any]]:
+    """Grouping from the bucket table plus entry branches (the entries without ts, or the partial
+    minutes at the edges of a time window), in one statement: one snapshot, also while the indexer
+    writes. ``lo``/``hi`` are epoch ms: the bounds of the minute for bucket rows, exact for entries."""
     ecol, bcol = COLUMN_FIELDS[spec.arg]
-    lo_b, hi_b = ("b.minute", "b.minute") if span else ("NULL", "NULL")
+    if span:
+        lo_b, hi_b, lo_e = f"b.minute * {BUCKET_MS}", f"b.minute * {BUCKET_MS} + {BUCKET_MS - 1}", "e.ts"
+    else:
+        lo_b = hi_b = lo_e = "NULL"
+    parts = [f"SELECT {bcol} AS g, b.n AS n, {lo_b} AS lo, {hi_b} AS hi FROM {table} b WHERE {bf.sql}"]
+    params: list[Any] = [*bf.params]
+    for where, extra in edges:
+        parts.append(f"SELECT {ecol}, 1, {lo_e}, {lo_e} FROM entry e WHERE {where}")
+        params += extra
     sql = (
         "SELECT g, sum(n) AS n, min(lo) AS lo, max(hi) AS hi FROM ("
-        f"SELECT {bcol} AS g, b.n AS n, {lo_b} AS lo, {hi_b} AS hi FROM {table} b WHERE {bf.sql} "
-        f"UNION ALL SELECT {ecol}, 1, NULL, NULL FROM entry e WHERE e.ts IS NULL AND ({cf.sql})"
-        ") GROUP BY g"
+        + " UNION ALL ".join(parts)
+        + ") GROUP BY g"
     )
-    return sql, [*bf.params, *cf.params]
+    return sql, params
+
+
+def _ts_window(tree: Any) -> tuple[list[Any], int | None, int | None] | None:
+    """``(other conjuncts, lo, hi)`` when the (validated) tree is an AND of ``ts`` comparisons
+    (``ge``/``gt``/``le``/``lt``) and of nodes without ``ts``: the window is ``lo <= ts < hi``
+    (``None`` = open). None for any other use of ``ts`` (lists, ``eq``, ``ne``, under or/not)."""
+    conjuncts: list[Any] = []
+
+    def flatten(node: Any) -> None:
+        if isinstance(node, dict) and len(node) == 1 and isinstance(node.get("and"), list):
+            for child in node["and"]:
+                flatten(child)
+        else:
+            conjuncts.append(node)
+
+    flatten(tree)
+    lo: int | None = None
+    hi: int | None = None
+    rest: list[Any] = []
+    found = False
+    for node in conjuncts:
+        if isinstance(node, dict) and len(node) == 1 and "ts" in node:
+            arg = node["ts"]
+            if not isinstance(arg, dict):
+                return None
+            for cmp, v in arg.items():
+                if cmp in ("ge", "gt"):
+                    a = v + (cmp == "gt")
+                    lo = a if lo is None else max(lo, a)
+                elif cmp in ("le", "lt"):
+                    b = v + (cmp == "le")
+                    hi = b if hi is None else min(hi, b)
+                else:
+                    return None
+            found = True
+        elif Q._uses_ts(node):  # noqa: SLF001 - same package
+            return None
+        else:
+            rest.append(node)
+    return (rest, lo, hi) if found else None
+
+
+def _bucket_plan(tree: Any, cf: CompiledFilter) -> BucketPlan | None:
+    """How the bucket table answers ``tree`` exactly, or None.
+
+    * no ``ts`` condition: the bucket rows of the filter plus the entries without ts;
+    * a time window (:func:`_ts_window`): the bucket rows of the whole minutes inside it plus the
+      entries of the partial minutes at its two ends (an indexed ``ts`` range of under a minute each).
+      The edges carry only their own ``ts`` bounds plus the rest of the filter: with the window's
+      bounds also present, SQLite may pick those for the index range and read the whole window.
+    """
+    if isinstance(tree, CompiledFilter):
+        return None
+    if not Q._uses_ts(tree):  # noqa: SLF001 - same package
+        bf = compile_bucket_filter(tree)
+        return None if bf is None else BucketPlan(bf, [_null_ts_edge(cf)], cf)
+    window = _ts_window(tree)
+    if window is None:
+        return None
+    rest, lo, hi = window
+    inner_lo = None if lo is None else -(-lo // BUCKET_MS) * BUCKET_MS
+    inner_hi = None if hi is None else hi // BUCKET_MS * BUCKET_MS
+    bounds = [b for b in (inner_lo, inner_hi) if b is not None]
+    if any(not INT64_MIN <= b <= INT64_MAX for b in bounds) or (
+        inner_lo is not None and inner_hi is not None and inner_lo >= inner_hi
+    ):
+        return None  # no whole minute inside the window: the entry path is cheap anyway
+    whole: dict[str, int] = {}
+    if inner_lo is not None:
+        whole["ge"] = inner_lo
+    if inner_hi is not None:
+        whole["lt"] = inner_hi
+    bf = compile_bucket_filter({"and": [*rest, {"ts": whole}]})
+    if bf is None:
+        return None
+    rest_cf = compile_filter({"and": rest})
+    edges: list[Edge] = []
+    cond = f"e.ts >= ? AND e.ts < ? AND ({rest_cf.sql})"
+    if lo is not None and lo < inner_lo:  # type: ignore[operator]
+        edges.append((cond, [lo, inner_lo, *rest_cf.params]))
+    if hi is not None and inner_hi < hi:  # type: ignore[operator]
+        edges.append((cond, [inner_hi, hi, *rest_cf.params]))
+    return BucketPlan(bf, edges, rest_cf, lo, hi)
 
 
 def _has_table(conn: sqlite3.Connection, table: str) -> bool:
@@ -212,49 +337,83 @@ def _bucket_table(conn: sqlite3.Connection, spec: FieldSpec, bf: CompiledFilter)
 
 
 def _refine_span(
-    conn: sqlite3.Connection, spec: FieldSpec, cf: CompiledFilter, rows: list[tuple]
+    conn: sqlite3.Connection, spec: FieldSpec, plan: BucketPlan, rows: list[tuple]
 ) -> list[tuple]:
-    """Exact first/last ts inside the first/last bucket minute of each value (indexed range reads)."""
+    """Exact first/last ts of each value: the true one lies in the minute of the bound found (the
+    bucket minute, or an exact entry ts), so one indexed range read per bound finds it. The range is
+    that minute clipped to the window, and the filter is the rest without ts (one index range)."""
     ecol = COLUMN_FIELDS[spec.arg][0]
-    sql_lo = f"SELECT min(e.ts) FROM entry e WHERE {ecol} = ? AND e.ts >= ? AND e.ts < ? AND ({cf.sql})"
-    sql_hi = f"SELECT max(e.ts) FROM entry e WHERE {ecol} = ? AND e.ts >= ? AND e.ts < ? AND ({cf.sql})"
+    rest = plan.rest
+    sql_lo = f"SELECT min(e.ts) FROM entry e WHERE {ecol} = ? AND e.ts >= ? AND e.ts < ? AND ({rest.sql})"
+    sql_hi = f"SELECT max(e.ts) FROM entry e WHERE {ecol} = ? AND e.ts >= ? AND e.ts < ? AND ({rest.sql})"
+
+    def clip(minute_start: int) -> tuple[int, int]:
+        a, b = minute_start, minute_start + BUCKET_MS
+        return (a if plan.lo is None else max(a, plan.lo)), (b if plan.hi is None else min(b, plan.hi))
+
     out = []
     for g, n, lo, hi in rows:
-        first = last = None
-        if lo is not None:
-            first = conn.execute(sql_lo, (g, lo * BUCKET_MS, (lo + 1) * BUCKET_MS, *cf.params)).fetchone()[0]
-            last = conn.execute(sql_hi, (g, hi * BUCKET_MS, (hi + 1) * BUCKET_MS, *cf.params)).fetchone()[0]
-        out.append(
-            (g, n, first if first is not None else _ms(lo), last if last is not None else _ms(hi, end=True))
-        )
+        first, last = lo, hi
+        if lo is not None and g is not None:
+            found = conn.execute(sql_lo, (g, *clip(lo // BUCKET_MS * BUCKET_MS), *rest.params)).fetchone()[0]
+            first = found if found is not None else lo
+            found = conn.execute(sql_hi, (g, *clip(hi // BUCKET_MS * BUCKET_MS), *rest.params)).fetchone()[0]
+            last = found if found is not None else hi
+        out.append((g, n, first, last))
     return out
 
 
-def _ms(minute: int | None, *, end: bool = False) -> int | None:
-    if minute is None:
+def _bucket_bound(conn: sqlite3.Connection, tree: Any, timeout_s: float | None) -> int | None:
+    """Entries the filter can keep at most, from the bucket table (``ts`` rounded to whole minutes,
+    so a superset) plus the entries without ts; None when bucket is empty, cannot express the
+    filter or does not answer in time."""
+    if isinstance(tree, CompiledFilter):
         return None
-    return minute * BUCKET_MS + (BUCKET_MS - 1 if end else 0)
-
-
-def _few_entries(conn: sqlite3.Connection, tree: Any, timeout_s: float) -> bool:
-    """True when the bucket table bounds the filter to at most KEY_ENTRY_FIRST_MAX entries (a cheap
-    superset: ts is rounded to whole minutes), so walking those entries beats the key type range."""
-    if tree is None or isinstance(tree, CompiledFilter):
-        return False
     bf = compile_bucket_filter(tree)
-    if bf is None or bf.sql == "1":
-        return False
+    if bf is None:
+        return None
     try:
         with Q.read_guard(conn, timeout_s):
             if not conn.execute("SELECT EXISTS(SELECT 1 FROM bucket)").fetchone()[0]:
-                return False
+                return None
+            table = "bucket_sev" if "tpl_id" not in bf.sql and _has_table(conn, "bucket_sev") else "bucket"
             n = conn.execute(
-                f"SELECT coalesce(sum(b.n), 0) FROM bucket b WHERE {bf.sql}", bf.params
+                f"SELECT coalesce(sum(b.n), 0) FROM {table} b WHERE {bf.sql}", bf.params
             ).fetchone()[0]
-            n += conn.execute("SELECT count(*) FROM entry WHERE ts IS NULL").fetchone()[0]
+            if not Q._uses_ts(tree):  # noqa: SLF001 - same package
+                n += conn.execute("SELECT count(*) FROM entry WHERE ts IS NULL").fetchone()[0]
     except Q.QueryTimeout:
-        return False
-    return n <= KEY_ENTRY_FIRST_MAX
+        return None
+    return n
+
+
+def _sample_group_sql(spec: FieldSpec, cf: CompiledFilter, span: bool) -> tuple[str, list[Any]]:
+    """Grouping over the id slices of the sample (their ranges are the trailing parameters).
+
+    The filter is evaluated per row in the select list (as ``query.count`` does), never in WHERE:
+    there the planner could prefer a ts or source index over the id ranges and read far more rows
+    than the 2% sample. Values that no sampled row of the filter has are dropped (``n > 0``)."""
+    match = f"({cf.sql})"
+    params: list[Any] = []
+    if spec.kind == "key":
+        g = "k.value"
+    elif spec.kind == "field":
+        g = "json_extract(e.fields, ?)"
+        params.append("$." + spec.arg)
+    else:
+        g = COLUMN_FIELDS[spec.arg][0]
+    agg = f", sum({match}) AS n"
+    params += cf.params
+    if span:
+        agg += f", min(CASE WHEN {match} THEN e.ts END) AS lo, max(CASE WHEN {match} THEN e.ts END) AS hi"
+        params += [*cf.params, *cf.params]
+    source = "entry e"
+    if spec.kind == "key":
+        source += " CROSS JOIN entry_key k INDEXED BY ix_key_entry ON k.entry_id = e.id AND k.key_type = ?"
+        params.append(spec.arg)
+    slices = " OR ".join(["e.id BETWEEN ? AND ?"] * Q.SAMPLE_SLICES)
+    sql = f"SELECT {g} AS g{agg} FROM {source} WHERE ({slices}) GROUP BY g HAVING n > 0"
+    return sql, params
 
 
 def _sample_slices(conn: sqlite3.Connection) -> tuple[list[int], int, int] | None:
@@ -283,6 +442,7 @@ def distinct(
     top: int = DEFAULT_TOP,
     *,
     span: bool = False,
+    exact: bool = False,
     timeout_s: float = DISTINCT_TIMEOUT_S,
     estimate_timeout_s: float = ESTIMATE_TIMEOUT_S,
     bucket_timeout_s: float = BUCKET_TIMEOUT_S,
@@ -293,49 +453,54 @@ def distinct(
         raise DistinctError("bad_top", "$.limit", limit=MAX_TOP)
     if not isinstance(span, bool):
         raise DistinctError("bad_span", "$.span")
+    if not isinstance(exact, bool):
+        raise DistinctError("bad_exact", "$.exact")
     tree = flt
     cf = compile_filter(tree) if not isinstance(tree, CompiledFilter) else tree
-    bucket_col = COLUMN_FIELDS[spec.arg][1] if spec.kind == "column" else None
-    bf = None if bucket_col is None or isinstance(tree, CompiledFilter) else compile_bucket_filter(tree)
+    has_bucket_column = spec.kind == "column" and COLUMN_FIELDS[spec.arg][1] is not None
     bucket_filled = False
-    if bf is not None:
+    if has_bucket_column and not isinstance(tree, CompiledFilter):
         try:
             with Q.read_guard(conn, bucket_timeout_s):
                 bucket_filled = bool(conn.execute("SELECT EXISTS(SELECT 1 FROM bucket)").fetchone()[0])
         except Q.QueryTimeout:
             bucket_filled = False
 
-    # 1. exact from bucket (no ts condition: whole minutes would make it a superset).
-    if bucket_filled and not Q._uses_ts(tree):  # noqa: SLF001 - same package
+    # 1. exact from bucket: the filter's bucket rows plus the entries bucket cannot answer.
+    plan = _bucket_plan(tree, cf) if bucket_filled else None
+    if plan is not None:
         try:
             with Q.read_guard(conn, bucket_timeout_s):
-                table = _bucket_table(conn, spec, bf)  # type: ignore[arg-type]
-                sql, params = _bucket_group_sql(spec, bf, cf, table, span)  # type: ignore[arg-type]
+                table = _bucket_table(conn, spec, plan.bf)
+                sql, params = _bucket_group_sql(spec, plan.bf, table, span, plan.edges)
                 rows, total, groups = _run_top(conn, sql, params, span, top)
                 if span:
-                    rows = _refine_span(conn, spec, cf, rows)
+                    rows = _refine_span(conn, spec, plan, rows)
             return _result(conn, spec, rows, total, groups, True, "bucket", span)
         except Q.QueryTimeout:
             pass
 
-    # 2. exact over entry.
-    entry_first = spec.kind == "key" and _few_entries(conn, tree, bucket_timeout_s)
-    try:
-        with Q.read_guard(conn, timeout_s):
-            sql, params = _entry_group_sql(spec, cf, span, entry_first=entry_first)
-            rows, total, groups = _run_top(conn, sql, params, span, top)
-        return _result(conn, spec, rows, total, groups, True, "exact", span)
-    except Q.QueryTimeout:
-        pass
+    # 2. exact over entry, unless bucket shows the filter is too large to group in time.
+    bound = _bucket_bound(conn, tree, bucket_timeout_s)
+    if exact or bound is None or bound <= DISTINCT_DIRECT_SAMPLE_ROWS:
+        entry_first = spec.kind == "key" and bound is not None and bound <= KEY_ENTRY_FIRST_MAX
+        try:
+            with Q.read_guard(conn, timeout_s):
+                sql, params = _entry_group_sql(spec, cf, span, entry_first=entry_first)
+                rows, total, groups = _run_top(conn, sql, params, span, top)
+            return _result(conn, spec, rows, total, groups, True, "exact", span)
+        except Q.QueryTimeout:
+            pass
 
-    # 3a. estimate from bucket (superset when the filter has a ts condition).
-    if bucket_filled:
+    # 3a. estimate from bucket (whole minutes: a superset when the filter has a ts condition).
+    bf = compile_bucket_filter(tree) if bucket_filled else None
+    if bf is not None:
+        edges = [] if Q._uses_ts(tree) else [_null_ts_edge(cf)]  # noqa: SLF001 - same package
         try:
             with Q.read_guard(conn, estimate_timeout_s):
-                table = _bucket_table(conn, spec, bf)  # type: ignore[arg-type]
-                sql, params = _bucket_group_sql(spec, bf, cf, table, span)  # type: ignore[arg-type]
+                table = _bucket_table(conn, spec, bf)
+                sql, params = _bucket_group_sql(spec, bf, table, span, edges)
                 rows, total, groups = _run_top(conn, sql, params, span, top)
-                rows = [(g, n, _ms(lo), _ms(hi, end=True)) for g, n, lo, hi in rows]
             return _result(conn, spec, rows, total, groups, False, "bucket_estimate", span)
         except Q.QueryTimeout:
             pass
@@ -349,12 +514,14 @@ def distinct(
             ranges, total_entries, sampled = sample
             if not sampled:
                 return _empty(spec)
-            where = " AND (" + " OR ".join(["e.id BETWEEN ? AND ?"] * Q.SAMPLE_SLICES) + ")"
-            sql, params = _entry_group_sql(spec, cf, span, where, entry_first=True)
+            sql, params = _sample_group_sql(spec, cf, span)
             rows, total, groups = _run_top(conn, sql, [*params, *ranges], span, top)
         scale = total_entries / sampled
+        rest = total - sum(r[1] for r in rows)
         rows = [(g, round(n * scale), lo, hi) for g, n, lo, hi in rows]
-        return _result(conn, spec, rows, round(total * scale), groups, False, "sample", span)
+        # Scaled parts rounded one by one: the total is their sum, so top N + others = total holds.
+        total = sum(r[1] for r in rows) + round(rest * scale)
+        return _result(conn, spec, rows, total, groups, False, "sample", span)
     except Q.QueryTimeout:
         return _empty(spec)
 
@@ -363,17 +530,19 @@ def _empty(spec: FieldSpec) -> Distinct:
     return Distinct(spec.name, [], 0, 0, None, 0, False, "none")
 
 
-def _labels(conn: sqlite3.Connection, spec: FieldSpec, values: list[Any]) -> dict[Any, str]:
+def _labels(conn: sqlite3.Connection, spec: FieldSpec, values: list[Any]) -> dict[Any, tuple[str, str]]:
+    """``{id: (label, code)}``: a template's readable title (its code when it has none) and code, or a
+    source's file name (twice)."""
     ids = [v for v in values if isinstance(v, int)]
     if spec.kind != "column" or spec.arg not in ("tpl", "source") or not ids:
         return {}
     marks = ",".join("?" * len(ids))
     if spec.arg == "tpl":
-        sql = f"SELECT id, code FROM template WHERE id IN ({marks})"
+        sql = f"SELECT id, coalesce(nullif(title, ''), code), code FROM template WHERE id IN ({marks})"
     else:
-        sql = f"SELECT id, file_name FROM source WHERE id IN ({marks})"
+        sql = f"SELECT id, file_name, file_name FROM source WHERE id IN ({marks})"
     with Q.read_guard(conn, Q.PAGE_TIMEOUT_S):
-        return {r[0]: r[1] for r in conn.execute(sql, ids).fetchall()}
+        return {r[0]: (r[1], r[2]) for r in conn.execute(sql, ids).fetchall()}
 
 
 def _result(
@@ -396,7 +565,10 @@ def _result(
             "leaf": drill_leaf(spec, g),
         }
         if spec.kind == "column" and spec.arg in ("tpl", "source"):
-            item["label"] = labels.get(g)
+            label, code = labels.get(g, (None, None))
+            item["label"] = label
+            if spec.arg == "tpl":
+                item["code"] = code
         if span:
             item["first_ts"] = lo
             item["last_ts"] = hi

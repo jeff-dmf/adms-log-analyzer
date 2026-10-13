@@ -807,7 +807,6 @@ class Api:
             ("GET", re.compile(r"/api/knowledge/error\Z"), self.get_knowledge_error),
             ("POST", re.compile(r"/api/entries/page\Z"), self.entries_page),
             ("POST", re.compile(r"/api/entries/count\Z"), self.entries_count),
-            ("POST", re.compile(r"/api/entries/distinct\Z"), self.entries_distinct),
             ("POST", re.compile(r"/api/histogram\Z"), self.histogram),
             ("GET", re.compile(r"/api/views\Z"), self.list_views),
             ("POST", re.compile(r"/api/views\Z"), self.create_view),
@@ -840,6 +839,7 @@ class Api:
             ("GET", re.compile(r"/api/redaction\Z"), self.get_redaction),
             ("PUT", re.compile(r"/api/redaction\Z"), self.put_redaction),
             ("POST", re.compile(r"/api/export\Z"), self.export_report),
+            ("POST", re.compile(r"/api/entries/distinct\Z"), self.entries_distinct),
         ]
 
     def shutdown(self) -> None:
@@ -1151,20 +1151,6 @@ class Api:
         with self.store.reader(cid) as conn:
             result = query.count(conn, flt)
         return Response(200, {"count": result.n, "exact": result.exact})
-
-    def entries_distinct(self, request: Request) -> Response:
-        """Top values of one field inside the filter (store/distinct.py; ARQUITETURA 10)."""
-        body = request.read_body()
-        cid = _case_from_body(self.store, body)
-        flt = body.get("filter")
-        if flt is not None and not isinstance(flt, dict):
-            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
-        _check_scan_filter(flt)
-        spec = distinct.parse_field(body.get("field"))
-        top = body.get("limit", distinct.DEFAULT_TOP)
-        with self.store.reader(cid) as conn:
-            result = distinct.distinct(conn, flt, spec, top, span=body.get("span", False))
-        return Response(200, distinct.as_json(result))
 
     def histogram(self, request: Request) -> Response:
         body = request.read_body()
@@ -1532,6 +1518,22 @@ class Api:
                 "map_saved": map_saved,
             },
         )
+
+    def entries_distinct(self, request: Request) -> Response:
+        """Top values of one field inside the filter (store/distinct.py; ARQUITETURA 10)."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        flt = body.get("filter")
+        if flt is not None and not isinstance(flt, dict):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
+        _check_scan_filter(flt)
+        spec = distinct.parse_field(body.get("field"))
+        top = body.get("limit", distinct.DEFAULT_TOP)
+        with self.store.reader(cid) as conn:
+            result = distinct.distinct(
+                conn, flt, spec, top, span=body.get("span", False), exact=body.get("exact", False)
+            )
+        return Response(200, distinct.as_json(result))
 
     # -- saved filters (per case, table saved_view)
 

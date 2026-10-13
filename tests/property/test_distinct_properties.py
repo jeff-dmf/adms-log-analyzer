@@ -59,3 +59,37 @@ def test_drill_down_leaves_partition_the_filter(tree, field):
     for v in result.values:
         if v["leaf"] is not None:
             assert Q.count(full, {"and": [tree, v["leaf"]]}).n == v["count"]
+
+
+@lru_cache(maxsize=1)
+def _wide():
+    """The case with its times stretched (x 2000) so that windows hold whole minutes."""
+    import sqlite3
+
+    folder = Path(tempfile.mkdtemp(prefix="dmslog-distinct-wide-"))
+    rows = build_case(folder / "wide.sqlite")
+    conn = sqlite3.connect(folder / "wide.sqlite")
+    with conn:
+        conn.execute("UPDATE entry SET ts = (ts - 999000) * 2000 WHERE ts IS NOT NULL")
+    conn.close()
+    _fill_bucket(folder / "wide.sqlite")
+    stretched = [{**r, "ts": None if r["ts"] is None else (r["ts"] - 999_000) * 2000} for r in rows]
+    return open_ro(folder / "wide.sqlite"), stretched
+
+
+wide_ts = st.integers(-100_000, 12_000_000)
+window = st.dictionaries(st.sampled_from(["lt", "le", "gt", "ge"]), wide_ts, min_size=1, max_size=2)
+
+
+@SETTINGS
+@given(trees(leaf), window, st.sampled_from(["tpl", "source", "sev"]), st.integers(1, 30), st.booleans())
+def test_time_window_split_matches_reference(tree, bounds, field, top, span):
+    """Whole minutes from bucket plus the partial minutes from entry equal the exact grouping."""
+    if _compile(tree) is None or Q._uses_ts(tree) or '"key"' in json.dumps(tree):
+        return
+    conn, rows = _wide()
+    flt = {"and": [tree, {"ts": bounds}]}
+    result = D.distinct(conn, flt, field, top, span=span)
+    assert result.exact and result.method in ("bucket", "exact")
+    counts, spans = reference(rows, flt, field)
+    check(result, counts, spans, top, span)
