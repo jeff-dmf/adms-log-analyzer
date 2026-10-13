@@ -28,6 +28,8 @@ EXPECTED_MODULES = {
     "events-model.js",
     "events-panel.js",
     "filter-tree-model.js",
+    "views-stack-model.js",
+    "views-stack.js",
     "filter-tree.js",
     "filters.js",
     "grid-model.js",
@@ -328,6 +330,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         "/css/column-resize.css",
         "/css/bookmarks.css", "/css/presets.css",
         "/css/case-files.css",
+        "/css/views-stack.css",
         "/vendor/uplot/uPlot.esm.js", "/vendor/uplot/uPlot.min.css",
         *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),
     ]  # fmt: skip
