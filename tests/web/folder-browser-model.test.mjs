@@ -127,3 +127,20 @@ test("a late answer of an older navigation is dropped", async () => {
   await first;
   assert.equal(model.path, "/home/u");
 });
+
+test("focus: a removed focused element falls back, a kept key is restored", async () => {
+  const { restoreFocusKey, trapTarget } = await import("../../src/dmslog/web/js/folder-browser-model.js");
+  assert.equal(restoreFocusKey("crumb:/a", ["crumb:/", "crumb:/a"]), "crumb:/a");
+  assert.equal(restoreFocusKey("crumb:/a/b", ["crumb:/", "crumb:/a"]), null); // element removed
+  assert.equal(restoreFocusKey(null, ["crumb:/"]), null);
+});
+
+test("Tab trap: focus outside the dialog or on a removed element returns to the ends", async () => {
+  const { trapTarget } = await import("../../src/dmslog/web/js/folder-browser-model.js");
+  assert.equal(trapTarget(5, -1, false, false), "first");
+  assert.equal(trapTarget(5, -1, false, true), "last");
+  assert.equal(trapTarget(5, 4, true, false), "first");
+  assert.equal(trapTarget(5, 0, true, true), "last");
+  assert.equal(trapTarget(5, 2, true, false), null);
+  assert.equal(trapTarget(0, -1, false, false), null);
+});

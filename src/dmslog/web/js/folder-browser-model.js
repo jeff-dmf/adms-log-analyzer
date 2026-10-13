@@ -200,3 +200,28 @@ export class FolderBrowser {
     this.changed();
   }
 }
+
+// Focus handling of the modal. `keys` are the stable keys (path or index) of the focusable
+// elements after a render; returns the key to focus again or null (fall back to the list).
+export function restoreFocusKey(previousKey, keys) {
+  return previousKey !== null && previousKey !== undefined && keys.includes(previousKey) ? previousKey : null;
+}
+
+// Tab trap: `index` is the position of the focused element among the dialog's focusable nodes
+// (-1 when it is not one of them), `inside` tells if it is still inside the dialog.
+// Returns "first", "last" or null (let the browser move the focus).
+export function trapTarget(count, index, inside, shift) {
+  if (count === 0) {
+    return null;
+  }
+  if (!inside || index < 0) {
+    return shift ? "last" : "first";
+  }
+  if (shift && index === 0) {
+    return "last";
+  }
+  if (!shift && index === count - 1) {
+    return "first";
+  }
+  return null;
+}

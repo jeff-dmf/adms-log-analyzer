@@ -57,6 +57,7 @@ export class CaseFiles {
     this.flow = new PickFlow(this.fs);
     this.state = new CaseFilesState(() => this.render());
     this.waiting = false;
+    this.dialogBusy = false; // the server says another dialog is open: keep a way to cancel it
     this.build();
     this.render();
   }
@@ -93,7 +94,7 @@ export class CaseFiles {
     this.waitBox.setAttribute("aria-live", "polite");
     this.waitBox.hidden = true;
     this.waitText = el("span", "cf-wait-text", S.cfWaitingDialog);
-    this.cancelButton = button(S.cfCancel, () => this.flow.cancel());
+    this.cancelButton = button(S.cfCancel, () => this.cancelDialog());
     this.waitBox.appendChild(this.waitText);
     this.waitBox.appendChild(this.cancelButton);
 
@@ -131,11 +132,18 @@ export class CaseFiles {
     this.pathInput.focus();
   }
 
+  async cancelDialog() {
+    await this.flow.cancel();
+    this.dialogBusy = false;
+    this.render();
+  }
+
   async browse() {
     if (this.waiting || this.state.busy) {
       return;
     }
     this.waiting = true;
+    this.dialogBusy = false;
     this.browseButton.disabled = true;
     this.render();
     try {
@@ -159,7 +167,7 @@ export class CaseFiles {
         state.addNotice("info", format(S.cfDialogTimeout, { minutes: outcome.minutes }));
         break;
       case "busy":
-        state.addNotice("info", S.cfDialogBusy);
+        this.dialogBusy = true;
         break;
       case "error":
         state.addNotice("error", outcome.message);
@@ -201,6 +209,8 @@ export class CaseFiles {
       this.onMessage(format(S.cfCreatedAll, { total: result.total }), false);
     } else if (result.state === "partial") {
       this.onMessage(format(S.cfPartial, { ok: result.ok, total: result.total }), true);
+    } else if (result.reason === "busy") {
+      this.onMessage(S.cfQueueBusy, true);
     } else if (result.reason === "case") {
       this.onMessage(this.state.notices.length > 0 ? this.state.notices[this.state.notices.length - 1].message : "", true);
     }
@@ -211,7 +221,9 @@ export class CaseFiles {
 
   render() {
     const state = this.state;
-    this.waitBox.hidden = !this.waiting;
+    this.waitBox.hidden = !this.waiting && !this.dialogBusy;
+    this.waitText.textContent = this.dialogBusy && !this.waiting ? S.cfDialogBusy : S.cfWaitingDialog;
+    this.cancelButton.textContent = this.dialogBusy && !this.waiting ? S.cfCancelDialog : S.cfCancel;
     this.addButton.disabled = state.busy;
     this.pathInput.disabled = state.busy;
     this.browseButton.disabled = state.busy || this.waiting;
@@ -230,6 +242,8 @@ export class CaseFiles {
         li.textContent = format(S.cfDuplicate, { name: notice.name });
       } else if (notice.type === "limit") {
         li.textContent = format(S.cfLimit, { name: notice.name, message: notice.message });
+      } else if (notice.type === "restart") {
+        li.textContent = S.cfNewCaseRestart;
       } else if (notice.name !== "") {
         li.textContent = format(S.cfItemError, { name: notice.name, message: notice.message });
       } else {

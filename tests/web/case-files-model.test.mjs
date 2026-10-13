@@ -204,3 +204,41 @@ test("pick flow: busy dialog and other errors", async () => {
   fs = { capabilities: async () => { throw new Error("x"); } };
   assert.equal((await new PickFlow(fs).browse()).outcome, "fallback");
 });
+
+test("a new name after a partial success is another case: every item goes back to pending and opens again", async () => {
+  const { CaseFilesState } = await import("../../src/dmslog/web/js/case-files-model.js");
+  const state = new CaseFilesState();
+  state.add(["/d/a.zip", "/d/b.zip"]);
+  const opened = [];
+  const deps = {
+    createCase: async (name) => ({ id: "case-" + name }),
+    selectCase: async () => {},
+    openPath: async (path) => {
+      opened.push(path);
+      return path === "/d/b.zip" && opened.length === 2 ? { status: "failed", message: "x" } : { status: "ok" };
+    },
+  };
+  const first = await state.create("A", deps);
+  assert.equal(first.state, "partial");
+  assert.equal(first.ok, 1);
+  const second = await state.create("B", deps);
+  assert.equal(second.caseId, "case-B");
+  assert.deepEqual(opened, ["/d/a.zip", "/d/b.zip", "/d/a.zip", "/d/b.zip"]);
+  assert.equal(second.state, "ok");
+  assert.equal(second.total, 2);
+});
+
+test("restart notice is added when the name changes", async () => {
+  const { CaseFilesState } = await import("../../src/dmslog/web/js/case-files-model.js");
+  const state = new CaseFilesState();
+  state.add(["/d/a.zip"]);
+  let fail = true;
+  const deps = {
+    createCase: async (name) => ({ id: name }), selectCase: async () => {},
+    openPath: async () => (fail ? { status: "failed", message: "x" } : { status: "ok" }),
+  };
+  await state.create("A", deps);
+  await state.create("B", deps);
+  assert.ok(state.notices.some((n) => n.type === "restart"));
+  fail = false;
+});

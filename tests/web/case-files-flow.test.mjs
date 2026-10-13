@@ -209,3 +209,71 @@ test("runCollection reports an error job as failed and a 409 as refused", async 
   assert.match(refused.message, /different server/);
   assert.equal(panel.waiter, null);
 });
+
+// -- review fixes -------------------------------------------------------------------------
+
+test("picker_busy keeps a Cancel the open dialog action until it is used", async () => {
+  let cancelled = 0;
+  const fs = {
+    capabilities: async () => ({ native: { available: true } }),
+    pick: async () => { throw Object.assign(new Error("busy"), { code: "picker_busy" }); },
+    cancelPick: async () => { cancelled += 1; return null; },
+  };
+  const { host, files } = setup(fs);
+  await files.browse();
+  const box = byClass(host, "cf-wait")[0];
+  assert.equal(box.hidden, false);
+  assert.match(box.textContent, /already open/);
+  const cancel = box.find((n) => n.tag === "button")[0];
+  assert.equal(cancel.textContent, "Cancel the open dialog");
+  await cancel.listeners.click[0]();
+  assert.equal(cancelled, 1);
+  assert.equal(box.hidden, true);
+});
+
+test("switching case or opening a collection is blocked while the files of a new case open", async () => {
+  api.cases = async () => ({ cases: [] });
+  api.sources = async () => ({ sources: [] });
+  api.createCase = async () => ({ id: "NEW" });
+  const { panel, messages } = panelSetup();
+  panel.caseId = null;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { files } = setup({});
+  files.state.add([ENT]);
+  files.nameInput.value = "N";
+  panel.caseFiles = files;
+  panel.runCollection = async () => { await gate; return { status: "ok" }; };
+  const running = panel.createCase();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(panel.queueBusy, true);
+  assert.equal(panel.refs.caseSelect.attrs["aria-disabled"], "true");
+  panel.refs.caseSelect.value = "OTHER";
+  panel.refs.caseSelect.fire("change");
+  assert.equal(panel.caseId, "NEW");
+  assert.equal(panel.refs.caseSelect.value, "NEW");
+  await panel.openCollection();
+  assert.match(messages.at(-1)[0], /still opening/);
+  release();
+  await running;
+  assert.equal(panel.queueBusy, false);
+  assert.equal(panel.refs.caseSelect.attrs["aria-disabled"], undefined);
+});
+
+test("a case change cancels the waiting run with a clear error, without a pending promise", async () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.sources = async () => ({ sources: [] });
+  api.progressUrl = () => "/p";
+  api.addCollection = async () => ({ job_id: "j" });
+  const { panel } = panelSetup();
+  const pending = panel.runCollection(ENT, "default", "C");
+  await new Promise((r) => setTimeout(r, 0));
+  await panel.selectCase("OTHER");
+  const result = await pending;
+  assert.equal(result.status, "failed");
+  assert.match(result.message, /case changed/);
+  assert.equal(panel.waiter, null);
+  const late = await panel.runCollection(ENT, "default", "C"); // the bound case is no longer current
+  assert.match(late.message, /case changed/);
+});

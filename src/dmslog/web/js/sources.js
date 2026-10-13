@@ -20,8 +20,16 @@ export class SourcesPanel {
     this.query = ""; // source filter text (see source-filter.js)
     this.onRendered = null; // (visible, total) after each render of the list
     this.caseFiles = null; // set by main.js: the "files of the new case" list (case-files.js)
-    this.waiter = null; // {jobId, resolve, seen}: a runCollection() waiting for its job's done event
-    refs.caseSelect.addEventListener("change", () => this.selectCase(refs.caseSelect.value || null));
+    this.queueBusy = false; // the files of a new case are being opened: case switch and Open form are blocked
+    this.waiter = null; // {jobId, caseId, resolve, seen}: a runCollection() waiting for its job's done event
+    refs.caseSelect.addEventListener("change", () => {
+      if (this.queueBusy) {
+        refs.caseSelect.value = this.caseId || "";
+        this.handlers.onMessage(S.cfQueueBusy, true);
+        return;
+      }
+      this.selectCase(refs.caseSelect.value || null);
+    });
     refs.newCaseForm.addEventListener("submit", (event) => {
       event.preventDefault();
       this.createCase();
@@ -53,7 +61,32 @@ export class SourcesPanel {
     await this.selectCase(wanted || null);
   }
 
+  setQueueBusy(busy) {
+    this.queueBusy = busy;
+    for (const node of [this.refs.caseSelect, this.refs.openForm]) {
+      if (busy) {
+        node.setAttribute("aria-disabled", "true");
+      } else {
+        node.removeAttribute("aria-disabled");
+      }
+    }
+  }
+
+  // A waiting runCollection() belongs to one case: if the case changes, it ends with an error.
+  cancelWaiter(message) {
+    const waiter = this.waiter;
+    if (!waiter) {
+      return;
+    }
+    this.waiter = null;
+    waiter.cancelled = true;
+    waiter.resolve({ status: "failed", message });
+  }
+
   async selectCase(caseId) {
+    if (this.waiter && this.waiter.caseId !== caseId) {
+      this.cancelWaiter(S.cfCaseChanged);
+    }
     this.closeEvents();
     this.caseId = caseId;
     this.selected.clear();
@@ -64,11 +97,24 @@ export class SourcesPanel {
 
   async createCase() {
     if (this.caseFiles) {
-      await this.caseFiles.submit({
-        createCase: (name) => api.createCase(name),
-        selectCase: (id) => this.loadCases(id),
-        openPath: (path) => this.runCollection(path, this.currentScope()),
-      });
+      if (this.queueBusy) {
+        this.handlers.onMessage(S.cfQueueBusy, true);
+        return;
+      }
+      let boundCase = null;
+      this.setQueueBusy(true);
+      try {
+        await this.caseFiles.submit({
+          createCase: (name) => api.createCase(name),
+          selectCase: async (id) => {
+            await this.loadCases(id);
+            boundCase = id;
+          },
+          openPath: (path) => this.runCollection(path, this.currentScope(), boundCase),
+        });
+      } finally {
+        this.setQueueBusy(false);
+      }
       return;
     }
     const name = this.refs.newCaseName.value.trim();
@@ -222,22 +268,33 @@ export class SourcesPanel {
 
   // Opens one path in the current case and resolves when its job ends (one job per case at a time):
   // {status: "ok"|"failed"|"refused", code?, message?}.
-  runCollection(path, scope) {
+  // expectedCaseId (optional) ties the run to the case it was created for.
+  runCollection(path, scope, expectedCaseId) {
     return new Promise((resolve) => {
       if (this.caseId === null) {
         resolve({ status: "failed", message: S.needCase });
         return;
       }
-      const waiter = { jobId: null, resolve, seen: new Map() };
+      if (expectedCaseId !== undefined && expectedCaseId !== null && expectedCaseId !== this.caseId) {
+        resolve({ status: "failed", message: S.cfCaseChanged });
+        return;
+      }
+      const waiter = { jobId: null, caseId: this.caseId, resolve, seen: new Map() };
       this.waiter = waiter;
       this.watchProgress(this.caseId);
-      api.addCollection(this.caseId, path, scope).then((started) => {
+      api.addCollection(waiter.caseId, path, scope).then((started) => {
+        if (waiter.cancelled) {
+          return;
+        }
         this.handlers.onMessage(S.collectionStarted, false);
         waiter.jobId = started ? started.job_id : null;
         if (waiter.jobId !== null && waiter.seen.has(waiter.jobId)) {
           this.finishJob(waiter.seen.get(waiter.jobId));
         }
       }).catch((err) => {
+        if (waiter.cancelled) {
+          return;
+        }
         this.waiter = null;
         this.closeEvents();
         resolve(refusalResult(err, {
@@ -268,6 +325,10 @@ export class SourcesPanel {
   // -- collections and progress -------------------------------------------------------------
 
   async openCollection() {
+    if (this.queueBusy) {
+      this.handlers.onMessage(S.cfQueueBusy, true);
+      return;
+    }
     if (this.caseId === null) {
       this.handlers.onMessage(S.needCase, true);
       return;

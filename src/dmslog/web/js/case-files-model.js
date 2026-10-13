@@ -182,9 +182,19 @@ export class CaseFilesState {
     this.changed();
     try {
       if (this.createdCaseId === null || this.createdName !== trimmed) {
+        const restarting = this.createdCaseId !== null;
         const created = await deps.createCase(trimmed);
         this.createdCaseId = created.id;
         this.createdName = trimmed;
+        if (restarting) {
+          // Another name means another case: nothing was opened in it yet.
+          for (const item of this.items) {
+            item.status = STATUS_PENDING;
+            item.code = "";
+            item.message = "";
+          }
+          this.notices.push({ type: "restart", name: "", message: "" });
+        }
       }
       await deps.selectCase(this.createdCaseId);
     } catch (err) {

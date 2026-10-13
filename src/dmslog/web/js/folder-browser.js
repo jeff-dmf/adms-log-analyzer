@@ -1,6 +1,6 @@
 // Built-in folder browser: an accessible modal that lists folders and ZIPs through /api/fs/list
 // and resolves to the chosen ZIPs. File names are untrusted data: textContent only.
-import { FolderBrowser, breadcrumbs } from "./folder-browser-model.js";
+import { FolderBrowser, breadcrumbs, restoreFocusKey, trapTarget } from "./folder-browser-model.js";
 import { formatSize } from "./case-files-model.js";
 import { S, format } from "./strings.js";
 
@@ -153,17 +153,11 @@ export function openFolderBrowser({ fs, storage, host }) {
       }
       if (event.key === "Tab") {
         const nodes = [...dialog.querySelectorAll(FOCUSABLE)].filter((n) => !n.hidden);
-        if (nodes.length === 0) {
-          return;
-        }
-        const first = nodes[0];
-        const last = nodes[nodes.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
+        const current = document.activeElement;
+        const target = trapTarget(nodes.length, nodes.indexOf(current), Boolean(current) && dialog.contains(current), event.shiftKey);
+        if (target !== null) {
           event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
+          (target === "first" ? nodes[0] : nodes[nodes.length - 1]).focus();
         }
       }
     }
@@ -240,6 +234,7 @@ export function openFolderBrowser({ fs, storage, host }) {
         box.checked = selected;
         box.disabled = Boolean(entry.broken);
         box.tabIndex = -1;
+        box.setAttribute("data-fb-key", "check:" + entry.path);
         box.setAttribute("aria-label", entry.name);
         box.addEventListener("click", (event) => event.stopPropagation());
         box.addEventListener("change", () => {
@@ -291,13 +286,35 @@ export function openFolderBrowser({ fs, storage, host }) {
       return make ? make() : item.path;
     }
 
+    function focusKey() {
+      const current = document.activeElement;
+      return current && dialog.contains(current) && typeof current.getAttribute === "function"
+        ? current.getAttribute("data-fb-key")
+        : null;
+    }
+
+    // The render replaces crumbs, shortcuts and checkboxes: put the focus back on the same element
+    // (by key) or, if it is gone, on the list so it never falls to the page behind the modal.
+    function restoreFocus(previousKey, hadFocus) {
+      if (!hadFocus) {
+        return;
+      }
+      const found = [...dialog.querySelectorAll("[data-fb-key]")];
+      const key = restoreFocusKey(previousKey, found.map((n) => n.getAttribute("data-fb-key")));
+      const target = key === null ? list : found.find((n) => n.getAttribute("data-fb-key") === key);
+      target.focus();
+    }
+
     function render() {
+      const hadFocus = Boolean(document.activeElement) && dialog.contains(document.activeElement);
+      const previousKey = focusKey();
       pathInput.value = model.path;
       upButton.disabled = model.parent === null;
       hiddenBox.checked = model.showHidden;
       crumbs.textContent = "";
       breadcrumbs(model.path).forEach((crumb, index, all) => {
         const node = button(crumb.label, () => model.load(crumb.path), "fb-crumb");
+        node.setAttribute("data-fb-key", "crumb:" + crumb.path);
         if (index === all.length - 1) {
           node.setAttribute("aria-current", "location");
         }
@@ -306,7 +323,9 @@ export function openFolderBrowser({ fs, storage, host }) {
       places.textContent = "";
       for (const item of model.shortcuts) {
         const li = el("li");
-        li.appendChild(button(shortcutLabel(item), () => model.load(item.path), "fb-place"));
+        const place = button(shortcutLabel(item), () => model.load(item.path), "fb-place");
+        place.setAttribute("data-fb-key", "place:" + item.path);
+        li.appendChild(place);
         places.appendChild(li);
       }
       list.textContent = "";
@@ -345,6 +364,7 @@ export function openFolderBrowser({ fs, storage, host }) {
       count.textContent = format(S.fbSelected, { n: model.selectedCount });
       addButton.disabled = model.selectedCount === 0;
       selectAll.disabled = !model.visible.some((e) => model.selectable(e));
+      restoreFocus(previousKey, hadFocus && !dialog.contains(document.activeElement));
     }
 
     backdrop.addEventListener("mousedown", (event) => {
