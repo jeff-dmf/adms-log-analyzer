@@ -1,0 +1,53 @@
+/* "Copy as" menu: a popover under the toolbar button (shares .menu-wrap and .menu with the columns menu). */
+.cx-panel {
+  min-width: 280px;
+  max-width: 360px;
+  gap: 6px;
+  z-index: 20;
+}
+
+.cx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cx-label {
+  color: var(--muted);
+}
+
+.cx-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cx-note,
+.cx-status {
+  margin: 0;
+  color: var(--muted);
+}
+
+.cx-status.cx-warn {
+  background: var(--error-bg);
+  color: var(--error-text);
+  padding: 4px 8px;
+  border-radius: 3px;
+}
+
+.cx-offscreen {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  opacity: 0;
+}
+
+.cx-panel [hidden] {
+  display: none;
+}
