@@ -155,14 +155,16 @@ export class ColumnResizer {
 // restore all) so the browser lays out once.
 export function intrinsicWidths(cells) {
   const saved = cells.map((c) => [c.style.width, c.style.flex]);
-  for (const c of cells) {
-    c.style.width = "auto";
-    c.style.flex = "none";
+  try {
+    for (const c of cells) {
+      c.style.width = "auto";
+      c.style.flex = "none";
+    }
+    return cells.map((c) => Math.max(c.scrollWidth || 0, c.offsetWidth || 0));
+  } finally {
+    cells.forEach((c, i) => {
+      c.style.width = saved[i][0];
+      c.style.flex = saved[i][1];
+    });
   }
-  const widths = cells.map((c) => Math.max(c.scrollWidth || 0, c.offsetWidth || 0));
-  cells.forEach((c, i) => {
-    c.style.width = saved[i][0];
-    c.style.flex = saved[i][1];
-  });
-  return widths;
 }

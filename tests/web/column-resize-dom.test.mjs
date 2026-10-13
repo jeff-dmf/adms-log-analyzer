@@ -10,6 +10,7 @@ import { FIT_MAX_WIDTH, FIT_SLACK, MIN_WIDTH } from "../../src/dmslog/web/js/col
 function cell(content) {
   const el = { style: { width: "", flex: "" }, content };
   Object.defineProperty(el, "scrollWidth", {
+    configurable: true,
     get() {
       return el.style.width === "auto" || el.style.width === "" ? el.content : Math.max(el.content, parseFloat(el.style.width));
     },
@@ -70,4 +71,18 @@ test("intrinsicWidths restores width and flex", () => {
   assert.deepEqual(intrinsicWidths([c]), [70]);
   assert.equal(c.style.width, "300px");
   assert.equal(c.style.flex, "1 0 auto");
+});
+
+test("intrinsicWidths restores the styles when a measurement throws", () => {
+  const a = cell(70);
+  a.style.width = "300px";
+  a.style.flex = "1 0 auto";
+  const b = cell(10);
+  b.style.width = "120px";
+  Object.defineProperty(b, "scrollWidth", { get() { throw new Error("layout failed"); } });
+  assert.throws(() => intrinsicWidths([a, b]), /layout failed/);
+  assert.equal(a.style.width, "300px");
+  assert.equal(a.style.flex, "1 0 auto");
+  assert.equal(b.style.width, "120px");
+  assert.equal(b.style.flex, "");
 });
