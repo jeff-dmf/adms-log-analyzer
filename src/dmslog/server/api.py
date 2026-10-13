@@ -1338,6 +1338,7 @@ class Api:
                 method=method,
                 ts_from=_time_param(request, "from"),
                 ts_to=_time_param(request, "to"),
+                collection=_id_param(request, "collection"),
             )
         return Response(200, {"samples": samples, "truncated": truncated})
 
@@ -1345,7 +1346,7 @@ class Api:
         cid = _case_from_query(self.store, request)
         stream_id = _id_param(request, "stream")
         with self.store.reader(cid) as conn:
-            methods = events.stat_methods(conn, stream_id)
+            methods = events.stat_methods(conn, stream_id, _id_param(request, "collection"))
         return Response(200, {"methods": methods})
 
     # -- correlation keys and links
