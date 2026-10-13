@@ -10,7 +10,7 @@ export const BIG_STEP = 50;       // px with Shift
 export const STORAGE_KEY = "dmslog.columnWidths";
 const MAX_STORED = 200;           // entries kept in storage (dynamic field columns come and go)
 
-const DEFAULT_WIDTHS = { ts: 190, pid: 72, tid: 72, level: 84, source: 160, msg: 300 };
+const DEFAULT_WIDTHS = { ts: 190, pid: 72, tid: 72, level: 84, source: 160, collection: 90, msg: 300 };
 const FIELD_DEFAULT = 140;
 
 // Width of a column when the user never resized it; `key` is the column key ("fields.<name>" for parsed fields).

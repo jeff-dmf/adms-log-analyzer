@@ -303,6 +303,21 @@ def test_stat_series_and_methods(conn):
     assert len(events.stat_methods(conn, stream_id=2)) == 1
 
 
+def test_stat_series_and_methods_by_collection(conn):
+    seed_stats(conn)
+    conn.execute("UPDATE stream SET collection_group = 7 WHERE id = 2")  # stream 2 is another collection
+    assert {s["stream_id"] for s in events.stat_series(conn, collection=1)[0]} == {1}
+    assert {s["stream_id"] for s in events.stat_series(conn, collection=7)[0]} == {2}
+    assert events.stat_series(conn, collection=99)[0] == []
+    assert (
+        len(events.stat_series(conn, collection=1)[0]) + len(events.stat_series(conn, collection=7)[0]) == 5
+    )
+    assert {m["stream_id"] for m in events.stat_methods(conn, collection=1)} == {1}
+    assert [m["stream_id"] for m in events.stat_methods(conn, collection=7)] == [2]
+    assert events.stat_methods(conn, stream_id=2, collection=1) == []  # both conditions apply
+    assert len(events.stat_methods(conn)) == 4
+
+
 def test_stat_series_is_capped(conn):
     conn.executemany(
         "INSERT INTO stat_sample(stream_id, ts, side, method, calls) VALUES (1, ?, 'client', 'M', 1)",

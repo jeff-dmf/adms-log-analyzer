@@ -45,9 +45,12 @@ python -m dmslog serve
   folder browser opens instead), or paste a full path and press Enter. Each file shows its name, folder,
   size and whether the name says Enterprise or Sensitive; **Remove** drops one, **Clear all** drops
   all. The files are opened one after the other; a file the case cannot take (for example a capture
-  from a different server) is marked in the list and does not stop the others. Today a case holds one
-  ERS (the Enterprise and Sensitive halves of the same capture go together). To add a path to the
-  selected case afterwards, use the path field under the case list and **Open**.
+  that was refused or failed is marked in the list and does not stop the others.
+- A case can hold several **collections**: an ERS capture (its Enterprise and Sensitive zips go
+  together, in any order), an installation `Log` folder or a loose file, each possibly from a
+  different server. To add more to the open case, use **Add ERS files to this case** (same Browse and
+  list as above) or the path field with **Open**. A copy of an ERS file already in the case from another
+  location is refused; opening the same file again just refreshes it.
 - From the command line (indexes without opening the viewer):
 
 ```bash
@@ -58,6 +61,21 @@ python3 dmslog.pyz serve        # then open the case
 
 Ingesting the same ERS again is safe and fast: unchanged files are not read again. The zip is read
 in place (never extracted) and log files are opened, read and closed on every cycle, never held open.
+
+## Collections (viewer)
+
+- The **Collections** panel (left column) lists the collections of the case as `C1`, `C2`, ...
+  with the kind (ERS capture, folder or file), server, GUID, record and source counts, first and last
+  time, and a note when one half of an ERS capture is still missing. **+** shows the files of a
+  collection.
+- Tick one or more collections to show only their records (**All collections** clears the choice). The
+  **Collection** column (`C<n>`) appears in the grid when the case has more than one collection; hide or
+  show it in the **Columns** menu. **Distinct values** can also group by Collection.
+- Each collection keeps its own server clock, so the order of records across collections is only
+  approximate; the viewer says so above the grid.
+- **Remove collection** asks for a second confirmation, then deletes that collection's records and
+  its bookmarks (the other collections stay). It is refused while the case is indexing or while the
+  viewer follows the collection's folder.
 
 ## Commands
 
@@ -120,6 +138,16 @@ In the record detail, **Highlight type = value** colors every record with that k
 in the sensitive logs. Press `]` and `[` to go to the next and previous highlighted record of the view.
 Rules are saved in the case and hold only what you typed.
 
+## Chained views (viewer)
+
+**Narrow this view** (above the filter bar) turns the current filters into the parent view and starts
+a new view with an empty filter; the view you see is always the parent's filters AND its own. The
+breadcrumbs show the stack (up to 10 views, each named after its last filter; **Rename** changes the
+name). Click a breadcrumb, use **Back** / **Forward** or press `Alt+Left` / `Alt+Right` to move
+between views; the child views stay available until you narrow again from an earlier view. **Show in
+parent** and **Show in root** leave the current view and keep the selected record selected. The stack
+lives in the browser tab (session storage), never on the server.
+
 ## Data directory
 
 Cases and indexes live in the user's data directory, one folder per case (deleting the case deletes
@@ -137,6 +165,16 @@ preset fills the filter tree. You can save the current tree as your own preset (
 or for all), rename or delete it, and export or import presets as JSON or TOML. Your presets live in
 `presets.toml` in the data directory and never contain paths or log data; the curated ones ship with
 the app.
+
+## Local alerts (follow mode)
+
+While `dmslog serve --watch` follows a folder, the **Alerts** panel can warn you when the new records
+match a rule: a banner in the viewer and, if you turn them on, browser notifications (the button
+**Enable browser notifications** is the only thing that asks the browser for permission). Rules are a
+template or a filter that matched new records, more than N matches in a time window, or an operation that
+stayed open longer than a timeout. Create them from the current filter or from a preset; they are kept in
+`alerts.toml` in the data directory (no paths or log data) and apply to every case. Nothing leaves this
+computer: no e-mail, no network calls.
 
 ## Local aliases
 

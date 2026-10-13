@@ -7,13 +7,17 @@ import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
 import { Detail } from "./detail.js";
 import {
-  NAV_ERROR_FILTER, TPL_LEAF, bookmarkKey, composeFilter, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
+  NAV_ERROR_FILTER, TPL_LEAF, andFilters, bookmarkKey, composeFilter, createLatestRequest, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { registerLeafType } from "./filter-tree-model.js";
 import { initFilterTree, registerLeafEditor } from "./filter-tree.js";
 import { initTimeline } from "./timeline.js";
 import { COLUMNS, Grid } from "./grid.js";
+import { CollectionsPanel } from "./collections-panel.js";
+import {
+  columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi,
+} from "./collections-model.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { searchTerms } from "./search.js";
 import { SourceFilter } from "./source-filter.js";
@@ -72,6 +76,14 @@ function writeList(key, list) {
     window.localStorage.setItem(key, JSON.stringify(list));
   } catch (err) {
     // Not persisted; the view still works.
+  }
+}
+
+function safeLocalStorage() {
+  try {
+    return window.localStorage;
+  } catch (err) {
+    return null;
   }
 }
 
@@ -184,14 +196,23 @@ function start() {
   let exportPanel = null;
   let copyExport = null;
   let sourceFamilies = new Map();
+  // API for the panels fed by derived events: their queries carry the chosen collection.
+  const derivedApi = scopeApi(api, () => (collectionsPanel ? collectionsPanel.selectedGroups() : []));
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
-  let navSeq = 0;
+  const navRequests = createLatestRequest(); // n/N/t/T lookups; a view change makes them stale
   let bookmarksPanel = null;
   let detailBookmark = null;
   let compare = null;
+  let alertsUi = null; // local alerts: banner and panel (alerts-panel.js)
   let distinctUi = null; // "Distinct values" and "Group by template" (distinct-panel.js)
   let aggregateUi = null; // "Aggregate" panel (aggregate-panel.js)
+  let collectionsPanel = null; // the Collections panel (collections-panel.js)
+  let collections = []; // collections of the open case (GET /collections)
+  let collectionColumnPref = loadColumnPref(safeLocalStorage());
+  let applyPending = false; // a full view reload follows: the Collection column need not reload the grid itself
+  let viewsStack = null; // chained views: model (views-stack-model.js) and UI (views-stack.js)
+  let viewsUi = null;
   const compareSelection = createCompareSelection();
   const compareButton = byId("compare-button");
   function paintCompareButton(entry) {
@@ -344,11 +365,45 @@ function start() {
     onError: showError,
   });
 
+  // Live conditions of the active view (toolbar + filter tree), for the stack of chained views.
+  const captureLive = () => ({
+    searchText,
+    form: {
+      sev: byId("sev-select").value, level: byId("level-select").value,
+      from: byId("from-input").value, to: byId("to-input").value,
+    },
+    formState: { ...formState },
+    toggles: { ...toggles },
+    userFilter,
+  });
+  const restoreLive = (state) => {
+    searchText = state.searchText;
+    byId("search-input").value = state.searchText;
+    byId("sev-select").value = state.form.sev;
+    byId("level-select").value = state.form.level;
+    byId("from-input").value = state.form.from;
+    byId("to-input").value = state.form.to;
+    formState = { ...state.formState };
+    toggles = { ...state.toggles };
+    byId("hide-noise").checked = toggles.hideNoise;
+    byId("unclassified-only").checked = toggles.unclassified;
+    userFilter = state.userFilter;
+    if (filterTree) {
+      filterTree.setFilter(userFilter);
+    }
+  };
+  const ownFilterOf = (state) =>
+    composeFilter({ sourceIds: [], text: state.searchText, ...state.formState }, state.userFilter, state.toggles);
+
   const applyView = () => {
     const ids = panel.selectedIds();
-    const filter = composeFilter({ sourceIds: ids, text: searchText, ...formState }, userFilter, toggles);
+    const groups = collectionsPanel ? collectionsPanel.selectedGroups() : [];
+    const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
+    // The effective view: the ancestors' filters AND the active view's own.
+    const filter = viewsStack ? andFilters(viewsStack.parentsFilter(), own) : own;
     currentFilter = filter;
-    const range = timeSpan(sources, ids, formState.from, formState.to);
+    navRequests.invalidate();
+    const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
     detail.setTerms(terms);
@@ -362,6 +417,9 @@ function start() {
     }
     if (aggregateUi) {
       aggregateUi.viewChanged();
+    }
+    if (viewsUi) {
+      viewsUi.changed();
     }
     return loaded;
   };
@@ -379,6 +437,11 @@ function start() {
   }, {
     onCase: (id) => {
       caseId = id;
+      applyPending = true; // refreshSources() follows and rebuilds the view
+      if (collectionsPanel) {
+        collectionsPanel.setCase();
+      }
+      byId("add-files-host").hidden = id === null;
       detail.clear(); // drop the old case's entry right away, before /sources answers
       bookmarkStore.reset();
       compareSelection.reset();
@@ -392,6 +455,12 @@ function start() {
       if (filterTree) {
         filterTree.setCase(id);
         filterTree.setFilter(null);
+      }
+      if (viewsUi) {
+        const saved = viewsUi.onCase(id);
+        if (saved) {
+          restoreLive(saved);
+        }
       }
       loadTemplates(id);
       knowledge.reset();
@@ -420,14 +489,23 @@ function start() {
       if (followTail) {
         followTail.onCase();
       }
+      if (alertsUi) {
+        alertsUi.onCase();
+      }
     },
     onSources: (list, quiet) => {
       sources = list;
       sourceNames = new Map(list.map((s) => [s.id, s.name]));
       sourceFamilies = new Map(list.map((s) => [s.id, s.family || ""]));
       grid.setSourceNames(sourceNames);
+      // The collections load first so the Collection column and the filter are right in the first load.
+      const listed = collectionsPanel ? collectionsPanel.refresh() : Promise.resolve();
       if (!quiet) {
-        applyView();
+        applyPending = true;
+        listed.then(() => {
+          applyPending = false;
+          return applyView();
+        });
       }
     },
     onSelection: () => applyView(),
@@ -451,10 +529,48 @@ function start() {
     onMessage: showMessage,
   });
   new SourceFilter({ host: byId("source-filter-host"), panel });
+  const syncCollectionColumn = () =>
+    grid.setCollectionColumn(columnShown(collections, collectionColumnPref), !applyPending).catch(showError);
+  collectionsPanel = new CollectionsPanel({
+    host: byId("collections-host"),
+    note: byId("collections-note"),
+    api,
+    getCase: () => caseId,
+    onSelection: (groups) => {
+      if (groups.length > 1) {
+        showMessage(S.colPanelsOne, false);
+      }
+      refreshDerived(); // Operations, Dashboard and the clock banner follow the chosen collection
+      return applyView();
+    },
+    onList: (list) => {
+      const multiChanged = isMulti(list) !== isMulti(collections);
+      collections = list;
+      grid.setCollectionTags(gridTags(list));
+      syncCollectionColumn();
+      if (multiChanged) {
+        buildColumnMenu(); // the menu is rebuilt only when it gains or loses the Collection item
+      }
+    },
+    // A collection was removed: sources, records, links, bookmarks and the panels fed by them reload.
+    onRemoved: async () => {
+      await panel.refreshSources(true);
+      await panel.handlers.onDone();
+    },
+    onMessage: showMessage,
+  });
   panel.caseFiles = new CaseFiles({
     host: byId("case-files-host"),
     nameInput: byId("new-case-name"),
     onMessage: showMessage,
+  });
+  byId("add-files-host").hidden = true; // until a case is open
+  panel.addFiles = new CaseFiles({
+    host: byId("add-files-host"),
+    nameInput: null,
+    onMessage: showMessage,
+    mode: "add",
+    onAdd: () => panel.addFilesToCase(),
   });
 
   byId("search-form").addEventListener("submit", (event) => {
@@ -534,6 +650,13 @@ function start() {
         visibleColumns = keys;
         saveColumns(keys);
         grid.setColumns(keys);
+      }));
+    }
+    if (isMulti(collections)) {
+      menu.appendChild(checkbox(S.columnCollection, collectionColumnPref, (box) => {
+        collectionColumnPref = box.checked;
+        saveColumnPref(collectionColumnPref, safeLocalStorage());
+        syncCollectionColumn();
       }));
     }
     const names = Array.from(new Set([...seenFields, ...fieldColumns])).sort();
@@ -787,6 +910,7 @@ function start() {
       getCase: () => caseId,
       getFilter: () => currentFilter,
       getFieldNames: () => Array.from(seenFields),
+      hasCollections: () => isMulti(collections),
       getSourceName: (id) => sourceNames.get(id) || String(id),
       onDrill: (leaf, exclude) => setUserFilter(model.drillFilter(userFilter, leaf, exclude)),
       onReveal: revealEntry,
@@ -809,6 +933,38 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: no Aggregate button.
+  });
+  // Chained views (breadcrumbs, Narrow this view, Show in parent/root): optional modules.
+  Promise.all([import("./views-stack.js"), import("./views-stack-model.js")]).then(([uiModule, model]) => {
+    viewsStack = model.createViewsStack({ ownFilter: ownFilterOf, getLive: captureLive });
+    viewsUi = uiModule.mountViewsStack({
+      parent: byId("grid-panel"),
+      beforePanel: byId("filter-form"),
+      footer: document.querySelector(".shortcuts-help"),
+      stack: viewsStack,
+      storage: (() => {
+        try {
+          return window.sessionStorage;
+        } catch (err) {
+          return null;
+        }
+      })(),
+      getCase: () => caseId,
+      restoreState: restoreLive,
+      applyView: () => applyView(),
+      getSelectedRow: () => grid.selectedRow(),
+      reveal: (row) => grid.revealRow(row),
+      showMessage,
+    });
+    if (caseId !== null) {
+      const saved = viewsUi.onCase(caseId);
+      if (saved) {
+        restoreLive(saved);
+        applyView();
+      }
+    }
+  }).catch(() => {
+    // Module missing or failing: no chained views.
   });
   // Bookmarks (detail section, panel, shortcuts) and "Compare with...": optional modules.
   const bookmarksHost = byId("bookmarks-host");
@@ -915,6 +1071,35 @@ function start() {
     // Module missing or failing: the toggle does nothing.
   });
 
+  // Local alerts (9.13): banner, panel and optional browser notifications; optional module.
+  const alertsHost = byId("alerts-host");
+  const alertsButton = byId("alerts-button");
+  import("./alerts-panel.js").then((module) => {
+    alertsUi = module.initAlerts(alertsHost, {
+      banner: byId("alert-banner"),
+      getCase: () => caseId,
+      getFilter: () => userFilter,
+      onShowRecords: (filter) => setUserFilter(filter).catch(showError),
+      onError: showError,
+      onClose: () => alertsButton.setAttribute("aria-expanded", "false"),
+    });
+    alertsButton.hidden = false;
+    alertsButton.addEventListener("click", () => {
+      if (alertsUi.isOpen()) {
+        alertsUi.close();
+      } else if (caseId === null) {
+        showMessage(S.needCase, true);
+        return;
+      } else {
+        alertsUi.open();
+      }
+      alertsButton.setAttribute("aria-expanded", alertsUi.isOpen() ? "true" : "false");
+    });
+    alertsUi.onCase();
+  }).catch(() => {
+    // Module missing or failing: no alerts UI.
+  });
+
   // Operations panel, adapter dashboard and clock-jump banner: optional modules like the panels above.
   const eventsHost = byId("events-panel-host");
   const eventsButton = byId("events-button");
@@ -926,7 +1111,7 @@ function start() {
     const ensureEventsPanel = () => {
       if (!eventsPanel) {
         eventsPanel = module.initEventsPanel(eventsHost, {
-          api,
+          api: derivedApi,
           getCase: () => caseId,
           onShowInGrid: showEventInGrid,
         });
@@ -1029,7 +1214,7 @@ function start() {
       if (!dashboardHost.hidden) {
         if (!dashboard) {
           dashboard = module.initDashboard(dashboardHost, {
-            api,
+            api: derivedApi,
             getCase: () => caseId,
             onShowInGrid: showEventInGrid,
           });
@@ -1046,7 +1231,7 @@ function start() {
       return;
     }
     clockBanner = module.initClockBanner(byId("clock-banner"), {
-      api,
+      api: derivedApi,
       getCase: () => caseId,
       onShowInGrid: showEventInGrid,
     });
@@ -1073,12 +1258,11 @@ function start() {
     event.preventDefault();
     const extra = nav.kind === "error" ? NAV_ERROR_FILTER : { tpl: [row.tpl_id] };
     const request = navRequest(currentFilter, extra, row, nav.dir);
-    navSeq += 1;
-    const seq = navSeq;
+    const { seq, signal } = navRequests.begin();
     const forCase = caseId;
     try {
-      const page = await api.page(forCase, request.filter, request.cursor, request.dir, request.limit);
-      if (seq !== navSeq || forCase !== caseId) {
+      const page = await api.page(forCase, request.filter, request.cursor, request.dir, request.limit, signal);
+      if (!navRequests.isCurrent(seq) || forCase !== caseId) {
         return;
       }
       const found = page.rows && page.rows[0];
@@ -1089,7 +1273,9 @@ function start() {
       showMessage("", false);
       await grid.revealRow(found);
     } catch (err) {
-      showError(err);
+      if (!(err && err.name === "AbortError") && navRequests.isCurrent(seq)) {
+        showError(err);
+      }
     }
   });
 

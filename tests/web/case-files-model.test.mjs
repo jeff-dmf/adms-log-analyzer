@@ -151,10 +151,11 @@ test("removing and clearing are ignored while creating", async () => {
   await running;
 });
 
-test("refusalResult explains a different server in plain words", () => {
-  const text = { conflictServer: "S", conflictCapture: "C", busy: "B" };
-  assert.deepEqual(refusalResult({ status: 409, code: "different_guid", message: "x" }, text), { status: "refused", code: "different_guid", message: "S" });
-  assert.equal(refusalResult({ status: 409, code: "different_capture", message: "x" }, text).message, "C");
+test("refusalResult explains a copy of a collection and a busy case in plain words", () => {
+  const text = { duplicate: "D", busy: "B" };
+  assert.deepEqual(refusalResult({ status: 409, code: "duplicate_collection", message: "x" }, text), { status: "refused", code: "duplicate_collection", message: "D" });
+  // Another server or capture is a new collection now: the old codes carry no special text.
+  assert.equal(refusalResult({ status: 409, code: "different_guid", message: "x" }, text).message, "x");
   assert.equal(refusalResult({ status: 409, code: "job_running", message: "x" }, text).message, "B");
   const other = refusalResult({ status: 400, code: "path_not_found", message: "No such path" }, text);
   assert.deepEqual([other.status, other.message], ["failed", "No such path"]);

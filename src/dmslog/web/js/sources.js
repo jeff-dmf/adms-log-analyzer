@@ -20,6 +20,7 @@ export class SourcesPanel {
     this.query = ""; // source filter text (see source-filter.js)
     this.onRendered = null; // (visible, total) after each render of the list
     this.caseFiles = null; // set by main.js: the "files of the new case" list (case-files.js)
+    this.addFiles = null; // set by main.js: the "add files to this case" list (case-files.js, mode "add")
     this.queueBusy = false; // the files of a new case are being opened: case switch and Open form are blocked
     this.waiter = null; // {jobId, caseId, resolve, seen}: a runCollection() waiting for its job's done event
     refs.caseSelect.addEventListener("change", () => {
@@ -88,6 +89,9 @@ export class SourcesPanel {
       this.cancelWaiter(S.cfCaseChanged);
     }
     this.closeEvents();
+    if (this.addFiles && caseId !== this.caseId) {
+      this.addFiles.state.resetResults(); // results belong to the case they were opened in
+    }
     this.caseId = caseId;
     this.selected.clear();
     this.refs.caseSelect.value = caseId || "";
@@ -127,6 +131,30 @@ export class SourcesPanel {
       await this.loadCases(created.id);
     } catch (err) {
       this.handlers.onMessage(err.message, true);
+    }
+  }
+
+  // Opens every file of the "add files" list in the open case, one after the other.
+  async addFilesToCase() {
+    if (!this.addFiles) {
+      return;
+    }
+    if (this.queueBusy) {
+      this.handlers.onMessage(S.cfQueueBusy, true);
+      return;
+    }
+    if (this.caseId === null) {
+      this.handlers.onMessage(S.needCase, true);
+      return;
+    }
+    const boundCase = this.caseId;
+    this.setQueueBusy(true);
+    try {
+      await this.addFiles.submitAdd({
+        openPath: (path) => this.runCollection(path, this.currentScope(), boundCase),
+      }, boundCase);
+    } finally {
+      this.setQueueBusy(false);
     }
   }
 
@@ -298,7 +326,7 @@ export class SourcesPanel {
         this.waiter = null;
         this.closeEvents();
         resolve(refusalResult(err, {
-          conflictServer: S.cfConflictServer, conflictCapture: S.cfConflictCapture, busy: S.cfBusy,
+          duplicate: S.cfDuplicateCollection, busy: S.cfBusy,
         }));
       });
     });

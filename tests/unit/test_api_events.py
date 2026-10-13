@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 import test_store_events as tse
 from test_api import client, mf, server  # noqa: F401  (fixtures)
@@ -170,3 +172,21 @@ def test_stats_series_and_methods(client, demo):  # noqa: F811
     ]
     assert len(client.get("/api/stats/methods?case=Demo")[1]["methods"]) == 4
     invalid(client, "/api/stats/methods?case=Demo&stream=-")
+
+
+def test_stats_series_and_methods_by_collection(client, demo, server):  # noqa: F811
+    conn = sqlite3.connect(server.api.store.root / "Demo" / "case.sqlite")
+    conn.execute("UPDATE stream SET collection_group = 7 WHERE id = 2")
+    conn.commit()
+    conn.close()
+    first = client.get("/api/stats/series?case=Demo&collection=1")[1]["samples"]
+    second = client.get("/api/stats/series?case=Demo&collection=7")[1]["samples"]
+    assert {s["stream_id"] for s in first} == {1} and {s["stream_id"] for s in second} == {2}
+    assert len(first) + len(second) == 5
+    methods = client.get("/api/stats/methods?case=Demo&collection=7")[1]["methods"]
+    assert [m["stream_id"] for m in methods] == [2]
+    assert {
+        m["stream_id"] for m in client.get("/api/stats/methods?case=Demo&collection=1")[1]["methods"]
+    } == {1}
+    invalid(client, "/api/stats/series?case=Demo&collection=x")
+    invalid(client, "/api/stats/methods?case=Demo&collection=x")
