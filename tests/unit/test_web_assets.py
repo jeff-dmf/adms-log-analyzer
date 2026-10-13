@@ -66,6 +66,8 @@ EXPECTED_MODULES = {
     "follow-tail.js",
     "copy-export-model.js",
     "copy-export.js",
+    "column-resize-model.js",
+    "column-resize.js",
 }
 
 FORBIDDEN_JS = [
@@ -311,6 +313,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         "/css/payload.css", "/css/payload-list.css",
         "/css/export.css",
         "/css/bookmarks.css",
+        "/css/column-resize.css",
         "/vendor/uplot/uPlot.esm.js", "/vendor/uplot/uPlot.min.css",
         *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),
     ]  # fmt: skip

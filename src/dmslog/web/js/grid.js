@@ -5,6 +5,7 @@ import {
   END_CURSOR, PAGE_LIMIT, ROW_HEIGHT, SCROLL_SPAN, RowWindow, fetchPlan, jumpCursor, scrollToTs,
   tsToScroll,
 } from "./grid-model.js";
+import { ColumnResizer } from "./column-resize.js";
 import { markerLabel } from "./bookmarks-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format } from "./strings.js";
@@ -68,6 +69,13 @@ export class Grid {
     this.selectTimer = null;
     this.wheelRemainder = 0;
     this.spacer.style.height = SCROLL_SPAN + "px";
+    this.resizer = new ColumnResizer({
+      viewport, rowsLayer, header,
+      // Every pooled slot, hidden ones included: a hidden row keeps the current widths when render() shows it again.
+      getCells: (key) => this.pool.filter((s) => s.cells[key]).map((s) => s.cells[key]),
+      getVisibleCells: (key) => this.pool.filter((s) => !s.el.hidden && s.cells[key]).map((s) => s.cells[key]),
+      getKeys: () => this.columnDefs().map((c) => c.key),
+    });
     this.bind();
     this.renderHeader();
   }
@@ -75,6 +83,10 @@ export class Grid {
   bind() {
     this.viewport.addEventListener("wheel", (event) => {
       event.preventDefault();
+      if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        this.viewport.scrollLeft += event.deltaX || event.deltaY; // horizontal scroll of wide columns
+        return;
+      }
       const unit = event.deltaMode === 1 ? 1 : ROW_HEIGHT;
       this.wheelRemainder += event.deltaY / unit * (event.deltaMode === 1 ? 3 : 1);
       const rows = Math.trunc(this.wheelRemainder);
@@ -174,13 +186,20 @@ export class Grid {
 
   renderHeader() {
     this.header.textContent = "";
+    this.resizer.resetHeader();
     for (const column of this.columnDefs()) {
       const cell = document.createElement("div");
       cell.className = "grid-cell " + cellClass(column);
       cell.setAttribute("role", "columnheader");
       cell.textContent = column.label();
       this.header.appendChild(cell);
+      this.resizer.decorate(cell, column);
     }
+    this.resizer.apply();
+  }
+
+  resetColumnWidths() {
+    this.resizer.reset();
   }
 
   // -- loading ------------------------------------------------------------------------------
@@ -456,6 +475,7 @@ export class Grid {
       const cell = document.createElement("div");
       cell.className = "grid-cell " + cellClass(column);
       cell.setAttribute("role", "gridcell");
+      cell.style.width = this.resizer.widthOf(column.key);
       rowEl.appendChild(cell);
       cells[column.key] = cell;
     }
