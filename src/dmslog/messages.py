@@ -386,3 +386,28 @@ VIEWEXPORT_EVENT_HEADERS = (
     "Event", "Operation", "Kind", "Status", "Duration (ms)", "Start", "End", "Key", "Operation key",
     "TID", "Family", "Process", "Source", "Records",
 )  # fmt: skip
+
+# File picker and folder browser (server/filepick.py, /api/fs/*)
+FS_BAD_PATH = "path must be a non-empty text of at most {limit} characters"
+FS_PATH_NOT_TEXT = "The path contains control characters or bytes that are not valid text"
+FS_PATH_NOT_ABSOLUTE = "The path must be absolute (for example C:\\Logs or /home/user/logs)"
+FS_DEVICE_PATH = "Device and extended-length paths (\\\\?\\, \\\\.\\) are not supported"
+FS_UNC_PATH = "Network paths (\\\\server\\share) cannot be browsed; map the share to a drive letter"
+FS_PATH_BAD_CHARS = "The path contains characters that Windows does not allow in names"
+FS_PATH_TRAILING_DOT = "A name in the path ends with a space or a dot, which Windows does not keep"
+FS_RESERVED_NAME = "The path contains a name Windows reserves for devices (CON, NUL, COM1...)"
+FS_NOT_FOUND = "The path does not exist"
+FS_NOT_A_DIRECTORY = "The path is not a folder"
+FS_NOT_A_ZIP = "The path is not a .zip file"
+FS_PERMISSION_DENIED = "Permission denied"
+FS_UNREADABLE = "The path could not be read"
+FS_BAD_PICK_KIND = "kind must be 'zip' or 'folder'"
+FS_BAD_PICK_MULTIPLE = "multiple must be true or false"
+FS_UNKNOWN_FIELD = "Unknown field {field!r}"
+FS_PICKER_UNAVAILABLE = "No native file dialog is available here; use the built-in folder browser"
+FS_PICKER_BUSY = "A file dialog is already open"
+FS_PICKER_FAILED = "The native file dialog failed; use the built-in folder browser"
+FS_DIALOG_TITLE_ZIP = "dmslog - Select ERS archives (.zip)"
+FS_DIALOG_TITLE_FOLDER = "dmslog - Select a folder"
+FS_DIALOG_FILTER_ZIP = "ERS archives"
+FS_DIALOG_FILTER_ALL = "All files"
