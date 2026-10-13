@@ -425,6 +425,8 @@ def update(data_dir: str | os.PathLike[str], name: Any, family: Any, raw: Any) -
             raise PresetError("duplicate_name", name=clean["name"])
         if "extra" not in clean and "extra" in doc.presets[index]:
             clean["extra"] = doc.presets[index]["extra"]
+        if "extra" in clean and not _small(clean["extra"], MAX_EXTRA_BYTES):
+            raise PresetError("extra_too_large")
         doc.presets[index] = clean
         _save(data_dir, doc)
     return public(clean, False)
@@ -512,7 +514,12 @@ def import_presets(data_dir: str | os.PathLike[str], fmt: Any, payload: Any) -> 
             if index is not None:
                 old_extra = doc.presets[index].get("extra")
                 if old_extra:  # the import replaces the known fields only
-                    preset["extra"] = {**old_extra, **preset.get("extra", {})}
+                    merged = {**old_extra, **preset.get("extra", {})}
+                    if not _small(merged, MAX_EXTRA_BYTES):  # the union must stay readable
+                        err = PresetError("extra_too_large")
+                        ignored.append({"name": preset["name"], "code": err.code, "message": str(err)})
+                        continue
+                    preset["extra"] = merged
                 doc.presets[index] = preset
                 updated += 1
             elif len(doc.presets) >= MAX_PRESETS:

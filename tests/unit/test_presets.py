@@ -343,3 +343,26 @@ def test_deeply_nested_toml_is_an_invalid_document(tmp_path):
     with pytest.raises(presets.PresetError) as err:
         presets.import_presets(tmp_path / "other", "json", nested)
     assert err.value.code in ("bad_import", "import_too_large")
+
+
+def test_import_update_rejects_a_union_of_unknown_fields_that_is_too_large(tmp_path):
+    old = {"name": "X", "filter": {"sev": 2}, "a": "a" * 5000}
+    presets.import_presets(tmp_path, "json", {"preset": [old]})
+    before = (tmp_path / presets.FILENAME).read_bytes()
+    incoming = {"name": "x", "filter": {"sev": 1}, "b": "b" * 5000}
+    report = presets.import_presets(tmp_path, "json", {"preset": [incoming, _make("Other")]})
+    assert report["added"] == 1 and report["updated"] == 0
+    assert [(i["name"], i["code"]) for i in report["ignored"]] == [("x", "extra_too_large")]
+    saved = {p["name"]: p for p in presets.load_user(tmp_path).presets}
+    assert saved["X"]["filter"] == {"sev": 2} and set(saved["X"]["extra"]) == {"a"}
+    assert not presets.load_user(tmp_path).problems and before != b""
+
+
+def test_update_keeps_the_extra_bound(tmp_path):
+    presets.import_presets(
+        tmp_path, "json", {"preset": [{"name": "X", "filter": {"sev": 2}, "a": "a" * 5000}]}
+    )
+    with pytest.raises(presets.PresetError) as err:
+        presets.update(tmp_path, "X", None, {"name": "X", "filter": {"sev": 1}, "b": "b" * 9000})
+    assert err.value.code == "extra_too_large"
+    assert presets.load_user(tmp_path).presets[0]["filter"] == {"sev": 2}
