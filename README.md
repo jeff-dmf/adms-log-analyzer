@@ -39,8 +39,15 @@ python -m dmslog serve
 
 ## Loading an ERS
 
-- In the viewer: create a case and add the ERS zip (or the `Log` folder) by its local path. A case
-  holds one ERS (the Enterprise and Sensitive halves of the same capture go together).
+- In the viewer, to create a case: type the case name, then add **1 or more** ERS ZIPs to the list
+  "ERS files of the new case" and press **Create case**. Press **Browse...** to pick the files in the
+  system file dialog (Ctrl or Shift selects several at once; where no native dialog exists, a built-in
+  folder browser opens instead), or paste a full path and press Enter. Each file shows its name, folder,
+  size and whether the name says Enterprise or Sensitive; **Remove** drops one, **Clear all** drops
+  all. The files are opened one after the other; a file the case cannot take (for example a capture
+  from a different server) is marked in the list and does not stop the others. Today a case holds one
+  ERS (the Enterprise and Sensitive halves of the same capture go together). To add a path to the
+  selected case afterwards, use the path field under the case list and **Open**.
 - From the command line (indexes without opening the viewer):
 
 ```bash

@@ -3,6 +3,7 @@
 import { api, onForbidden } from "./api.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
+import { CaseFiles } from "./case-files.js";
 import { Detail } from "./detail.js";
 import {
   NAV_ERROR_FILTER, TPL_LEAF, bookmarkKey, composeFilter, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
@@ -424,6 +425,11 @@ function start() {
     onMessage: showMessage,
   });
   new SourceFilter({ host: byId("source-filter-host"), panel });
+  panel.caseFiles = new CaseFiles({
+    host: byId("case-files-host"),
+    nameInput: byId("new-case-name"),
+    onMessage: showMessage,
+  });
 
   byId("search-form").addEventListener("submit", (event) => {
     event.preventDefault();

@@ -1,6 +1,7 @@
 // Sources panel: case selection, opening a collection with live progress (SSE), source list.
 import { ApiError, api } from "./api.js";
 import { filterSources, highlightParts, isFiltering } from "./source-filter-model.js";
+import { refusalResult } from "./case-files-model.js";
 import { S, format } from "./strings.js";
 
 export function conflictMessage(error) {
@@ -18,6 +19,8 @@ export class SourcesPanel {
     this.events = null;
     this.query = ""; // source filter text (see source-filter.js)
     this.onRendered = null; // (visible, total) after each render of the list
+    this.caseFiles = null; // set by main.js: the "files of the new case" list (case-files.js)
+    this.waiter = null; // {jobId, resolve, seen}: a runCollection() waiting for its job's done event
     refs.caseSelect.addEventListener("change", () => this.selectCase(refs.caseSelect.value || null));
     refs.newCaseForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -60,6 +63,14 @@ export class SourcesPanel {
   }
 
   async createCase() {
+    if (this.caseFiles) {
+      await this.caseFiles.submit({
+        createCase: (name) => api.createCase(name),
+        selectCase: (id) => this.loadCases(id),
+        openPath: (path) => this.runCollection(path, this.currentScope()),
+      });
+      return;
+    }
     const name = this.refs.newCaseName.value.trim();
     if (name === "") {
       return;
@@ -205,6 +216,55 @@ export class SourcesPanel {
     }
   }
 
+  currentScope() {
+    return this.refs.scopeSelect.value === "all" ? "all" : "default";
+  }
+
+  // Opens one path in the current case and resolves when its job ends (one job per case at a time):
+  // {status: "ok"|"failed"|"refused", code?, message?}.
+  runCollection(path, scope) {
+    return new Promise((resolve) => {
+      if (this.caseId === null) {
+        resolve({ status: "failed", message: S.needCase });
+        return;
+      }
+      const waiter = { jobId: null, resolve, seen: new Map() };
+      this.waiter = waiter;
+      this.watchProgress(this.caseId);
+      api.addCollection(this.caseId, path, scope).then((started) => {
+        this.handlers.onMessage(S.collectionStarted, false);
+        waiter.jobId = started ? started.job_id : null;
+        if (waiter.jobId !== null && waiter.seen.has(waiter.jobId)) {
+          this.finishJob(waiter.seen.get(waiter.jobId));
+        }
+      }).catch((err) => {
+        this.waiter = null;
+        this.closeEvents();
+        resolve(refusalResult(err, {
+          conflictServer: S.cfConflictServer, conflictCapture: S.cfConflictCapture, busy: S.cfBusy,
+        }));
+      });
+    });
+  }
+
+  async finishJob(data) {
+    const waiter = this.waiter;
+    this.waiter = null;
+    this.closeEvents();
+    if (data.status === "error") {
+      this.handlers.onMessage(S.progressFailed + (data.message ? ": " + data.message : ""), true);
+    } else {
+      this.handlers.onMessage(S.progressDone, false);
+    }
+    await this.refreshSources();
+    this.handlers.onDone();
+    if (waiter) {
+      waiter.resolve(data.status === "error"
+        ? { status: "failed", code: data.code || "", message: data.message || S.progressFailed }
+        : { status: "ok" });
+    }
+  }
+
   // -- collections and progress -------------------------------------------------------------
 
   async openCollection() {
@@ -260,15 +320,15 @@ export class SourcesPanel {
     });
     events.addEventListener("done", async (event) => {
       const data = parseEvent(event) || {};
-      this.closeEvents();
-      bar.hidden = true;
-      if (data.status === "error") {
-        this.handlers.onMessage(S.progressFailed + (data.message ? ": " + data.message : ""), true);
-      } else {
-        this.handlers.onMessage(S.progressDone, false);
+      if (this.waiter) {
+        // A replayed done of the previous job may arrive first: only this job's counts.
+        this.waiter.seen.set(data.job_id, data);
+        if (this.waiter.jobId !== null && this.waiter.jobId === data.job_id) {
+          await this.finishJob(data);
+        }
+        return;
       }
-      await this.refreshSources();
-      this.handlers.onDone();
+      await this.finishJob(data);
     });
     events.addEventListener("error", () => {
       // The browser retries by itself; a closed stream just stops the bar.
