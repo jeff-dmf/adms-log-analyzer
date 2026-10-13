@@ -93,7 +93,7 @@ Aceite:
 | 1.2 | `parse/envelope.py` (adms, oaserr, plain; detecção; registro extensível de envelopes) e `parse/records.py` (retomada por offset, `final`, `partial`) | opus |
 | 1.3 | Testes de propriedade do envelope e da reconstrução/corte em qualquer byte (hypothesis) | opus |
 | 1.4 | Fixtures sintéticas de borda (BOM, CRLF, sem TID, TAB inicial, dump grande, truncado, ts que volta 3 ms, retrocesso de 1 h, `.log.0`/`.log`, oaserr) | sonnet |
-| 1.5 | `families.toml` (padrão de caminho → família, envelope, escopo padrão) + `ingest/discover.py` + `ers.py` (classificação dirigida por dados, par Enterprise/Sensitive, um ERS por caso, escopo padrão; demais logs listados e indexáveis em nível genérico) | sonnet |
+| 1.5 | `families.toml` (padrão de caminho → família, envelope, escopo padrão) + `ingest/discover.py` + `ers.py` (classificação dirigida por dados, par Enterprise/Sensitive, um ERS por caso (histórico: revisto na U21, tarefa 9.20), escopo padrão; demais logs listados e indexáveis em nível genérico) | sonnet |
 | 1.6 | `ingest/reader.py` (zip em streaming com limites anti-bomb; arquivo abre-lê-fecha) e `pipeline.py` (lotes por bytes, progresso, `bucket`) | sonnet |
 | 1.7 | `store/filters.py` (árvore JSON → SQL parametrizado; testes de injeção) e `query.py` (`page` keyset, `count` com timeout, `context`) | opus |
 | 1.8 | API: casos, coleções (409 para segunda coleta), progresso SSE, fontes, `entries/page`, `entries/count`, `entries/{id}`, `context` | sonnet |
@@ -106,7 +106,7 @@ Aceite:
 - Local, com o ERS de exemplo: escopo padrão indexado em ≤ 40 s; página do grid < 50 ms; busca FTS < 100 ms; RSS < 500 MB.
 - Registro com `<script>` no texto aparece literal no grid e no detalhe (teste de integração).
 - O horário exibido no grid é idêntico ao texto do log, com o fuso do PC de teste diferente de UTC (teste de UI/integração).
-- Adicionar um segundo ERS (outro GUID) ao caso devolve 409; a outra metade do par é aceita.
+- Adicionar um segundo ERS (outro GUID) ao caso devolve 409; a outra metade do par é aceita. (Histórico do M1: a U21 e a tarefa 9.20 substituem a regra, aceitando coletas de servidores diferentes e recusando só a duplicata da mesma coleta.)
 - Smoke do portátil no CI indexa o zip de fixture e devolve uma página.
 
 ## M2: templates, severidade, merge, filtros e timeline
@@ -297,6 +297,6 @@ Aceite do M9:
 |---|---|---|
 | P1 | Templates e eventos para os demais logs do ERS (NMC, PSengine, arbIP, outros processos `UNKNOWN`, ...) | Só dados (`families.toml` + TOML) e derivadores novos; esquema e descoberta já preparados (ARQUITETURA, 9.1a) |
 | P1a | **Feito (PR #77):** criar `tools/mine_templates.py` (dev, sonnet): agrupa registros desconhecidos pela `signature` e propõe esboço de TOML com exemplos; vem antes de minerar os demais logs do P1 | Decisão de 2026-10-11. A assinatura (`parse/signature.py`) e a tabela `unknown_sig` já existem; ver ARQUITETURA 6.7 e `docs/FAMILIA-NOVA.md` |
-| P2 | ~~Vários ERS por caso~~ (passou para a **9.20**, U21), correlação entre máquinas, ajuste de relógio (`clock_offset_ms`, 9.15) | Esquema já comporta (`collection_group`, `clock_offset_ms`); falta UI, regra de 409 e correlação por tempo entre coletas |
+| P2 | ~~Vários ERS por caso~~ (**9.20**, U21) e ~~ajuste de relógio~~ (**9.15**, `clock_offset_ms`) passaram para o M9; resta a correlação automática entre máquinas por chave e por tempo | Esquema já comporta (`collection_group`, `clock_offset_ms`); a 9.20 entrega a UI e a regra de 409; a correlação por tempo entre coletas fica pós-0.1.0 |
 | P3 | **Proposta, aguarda decisão do Jefferson:** bancos `LocalPersistenceStore/*.db3` do ERS (fila/cache de mensagens dos adapters) como fonte opcional: painel de itens pendentes/não enviados e ligação ao evento do log por MessageId | Fora da 1.0. Sensível, nunca indexado por padrão, sem o corpo; desenho na ARQUITETURA, seção 15 (`payloads.md`, seção 10) |
 | — | Adapters do vault sem amostra | Fora do escopo (não existem no ambiente produtivo, U8); entram só se surgirem amostras, pelo mesmo processo do P1 |

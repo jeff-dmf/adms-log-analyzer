@@ -204,7 +204,7 @@ CREATE TABLE collection(                                       -- um ERS (zip), 
   ers_variant TEXT CHECK(ers_variant IN ('enterprise','sensitive')),
   ers_group INTEGER,                                           -- mesmo valor para o par Enterprise/Sensitive da mesma coleta
   machine TEXT, system TEXT, label TEXT,                       -- ex.: DSPMPDMZINT01 / mpdmz / rótulo do usuário
-  clock_offset_ms INTEGER NOT NULL DEFAULT 0,                  -- sempre 0 na 1.0 (um ERS por caso); reservado
+  clock_offset_ms INTEGER NOT NULL DEFAULT 0,                  -- sempre 0 até a tarefa 9.15 (offset entre coletas, U21); reservado
   added_at TEXT NOT NULL);
 
 CREATE TABLE stream(                                           -- fluxo lógico: um processo (família+PID+sensitivity) numa coleta
@@ -820,7 +820,7 @@ Várias entradas podem repetir o mesmo `public` (uma grafia real por forma: Came
 | callback | `GID` (Crm `OMS_REQUEST`) entre registro de espera e callback, em outra TID (o Osr não loga o GID no pedido: ver a linha "callback do IMS ↔ CreatedIncidentHazards"). Wfm `Callback received` sem chave na linha de início: ver a linha "callback ↔ requisição de origem"; sem chave, **sem ligação** (a heurística por janela de tempo foi medida errada e saiu do catálogo, issue #65). | 3 |
 | retry e resposta | mesmo `msgId` (Smn/Ont `Sending ... message: <guid>` → `finished` → `Request message with MessageId ... sent`). | 3 |
 | mesma chave | qualquer valor de `entry_key` repetido em fontes diferentes do caso (INC, GID, mRID, GUID): consulta sob demanda, não materializada. | — |
-| entre máquinas | **fora da 1.0** (U5: um ERS por caso). Pós-1.0: por chave e por tempo com `clock_offset_ms` da coleta. | — |
+| entre máquinas | **Vários ERS por caso entram no M9** (U21, tarefa 9.20); o offset de relógio entre coletas é a 9.15 (`clock_offset_ms` da coleta); a correlação automática por chave e por tempo entre máquinas fica pós-0.1.0. | — |
 | payload ↔ anúncio, par e operação | anúncio no normal por PID + TID + Δt ≤ 1 s (+ MessageID); request ↔ operação por MessageID; response ↔ request por CorrelationID (Wfm) ou pelo fim da operação ±16 ms (Ont/Smn, sem ID); conteúdo do Wfm pela TID da operação aberta (seção 6.6). | 3 por chave; 2 TID dentro da operação; 1 tempo |
 | callback CRS/IMS (Wfm, só com nível ≥ Info) | GID do pedido (WFM-123/124) = GID do callback (WFM-126, WFM-030). | 3 |
 | callback ↔ requisição de origem (Wfm, só com nível ≥ Info; issue #65) | Início da operação (WFM-010/011) → WFM-030 quando todos os WFM-123/124 com o GID do callback pertencem a **uma única** operação (`entry.event_id`) e o último deles fica até 60 s antes do callback (`origin = "operation"` em `[[link_rule]]`). Ausente, ambíguo, fora de operação ou fora da janela: sem ligação, contado. WFM-S030 chega pela ligação normal↔sensitive. Números em `docs/formato/wfm-ont.md`, seção 4. | 2 |
