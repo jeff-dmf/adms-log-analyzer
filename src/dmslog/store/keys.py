@@ -102,7 +102,7 @@ def records_with_key(
         cond = " AND st.collection_group = ?"
         params.append(collection)
     if after is not None:
-        cond = f" AND ({ts_expr} > ? OR ({ts_expr} = ? AND e.id > ?))"
+        cond += f" AND ({ts_expr} > ? OR ({ts_expr} = ? AND e.id > ?))"
         params.extend((after.ts, after.ts, after.id))
     sql = (
         f"SELECT {_RECORD_COLUMNS} FROM entry_key k JOIN entry e ON e.id = k.entry_id"  # noqa: S608

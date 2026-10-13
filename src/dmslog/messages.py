@@ -385,7 +385,7 @@ VIEWEXPORT_CSV_HEADERS = {
 }
 VIEWEXPORT_EVENT_HEADERS = (
     "Event", "Operation", "Kind", "Status", "Duration (ms)", "Start", "End", "Key", "Operation key",
-    "TID", "Family", "Process", "Source", "Records",
+    "TID", "Family", "Process", "Source", "Collection", "Records",
 )  # fmt: skip
 
 # Collections of a case (U21: a case groups ERS captures, folders and files; store/collections.py)

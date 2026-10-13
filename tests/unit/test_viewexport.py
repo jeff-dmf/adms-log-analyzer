@@ -250,6 +250,7 @@ def test_events_csv(conn, tmp_path):
     assert one["Operation"] == "GetIncidents" and one["Status"] == "fail" and one["Duration (ms)"] == "250"
     assert one["Key"] == "K-1" and one["Operation key"] == "'=OPK" and one["Source"] == "a.log"
     assert one["Start"] == "1970-01-01 00:16:40.000"
+    assert table[0][-3:] == ["Source", "Collection", "Records"] and one["Collection"] == "C1"
     only_ok = parse_csv(collect(ve.stream_events_csv(conn, EventFilter(statuses=("ok",)), req)))
     assert len(only_ok) == 2 and only_ok[1][1] == "SendWorks"
 

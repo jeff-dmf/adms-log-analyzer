@@ -68,6 +68,34 @@ def conn(tmp_path):
     c.close()
 
 
+def two_groups(conn):
+    """Move the sensitive stream (entries 6..10) to a second collection group; entries 11, 12 stay loose."""
+    conn.execute("UPDATE stream SET collection_group = 2 WHERE id = 2")
+    conn.commit()
+
+
+def test_collection_filter_paginates_without_gaps_or_duplicates(conn):
+    two_groups(conn)
+    everything = [r["id"] for r in keys.records_with_key(conn, "msgid", "M-1", limit=1000)[0]]
+    assert len(everything) == 12
+    for group, expected in ((1, {1, 2, 3, 4, 5}), (2, {6, 7, 8, 9, 10})):
+        full = keys.records_with_key(conn, "msgid", "M-1", limit=1000, collection=group)[0]
+        assert {r["id"] for r in full} == expected and {r["collection"] for r in full} == {group}
+        for size in (1, 2, 3):
+            seen, after = [], None
+            while True:
+                page, nxt = keys.records_with_key(conn, "msgid", "M-1", size, after, collection=group)
+                assert len(page) <= size
+                seen += [r["id"] for r in page]
+                if nxt is None:
+                    break
+                after = Cursor.parse(nxt)
+            assert seen == [r["id"] for r in full] and len(set(seen)) == len(expected), (group, size)
+    assert [i for i in everything if i in range(1, 6)] == [
+        r["id"] for r in keys.records_with_key(conn, "msgid", "M-1", limit=1000, collection=1)[0]
+    ]
+
+
 def test_key_types_counts(conn):
     assert keys.key_types(conn) == [
         {"type": "errcode", "count": 2, "values": 2},

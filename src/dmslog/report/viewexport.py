@@ -483,10 +483,11 @@ def stream_view_csv(conn: sqlite3.Connection, req: ViewRequest) -> Iterator[str]
 def stream_events_csv(
     conn: sqlite3.Connection, evflt: store_events.EventFilter, req: ViewRequest
 ) -> Iterator[str]:
-    """Events (operations by default) of the filter: duration, status, operation, keys, time, source."""
+    """Events (operations by default) of the filter: duration, status, keys, time, source, collection."""
 
     def body() -> Iterator[str]:
         yield csv_row(messages.VIEWEXPORT_EVENT_HEADERS)
+        tags = store_collections.group_tags(conn)
         after = None
         remaining = req.max_rows
         while remaining > 0:
@@ -494,13 +495,14 @@ def stream_events_csv(
             if not rows:
                 return
             ids = [r["start_entry_id"] for r in rows if r["start_entry_id"] is not None]
-            files: dict[int, str] = {}
+            files: dict[int, tuple[str, int | None]] = {}
             if ids:
                 marks = ",".join("?" * len(ids))
                 files = {
-                    i: n
-                    for i, n in conn.execute(
-                        "SELECT e.id, s.file_name FROM entry e JOIN source s ON s.id = e.source_id"  # noqa: S608
+                    i: (n, g)
+                    for i, n, g in conn.execute(
+                        "SELECT e.id, s.file_name, st.collection_group FROM entry e"  # noqa: S608
+                        " JOIN source s ON s.id = e.source_id LEFT JOIN stream st ON st.id = s.stream_id"
                         f" WHERE e.id IN ({marks})",
                         ids,
                     )
@@ -509,6 +511,7 @@ def stream_events_csv(
             for ev in rows:
                 detail = ev["detail"] if isinstance(ev["detail"], dict) else {}
                 op_key = detail.get("op_key")
+                file_name, group = files.get(ev["start_entry_id"], (None, None))
                 out.append(
                     csv_row(
                         [
@@ -524,7 +527,8 @@ def stream_events_csv(
                             None if ev["tid"] is None else f"0x{ev['tid']:x}",
                             ev["family"],
                             ev["process"],
-                            files.get(ev["start_entry_id"]),
+                            file_name,
+                            None if group is None else tags.get(group, str(group)),
                             ev["n_entries"],
                         ]
                     )  # fmt: skip

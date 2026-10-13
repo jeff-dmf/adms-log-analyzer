@@ -397,16 +397,17 @@ class IngestJobs:
             path,
             pipeline.IngestOptions(scope=scope, case_name=cid, aliases=aliases.get(self._store.data_dir)),
         )
+        folder = str(Path(path).resolve())
         thread = threading.Thread(
-            target=self._watch, args=(cid, watcher, interval), name=f"watch-{cid}", daemon=True
+            target=self._watch, args=(cid, watcher, interval, folder), name=f"watch-{cid}", daemon=True
         )
         with self._lock:
             self._threads.add(thread)
-            self._watched[cid] = str(Path(path).resolve())
+            self._watched[cid] = folder
         thread.start()
         return cid
 
-    def _watch(self, cid: str, watcher: Watcher, interval: float) -> None:
+    def _watch(self, cid: str, watcher: Watcher, interval: float, folder: str) -> None:
         hub = self.hub(cid)
         failures = 0
         try:
@@ -436,6 +437,8 @@ class IngestJobs:
         finally:
             with self._lock:
                 self._threads.discard(threading.current_thread())
+                if self._watched.get(cid) == folder:  # a newer watcher of the same case keeps its own entry
+                    del self._watched[cid]
 
     def _watch_cycle(self, cid: str, watcher: Watcher, hub: ProgressHub) -> CycleReport | None:
         """Ingest what ``watcher.poll`` found, publishing progress; always finishes the hub's job."""

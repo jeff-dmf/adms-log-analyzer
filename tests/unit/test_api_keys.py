@@ -58,6 +58,28 @@ def test_key_records_pagination_over_http(client, demo):  # noqa: F811
             "tpl_code", "msg", "collection"} == set(full["records"][0])  # fmt: skip
 
 
+def test_key_records_pagination_filtered_by_collection(client, server, demo):  # noqa: F811
+    conn = create_case_db(server.api.store.root / "Demo" / "case.sqlite")
+    conn.execute("UPDATE stream SET collection_group = 2 WHERE id = 2")
+    conn.commit()
+    conn.close()
+    for group, expected in ((1, {1, 2, 3, 4, 5}), (2, {6, 7, 8, 9, 10})):
+        base = f"/api/keys/msgid/M-1?case=Demo&collection={group}"
+        full = client.get(f"{base}&limit=1000")[1]
+        assert {r["id"] for r in full["records"]} == expected and full["next"] is None
+        seen, after, pages = [], "", 0
+        while True:
+            status, body, _ = client.get(f"{base}&limit=2&after={quote(after)}")
+            assert status == 200
+            pages += 1
+            seen += [r["id"] for r in body["records"]]
+            assert {r["collection"] for r in body["records"]} == {group}
+            if body["next"] is None:
+                break
+            after = body["next"]
+        assert pages == 3 and seen == [r["id"] for r in full["records"]] and set(seen) == expected
+
+
 def test_key_value_with_odd_characters(client, demo):  # noqa: F811
     value = quote("50%/ \u00e9", safe="")
     status, body, _ = client.get(f"/api/keys/errcode/{value}?case=Demo")

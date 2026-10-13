@@ -5,6 +5,8 @@ ARQUITETURA 5 (model), 9.1 (add rules), 10 (routes and filters).
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 
 import multi_helpers as mh
@@ -250,6 +252,22 @@ def test_view_export_has_a_collection_column(db, zips):
         {"kind": "values", "column": "collection", "unique": True, "filter": {"collection": [b]}}
     )
     assert "".join(ve.stream_view(db, req)) == "C2"
+
+
+def test_events_csv_names_the_collection_of_each_event(db, zips):
+    from dmslog.report import viewexport as ve
+
+    ingest(db, zips, ("A", "enterprise"), ("A", "sensitive"))
+    one = list(
+        csv.DictReader(io.StringIO("".join(ve.stream_view(db, ve.parse_request({"kind": "events_csv"})))))
+    )
+    assert one and {r["Collection"] for r in one} == {"C1"}
+    ingest(db, zips, ("B", "enterprise"), ("B", "sensitive"))
+    both = list(
+        csv.DictReader(io.StringIO("".join(ve.stream_view(db, ve.parse_request({"kind": "events_csv"})))))
+    )
+    assert {r["Collection"] for r in both} == {"C1", "C2"} and len(both) > len(one)
+    assert list(both[0]).index("Collection") == list(both[0]).index("Source") + 1
 
 
 @pytest.mark.parametrize(
