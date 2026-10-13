@@ -79,6 +79,9 @@ def test_parse_request_validates():
             ve.parse_request({"kind": "lines", "max_rows": bad})
     with pytest.raises(ve.ViewExportError):
         ve.parse_request({"kind": "values", "column": "tid", "separator": "tab"})
+    with pytest.raises(ve.ViewExportError) as caught:
+        ve.parse_request({"kind": "view_csv", "columns": ["fields.not_in_catalog"]})
+    assert caught.value.code == "unknown_column"
     req = ve.parse_request({"kind": "view_csv", "columns": ["ts", "ts", "fields.op"], "bom": True})
     assert req.columns == ("ts", "fields.op") and req.max_rows == ve.DEFAULT_MAX_ROWS and req.bom
 
@@ -154,8 +157,27 @@ def test_lines_cut_a_huge_record_with_a_notice(tmp_path):
     ro = connect(path, readonly=True)
     text = collect(ve.stream_lines(ro, ve.parse_request({"kind": "lines"})))
     ro.close()
-    assert "[... 50 more characters of this record are not exported]" in text
+    msg_len = len(next(r for r in rows if r["cont"] is not None)["msg"] or "")  # the first record with a body
+    assert f"[... {msg_len + 50} more characters of this record are not exported]" in text
     assert len(rows) > 0
+
+
+def test_lines_one_budget_for_message_and_continuation(tmp_path):
+    path = tmp_path / "budget.sqlite"
+    build_case(path, rows=None)
+    half = 150_000  # each part is under the limit, together they are over it
+    rw = connect(path)
+    with rw:
+        entry_id = rw.execute("SELECT min(entry_id) FROM entry_body").fetchone()[0]
+        rw.execute("UPDATE entry SET msg = ? WHERE id = ?", ("m" * half, entry_id))
+        rw.execute("UPDATE entry_body SET cont = ? WHERE entry_id = ?", ("c" * half, entry_id))
+    rw.close()
+    ro = connect(path, readonly=True)
+    text = collect(ve.stream_lines(ro, ve.parse_request({"kind": "lines"})))
+    ro.close()
+    kept = text[text.index("m" * 100) :].split("\n[...")[0]
+    assert len(kept.replace("\n", "")) == ve.MAX_RECORD_CHARS
+    assert f"[... {2 * half - ve.MAX_RECORD_CHARS} more characters of this record are not exported]" in text
 
 
 def test_view_csv_is_rfc4180_with_fields_and_template(conn):
@@ -252,6 +274,37 @@ def test_events_csv_pages_through_every_event(tmp_path):
     ro.close()
 
 
+def test_unique_keeps_memory_flat_with_many_distinct_values():
+    n = 100_000
+    values = (f"distinct value number {i} " + "z" * 40 for i in range(n))
+    tracemalloc.start()
+    size = count = 0
+    for chunk in ve._list_chunks(values, "newline", "none", True):
+        size += len(chunk)
+        count += chunk.count("\n")
+    count += 1
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert count == n and size > 5_000_000
+    assert peak < 3_000_000  # a Python set of the values would take about 19 MB
+    assert ve.format_list(["a", "b", "a", "b", "c"], unique=True) == "a\nb\nc"
+
+
+def test_unique_removes_its_temporary_folder():
+    import glob
+    import tempfile
+
+    pattern = tempfile.gettempdir() + "/dmslog-unique-*"
+    before = set(glob.glob(pattern))
+    assert "".join(ve._list_chunks(iter(["a", "b"] * 5), "newline", "none", True)) == "a\nb"
+    assert set(glob.glob(pattern)) == before
+    gen = ve._list_chunks((str(i) for i in range(100_000)), "newline", "none", True)
+    next(gen)
+    assert set(glob.glob(pattern)) != before  # open while streaming
+    gen.close()  # the client went away
+    assert set(glob.glob(pattern)) == before
+
+
 def test_streaming_keeps_memory_flat(tmp_path):
     path = tmp_path / "many.sqlite"
     conn = create_case_db(path)
@@ -342,6 +395,30 @@ def test_route_values_lines_and_events(client, demo):  # noqa: F811
     table = parse_csv(data.decode())
     assert status == 200 and len(table) == 2 and table[1][1] == "GetIncidents"
     assert headers["x-dmslog-rows"] == "1"
+
+
+def test_route_events_csv_applies_the_view_filter(client, demo, server):  # noqa: F811
+    rw = connect(server.api.store.root / "Demo" / "case.sqlite")
+    with rw:
+        rw.execute("UPDATE event SET start_entry_id = 10 WHERE id = 1")
+        rw.execute("UPDATE event SET start_entry_id = 1 WHERE id = 2")  # entry 1 is in source 3
+    rw.close()
+    base = {"case": "Demo", "kind": "events_csv", "events": {"kind": "operation"}}
+    status, data, headers = post_raw(client, base)
+    assert status == 200 and headers["x-dmslog-rows"] == "2"
+    status, data, headers = post_raw(client, {**base, "filter": {"source": [1]}})
+    assert status == 200 and headers["x-dmslog-rows"] == "1"
+    assert len(parse_csv(data.decode())) == 2
+    status, data, headers = post_raw(client, {**base, "filter": {"source": [999]}})
+    assert status == 200 and headers["x-dmslog-rows"] == "0"
+    assert len(parse_csv(data.decode())) == 1  # header only
+    assert post_raw(client, {**base, "filter": {"bogus": 1}})[0] == 400
+
+
+def test_route_rejects_a_field_column_outside_the_catalog(client, demo):  # noqa: F811
+    body = {"case": "Demo", "kind": "view_csv", "columns": ["ts", "fields.not_in_catalog"]}
+    status, data, _ = post_raw(client, body)
+    assert status == 400 and json.loads(data)["error"]
 
 
 def test_route_errors(client, demo):  # noqa: F811

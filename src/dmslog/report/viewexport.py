@@ -12,7 +12,9 @@ changes legitimate text such as ``-5`` or ``+55 11...`` into ``'-5``; numbers wr
 pasting into other tools and are NOT guarded.
 
 Limits: ``max_rows`` (default 100 000, at most 1 000 000) counts records (or events) read from the view;
-a record text is cut at ``MAX_RECORD_CHARS`` characters in the line export, with a visible notice.
+a record text (message plus continuation, one budget) is cut at ``MAX_RECORD_CHARS`` characters in the
+line export, with a visible notice. ``unique`` deduplicates in a temporary SQLite file on disk (removed
+at the end), so memory stays constant however many distinct values there are.
 The first line of a record is the grid preview (``query.MSG_PREVIEW_CHARS`` characters) in the value
 list and the view CSV.
 """
@@ -22,9 +24,12 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import cache
+from pathlib import Path
 from typing import Any
 
 from .. import messages
@@ -103,24 +108,62 @@ def format_list(values: Iterable[str], separator: str = "newline", quote: str = 
 
 def _list_chunks(values: Iterator[str], separator: str, quote: str, unique: bool) -> Iterator[str]:
     sep = SEPARATORS[separator]
-    seen: set[str] = set()
     parts: list[str] = []
     size = 0
     first = True
-    for value in values:
-        if unique:
-            if value in seen:
+    with _Dedup(unique) as dedup:
+        for value in values:
+            if dedup.seen(value):
                 continue
-            seen.add(value)
-        piece = quote_value(value, quote)
-        parts.append(piece if first else sep + piece)
-        first = False
-        size += len(piece) + 1
-        if size >= CHUNK_CHARS:
-            yield "".join(parts)
-            parts, size = [], 0
+            piece = quote_value(value, quote)
+            parts.append(piece if first else sep + piece)
+            first = False
+            size += len(piece) + 1
+            if size >= CHUNK_CHARS:
+                yield "".join(parts)
+                parts, size = [], 0
     if parts:
         yield "".join(parts)
+
+
+class _Dedup:
+    """First-seen test with bounded memory: the values live in a temporary SQLite file (private folder,
+    mode 0700 on POSIX), removed on exit. Disabled, it lets every value through."""
+
+    _BATCH = 20_000
+
+    def __init__(self, enabled: bool) -> None:
+        self._enabled = enabled
+        self._dir: tempfile.TemporaryDirectory[str] | None = None
+        self._conn: sqlite3.Connection | None = None
+        self._pending = 0
+
+    def __enter__(self) -> _Dedup:
+        if self._enabled:
+            self._dir = tempfile.TemporaryDirectory(prefix="dmslog-unique-")  # mkdtemp: private folder
+            self._conn = sqlite3.connect(Path(self._dir.name) / "seen.sqlite", isolation_level=None)
+            self._conn.execute("PRAGMA journal_mode = OFF")
+            self._conn.execute("PRAGMA synchronous = OFF")
+            self._conn.execute("CREATE TABLE seen(v TEXT PRIMARY KEY) WITHOUT ROWID")
+            self._conn.execute("BEGIN")
+        return self
+
+    def seen(self, value: str) -> bool:
+        if self._conn is None:
+            return False
+        added = self._conn.execute("INSERT OR IGNORE INTO seen(v) VALUES (?)", (value,)).rowcount
+        self._pending += 1
+        if self._pending >= self._BATCH:
+            self._conn.execute("COMMIT")
+            self._conn.execute("BEGIN")
+            self._pending = 0
+        return added == 0
+
+    def __exit__(self, *exc: object) -> None:
+        if self._conn is not None:
+            self._conn.close()
+        if self._dir is not None:
+            self._dir.cleanup()
 
 
 # --------------------------------------------------------------------------- request
@@ -145,8 +188,22 @@ def _bad(field_name: str) -> ViewExportError:
     return ViewExportError("invalid_field", messages.VIEWEXPORT_BAD_FIELD.format(field=field_name))
 
 
+@cache
+def catalog_fields() -> frozenset[str]:
+    """Field names the adapter templates can extract (the allow-list for ``fields.<name>`` columns)."""
+    from ..parse.templates import load_catalog
+
+    names: set[str] = set()
+    for tpl in load_catalog().templates():
+        names |= tpl.field_names
+    return frozenset(names)
+
+
 def _column_name(name: Any) -> str:
-    if not isinstance(name, str) or not (name in FIXED_COLUMNS or _FIELD_COLUMN.match(name)):
+    known = isinstance(name, str) and (
+        name in FIXED_COLUMNS or (_FIELD_COLUMN.match(name) and name[len("fields.") :] in catalog_fields())
+    )
+    if not known:
         raise ViewExportError("unknown_column", messages.VIEWEXPORT_BAD_COLUMN.format(name=str(name)[:64]))
     return name
 
@@ -360,9 +417,10 @@ def stream_lines(conn: sqlite3.Connection, req: ViewRequest) -> Iterator[str]:
             texts = {
                 r[0]: r[1:]
                 for r in conn.execute(
-                    "SELECT e.id, substr(e.msg, 1, ?), length(e.msg), substr(b.cont, 1, ?), length(b.cont)"  # noqa: S608
+                    "SELECT e.id, substr(e.msg, 1, ?), length(e.msg),"  # noqa: S608
+                    " substr(b.cont, 1, max(? - min(coalesce(length(e.msg), 0), ?), 0)), length(b.cont)"
                     f" FROM entry e LEFT JOIN entry_body b ON b.entry_id = e.id WHERE e.id IN ({marks})",
-                    (MAX_RECORD_CHARS, MAX_RECORD_CHARS, *[r["id"] for r in group]),
+                    (MAX_RECORD_CHARS, MAX_RECORD_CHARS, MAX_RECORD_CHARS, *[r["id"] for r in group]),
                 )
             }
             for row in group:
@@ -370,9 +428,8 @@ def stream_lines(conn: sqlite3.Connection, req: ViewRequest) -> Iterator[str]:
                 text = _record_head(row) + (msg or "")
                 if cont:
                     text += "\n" + cont
-                omitted = max((msg_len or 0) - MAX_RECORD_CHARS, 0) + max(
-                    (cont_len or 0) - MAX_RECORD_CHARS, 0
-                )
+                # one budget for message + continuation; what the query left out is counted for the notice
+                omitted = max((msg_len or 0) + (cont_len or 0) - len(msg or "") - len(cont or ""), 0)
                 if omitted:
                     text += "\n" + messages.VIEWEXPORT_CUT_NOTICE.format(count=omitted)
                 parts.append(text + "\n")

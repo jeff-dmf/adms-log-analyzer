@@ -1725,6 +1725,10 @@ class Api:
                 if value is not None and value != "":
                     params[name] = str(value)
             evflt = _event_filter(Request("GET", request.path, params, request.read_body), ("operation",))
+            _check_scan_filter(req.filter)  # an invalid tree is a bad request here too
+            if req.filter:
+                cf = compile_filter(req.filter)
+                evflt = replace(evflt, entry_sql=cf.sql, entry_params=cf.params)
         else:
             _check_scan_filter(req.filter)
         with self.store.reader(cid) as conn:
