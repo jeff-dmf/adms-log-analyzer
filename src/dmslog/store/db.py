@@ -9,6 +9,8 @@ from pathlib import Path
 
 from dmslog.paths import private_mkdir
 
+from .filters import REGEX_FUNCTION, regexp
+
 SCHEMA_RESOURCE = "schema.sql"
 
 # PRAGMAs applied to every connection (docs/ARQUITETURA.md, section 5).
@@ -146,6 +148,20 @@ def _migrate_to_5(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS ix_key_payload ON entry_key(entry_id) WHERE origin = 1")
 
 
+_HIGHLIGHT_RULE_DDL = (
+    "CREATE TABLE IF NOT EXISTS highlight_rule(id INTEGER PRIMARY KEY, pos INTEGER NOT NULL,"
+    " name TEXT NOT NULL, color TEXT NOT NULL, cond TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,"
+    " created_at TEXT NOT NULL)"
+)
+
+
+def _migrate_to_6(conn: sqlite3.Connection) -> None:
+    """Add ``highlight_rule`` (user highlight rules of the case, store/highlights.py; ARQUITETURA 10b).
+
+    User data like ``saved_view``: no existing row changes, so the step only creates the table."""
+    conn.execute(_HIGHLIGHT_RULE_DDL)
+
+
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_1,
@@ -153,6 +169,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     3: _migrate_to_3,
     4: _migrate_to_4,
     5: _migrate_to_5,
+    6: _migrate_to_6,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -229,6 +246,7 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
         conn.execute("PRAGMA synchronous=NORMAL")
     for pragma in _COMMON_PRAGMAS:
         conn.execute(pragma)
+    conn.create_function(REGEX_FUNCTION, 2, regexp, deterministic=True)  # text.regex of the filters
     if readonly:
         conn.execute("PRAGMA query_only=ON")
     return conn

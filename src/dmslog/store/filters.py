@@ -12,7 +12,7 @@ Grammar (each node is an object with exactly one key)::
     leaf      := {"source": ids} | {"stream": ids} | {"family": strs} | {"sensitive": bool}
                | {"sev": ordered} | {"level": ordered} | {"ts": ordered}
                | {"tid": ids} | {"pid": ids} | {"event": ids}
-               | {"tpl": tpls} | {"text": {"fts": str} | {"substr": str}}
+               | {"tpl": tpls} | {"text": {"fts": str} | {"substr": str} | {"regex": str}}
                | {"key": {"type": str, "eq": str} | {"type": str, "in": [str, ...]} | {"type": str}}
                | {"event_status": strs} | {"flags": flag | [flag, ...]}
                | {"field": {"name": field_name, "eq": str | int | float | null}}
@@ -45,14 +45,28 @@ It is the drill-down leaf of the distinct values of a field (``store/distinct.py
 lines (``instr``); it scans rows, so the caller should pair it with a source or time
 filter (ARQUITETURA 9.4) and run it under the query timeout (``query.py``).
 
+``text.regex`` is a ``re.search`` on the first :data:`REGEX_WINDOW` characters of ``msg`` (the first
+line), through the SQL function :data:`REGEX_FUNCTION` that :func:`dmslog.store.db.connect` registers.
+The pattern is checked by the catalog's regex validator (whitelist, construction limits and a work
+budget for a search, ``parse.templates.compile_search_regex``); no flags, groups are ``(?:...)``. Like
+``substr`` it scans rows; the function also stops at the deadline of :func:`query.read_guard`.
+
+``compile_filter(tree, rowwise=True)`` writes the set conditions (``text.fts``, ``key``, ``payload``,
+``event_status``) as correlated ``EXISTS`` lookups of the current row instead of ``e.id IN (set)``:
+same result, much cheaper when the rows are already known (a few hundred ids, ``store/highlights.py``),
+much slower for a scan. Highlight marking uses it; the grid does not.
+
 Filters over tables that are still empty in M1 (template, event, payload, entry_key)
 compile normally and simply match nothing.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
+import threading
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -71,6 +85,11 @@ MAX_FTS_TERMS = 16
 MIN_PREFIX_CHARS = 2
 INT64_MIN = -(2**63)
 INT64_MAX = 2**63 - 1
+# text.regex: re.search on the first REGEX_WINDOW characters of msg, bounded by a work budget.
+REGEX_WINDOW = 512
+MAX_REGEX_CHARS = 256
+MAX_REGEX_SEARCH_STEPS = 1 << 22
+REGEX_FUNCTION = "dmslog_regexp"
 
 SEV_NAMES = {"critical": 1, "error": 2, "warning": 3, "info": 4, "noise": 5}
 LEVEL_NAMES = {name.decode("ascii").lower(): value for name, value in LEVELS.items()}
@@ -115,6 +134,7 @@ ERROR_MESSAGES = {
     "fts_empty": "the search text has no searchable word",
     "fts_too_many_terms": "the search text has more than {limit} terms",
     "fts_prefix_too_short": "a prefix search needs at least {limit} letters or digits before '*'",
+    "bad_regex": "invalid regex: {detail}",
 }
 
 
@@ -149,6 +169,7 @@ class CompiledFilter:
     params: tuple[Any, ...]
     uses_fts: bool = False
     uses_substr: bool = False
+    uses_regex: bool = False
 
 
 TRUE = CompiledFilter("1", ())
@@ -187,15 +208,68 @@ def compile_bucket_filter(tree: Any) -> CompiledFilter | None:
     return CompiledFilter(sql, tuple(compiler.params))
 
 
-def compile_filter(tree: Any) -> CompiledFilter:
-    """Validate ``tree`` and compile it into a parameterized SQL expression."""
+def compile_filter(tree: Any, *, rowwise: bool = False) -> CompiledFilter:
+    """Validate ``tree`` and compile it into a parameterized SQL expression.
+
+    ``rowwise`` writes the set conditions as per-row lookups (module docstring)."""
     if tree is None or (isinstance(tree, dict) and not tree):
         return TRUE
-    compiler = _Compiler()
+    compiler = _Compiler(rowwise=rowwise)
     sql = compiler.node(tree, "$", 1)
     if len(compiler.params) > MAX_PARAMS:
         raise FilterError("too_many_params", limit=MAX_PARAMS)
-    return CompiledFilter(sql, tuple(compiler.params), compiler.uses_fts, compiler.uses_substr)
+    return CompiledFilter(
+        sql, tuple(compiler.params), compiler.uses_fts, compiler.uses_substr, compiler.uses_regex
+    )
+
+
+# --- user regex (text.regex) ------------------------------------------------------------
+
+_deadline = threading.local()  # set by query.read_guard: the regex function stops after it
+
+
+class RegexDeadline(Exception):
+    """The query deadline passed while the regex function was running (becomes a query timeout)."""
+
+
+def set_regex_deadline(deadline: float | None) -> float | None:
+    """Set the deadline (``time.monotonic()``) of the regex function on this thread; returns the old one."""
+    previous = getattr(_deadline, "at", None)
+    _deadline.at = deadline
+    return previous
+
+
+@functools.lru_cache(maxsize=64)
+def _search_regex(pattern: str) -> re.Pattern[str]:
+    from ..parse.templates import TemplateError, compile_search_regex  # parse is heavier; load on use
+
+    try:
+        return compile_search_regex(pattern, window=REGEX_WINDOW, max_steps=MAX_REGEX_SEARCH_STEPS)
+    except TemplateError as exc:
+        raise FilterError("bad_regex", detail=exc.detail[:300]) from None
+
+
+def check_regex(value: Any, path: str = "$") -> str:
+    """Validate a ``text.regex`` pattern; returns it."""
+    pattern = _str(value, path, MAX_REGEX_CHARS)
+    if not pattern:
+        raise FilterError("bad_value", path, detail="empty text")
+    try:
+        _search_regex(pattern)
+    except FilterError as exc:
+        raise FilterError("bad_regex", path, **exc.params) from None
+    return pattern
+
+
+def regexp(pattern: str, text: str | None) -> int:
+    """SQL function ``dmslog_regexp(pattern, text)``: 1 when the pattern is found in the first
+    REGEX_WINDOW characters of ``text``. Only validated patterns run (the cache validates)."""
+    deadline = getattr(_deadline, "at", None)
+    if deadline is not None and time.monotonic() >= deadline:
+        raise RegexDeadline
+    if text is None or not isinstance(pattern, str):
+        return 0
+    return 1 if _search_regex(pattern).search(text, 0, REGEX_WINDOW) is not None else 0
 
 
 # --- validation helpers -----------------------------------------------------------
@@ -293,11 +367,13 @@ _BUCKET_COLUMNS = {"source_id": "b.source_id", "sev": "b.sev", "tpl_id": "b.tpl_
 
 
 class _Compiler:
-    def __init__(self, *, bucket: bool = False) -> None:
+    def __init__(self, *, bucket: bool = False, rowwise: bool = False) -> None:
         self.params: list[Any] = []
         self.nodes = 0
         self.uses_fts = False
         self.uses_substr = False
+        self.uses_regex = False
+        self.rowwise = rowwise  # set conditions as per-row lookups (EXISTS) instead of e.id IN (set)
         self.bucket = bucket  # compile over "bucket b" instead of "entry e" (approximate on ts)
         self.negated = 0
 
@@ -396,7 +472,13 @@ class _Compiler:
         if kind == "fts":
             self.uses_fts = True
             self.bind(fts_query(value, f"{path}.fts"))
+            if self.rowwise:
+                return "EXISTS (SELECT 1 FROM entry_fts WHERE entry_fts MATCH ? AND rowid = e.id)"
             return "e.id IN (SELECT rowid FROM entry_fts WHERE entry_fts MATCH ?)"
+        if kind == "regex":
+            self.uses_regex = True
+            self.bind(check_regex(value, f"{path}.regex"))
+            return f"({REGEX_FUNCTION}(?, e.msg) = 1)"
         if kind == "substr":
             value = _str(value, f"{path}.substr")
             if not value:
@@ -409,6 +491,14 @@ class _Compiler:
             )
         raise FilterError("unknown_operator", path, name=str(kind)[:64])
 
+    def in_set(self, column: str, subquery: str) -> str:
+        """``e.id IN (SELECT <column> FROM ...)``, or its per-row form in rowwise mode.
+
+        ``subquery`` is ``FROM <table> WHERE <constant conditions>``; ``column`` is a constant name."""
+        if self.rowwise:
+            return f"EXISTS (SELECT 1 {subquery} AND {column} = e.id)"
+        return f"e.id IN (SELECT {column} {subquery})"
+
     def key(self, arg: Any, path: str) -> str:
         if not isinstance(arg, dict) or "type" not in arg or not set(arg) <= {"type", "eq", "in"}:
             raise FilterError("bad_type", path, expected='{"type": ..., "eq" | "in": ...}')
@@ -417,25 +507,26 @@ class _Compiler:
         self.bind(_str(arg["type"], f"{path}.type"))
         if "eq" in arg:
             self.bind(_str(arg["eq"], f"{path}.eq"))
-            return "e.id IN (SELECT entry_id FROM entry_key WHERE key_type = ? AND value = ?)"
+            return self.in_set("entry_id", "FROM entry_key WHERE key_type = ? AND value = ?")
         if "in" in arg:
             if not isinstance(arg["in"], list):
                 raise FilterError("bad_type", f"{path}.in", expected="a list of strings")
             values = [_str(v, f"{path}.in[{k}]") for k, v in enumerate(_as_list(arg["in"], f"{path}.in"))]
             self.bind(*values)
-            return (
-                "e.id IN (SELECT entry_id FROM entry_key WHERE key_type = ? "
-                f"AND value IN ({_placeholders(len(values))}))"
+            return self.in_set(
+                "entry_id", f"FROM entry_key WHERE key_type = ? AND value IN ({_placeholders(len(values))})"
             )
-        return "e.id IN (SELECT entry_id FROM entry_key WHERE key_type = ?)"
+        return self.in_set("entry_id", "FROM entry_key WHERE key_type = ?")
 
     def event_status(self, arg: Any, path: str) -> str:
         values = [_str(v, f"{path}[{k}]") for k, v in enumerate(_as_list(arg, path))]
         self.bind(*values)
-        return _guard(
-            "e.event_id",
-            f"e.event_id IN (SELECT id FROM event WHERE status IN ({_placeholders(len(values))}))",
-        )
+        statuses = _placeholders(len(values))
+        if self.rowwise:
+            return _guard(
+                "e.event_id", f"EXISTS (SELECT 1 FROM event WHERE status IN ({statuses}) AND id = e.event_id)"
+            )
+        return _guard("e.event_id", f"e.event_id IN (SELECT id FROM event WHERE status IN ({statuses}))")
 
     def flags(self, arg: Any, path: str) -> str:
         mask = 0
@@ -484,6 +575,8 @@ class _Compiler:
             self.bind(*values)
             # column is one of the constant column names above, never user text.
             parts.append(f"{column} IN ({_placeholders(len(values))})")
+        if self.rowwise:
+            return self.in_set("entry_id", "FROM payload WHERE " + " AND ".join(parts or ["1"]))
         where = (" WHERE " + " AND ".join(parts)) if parts else ""
         return f"e.id IN (SELECT entry_id FROM payload{where})"
 

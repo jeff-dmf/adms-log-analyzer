@@ -74,6 +74,8 @@ EXPECTED_MODULES = {
     "source-filter.js",
     "distinct-model.js",
     "distinct-panel.js",
+    "highlight-model.js",
+    "highlight-panel.js",
     "case-files-model.js",
     "case-files.js",
     "folder-browser-model.js",
