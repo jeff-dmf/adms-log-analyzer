@@ -84,6 +84,8 @@ EXPECTED_MODULES = {
     "folder-browser.js",
     "collections-model.js",
     "collections-panel.js",
+    "alerts-model.js",
+    "alerts-panel.js",
 }
 
 FORBIDDEN_JS = [
@@ -333,6 +335,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         "/css/bookmarks.css", "/css/presets.css",
         "/css/case-files.css",
         "/css/views-stack.css",
+        "/css/alerts.css",
         "/vendor/uplot/uPlot.esm.js", "/vendor/uplot/uPlot.min.css",
         *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),
     ]  # fmt: skip

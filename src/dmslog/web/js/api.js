@@ -262,4 +262,13 @@ export const api = {
     request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/collections", undefined, signal),
   removeCollection: (caseId, group) =>
     request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group)),
+  // Local alerts (store/alerts.py): the user's rules, and the alert history of a case.
+  alerts: {
+    rules: (caseId, signal) => request("GET", "/api/alerts/rules" + query({ case: caseId }), undefined, signal),
+    createRule: (rule) => request("POST", "/api/alerts/rules", rule),
+    updateRule: (name, rule) => request("PUT", "/api/alerts/rules", { match: { name }, rule }),
+    deleteRule: (name) => request("DELETE", "/api/alerts/rules" + query({ name })),
+    history: (caseId, signal) => request("GET", "/api/alerts/history" + query({ case: caseId }), undefined, signal),
+    clearHistory: (caseId) => request("DELETE", "/api/alerts/history" + query({ case: caseId })),
+  },
 };

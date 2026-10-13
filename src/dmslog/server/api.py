@@ -44,6 +44,7 @@ from ..knowledge.resolve import Knowledge
 from ..report import export as report_export
 from ..report import redact, viewexport
 from ..store import (
+    alerts,
     bookmarks,
     db,
     distinct,
@@ -287,6 +288,7 @@ class IngestJobs:
         self._threads: set[threading.Thread] = set()
         self.stopping = threading.Event()
         self._watched: dict[str, str] = {}  # case -> resolved folder followed by ``serve --watch``
+        self.alerts = alerts.AlertState()  # cooldowns, alerted operations and history of the local alerts
 
     def _describe(self, error: BaseException) -> str:
         """Safe error text (fixed description plus alias-normalized components)."""
@@ -429,8 +431,6 @@ class IngestJobs:
                     self._store.require(cid)  # the case was deleted: stop following
                     if watcher.poll() and hub.try_begin(uuid.uuid4().hex[:12]):
                         report = self._watch_cycle(cid, watcher, hub)
-                        if report is not None and report.has_news:
-                            hub.publish("watch", watch_payload(report), coalesce=True)
                         if report is not None and report.failed:
                             failures += 1  # partial failure: the change stays pending, retry with a backoff
                             delay = min(backoff_delay(interval, failures), MAX_BACKOFF_S)
@@ -452,12 +452,31 @@ class IngestJobs:
                 if self._watched.get(cid) == folder:  # a newer watcher of the same case keeps its own entry
                     del self._watched[cid]
 
+    def _alert_baseline(self, cid: str) -> int | None:
+        """Highest record id before a follow cycle (the cycle's new records are the ones above it)."""
+        try:
+            with self._store.reader(cid) as conn:
+                return alerts.max_entry_id(conn)
+        except (ApiError, sqlite3.Error):
+            return None
+
+    def _evaluate_alerts(self, cid: str, baseline: int | None) -> list[dict[str, Any]]:
+        """Evaluate the local alert rules over the cycle's new records (best effort: never raises)."""
+        if baseline is None:
+            return []
+        try:
+            with self._store.reader(cid) as conn:
+                return self.alerts.process_cycle(conn, self._store.data_dir, cid, baseline)
+        except Exception:  # noqa: BLE001 - alerts must not stop the follow mode
+            return []
+
     def _watch_cycle(self, cid: str, watcher: Watcher, hub: ProgressHub) -> CycleReport | None:
         """Ingest what ``watcher.poll`` found, publishing progress; always finishes the hub's job."""
         job_id = hub.job_id or ""
         done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
         conn: sqlite3.Connection | None = None
         report: CycleReport | None = None
+        baseline: int | None = None
 
         def progress(event: pipeline.ProgressEvent) -> None:
             if self.stopping.is_set():
@@ -476,6 +495,7 @@ class IngestJobs:
             )
 
         try:
+            baseline = self._alert_baseline(cid)
             conn = db.create_case_db(self._store.db_path(cid))
             watcher.conn = conn
             report = watcher.ingest(progress)
@@ -500,7 +520,18 @@ class IngestJobs:
             watcher.conn = None
             if conn is not None:
                 conn.close()
-            hub.finish(done)
+            # The job (one per case) stays held while the alerts are evaluated: a delete or another ingest
+            # cannot overlap the evaluation or recreate its state. Events go out after the release.
+            news = report is not None and report.has_news
+            found: list[dict[str, Any]] = []
+            try:
+                found = self._evaluate_alerts(cid, baseline) if news else []
+            finally:
+                hub.finish(done)
+            if news and report is not None:
+                hub.publish("watch", watch_payload(report), coalesce=True)
+                for body in found:
+                    hub.publish("alert", body)
         return report
 
 
@@ -895,6 +926,14 @@ class Api:
             ("DELETE", re.compile(r"/api/cases/(?P<case>[^/]+)/collections/(?P<group>[^/]+)\Z"),
              self.remove_collection),
         ]  # fmt: skip
+        self._routes += [
+            ("GET", re.compile(r"/api/alerts/rules\Z"), self.list_alert_rules),
+            ("POST", re.compile(r"/api/alerts/rules\Z"), self.create_alert_rule),
+            ("PUT", re.compile(r"/api/alerts/rules\Z"), self.update_alert_rule),
+            ("DELETE", re.compile(r"/api/alerts/rules\Z"), self.delete_alert_rule),
+            ("GET", re.compile(r"/api/alerts/history\Z"), self.alert_history),
+            ("DELETE", re.compile(r"/api/alerts/history\Z"), self.clear_alert_history),
+        ]
 
     def shutdown(self) -> None:
         self.picker.close()
@@ -951,6 +990,7 @@ class Api:
         if self.jobs.is_running(cid):
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
         self.store.delete(cid)
+        self.jobs.alerts.forget_case(cid)
         return Response(204)
 
     def add_collection(self, request: Request) -> Response:
@@ -2070,9 +2110,67 @@ class Api:
             raise ApiError(408, "query_timeout", messages.API_HIGHLIGHT_NEXT_TIMEOUT) from None
         return Response(200, {"row": found.row, "rule": found.rule})
 
+    # -- local alerts (9.13; rules in <data dir>/alerts.toml, history in memory)
+
+    def list_alert_rules(self, request: Request) -> Response:
+        """The user's alert rules; with ``case`` each rule also says whether it can work in that case."""
+        body = _alert_call(lambda: alerts.list_rules(self.data_dir))
+        if request.query.get("case"):
+            cid = _case_from_query(self.store, request)
+            with self.store.reader(cid) as conn:
+                for rule in body["rules"]:
+                    status = alerts.rule_status(conn, rule)
+                    rule["available"] = status["available"]
+                    if not status["available"]:
+                        rule["unavailable_message"] = messages.ALERT_TIMEOUT_UNAVAILABLE
+        return Response(200, body)
+
+    def create_alert_rule(self, request: Request) -> Response:
+        return Response(201, _alert_call(lambda: alerts.create(self.data_dir, request.read_body())))
+
+    def update_alert_rule(self, request: Request) -> Response:
+        """Body: ``{"match": {"name"}, "rule": {...}}`` (rename, new filter, switch on or off)."""
+        body = request.read_body()
+        match = body.get("match")
+        if not isinstance(match, dict) or not isinstance(match.get("name"), str):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="match"))
+        updated = _alert_call(lambda: alerts.update(self.data_dir, match["name"], body.get("rule")))
+        return Response(200, updated)
+
+    def delete_alert_rule(self, request: Request) -> Response:
+        name = request.query.get("name")
+        if not name:
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="name"))
+        _alert_call(lambda: alerts.delete(self.data_dir, name))
+        return Response(204)
+
+    def alert_history(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        return Response(200, {"alerts": self.jobs.alerts.history(cid)})
+
+    def clear_alert_history(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        self.jobs.alerts.clear_history(cid)
+        return Response(204)
+
 
 _PRESET_STATUS = {
     "duplicate_name": 409, "reserved_name": 409, "too_many_presets": 409, "not_found": 404,
     "builtin": 403, "import_too_large": 413, "file_invalid": 409, "file_too_large": 409, "save_failed": 500,
 }  # fmt: skip
 _BODY_LIMITS["/api/presets/import"] = presets.MAX_IMPORT_BYTES
+
+
+# --------------------------------------------------------------------------- local alerts (9.13)
+
+_ALERT_STATUS = {
+    "duplicate_name": 409, "too_many_rules": 409, "not_found": 404, "file_invalid": 409,
+    "file_too_large": 409, "save_failed": 500,
+}  # fmt: skip
+
+
+def _alert_call(call: Callable[[], Any]) -> Any:
+    try:
+        return call()
+    except alerts.AlertError as exc:
+        raise ApiError(_ALERT_STATUS.get(exc.code, 400), exc.code, str(exc)) from None

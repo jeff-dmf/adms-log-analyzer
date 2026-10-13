@@ -204,6 +204,7 @@ function start() {
   let bookmarksPanel = null;
   let detailBookmark = null;
   let compare = null;
+  let alertsUi = null; // local alerts: banner and panel (alerts-panel.js)
   let distinctUi = null; // "Distinct values" and "Group by template" (distinct-panel.js)
   let collectionsPanel = null; // the Collections panel (collections-panel.js)
   let collections = []; // collections of the open case (GET /collections)
@@ -483,6 +484,9 @@ function start() {
       refreshDerived();
       if (followTail) {
         followTail.onCase();
+      }
+      if (alertsUi) {
+        alertsUi.onCase();
       }
     },
     onSources: (list, quiet) => {
@@ -1045,6 +1049,35 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: the toggle does nothing.
+  });
+
+  // Local alerts (9.13): banner, panel and optional browser notifications; optional module.
+  const alertsHost = byId("alerts-host");
+  const alertsButton = byId("alerts-button");
+  import("./alerts-panel.js").then((module) => {
+    alertsUi = module.initAlerts(alertsHost, {
+      banner: byId("alert-banner"),
+      getCase: () => caseId,
+      getFilter: () => userFilter,
+      onShowRecords: (filter) => setUserFilter(filter).catch(showError),
+      onError: showError,
+      onClose: () => alertsButton.setAttribute("aria-expanded", "false"),
+    });
+    alertsButton.hidden = false;
+    alertsButton.addEventListener("click", () => {
+      if (alertsUi.isOpen()) {
+        alertsUi.close();
+      } else if (caseId === null) {
+        showMessage(S.needCase, true);
+        return;
+      } else {
+        alertsUi.open();
+      }
+      alertsButton.setAttribute("aria-expanded", alertsUi.isOpen() ? "true" : "false");
+    });
+    alertsUi.onCase();
+  }).catch(() => {
+    // Module missing or failing: no alerts UI.
   });
 
   // Operations panel, adapter dashboard and clock-jump banner: optional modules like the panels above.

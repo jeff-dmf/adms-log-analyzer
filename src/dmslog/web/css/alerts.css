@@ -1,0 +1,135 @@
+/* Local alerts: banner and panel. Colors come from the theme tokens of app.css (light and dark). */
+.al-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.al-banner.al-sev-critical {
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+
+.al-banner[hidden],
+.al-panel[hidden] {
+  display: none;
+}
+
+.al-banner-text {
+  font-weight: 600;
+}
+
+.al-banner-more,
+.al-muted {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.al-banner .al-banner-more {
+  color: inherit;
+}
+
+.al-panel {
+  padding: 8px 10px;
+  overflow: auto;
+  max-height: 50vh;
+}
+
+.al-head,
+.al-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.al-title,
+.al-panel h4 {
+  margin: 4px 0;
+}
+
+.al-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.al-rule,
+.al-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.al-rule-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.al-sev {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font-size: 0.85em;
+}
+
+.al-sev-critical.al-sev {
+  color: var(--sev-1);
+}
+
+.al-sev-warning.al-sev {
+  color: var(--sev-3);
+}
+
+.al-sev-info.al-sev {
+  color: var(--muted);
+}
+
+.al-unavailable,
+.al-form-message {
+  color: var(--error-text);
+}
+
+.al-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 12px;
+  margin: 8px 0;
+}
+
+.al-form h4,
+.al-form-message,
+.al-create {
+  grid-column: 1 / -1;
+}
+
+.al-create {
+  justify-self: start;
+}
+
+.al-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.al-field[hidden] {
+  display: none;
+}
+
+.al-panel button:focus-visible,
+.al-banner button:focus-visible,
+.al-panel input:focus-visible,
+.al-panel select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
