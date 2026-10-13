@@ -129,7 +129,7 @@ def test_user_values_never_appear_in_sql():
         ({"tpl": -1}, "bad_value"),
         ({"sensitive": 1}, "bad_type"),
         ({"text": "timeout"}, "bad_type"),
-        ({"text": {"regex": "a.*"}}, "unknown_operator"),
+        ({"text": {"glob": "a*"}}, "unknown_operator"),
         ({"text": {"substr": ""}}, "bad_value"),
         ({"text": {"fts": "*"}}, "fts_empty"),
         ({"text": {"fts": "a*"}}, "fts_prefix_too_short"),

@@ -1809,3 +1809,30 @@ def load_dir(
 def load_catalog(*, check_examples: bool = False) -> Catalog:
     """Load the packaged adapter files (works inside the .pyz)."""
     return load_dir(resources.files(ADAPTERS_PACKAGE), check_examples=check_examples)
+
+
+def compile_search_regex(source: str, *, window: int, max_steps: int) -> re.Pattern[str]:
+    """Compile a user regex for ``re.search`` on one line of at most ``window`` characters.
+
+    Same whitelist and construction limits as the catalog (``_compile_regex``), and a work budget for
+    search: a search tries the pattern at every start, so the bound is ``window * work(window)``
+    (the ``re.match`` bound of :func:`_check_regex` at every position) and it must stay within
+    ``max_steps``. In practice a pattern with one unbounded repeat passes and two unbounded repeats in
+    sequence (``a.*b\\d+``) do not; two conditions combined with AND do the same job.
+    Raises InvalidRegexError (does not compile, unnamed group, ...) or UnsafeRegexError (budget).
+    """
+    rx, _info = _compile_regex(source, src="", where="regex", window=1)
+    if not _HAVE_PARSER:  # pragma: no cover
+        return rx
+    try:
+        info = _seq(_sre_parser.parse(source, 0).data, _PATTERN_END)
+    except _Unsafe as exc:  # pragma: no cover - _compile_regex already ran the same analysis
+        raise UnsafeRegexError(str(exc), where="regex") from None
+    steps = _at(_add(info.work, info.once), window) * window
+    if steps > max_steps:
+        raise UnsafeRegexError(
+            f"too much possible backtracking for a search on a {window}-character line ({steps} steps >"
+            f" {max_steps}); keep one unbounded repeat (* or +) per regex, or combine two conditions",
+            where="regex",
+        )
+    return rx

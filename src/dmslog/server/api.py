@@ -43,7 +43,18 @@ from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
 from ..report import export as report_export
 from ..report import redact, viewexport
-from ..store import bookmarks, db, distinct, events, keys, payloads, presets, query, views
+from ..store import (
+    bookmarks,
+    db,
+    distinct,
+    events,
+    highlights,
+    keys,
+    payloads,
+    presets,
+    query,
+    views,
+)
 from ..store import config as config_store
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import IndexWriter
@@ -70,6 +81,7 @@ SCOPE_LEAVES = frozenset({"source", "stream", "family", "ts"})
 _ENTRY_ID = re.compile(r"\d{1,18}\Z")
 _SMALL_INT = re.compile(r"\d{1,6}\Z")
 _VIEW_STATUS = {"filter_too_large": 413, "duplicate_name": 409, "too_many_views": 409, "not_found": 404}
+_HIGHLIGHT_STATUS = {"not_found": 404, "too_many_rules": 409, "cond_too_large": 413}
 _BOOKMARK_STATUS = {
     "not_found": 404, "entry_not_found": 404, "already_bookmarked": 409, "too_many": 409,
     "import_too_large": 413,
@@ -856,6 +868,14 @@ class Api:
             ("POST", re.compile(r"/api/fs/pick\Z"), self.fs_pick),
             ("DELETE", re.compile(r"/api/fs/pick\Z"), self.fs_pick_cancel),
             ("POST", re.compile(r"/api/entries/distinct\Z"), self.entries_distinct),
+            ("GET", re.compile(r"/api/highlights\Z"), self.list_highlights),
+            ("POST", re.compile(r"/api/highlights\Z"), self.create_highlight),
+            ("PUT", re.compile(r"/api/highlights/order\Z"), self.order_highlights),
+            ("POST", re.compile(r"/api/highlights/key\Z"), self.highlight_key),
+            ("PATCH", re.compile(r"/api/highlights/(?P<id>[^/]+)\Z"), self.update_highlight),
+            ("DELETE", re.compile(r"/api/highlights/(?P<id>[^/]+)\Z"), self.delete_highlight),
+            ("POST", re.compile(r"/api/entries/highlight\Z"), self.entries_highlight),
+            ("POST", re.compile(r"/api/entries/highlight/next\Z"), self.entries_highlight_next),
         ]
         self._routes += [
             ("GET", re.compile(r"/api/presets\Z"), self.list_presets),
@@ -1877,6 +1897,101 @@ class Api:
     def fs_pick_cancel(self, request: Request) -> Response:
         self.picker.cancel()
         return Response(204)
+
+    # -- highlight rules (per case, table highlight_rule; store/highlights.py, ARQUITETURA 10b)
+
+    @staticmethod
+    @contextmanager
+    def _highlight_errors() -> Iterator[None]:
+        try:
+            yield
+        except highlights.HighlightError as exc:
+            status = _HIGHLIGHT_STATUS.get(exc.code, 400)
+            raise ApiError(status, exc.code, str(exc)) from None
+
+    @staticmethod
+    def _highlight_id(request: Request) -> int:
+        raw = request.match["id"]
+        if not _ENTRY_ID.match(raw):
+            raise ApiError(400, "invalid_highlight_id", messages.API_BAD_HIGHLIGHT_ID)
+        return int(raw)
+
+    def list_highlights(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            rules = highlights.list_rules(conn)
+        limits = {"rules": highlights.MAX_RULES, "ids": highlights.MAX_MARK_IDS}
+        return Response(200, {"rules": rules, "palette": list(highlights.PALETTE), "limits": limits})
+
+    def create_highlight(self, request: Request) -> Response:
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        with self._highlight_errors(), self._writer(cid) as conn:
+            made = highlights.create_rule(
+                conn, body.get("name"), body.get("color"), body.get("cond"), body.get("enabled", True)
+            )
+        return Response(201, made)
+
+    def update_highlight(self, request: Request) -> Response:
+        rule_id = self._highlight_id(request)
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        changes = {k: body[k] for k in ("name", "color", "cond", "enabled") if k in body}
+        with self._highlight_errors(), self._writer(cid) as conn:
+            changed = highlights.update_rule(conn, rule_id, **changes)
+        return Response(200, changed)
+
+    def delete_highlight(self, request: Request) -> Response:
+        rule_id = self._highlight_id(request)
+        cid = _case_from_query(self.store, request)
+        with self._highlight_errors(), self._writer(cid) as conn:
+            highlights.delete_rule(conn, rule_id)
+        return Response(204)
+
+    def order_highlights(self, request: Request) -> Response:
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        with self._highlight_errors(), self._writer(cid) as conn:
+            rules = highlights.reorder(conn, body.get("ids"))
+        return Response(200, {"rules": rules})
+
+    def highlight_key(self, request: Request) -> Response:
+        """Highlight this key: creates the rule ``key type = value`` or recolors the existing one."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        with self._highlight_errors(), self._writer(cid) as conn:
+            key = (body.get("type"), body.get("value"))
+            rule, created = highlights.highlight_key(conn, *key, body.get("color"))
+        return Response(201 if created else 200, {"rule": rule, "created": created})
+
+    def entries_highlight(self, request: Request) -> Response:
+        """Batch marking: ``{case, rules: [filter, ...], ids: [...]}`` -> ``{marks: {id: rule index}}``."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        with self._highlight_errors(), self.store.reader(cid) as conn:
+            marks = highlights.mark(conn, body.get("rules"), body.get("ids"))
+        return Response(200, {"marks": {str(k): v for k, v in marks.items()}})
+
+    def entries_highlight_next(self, request: Request) -> Response:
+        """Next/previous highlighted record of the view: ``{case, filter, rules, cursor, dir}``."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        flt = body.get("filter")
+        if flt is not None and not isinstance(flt, dict):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
+        _check_scan_filter(flt)
+        cursor = body.get("cursor")
+        if cursor is not None and not isinstance(cursor, str):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="cursor"))
+        direction = body.get("dir", "fwd")
+        if direction not in ("fwd", "back"):
+            raise query.ColumnError("bad_direction", "$.dir")
+        try:
+            with self._highlight_errors(), self.store.reader(cid) as conn:
+                found = highlights.next_match(conn, flt, body.get("rules"), cursor, direction)
+        except query.QueryTimeout:
+            raise ApiError(408, "query_timeout", messages.API_HIGHLIGHT_NEXT_TIMEOUT) from None
+        return Response(200, {"row": found.row, "rule": found.rule})
 
 
 _PRESET_STATUS = {

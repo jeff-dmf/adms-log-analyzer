@@ -212,3 +212,8 @@ CREATE TRIGGER bookmark_source_gone AFTER DELETE ON source BEGIN  -- a dropped s
   UPDATE bookmark SET source_id = NULL, entry_id = NULL WHERE source_id = OLD.id;
 END;
 CREATE TABLE saved_view(id INTEGER PRIMARY KEY, name TEXT NOT NULL, filter TEXT NOT NULL, columns TEXT, created_at TEXT NOT NULL);
+CREATE TABLE highlight_rule(                                   -- store/highlights.py; migration 6; ARQUITETURA 10b
+  id INTEGER PRIMARY KEY, pos INTEGER NOT NULL,                -- pos: priority (0 first; the first match colors)
+  name TEXT NOT NULL, color TEXT NOT NULL,                     -- color: a name of the fixed palette
+  cond TEXT NOT NULL,                                          -- filter tree (JSON, ARQUITETURA 10), as typed
+  enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);

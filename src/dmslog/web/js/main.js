@@ -2,6 +2,7 @@
 // and reaches the page through textContent / DOM nodes only.
 import { api, onForbidden } from "./api.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
+import { createHighlightStore } from "./highlight-model.js";
 import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { Detail } from "./detail.js";
 import {
@@ -210,6 +211,19 @@ function start() {
     },
   });
 
+  // Highlight rules of the case: colors of the grid rows (highlight-model.js).
+  let highlightUi = null;
+  const highlightStore = createHighlightStore({
+    api,
+    getCase: () => caseId,
+    onChange: () => {
+      grid.render();
+      if (highlightUi) {
+        highlightUi.storeChanged();
+      }
+    },
+  });
+
   // Panels fed by the derived events: visible ones reload, hidden ones load when opened.
   const refreshDerived = () => {
     if (clockBanner) {
@@ -263,7 +277,11 @@ function start() {
     },
     onError: showError,
     getMark: (id) => bookmarkStore.get(id),
-    onVisible: (ids) => bookmarkStore.ensure(ids),
+    getHighlight: (id) => highlightStore.get(id),
+    onVisible: (ids) => {
+      bookmarkStore.ensure(ids);
+      highlightStore.ensure(ids);
+    },
     onView: () => followTail && followTail.viewChanged(),
   });
   const detail = new Detail({
@@ -292,6 +310,9 @@ function start() {
       }
       if (detailBookmark) {
         detailBookmark.show(entry);
+      }
+      if (highlightUi) {
+        highlightUi.showEntry(entry);
       }
       paintCompareButton(entry);
     },
@@ -407,6 +428,7 @@ function start() {
     onSelection: () => applyView(),
     onDone: () => {
       bookmarkStore.invalidate(); // the records were (re)indexed: markers are looked up again
+      highlightStore.invalidateMarks();
       if (bookmarksPanel && bookmarksPanel.isOpen()) {
         bookmarksPanel.refresh();
       }
@@ -722,6 +744,27 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: the button stays hidden.
+  });
+  // Highlight rules (panel, detail section, ]/[ navigation): optional module; the store is above.
+  import("./highlight-panel.js").then((module) => {
+    highlightUi = module.mountHighlights({
+      toolbar: byId("toolbar"),
+      beforeButton: byId("theme-button"),
+      panelParent: byId("grid-panel"),
+      beforePanel: byId("filter-form"),
+      footer: document.querySelector(".shortcuts-help"),
+      detailAnchor: byId("detail-bookmark"),
+      store: highlightStore,
+      getCase: () => caseId,
+      getFilter: () => currentFilter,
+      getSelectedRow: () => grid.selectedRow(),
+      getTemplateCode: (id) => templateCodes.get(id) || "",
+      reveal: (row) => grid.revealRow(row),
+      showMessage,
+    });
+    highlightUi.showEntry(detail.entry);
+  }).catch(() => {
+    // Module missing or failing: rules still color the grid, without the panel.
   });
   // Distinct values of a field (drill-down into the filter) and "Group by template": optional module.
   Promise.all([import("./distinct-panel.js"), import("./distinct-model.js")]).then(([panelModule, model]) => {

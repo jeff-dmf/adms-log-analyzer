@@ -103,6 +103,16 @@ BOM for Excel on Windows; text cells that start with `=`, `+`, `-`, `@` or a tab
 apostrophe so spreadsheets do not run them as formulas. Files are limited to 100,000 rows by default
 (configurable); the menu warns when the view had more rows.
 
+## Highlights (viewer)
+
+**Highlights** in the toolbar keeps up to 20 color rules per case. A rule colors the records it
+matches and hides nothing; the first enabled rule that matches gives the color. A condition is words
+(full-text search), exact text, a regex (searched in the first 512 characters of the first line; one
+unbounded repeat per regex), a key, a message type, a severity, a parsed field or the current filter.
+In the record detail, **Highlight type = value** colors every record with that key, in the normal and
+in the sensitive logs. Press `]` and `[` to go to the next and previous highlighted record of the view.
+Rules are saved in the case and hold only what you typed.
+
 ## Data directory
 
 Cases and indexes live in the user's data directory, one folder per case (deleting the case deletes
