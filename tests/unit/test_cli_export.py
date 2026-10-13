@@ -50,11 +50,19 @@ def test_the_default_export_is_the_original_text(data_dir, capsysbinary):
     assert not (data_dir / "redaction-maps").exists()
 
 
+def _without_generated_line(raw: bytes) -> bytes:
+    # The header carries "Generated: <local time>" with second resolution: two runs that straddle a
+    # second boundary differ only there, which made this comparison flaky on slow CI runners.
+    return b"\r\n".join(ln for ln in raw.split(b"\r\n") if not ln.lstrip().startswith(b"Generated:"))
+
+
 def test_no_anonymize_is_still_accepted_and_equals_the_default(data_dir, capsysbinary):
     assert run(data_dir, "--ids", "3") == 0
     default = capsysbinary.readouterr().out
+    assert b"Generated:" in default  # the masking below must really remove something
     assert run(data_dir, "--ids", "3", "--no-anonymize") == 0
-    assert capsysbinary.readouterr().out == default
+    other = capsysbinary.readouterr().out
+    assert _without_generated_line(other) == _without_generated_line(default)
 
 
 def test_anonymize_and_no_anonymize_together_are_refused(data_dir, capsys):
