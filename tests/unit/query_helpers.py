@@ -262,6 +262,15 @@ def py_match(tree, row) -> bool:
         for name in _lst(arg):
             mask |= FLAGS[name]
         return row["flags"] & mask == mask
+    if op == "field":
+        fields = json.loads(row["fields"]) if row["fields"] else {}
+        value = fields.get(arg["name"])
+        want = arg["eq"]
+        if value is None or want is None:
+            return value is None and want is None
+        if isinstance(value, str) != isinstance(want, str):
+            return False  # json_extract keeps the JSON type: "5" is not 5
+        return value == want
     if op == "payload":
         p = PAYLOADS.get(row["id"])
         return p is not None and all(p[k] in _lst(v) for k, v in arg.items())

@@ -237,6 +237,50 @@ def test_report_names_the_collection_of_every_record(db, zips):
     assert len(heads) == 4 and {h.split()[3] for h in heads} == {"C1", "C2"}
 
 
+def test_view_export_has_a_collection_column(db, zips):
+    from dmslog.report import viewexport as ve
+
+    ingest(db, zips, *BOTH)
+    b = mh.group_of(db, "B")
+    req = ve.parse_request({"kind": "view_csv", "columns": ["source", "collection"]})
+    lines = "".join(ve.stream_view(db, req)).splitlines()
+    assert lines[0] == "Record,Source,Collection"
+    assert {line.rsplit(",", 1)[1] for line in lines[1:]} == {"C1", "C2"}
+    req = ve.parse_request(
+        {"kind": "values", "column": "collection", "unique": True, "filter": {"collection": [b]}}
+    )
+    assert "".join(ve.stream_view(db, req)) == "C2"
+
+
+@pytest.mark.parametrize(
+    ("flt", "method"),
+    [
+        (None, "bucket"),
+        ({"level": {"ge": 1}}, "exact"),
+        ({"level": {"ge": 1}}, "sample"),
+    ],
+)
+def test_distinct_groups_by_collection_with_tags_and_leaves(db, zips, monkeypatch, flt, method):
+    from dmslog.store import distinct as D
+
+    if method == "sample":  # the exact grouping times out; the level filter has no bucket estimate
+
+        def too_slow(*args, **kwargs):
+            raise query.QueryTimeout
+
+        monkeypatch.setattr(D, "_entry_group_sql", too_slow)
+    ingest(db, zips, *BOTH)
+    a, b = mh.group_of(db, "A"), mh.group_of(db, "B")
+    result = D.distinct(db, flt, "collection", span=True)
+    assert result.method == method
+    by_group = {v["value"]: v for v in result.values}
+    assert set(by_group) == {a, b} and by_group[b]["label"] == "C2"
+    if method != "sample":
+        assert result.exact and by_group[a]["count"] == by_group[b]["count"] == mh.RECORDS
+    assert by_group[b]["leaf"] == {"collection": b}
+    assert query.count(db, by_group[b]["leaf"]).n == mh.RECORDS
+
+
 def test_report_of_a_single_collection_is_unchanged(db, zips):
     ingest(db, zips, ("A", "enterprise"), ("A", "sensitive"))
     text = build_report(db, Selection(ids=(1,)), ExportOptions(context=0)).parts[0].text

@@ -43,11 +43,12 @@ from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
 from ..report import export as report_export
 from ..report import redact, viewexport
-from ..store import bookmarks, db, events, keys, payloads, presets, query, views
+from ..store import bookmarks, db, distinct, events, keys, payloads, presets, query, views
 from ..store import collections as collections_store
 from ..store import config as config_store
 from ..store.filters import QueryInputError, compile_filter
 from ..store.writer import CollectionRow, IndexWriter
+from . import filepick
 from .sse import ProgressHub
 
 MAX_BODY_BYTES = 256 * 1024
@@ -804,6 +805,7 @@ class Api:
         self._knowledge_lock = threading.Lock()
         self._pack_knowledge: Knowledge | None = None
         self._case_knowledge: dict[str, tuple[Any, Knowledge]] = {}
+        self.picker = filepick.Picker()
         self._routes: list[tuple[str, re.Pattern[str], Callable[[Request], Response | Stream | Download]]] = [
             ("GET", re.compile(r"/api/cases\Z"), self.list_cases),
             ("POST", re.compile(r"/api/cases\Z"), self.create_case),
@@ -851,6 +853,11 @@ class Api:
             ("PUT", re.compile(r"/api/redaction\Z"), self.put_redaction),
             ("POST", re.compile(r"/api/export\Z"), self.export_report),
             ("POST", re.compile(r"/api/export/view\Z"), self.export_view),
+            ("GET", re.compile(r"/api/fs/capabilities\Z"), self.fs_capabilities),
+            ("GET", re.compile(r"/api/fs/list\Z"), self.fs_list),
+            ("POST", re.compile(r"/api/fs/pick\Z"), self.fs_pick),
+            ("DELETE", re.compile(r"/api/fs/pick\Z"), self.fs_pick_cancel),
+            ("POST", re.compile(r"/api/entries/distinct\Z"), self.entries_distinct),
         ]
         self._routes += [
             ("GET", re.compile(r"/api/presets\Z"), self.list_presets),
@@ -867,6 +874,7 @@ class Api:
         ]  # fmt: skip
 
     def shutdown(self) -> None:
+        self.picker.close()
         self.jobs.shutdown()
 
     # -- dispatch
@@ -1547,6 +1555,22 @@ class Api:
             },
         )
 
+    def entries_distinct(self, request: Request) -> Response:
+        """Top values of one field inside the filter (store/distinct.py; ARQUITETURA 10)."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        flt = body.get("filter")
+        if flt is not None and not isinstance(flt, dict):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
+        _check_scan_filter(flt)
+        spec = distinct.parse_field(body.get("field"))
+        top = body.get("limit", distinct.DEFAULT_TOP)
+        with self.store.reader(cid) as conn:
+            result = distinct.distinct(
+                conn, flt, spec, top, span=body.get("span", False), exact=body.get("exact", False)
+            )
+        return Response(200, distinct.as_json(result))
+
     # -- saved filters (per case, table saved_view)
 
     def list_views(self, request: Request) -> Response:
@@ -1889,6 +1913,43 @@ class Api:
         finally:
             hub.finish(done)
         return Response(200, body)
+
+    # -- file picker and folder browser (9.16, ARQUITETURA 10.4)
+
+    def fs_capabilities(self, request: Request) -> Response:
+        return Response(200, self.picker.capabilities())
+
+    def fs_list(self, request: Request) -> Response:
+        raw = request.query.get("path") or os.path.expanduser("~")
+        try:
+            listing = filepick.list_dir(raw)
+        except filepick.PathRejectedError as exc:
+            raise ApiError(404 if exc.code == "path_not_found" else 400, exc.code, exc.message) from exc
+        return Response(200, listing)
+
+    def fs_pick(self, request: Request) -> Response:
+        body = request.read_body()
+        for name in body:
+            if name not in ("kind", "multiple"):
+                raise ApiError(400, "invalid_field", messages.FS_UNKNOWN_FIELD.format(field=name[:64]))
+        kind = body.get("kind", filepick.KIND_ZIP)
+        if kind not in filepick.PICK_KINDS:
+            raise ApiError(400, "bad_kind", messages.FS_BAD_PICK_KIND)
+        multiple = body.get("multiple", True)
+        if not isinstance(multiple, bool):
+            raise ApiError(400, "bad_multiple", messages.FS_BAD_PICK_MULTIPLE)
+        try:
+            return Response(200, self.picker.pick(kind, multiple))
+        except filepick.PickerBusyError as exc:
+            raise ApiError(409, "picker_busy", messages.FS_PICKER_BUSY) from exc
+        except filepick.PickerError as exc:
+            if self.picker.capabilities()["native"]["available"]:
+                raise ApiError(500, "picker_failed", messages.FS_PICKER_FAILED) from exc
+            raise ApiError(409, "picker_unavailable", messages.FS_PICKER_UNAVAILABLE) from exc
+
+    def fs_pick_cancel(self, request: Request) -> Response:
+        self.picker.cancel()
+        return Response(204)
 
 
 _PRESET_STATUS = {

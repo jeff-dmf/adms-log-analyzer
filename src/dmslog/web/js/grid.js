@@ -6,6 +6,7 @@ import {
   tsToScroll,
 } from "./grid-model.js";
 import { ColumnResizer } from "./column-resize.js";
+import { baseName } from "./source-filter-model.js";
 import { markerLabel } from "./bookmarks-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format } from "./strings.js";
@@ -16,7 +17,6 @@ export const COLUMNS = [
   { key: "pid", label: () => S.columnPid },
   { key: "tid", label: () => S.columnTid },
   { key: "level", label: () => S.columnLevel },
-  { key: "template", label: () => S.columnTemplate },
   { key: "source", label: () => S.columnSource },
   { key: "msg", label: () => S.columnMessage },
 ];
@@ -34,7 +34,7 @@ function fieldText(value) {
 
 export class Grid {
   constructor({
-    viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, onTemplate, getMark, onVisible, onView,
+    viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, getMark, onVisible, onView,
   }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
@@ -43,14 +43,12 @@ export class Grid {
     this.onSelect = onSelect;
     this.onStatus = onStatus;
     this.onError = onError;
-    this.onTemplate = onTemplate || (() => {});
     this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
     this.onVisible = onVisible || (() => {}); // ids of the rendered rows (bookmark lookup)
     this.onView = onView || (() => {});
     this.countGeneration = 0;
     this.countController = null;
     this.total = null; // last entry count of the filter (a number), the baseline of "follow tail"
-    this.templateCodes = new Map();
     this.fieldColumns = [];
     this.window = new RowWindow();
     this.visibleColumns = COLUMNS.map((c) => c.key);
@@ -101,10 +99,6 @@ export class Grid {
       const rowEl = event.target.closest(".grid-row");
       if (rowEl && rowEl.dataset.index !== undefined) {
         this.window.selected = Number(rowEl.dataset.index);
-        const clicked = this.window.rows[this.window.selected];
-        if (clicked && event.target.closest(".col-template") && clicked.tpl_id > 0) {
-          this.onTemplate(clicked.tpl_id);
-        }
         this.render();
         this.notifySelect(0);
         this.viewport.focus();
@@ -137,11 +131,6 @@ export class Grid {
     this.rowsLayer.textContent = "";
     this.renderHeader();
     return this.caseId === null ? Promise.resolve() : this.reload();
-  }
-
-  setTemplateCodes(map) {
-    this.templateCodes = map;
-    this.render();
   }
 
   // The visible columns in order: the fixed ones, then one per chosen parsed field.
@@ -532,11 +521,6 @@ export class Grid {
     if (cells.level) {
       cells.level.textContent = S.levelNames[row.level] || "";
     }
-    if (cells.template) {
-      const known = row.tpl_id > 0;
-      cells.template.textContent = known ? this.templateCodes.get(row.tpl_id) || String(row.tpl_id) : "";
-      cells.template.classList.toggle("tpl-link", known);
-    }
     for (const name of this.fieldColumns) {
       const cell = cells["fields." + name];
       if (cell) {
@@ -544,7 +528,8 @@ export class Grid {
       }
     }
     if (cells.source) {
-      cells.source.textContent = this.sourceNames.get(row.source_id) || String(row.source_id);
+      const name = this.sourceNames.get(row.source_id);
+      cells.source.textContent = name === undefined ? String(row.source_id) : baseName(name);
     }
     if (cells.msg) {
       renderHighlighted(cells.msg, row.msg === null || row.msg === undefined ? "" : String(row.msg), this.terms);

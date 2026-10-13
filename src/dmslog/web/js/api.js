@@ -136,6 +136,9 @@ export const api = {
   histogram: (caseId, filter, bucketMs, split, signal) =>
     request("POST", "/api/histogram", { case: caseId, filter, bucket_ms: bucketMs, split }, signal),
   count: (caseId, filter, signal) => request("POST", "/api/entries/count", { case: caseId, filter }, signal),
+  distinct: (caseId, filter, field, limit, span, signal, exact) =>
+    request("POST", "/api/entries/distinct",
+      { case: caseId, filter, field, limit, span: Boolean(span), exact: Boolean(exact) }, signal),
   entry: (caseId, id, signal) =>
     request("GET", "/api/entries/" + encodeURIComponent(id) + query({ case: caseId }), undefined, signal),
   context: (caseId, id, same, before, after, signal) =>
@@ -223,6 +226,14 @@ export const api = {
   // Copy as / export of the view (lists, original lines, CSV); see report/viewexport.py.
   exportView: (caseId, body, as, signal) =>
     requestFile("/api/export/view", { ...body, case: caseId }, as, signal),
+  // File picker: native dialog opened by the server, and the built-in folder browser (ARQUITETURA 10.4).
+  // `pick` resolves when the user closes the dialog; `cancelPick` closes an open one.
+  fs: {
+    capabilities: (signal) => request("GET", "/api/fs/capabilities", undefined, signal),
+    list: (path, signal) => request("GET", "/api/fs/list" + query({ path }), undefined, signal),
+    pick: (kind, multiple) => request("POST", "/api/fs/pick", { kind, multiple }),
+    cancelPick: () => request("DELETE", "/api/fs/pick"),
+  },
   // View presets (curated + the user's file): list for a case, create, update, delete, export, import.
   presets: {
     list: (caseId, signal) => request("GET", "/api/presets" + query({ case: caseId }), undefined, signal),

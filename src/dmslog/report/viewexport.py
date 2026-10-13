@@ -34,6 +34,7 @@ from typing import Any
 
 from .. import messages
 from ..parse.envelope import LEVEL_NAMES
+from ..store import collections as store_collections
 from ..store import events as store_events
 from ..store import query
 from ..store.filters import compile_filter
@@ -50,7 +51,8 @@ BOM = "﻿"
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 SEPARATORS = {"newline": "\n", "comma": ","}
 QUOTES = ("none", "double", "single")
-FIXED_COLUMNS = ("ts", "pid", "tid", "level", "template", "source", "msg")
+# collection: the C<n> tag of the record's collection group (U21)
+FIXED_COLUMNS = ("ts", "pid", "tid", "level", "template", "source", "collection", "msg")
 _FIELD_COLUMN = re.compile(r"fields\.[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 _KEY_TYPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _EPOCH = datetime(1970, 1, 1)
@@ -333,7 +335,9 @@ def _field_text(value: Any) -> str:
     return json.dumps(value) if isinstance(value, dict | list) else str(value)
 
 
-def _cell_text(row: Mapping[str, Any], column: str, sources: Mapping[int, str]) -> str:
+def _cell_text(
+    row: Mapping[str, Any], column: str, sources: Mapping[int, str], tags: Mapping[int, str] | None = None
+) -> str:
     if column == "ts":
         return format_ts(row["ts"])
     if column == "pid":
@@ -346,13 +350,19 @@ def _cell_text(row: Mapping[str, Any], column: str, sources: Mapping[int, str]) 
         return row.get("tpl") or ""
     if column == "source":
         return sources.get(row["source_id"], str(row["source_id"]))
+    if column == "collection":  # the tag of the collection group, as the collections route numbers it
+        group = row.get("collection")
+        return "" if group is None else (tags or {}).get(group, str(group))
     if column == "msg":
         return row["msg"] or ""
     return _field_text(row.get(column))
 
 
 def _extra_columns(names: Iterable[str]) -> list[str]:
+    names = list(names)
     extra = ["tpl"] if "template" in names else []
+    if "collection" in names:
+        extra.append("collection")
     return extra + [n for n in names if n.startswith("fields.")]
 
 
@@ -385,9 +395,10 @@ def stream_values(conn: sqlite3.Connection, req: ViewRequest) -> Iterator[str]:
             return
         assert req.column is not None
         sources = _source_names(conn) if req.column == "source" else {}
+        tags = store_collections.group_tags(conn) if req.column == "collection" else {}
         for rows in _walk(conn, req.filter, _extra_columns([req.column]), req.max_rows):
             for row in rows:
-                text = _cell_text(row, req.column, sources)
+                text = _cell_text(row, req.column, sources, tags)
                 if text != "":
                     yield text
 
@@ -459,9 +470,11 @@ def stream_view_csv(conn: sqlite3.Connection, req: ViewRequest) -> Iterator[str]
     def body() -> Iterator[str]:
         yield csv_row(csv_header(req.columns))
         sources = _source_names(conn) if "source" in req.columns else {}
+        tags = store_collections.group_tags(conn) if "collection" in req.columns else {}
         for rows in _walk(conn, req.filter, _extra_columns(req.columns), req.max_rows):
             yield "".join(
-                csv_row([row["id"], *(_cell_text(row, c, sources) for c in req.columns)]) for row in rows
+                csv_row([row["id"], *(_cell_text(row, c, sources, tags) for c in req.columns)])
+                for row in rows
             )
 
     return _with_bom(req.bom, body())

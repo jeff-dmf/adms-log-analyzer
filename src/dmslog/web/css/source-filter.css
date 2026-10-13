@@ -1,0 +1,25 @@
+/* Source filter box above the source list. Theme tokens only. */
+.source-filter-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.source-filter-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.source-filter-clear {
+  padding: 0 8px;
+}
+
+.source-filter-status {
+  margin: 2px 0 4px;
+}
+
+.source-name mark {
+  background: var(--mark);
+  color: var(--text);
+  border-radius: 2px;
+}

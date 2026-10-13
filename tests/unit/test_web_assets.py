@@ -70,6 +70,10 @@ EXPECTED_MODULES = {
     "copy-export.js",
     "column-resize-model.js",
     "column-resize.js",
+    "source-filter-model.js",
+    "source-filter.js",
+    "distinct-model.js",
+    "distinct-panel.js",
 }
 
 FORBIDDEN_JS = [
