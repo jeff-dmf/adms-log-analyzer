@@ -5,11 +5,12 @@ import { S, format } from "./strings.js";
 
 export class ColumnResizer {
   // `getCells(key)`: the rendered body cells of a column; `getKeys()`: the visible column keys in order.
-  constructor({ viewport, rowsLayer, header, getCells, getKeys, storage }) {
+  constructor({ viewport, rowsLayer, header, getCells, getVisibleCells, getKeys, storage }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
     this.header = header;
     this.getCells = getCells;
+    this.getVisibleCells = getVisibleCells || getCells;
     this.getKeys = getKeys;
     this.model = new ColumnWidths(storage);
     this.headerCells = new Map();
@@ -94,17 +95,15 @@ export class ColumnResizer {
     this.apply();
   }
 
-  // Fits the column to the widest of its header and the rendered cells (scrollWidth ignores the truncation).
+  // Fits the column to the widest of its header and the rendered cells, measured without the applied
+  // width and without flex-grow (see intrinsicWidths).
   fit(key) {
-    const widths = [];
+    const cells = [...this.getVisibleCells(key)];
     const head = this.headerCells.get(key);
     if (head) {
-      widths.push(head.scrollWidth);
+      cells.push(head);
     }
-    for (const cell of this.getCells(key)) {
-      widths.push(cell.scrollWidth);
-    }
-    this.setWidth(key, fitWidth(widths), true);
+    this.setWidth(key, fitWidth(intrinsicWidths(cells)), true);
   }
 
   reset() {
@@ -150,4 +149,20 @@ export class ColumnResizer {
       this.header.scrollLeft = v.scrollLeft;
     }
   }
+}
+
+// Content width of each cell with its applied width and flex-grow removed. Batched (set all, read all,
+// restore all) so the browser lays out once.
+export function intrinsicWidths(cells) {
+  const saved = cells.map((c) => [c.style.width, c.style.flex]);
+  for (const c of cells) {
+    c.style.width = "auto";
+    c.style.flex = "none";
+  }
+  const widths = cells.map((c) => Math.max(c.scrollWidth || 0, c.offsetWidth || 0));
+  cells.forEach((c, i) => {
+    c.style.width = saved[i][0];
+    c.style.flex = saved[i][1];
+  });
+  return widths;
 }

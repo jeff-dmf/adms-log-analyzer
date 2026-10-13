@@ -71,7 +71,9 @@ export class Grid {
     this.spacer.style.height = SCROLL_SPAN + "px";
     this.resizer = new ColumnResizer({
       viewport, rowsLayer, header,
-      getCells: (key) => this.pool.filter((s) => !s.el.hidden && s.cells[key]).map((s) => s.cells[key]),
+      // Every pooled slot, hidden ones included: a hidden row keeps the current widths when render() shows it again.
+      getCells: (key) => this.pool.filter((s) => s.cells[key]).map((s) => s.cells[key]),
+      getVisibleCells: (key) => this.pool.filter((s) => !s.el.hidden && s.cells[key]).map((s) => s.cells[key]),
       getKeys: () => this.columnDefs().map((c) => c.key),
     });
     this.bind();
