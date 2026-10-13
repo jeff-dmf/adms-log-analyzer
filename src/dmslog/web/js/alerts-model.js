@@ -6,6 +6,7 @@
 export const KINDS = ["match", "threshold", "open_operation"];
 export const SEVERITIES = ["info", "warning", "critical"];
 export const HISTORY_SHOWN = 50;
+export const SEEN_LIMIT = 1000; // ids remembered to drop replayed events
 export const MAX_NAME = 80; // store/views.py MAX_NAME_CHARS
 export const NOTIFY_KEY = "dmslog.alerts.notify";
 export const DEFAULT_MIN_INTERVAL = 30;
@@ -216,6 +217,16 @@ export function createNotifier({ NotificationImpl, storage } = {}) {
 // Options: api (alerts.rules/createRule/updateRule/deleteRule/history/clearHistory), getCase(), notifier,
 // describe(alert) -> {title, body}, onChange(state). The state is plain data for the view.
 export function createAlertsFlow({ api, getCase, notifier, describe, onChange }) {
+  const seen = new Set(); // ids received so far (bounded, insertion order), apart from the visible history
+  const remember = (id) => {
+    if (id === null) {
+      return;
+    }
+    seen.add(id);
+    while (seen.size > SEEN_LIMIT) {
+      seen.delete(seen.values().next().value);
+    }
+  };
   const state = { rules: [], history: [], banner: null, problems: [], invalid: false, error: null };
   let seq = 0;
   const emit = () => onChange && onChange(state);
@@ -243,7 +254,9 @@ export function createAlertsFlow({ api, getCase, notifier, describe, onChange })
       state.rules = rules.rules || [];
       state.invalid = Boolean(rules.invalid);
       state.problems = rules.problems || [];
-      state.history = (history.alerts || []).map(parseAlertEvent).filter(Boolean).reverse().slice(0, HISTORY_SHOWN);
+      const loaded = (history.alerts || []).map(parseAlertEvent).filter(Boolean);
+      loaded.forEach((a) => remember(a.id));
+      state.history = loaded.reverse().slice(0, HISTORY_SHOWN);
       state.error = null;
       emit();
     } catch (err) {
@@ -259,9 +272,10 @@ export function createAlertsFlow({ api, getCase, notifier, describe, onChange })
     if (alert === null) {
       return null;
     }
-    if (alert.id !== null && state.history.some((h) => h.id === alert.id)) {
+    if (alert.id !== null && seen.has(alert.id)) {
       return null; // replayed after an SSE reconnect (or already loaded): no second banner or notification
     }
+    remember(alert.id);
     state.history = [alert, ...state.history].slice(0, HISTORY_SHOWN);
     state.banner = { alert, more: state.banner ? state.banner.more + 1 : 0 };
     if (notifier && describe) {
@@ -282,6 +296,7 @@ export function createAlertsFlow({ api, getCase, notifier, describe, onChange })
     },
     reset() {
       seq += 1;
+      seen.clear();
       state.rules = [];
       state.history = [];
       state.banner = null;

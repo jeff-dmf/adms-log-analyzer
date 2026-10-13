@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import {
   HISTORY_SHOWN, NOTIFY_KEY, connectAlertStream, createAlertsFlow, createNotifier, parseAlertEvent, recordsFilter,
-  ruleBody, validateDraft, MAX_COUNT,
+  ruleBody, validateDraft, MAX_COUNT, SEEN_LIMIT,
 } from "../../src/dmslog/web/js/alerts-model.js";
 
 const EVENT = {
@@ -283,4 +283,35 @@ test("validateDraft keeps counts inside what the server can reach", () => {
   assert.equal(validateDraft({ name: "a", kind: "match", filter, minCount: String(MAX_COUNT) }).error, undefined);
   assert.equal(validateDraft({ name: "a", kind: "match", filter, minCount: String(MAX_COUNT + 1) }).error, "count");
   assert.equal(validateDraft({ name: "a", kind: "threshold", filter, threshold: String(MAX_COUNT), windowS: "5" }).error, "threshold");
+});
+
+test("flow: a replay of more alerts than the visible history still gives no duplicates", () => {
+  const fake = fakeNotification({ permission: "granted" });
+  const notifier = createNotifier({ NotificationImpl: fake.Fake, storage: memoryStorage() });
+  notifier.setWanted(true);
+  const flow = createAlertsFlow({
+    api: fakeApi(), getCase: () => "demo", notifier, describe: (a) => ({ title: a.rule, body: "" }),
+  });
+  const total = HISTORY_SHOWN + 1;
+  for (let i = 1; i <= total; i += 1) {
+    flow.receive({ ...EVENT, id: i });
+  }
+  assert.equal(fake.shown.length, total);
+  flow.dismiss();
+  for (let i = 1; i <= total; i += 1) {
+    assert.equal(flow.receive({ ...EVENT, id: i }), null); // the whole log replayed after a reconnect
+  }
+  assert.equal(fake.shown.length, total);
+  assert.equal(flow.state.banner, null);
+});
+
+test("flow: the remembered ids are bounded and a new case starts clean", () => {
+  const flow = createAlertsFlow({ api: fakeApi(), getCase: () => "demo" });
+  for (let i = 1; i <= SEEN_LIMIT + 5; i += 1) {
+    flow.receive({ ...EVENT, id: i });
+  }
+  assert.notEqual(flow.receive({ ...EVENT, id: 1 }), null); // the oldest id fell out of the bounded set
+  assert.equal(flow.receive({ ...EVENT, id: SEEN_LIMIT + 5 }), null);
+  flow.reset();
+  assert.notEqual(flow.receive({ ...EVENT, id: SEEN_LIMIT + 5 }), null);
 });
