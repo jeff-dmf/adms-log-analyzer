@@ -18,6 +18,7 @@ A file that is not valid TOML, or has a newer schema, is never overwritten: writ
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import re
@@ -41,7 +42,9 @@ MAX_PRESETS = 200
 MAX_DESCRIPTION_CHARS = 200
 MAX_FAMILY_CHARS = 32
 MAX_IMPORT_BYTES = 1024 * 1024
-MAX_FILE_BYTES = 4 * 1024 * 1024
+# MAX_PRESETS presets of MAX_FILTER bytes (filters.MAX_JSON_BYTES) plus extras must fit in the file.
+MAX_EXTRA_BYTES = 8 * 1024
+MAX_FILE_BYTES = 16 * 1024 * 1024
 FAMILY_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}\Z")
 # Leaves that point at one case (ids and time of that case); a preset must work in any case.
 CASE_LEAVES = frozenset({"source", "stream", "event", "ts"})
@@ -66,6 +69,8 @@ ERROR_MESSAGES = {
     "bad_format": "the format must be 'json' or 'toml'",
     "bad_import": "the import data is not a valid presets document",
     "import_too_large": "the import data is larger than {limit} bytes",
+    "extra_too_large": "the unknown fields of the preset are too large or too deeply nested",
+    "file_too_large": "the presets file would be larger than {limit} bytes; delete some presets",
     "save_failed": "the presets file could not be written",
 }
 
@@ -117,6 +122,14 @@ def _walk_leaves(tree: Any) -> list[str]:
     return names
 
 
+def _small(value: Any, limit: int) -> bool:
+    """True when ``value`` serializes to at most ``limit`` bytes and is not nested too deeply."""
+    try:
+        return len(json.dumps(value, default=str, ensure_ascii=False).encode("utf-8")) <= limit
+    except (RecursionError, ValueError, TypeError, UnicodeEncodeError):
+        return False
+
+
 def validate_preset(raw: Any) -> dict[str, Any]:
     """Return the clean preset (unknown keys kept in ``extra``); raises PresetError."""
     if not isinstance(raw, dict):
@@ -147,6 +160,8 @@ def validate_preset(raw: Any) -> dict[str, Any]:
     clean: dict[str, Any] = {"name": name, "description": description, "family": family, "filter": tree}
     extra = {k: v for k, v in raw.items() if k not in KNOWN_KEYS}
     if extra:
+        if not _small(extra, MAX_EXTRA_BYTES):
+            raise PresetError("extra_too_large")
         clean["extra"] = extra
     return clean
 
@@ -175,9 +190,13 @@ def _toml_value(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
-            raise PresetError("bad_preset")
+        if value != value:
+            return "nan"
+        if value in (float("inf"), float("-inf")):
+            return "inf" if value > 0 else "-inf"
         return repr(value)
+    if isinstance(value, dt.datetime | dt.date | dt.time):
+        return value.isoformat()
     if isinstance(value, str):
         return _toml_string(value)
     if isinstance(value, list):
@@ -241,6 +260,9 @@ def parse_document(data: Any) -> Document:
         doc.invalid = True
         return doc
     doc.top_extra = {k: v for k, v in data.items() if k not in ("schema", "preset")}
+    if doc.top_extra and not _small(doc.top_extra, MAX_EXTRA_BYTES):
+        doc.invalid = True
+        return doc
     raw_list = data.get("preset", [])
     if not isinstance(raw_list, list):
         doc.invalid = True
@@ -265,7 +287,7 @@ def parse_document(data: Any) -> Document:
 def _parse_toml_text(text: str) -> Document:
     try:
         data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
+    except (tomllib.TOMLDecodeError, RecursionError):
         doc = Document()
         doc.invalid = True
         return doc
@@ -324,9 +346,14 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 def _save(data_dir: str | os.PathLike[str], doc: Document) -> None:
     try:
-        text = dump_toml(doc.presets, doc.top_extra)
-        _atomic_write(presets_path(data_dir), text.encode("utf-8"))
-    except (OSError, UnicodeEncodeError):
+        data = dump_toml(doc.presets, doc.top_extra).encode("utf-8")
+    except (UnicodeEncodeError, RecursionError):
+        raise PresetError("save_failed") from None
+    if len(data) > MAX_FILE_BYTES:  # the next read would reject it: keep the old file
+        raise PresetError("file_too_large", limit=MAX_FILE_BYTES)
+    try:
+        _atomic_write(presets_path(data_dir), data)
+    except OSError:
         raise PresetError("save_failed") from None
 
 
@@ -437,6 +464,13 @@ def decode_import(fmt: Any, payload: Any) -> Document:
         raise PresetError("bad_format")
     if fmt == "json":
         data = payload
+        if not isinstance(payload, str):
+            try:
+                size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8", "replace"))
+            except (RecursionError, ValueError, TypeError):
+                raise PresetError("bad_import") from None
+            if size > MAX_IMPORT_BYTES:
+                raise PresetError("import_too_large", limit=MAX_IMPORT_BYTES)
         if isinstance(payload, str):
             if len(payload.encode("utf-8", "replace")) > MAX_IMPORT_BYTES:
                 raise PresetError("import_too_large", limit=MAX_IMPORT_BYTES)
@@ -476,6 +510,9 @@ def import_presets(data_dir: str | os.PathLike[str], fmt: Any, payload: Any) -> 
                 continue
             index = next((i for i, p in enumerate(doc.presets) if identity(p) == key), None)
             if index is not None:
+                old_extra = doc.presets[index].get("extra")
+                if old_extra:  # the import replaces the known fields only
+                    preset["extra"] = {**old_extra, **preset.get("extra", {})}
                 doc.presets[index] = preset
                 updated += 1
             elif len(doc.presets) >= MAX_PRESETS:

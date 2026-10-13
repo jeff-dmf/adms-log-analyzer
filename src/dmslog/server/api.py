@@ -1760,6 +1760,6 @@ class Api:
 
 _PRESET_STATUS = {
     "duplicate_name": 409, "reserved_name": 409, "too_many_presets": 409, "not_found": 404,
-    "builtin": 403, "import_too_large": 413, "file_invalid": 409, "save_failed": 500,
+    "builtin": 403, "import_too_large": 413, "file_invalid": 409, "file_too_large": 409, "save_failed": 500,
 }  # fmt: skip
-_BODY_LIMITS["/api/presets/import"] = presets.MAX_IMPORT_BYTES + 64 * 1024
+_BODY_LIMITS["/api/presets/import"] = presets.MAX_IMPORT_BYTES

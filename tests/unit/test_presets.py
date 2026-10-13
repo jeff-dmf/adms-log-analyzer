@@ -257,3 +257,89 @@ def test_toml_writer_handles_special_characters(tmp_path):
     tree = {"text": {"fts": "tab\there \x7f \u2028 line\nbreak"}}
     presets.create(tmp_path, _make("Odd", tree=tree))
     assert presets.load_user(tmp_path).presets[0]["filter"] == tree
+
+
+# -- review fixes (limits, merge, TOML types, deep nesting) ------------------------------------------
+
+
+def test_save_refuses_a_file_the_next_read_would_reject(tmp_path, monkeypatch):
+    presets.create(tmp_path, _make("A"))
+    before = (tmp_path / presets.FILENAME).read_bytes()
+    monkeypatch.setattr(presets, "MAX_FILE_BYTES", len(before) + 10)
+    with pytest.raises(presets.PresetError) as err:
+        presets.create(tmp_path, _make("B"))
+    assert err.value.code == "file_too_large"
+    assert (tmp_path / presets.FILENAME).read_bytes() == before
+    assert not presets.load_user(tmp_path).invalid
+
+
+def test_max_presets_of_max_size_fit_in_the_file(tmp_path):
+    big = {"or": [{"text": {"fts": "w" * 300}} for _ in range(190)]}
+    assert len(json.dumps(big)) < 64 * 1024
+    doc = presets.Document(
+        presets=[presets.validate_preset(_make(f"p{i}", tree=big)) for i in range(presets.MAX_PRESETS)]
+    )
+    assert len(presets.dump_toml(doc.presets).encode()) <= presets.MAX_FILE_BYTES
+
+
+def test_extra_fields_are_bounded():
+    with pytest.raises(presets.PresetError) as err:
+        presets.validate_preset(_make("x", note="n" * (presets.MAX_EXTRA_BYTES + 1)))
+    assert err.value.code == "extra_too_large"
+
+
+def test_json_object_import_honours_the_size_limit(tmp_path):
+    data = {"schema": 1, "preset": [_make("Big", note="x" * (presets.MAX_IMPORT_BYTES))]}
+    with pytest.raises(presets.PresetError) as err:
+        presets.import_presets(tmp_path, "json", data)
+    assert err.value.code == "import_too_large"
+
+
+def test_import_update_keeps_unknown_fields_of_the_existing_preset(tmp_path):
+    (tmp_path / presets.FILENAME).write_text(
+        'schema = 1\n[[preset]]\nname = "X"\nfilter = { sev = 2 }\nnote = "keep"\nother = 1\n',
+        encoding="utf-8",
+    )
+    report = presets.import_presets(
+        tmp_path, "json", {"preset": [{"name": "x", "filter": {"sev": 1}, "other": 2}]}
+    )
+    assert report["updated"] == 1
+    saved = presets.load_user(tmp_path).presets[0]
+    assert saved["filter"] == {"sev": 1} and saved["extra"] == {"note": "keep", "other": 2}
+
+
+def test_toml_dates_times_inf_nan_in_unknown_fields_roundtrip(tmp_path):
+    (tmp_path / presets.FILENAME).write_text(
+        'schema = 1\nwhen = 2026-10-13T10:00:00Z\n[[preset]]\nname = "X"\nfilter = { sev = 2 }\n'
+        "d = 2026-10-13\nt = 10:30:00\nldt = 2026-10-13T10:00:00\nup = inf\ndown = -inf\nbad = nan\n",
+        encoding="utf-8",
+    )
+    presets.create(tmp_path, _make("Y"))
+    raw = tomllib.loads((tmp_path / presets.FILENAME).read_text(encoding="utf-8"))
+    original = tomllib.loads((tmp_path / presets.FILENAME).read_text(encoding="utf-8"))
+    first = raw["preset"][0]
+    assert str(first["d"]) == "2026-10-13" and str(first["t"]) == "10:30:00"
+    assert first["up"] == float("inf") and first["down"] == float("-inf") and first["bad"] != first["bad"]
+    assert str(raw["when"]) == "2026-10-13 10:00:00+00:00" and original["when"] == raw["when"]
+    assert first["ldt"].tzinfo is None
+
+
+def test_deeply_nested_toml_is_an_invalid_document(tmp_path):
+    deep = "x = " + "[" * 6000 + "]" * 6000 + "\n"
+    (tmp_path / presets.FILENAME).write_text(deep, encoding="utf-8")
+    assert presets.load_user(tmp_path).invalid
+    with pytest.raises(presets.PresetError) as err:
+        presets.create(tmp_path, _make("A"))
+    assert err.value.code == "file_invalid"
+    assert (tmp_path / presets.FILENAME).read_text(encoding="utf-8") == deep
+    with pytest.raises(presets.PresetError) as err:
+        presets.import_presets(tmp_path / "other", "toml", deep)
+    assert err.value.code == "bad_import"
+    nested = {"schema": 1, "preset": [], "x": []}
+    cur = nested["x"]
+    for _ in range(5000):
+        cur.append([])
+        cur = cur[0]
+    with pytest.raises(presets.PresetError) as err:
+        presets.import_presets(tmp_path / "other", "json", nested)
+    assert err.value.code in ("bad_import", "import_too_large")

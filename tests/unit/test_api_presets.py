@@ -75,3 +75,9 @@ def test_export_and_import(client, case):
     assert status == 400 and report["error"] == "bad_import"
     big = json.dumps({"format": "json", "data": "x" * (2 * 1024 * 1024)}).encode()
     assert client.request("POST", "/api/presets/import", raw=big)[0] == 413
+
+
+def test_import_toml_deep_nesting_is_a_controlled_400(client, case):
+    deep = "x = " + "[" * 6000 + "]" * 6000
+    status, body, _ = client.post("/api/presets/import", {"format": "toml", "data": deep})
+    assert status == 400 and body["error"] == "bad_import"
