@@ -7,7 +7,7 @@ import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
 import { Detail } from "./detail.js";
 import {
-  NAV_ERROR_FILTER, TPL_LEAF, andFilters, bookmarkKey, composeFilter, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
+  NAV_ERROR_FILTER, TPL_LEAF, andFilters, bookmarkKey, composeFilter, createLatestRequest, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { registerLeafType } from "./filter-tree-model.js";
@@ -186,7 +186,7 @@ function start() {
   let sourceFamilies = new Map();
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
   let fieldColumns = readList(FIELD_COLUMNS_KEY);
-  let navSeq = 0;
+  const navRequests = createLatestRequest(); // n/N/t/T lookups; a view change makes them stale
   let bookmarksPanel = null;
   let detailBookmark = null;
   let compare = null;
@@ -381,6 +381,7 @@ function start() {
     // The effective view: the ancestors' filters AND the active view's own.
     const filter = viewsStack ? andFilters(viewsStack.parentsFilter(), own) : own;
     currentFilter = filter;
+    navRequests.invalidate();
     const range = timeSpan(sources, ids, formState.from, formState.to);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
@@ -1128,12 +1129,11 @@ function start() {
     event.preventDefault();
     const extra = nav.kind === "error" ? NAV_ERROR_FILTER : { tpl: [row.tpl_id] };
     const request = navRequest(currentFilter, extra, row, nav.dir);
-    navSeq += 1;
-    const seq = navSeq;
+    const { seq, signal } = navRequests.begin();
     const forCase = caseId;
     try {
-      const page = await api.page(forCase, request.filter, request.cursor, request.dir, request.limit);
-      if (seq !== navSeq || forCase !== caseId) {
+      const page = await api.page(forCase, request.filter, request.cursor, request.dir, request.limit, signal);
+      if (!navRequests.isCurrent(seq) || forCase !== caseId) {
         return;
       }
       const found = page.rows && page.rows[0];
@@ -1144,7 +1144,9 @@ function start() {
       showMessage("", false);
       await grid.revealRow(found);
     } catch (err) {
-      showError(err);
+      if (!(err && err.name === "AbortError") && navRequests.isCurrent(seq)) {
+        showError(err);
+      }
     }
   });
 

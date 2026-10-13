@@ -4,6 +4,7 @@
 // the own filter of every view from the root down to the active one. Nothing here reaches the
 // server: the composition is an ordinary {"and": [...]} filter.
 import { andFilters } from "./filters.js";
+import { MAX_DEPTH as MAX_TREE_DEPTH, MAX_LIST, MAX_NODES, MAX_TEXT } from "./filter-tree-model.js";
 import { S, format } from "./strings.js";
 
 export const MAX_DEPTH = 10; // views in the stack, root included
@@ -109,6 +110,57 @@ export function sanitizeName(raw) {
   return String(raw === null || raw === undefined ? "" : raw).replace(/\s+/g, " ").trim().slice(0, MAX_NAME);
 }
 
+// JSON value of a leaf argument: plain, shallow, with bounded lists, strings and keys.
+function boundedValue(v, depth) {
+  if (v === null || typeof v === "boolean") {
+    return true;
+  }
+  if (typeof v === "number") {
+    return Number.isFinite(v);
+  }
+  if (typeof v === "string") {
+    return v.length <= MAX_TEXT;
+  }
+  if (depth >= 4) {
+    return false;
+  }
+  if (Array.isArray(v)) {
+    return v.length <= MAX_LIST && v.every((x) => boundedValue(x, depth + 1));
+  }
+  const keys = isObject(v) ? Object.keys(v) : null;
+  return keys !== null && keys.length <= 8 && keys.every((k) => k.length <= 64 && boundedValue(v[k], depth + 1));
+}
+
+// True when `filter` is a well-formed filter tree within the limits of the filter editor
+// (depth, node count, list and text sizes). Iterative: a hostile nesting cannot overflow the stack.
+export function isValidFilter(filter) {
+  if (filter === null) {
+    return true;
+  }
+  let nodes = 0;
+  const pending = [[filter, 1]];
+  while (pending.length > 0) {
+    const [node, depth] = pending.pop();
+    nodes += 1;
+    if (!isObject(node) || Object.keys(node).length !== 1 || depth > MAX_TREE_DEPTH || nodes > MAX_NODES) {
+      return false;
+    }
+    const [op] = Object.keys(node);
+    const arg = node[op];
+    if (op === "and" || op === "or") {
+      if (!Array.isArray(arg) || arg.length > MAX_NODES) {
+        return false;
+      }
+      arg.forEach((child) => pending.push([child, depth + 1]));
+    } else if (op === "not") {
+      pending.push([arg, depth + 1]);
+    } else if (!boundedValue(arg, 0)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function sanitizeState(raw) {
   const base = emptyState();
   if (!isObject(raw)) {
@@ -124,7 +176,7 @@ function sanitizeState(raw) {
     form: { sev: str(form.sev), level: str(form.level), from: str(form.from), to: str(form.to) },
     formState: { sevMax: num(applied.sevMax), levelMax: num(applied.levelMax), from: num(applied.from), to: num(applied.to) },
     toggles: { hideNoise: toggles.hideNoise === true, unclassified: toggles.unclassified === true },
-    userFilter: isObject(raw.userFilter) ? raw.userFilter : null,
+    userFilter: isObject(raw.userFilter) && isValidFilter(raw.userFilter) ? raw.userFilter : null,
   };
 }
 

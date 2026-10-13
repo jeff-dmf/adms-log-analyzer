@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { composeFilter } from "../../src/dmslog/web/js/filters.js";
 import {
-  MAX_DEPTH, createViewsStack, describeFilter, emptyState, loadStack, saveStack, viewsKey,
+  MAX_DEPTH, createViewsStack, describeFilter, emptyState, isValidFilter, loadStack, saveStack, viewsKey,
 } from "../../src/dmslog/web/js/views-stack-model.js";
 
 const ownFilter = (s) => composeFilter({ sourceIds: [], text: s.searchText, ...s.formState }, s.userFilter, s.toggles);
@@ -139,4 +139,36 @@ test("Alt+Left / Alt+Right only", () => {
   assert.equal(viewsKey({ key: "ArrowLeft" }), null);
   assert.equal(viewsKey({ key: "ArrowLeft", altKey: true, ctrlKey: true }), null);
   assert.equal(viewsKey({ key: "n", altKey: true }), null);
+});
+
+test("malformed stored filters are discarded, valid ones kept", () => {
+  assert.equal(isValidFilter(null), true);
+  assert.equal(isValidFilter({ and: [{ tid: [1] }, { not: { key: { type: "g", eq: "x" } } }] }), true);
+  assert.equal(isValidFilter({ and: "invalid" }), false);
+  assert.equal(isValidFilter({ and: [1] }), false);
+  assert.equal(isValidFilter({ tid: [1], pid: [2] }), false);
+  assert.equal(isValidFilter({ tid: Array.from({ length: 1001 }, (_, k) => k) }), false);
+  assert.equal(isValidFilter({ text: { fts: "x".repeat(513) } }), false);
+  assert.equal(isValidFilter({ and: Array.from({ length: 201 }, () => ({ tid: [1] })) }), false);
+  let deep = { tid: [1] };
+  for (let i = 0; i < 100000; i += 1) {
+    deep = { not: deep };
+  }
+  assert.equal(isValidFilter(deep), false); // no RangeError either
+  let nested = [1];
+  for (let i = 0; i < 50000; i += 1) {
+    nested = [nested];
+  }
+  assert.equal(isValidFilter({ tid: nested }), false);
+
+  const m = make();
+  const bad = (userFilter) => ({
+    v: 1, index: 1, nodes: [{ name: "", state: { ...emptyState(), userFilter } }, { name: "", state: emptyState() }],
+  });
+  assert.deepEqual(m.stack.load(bad({ and: "invalid" })), emptyState());
+  assert.equal(m.stack.parentsFilter(), null); // the invalid filter was dropped
+  m.stack.load(bad(deep));
+  assert.equal(m.stack.crumbs().length, 2); // renders names without throwing
+  m.stack.load(bad({ and: [{ tid: [4] }] }));
+  assert.deepEqual(m.stack.parentsFilter(), { and: [{ tid: [4] }] });
 });
