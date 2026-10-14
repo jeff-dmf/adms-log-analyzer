@@ -35,13 +35,49 @@ def test_web_assets_never_assign_inner_html_or_use_cdn():
         assert not re.search(r"https?://", text), path
 
 
+_JS_COMMENTS = re.compile(r"/\*.*?\*/|(?<![:\\\"'])//[^\n]*", re.S)
+_STYLE_INJECTION = re.compile(
+    r"createElement\(\s*[\"'`](?:link|style)[\"'`]\s*\)"  # any quoting, any spacing
+    r"|setAttribute\(\s*[\"'`]rel[\"'`]"  # rel set through an attribute
+    r"|\.rel\s*=|\brel\s*[:=]\s*[\"'`]stylesheet"  # rel assigned or given in an object literal
+    r"|\blink\[rel|\bdocument\.(?:head|styleSheets)\b|\binsertRule\s*\(|\badoptedStyleSheets\b|ensureStylesheet"
+)
+
+
+def injects_styles(source: str) -> bool:
+    """True when JS source (comments ignored) creates or inserts a stylesheet or style element."""
+    return bool(_STYLE_INJECTION.search(_JS_COMMENTS.sub("", source)))
+
+
 def test_web_modules_never_create_stylesheet_links():
     # Every stylesheet is listed in index.html (no late injection, no style recalculation after first paint).
-    pattern = re.compile(
-        r"createElement\(\s*[\"']link[\"']\s*\)|rel\s*=\s*[\"']stylesheet[\"']|\blink\[rel|ensureStylesheet"
-    )
     for path in sorted((ROOT / "src/dmslog/web/js").glob("*.js")):
-        assert not pattern.search(path.read_text(encoding="utf-8")), path
+        assert not injects_styles(path.read_text(encoding="utf-8")), path
+
+
+def test_stylesheet_injection_detector_catches_real_patterns_and_ignores_comments():
+    positives = [
+        'const l = document.createElement("link"); l.rel = "stylesheet";',
+        "document.createElement( `link` )",
+        'link.setAttribute("rel", "stylesheet")',
+        "document.head.append(link)",
+        "document.head.appendChild(style)",
+        'const s = document.createElement("style");',
+        "sheet.insertRule('a{}')",
+        "document.adoptedStyleSheets = [x]",
+        'const o = { rel: "stylesheet" };',
+        "ensureStylesheet(url)",
+    ]
+    for source in positives:
+        assert injects_styles(source), source
+    negatives = [
+        "// ensureStylesheet is gone, see index.html",
+        "/* document.createElement('link') used to live here */",
+        "const url = 'https://x'; // no document.head here",
+        'element.className = "link"; const rel = relation + 1;',
+    ]
+    for source in negatives:
+        assert not injects_styles(source), source
 
 
 def test_package_never_binds_outside_loopback(monkeypatch):
