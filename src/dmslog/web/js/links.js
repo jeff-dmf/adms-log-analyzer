@@ -6,17 +6,6 @@ import { api } from "./api.js";
 import { PREVIEW_LINES, buildKeyChips, createLinksFlow, revealLabel } from "./links-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/links.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -112,7 +101,6 @@ export class LinksSection {
       host.hidden = true;
       return;
     }
-    ensureStylesheet();
     host.hidden = false;
     if (hasChips) {
       host.appendChild(this.keyChips());

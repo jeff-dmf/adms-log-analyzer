@@ -9,17 +9,7 @@ import {
 import { isTypingTarget } from "./filters.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/highlight.css";
 const MAX_KEY_CHIPS = 8;
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -71,7 +61,6 @@ function labeled(text, control) {
 // getCase, getFilter (the view filter), getSelectedRow, reveal(row), showMessage(text, isError).
 export function mountHighlights(options) {
   const { store, getCase, getFilter, getSelectedRow, reveal, showMessage } = options;
-  ensureStylesheet();
 
   // -- toolbar button and panel
   const toggle = button("hl-button", S.hlButton);

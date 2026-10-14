@@ -5,17 +5,6 @@ import { isTypingTarget } from "./filters.js";
 import { S, format } from "./strings.js";
 import { MAX_NAME, loadStack, saveStack, viewsKey } from "./views-stack-model.js";
 
-const STYLESHEET = "/css/views-stack.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -42,7 +31,6 @@ function button(className, text, title) {
 export function mountViewsStack(options) {
   const { stack, getCase, restoreState, applyView, getSelectedRow, reveal, showMessage } = options;
   const storage = options.storage || null;
-  ensureStylesheet();
 
   const bar = element("div", "vs-bar");
   bar.id = "views-stack-bar";

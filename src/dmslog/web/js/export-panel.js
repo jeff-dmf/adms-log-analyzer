@@ -13,17 +13,7 @@ import {
 } from "./export-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/export.css";
 const SELECTION_LABELS = { filter: "exportSelFilter", record: "exportSelRecord", event: "exportSelEvent" };
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -77,7 +67,6 @@ function download(part) {
 //   onOpenRedaction()   open the redaction settings panel
 // Returns { refresh(), reset() }.
 export function initExportPanel(host, { getContext, onOpenRedaction }) {
-  ensureStylesheet();
   host.textContent = "";
   const head = element("div", "export-head");
   head.appendChild(element("h3", "export-title", S.exportTitle));

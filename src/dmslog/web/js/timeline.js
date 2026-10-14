@@ -26,18 +26,6 @@ const SPLITS = [
   ["source", "timelineSplitSource"],
   ["tpl", "timelineSplitTpl"],
 ];
-const STYLESHEETS = ["/vendor/uplot/uPlot.min.css", "/css/timeline.css"];
-
-function ensureStylesheets() {
-  for (const href of STYLESHEETS) {
-    if (!document.querySelector('link[rel="stylesheet"][href="' + href + '"]')) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = href;
-      document.head.appendChild(link);
-    }
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -57,7 +45,6 @@ function element(tag, className, text) {
 //   getSourceName(id) optional name for the "source" split
 // Returns { refresh(), destroy() }; call refresh() whenever the case or the filter changed.
 export function initTimeline(container, { api, getFilter, onRangeSelected, getSourceName }) {
-  ensureStylesheets();
   const root = element("div", "tl");
   const head = element("div", "tl-head");
   const splitLabel = element("label", "visually-hidden", S.timelineSplitLabel);

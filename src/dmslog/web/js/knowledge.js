@@ -6,16 +6,6 @@ import { buildKnowledgeView, planKnowledge } from "./knowledge-model.js";
 import { S, format } from "./strings.js";
 
 const CACHE_LIMIT = 500;
-const STYLESHEET = "/css/knowledge.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -117,7 +107,6 @@ export class KnowledgeSection {
       host.hidden = true;
       return;
     }
-    ensureStylesheet();
     host.hidden = false;
     const head = element("div", "kn-head");
     head.appendChild(element("h3", "kn-title", S.knowTitle));

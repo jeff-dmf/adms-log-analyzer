@@ -6,17 +6,6 @@ import {
   buildKeyRows, buildOperationRows, countDiverging, createConfigFlow, filterKeyRows, logLevelText, productOptions,
 } from "./config-panel-model.js";
 
-const STYLESHEET = "/css/config-panel.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -53,7 +42,6 @@ let uid = 0;
 //   onOpenEntry(id)     open the entry where the value was logged
 // Returns { refresh() }; call it when the case changed or indexing finished.
 export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
-  ensureStylesheet();
   uid += 1;
   const prefix = "cfg" + uid + "-";
   let products = [];

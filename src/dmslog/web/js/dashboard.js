@@ -12,19 +12,7 @@ import { statusBadge } from "./events-panel.js";
 import { S, format } from "./strings.js";
 import { compactCount, formatBucketStart, readoutAt, stackSeries } from "./timeline-model.js";
 
-const STYLESHEETS = ["/vendor/uplot/uPlot.min.css", "/css/events.css", "/css/dashboard.css"];
 const PLOT_HEIGHT = 160;
-
-function ensureStylesheets() {
-  for (const href of STYLESHEETS) {
-    if (!document.querySelector('link[rel="stylesheet"][href="' + href + '"]')) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = href;
-      document.head.appendChild(link);
-    }
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -62,7 +50,6 @@ let uid = 0;
 //   onShowInGrid(t)   t = { from, to, entryId }: set the grid time filter and select the entry
 // Returns { refresh() }; call it when the case changed or indexing finished.
 export function initDashboard(container, { api, getCase, onShowInGrid }) {
-  ensureStylesheets();
   uid += 1;
   const prefix = "dash" + uid + "-";
 

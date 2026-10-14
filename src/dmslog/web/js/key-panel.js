@@ -5,17 +5,6 @@ import { api } from "./api.js";
 import { buildKeyRow, createKeyFlow, keyHeading } from "./key-panel-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/key-panel.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -32,7 +21,6 @@ function element(tag, className, text) {
 //   onSelect({id, ts}) select the record in the grid
 // Returns { open(type, value), close(), reset() }.
 export function initKeyPanel(host, { getCase, onSelect }) {
-  ensureStylesheet();
   host.textContent = "";
   const head = element("div", "key-head");
   head.appendChild(element("h3", "key-title", S.keyTitle));
