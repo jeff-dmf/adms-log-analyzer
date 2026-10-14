@@ -346,13 +346,31 @@ progress {
   overflow: hidden;
 }
 
+/* Background priority: selection > user highlight (highlight.css) > abnormal row > hover. */
 .grid-row:hover {
   background: var(--row-hover);
 }
 
-.grid-row.selected {
+.grid-row[data-sev="1"],
+.grid-row[data-sev="2"] {
+  background: var(--abn-row);
+}
+
+.grid-row.selected,
+.grid-row.selected:hover {
   background: var(--row-selected);
   box-shadow: inset 3px 0 0 var(--accent); /* the selection never relies on the fill alone */
+}
+
+.grid-viewport:focus-visible .grid-row.selected {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+/* Critical and Error: a non-chromatic cue in the Level column. */
+.grid-row[data-sev="1"] .col-level,
+.grid-row[data-sev="2"] .col-level {
+  font-weight: 600;
 }
 
 .grid-row[data-sev="1"] .col-level,
@@ -535,5 +553,26 @@ mark {
 
   #grid-panel {
     min-height: 70vh;
+  }
+}
+
+/* Windows high contrast: box-shadow and fills are replaced by system colors, so the selection is an outline. */
+@media (forced-colors: active) {
+  .grid-row.selected,
+  .grid-row.selected:hover {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .grid-row.selected .grid-cell {
+    color: HighlightText;
+  }
+
+  [aria-pressed="true"],
+  [aria-expanded="true"] {
+    border: 2px solid ButtonText;
   }
 }
