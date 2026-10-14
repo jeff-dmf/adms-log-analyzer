@@ -84,6 +84,7 @@ html,
 body {
   height: 100%;
   margin: 0;
+  overflow: hidden; /* the page never scrolls: only inner regions do */
 }
 
 body {
@@ -94,7 +95,10 @@ body {
 #app {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  position: relative; /* contains the absolutely positioned helpers (.visually-hidden) */
+  overflow: hidden;
 }
 
 :focus-visible {
@@ -211,7 +215,35 @@ input[type="checkbox"] {
   flex: 1;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 380px;
+  grid-template-rows: minmax(0, 1fr); /* the row never outgrows the viewport */
   min-height: 0;
+}
+
+/* The sources panel scrolls as a whole when its forms outgrow it; the list keeps >= 240px. */
+#sources-panel {
+  position: relative; /* hidden labels scroll with the panel instead of extending the page */
+  overflow: auto;
+}
+
+#sources-panel > * {
+  flex: none;
+}
+
+#sources-panel > #source-list {
+  flex: 1 0 240px;
+}
+
+/* Fixed-size children of the grid panel never shrink; only the grid viewport and the host panels give way. */
+#grid-panel {
+  overflow: auto;
+}
+
+#grid-panel > * {
+  flex: none;
+}
+
+#grid-panel > .grid-viewport {
+  flex: 1 1 0;
 }
 
 .panel {
@@ -222,6 +254,10 @@ input[type="checkbox"] {
   padding: 8px;
   background: var(--panel);
   border-right: 1px solid var(--border);
+}
+
+#detail-panel > * {
+  flex: none;
 }
 
 #detail-panel {
@@ -270,7 +306,7 @@ progress {
   margin: 0;
   padding: 0;
   overflow: auto;
-  flex: 1;
+  flex: 1 0 240px;
 }
 
 .source-list li {
@@ -350,8 +386,8 @@ progress {
 
 .grid-viewport {
   position: relative;
-  flex: 1;
-  min-height: 120px;
+  flex: 1 1 0; /* basis 0: the spacer's full height must not enter the shrink maths */
+  min-height: calc(var(--row-height) * 8 + 20px); /* 8 rows + border + horizontal scrollbar */
   overflow-y: scroll;
   overflow-x: hidden;
   border: 1px solid var(--border);
@@ -473,6 +509,10 @@ mark {
 }
 
 .detail-text {
+  flex: none;
+  min-height: 123px; /* fallback: 6 lines of content plus padding and border, for engines without lh */
+  min-height: calc(6lh + 18px); /* 6 lines of content plus padding and border */
+  line-height: 1.4;
   margin: 8px 0;
   padding: 8px;
   background: var(--panel-alt);
@@ -482,7 +522,8 @@ mark {
   font-size: 12.5px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 55vh;
+  max-height: 45vh;
+  resize: vertical;
   overflow: auto;
 }
 
