@@ -2,7 +2,7 @@
 
 Documento do Opus para a sequência de UI do M9 (`docs/analises-ui/CONSOLIDADO.md`, PRs 10 a 17, UI-18, UI-24, UI-28 e UI-29). Define cinco interfaces pequenas e estáveis: **registro de ações**, **doca inferior**, **barra de status**, **fichas de filtro** e **regiões de teclado (F6) com ordem de tab**. Identificadores, assinaturas e textos do app em inglês; o resto em pt-BR.
 
-Referências de linha: `main` em `2a1d5cb`, caminhos relativos a `src/dmslog/web/`. Os PRs 5 a 9 (tokens, CSS pelo HTML, seleção, linha de 20 px, textos) deslocam linhas e removem as funções `ensureStylesheet`; na dúvida, procurar pelo símbolo citado.
+Referências de linha: `main.js`, `index.html`, `grid.js` e `sources.js` como na `main` em `2a1d5cb` (as UI-05 a UI-09 não mudaram essas linhas); módulos de painel conferidos em `f4ead1d` (já sem as funções `ensureStylesheet`, removidas pela UI-06). Caminhos relativos a `src/dmslog/web/`; na dúvida, procurar pelo símbolo citado.
 
 ## 0. Decisões gerais
 
@@ -163,30 +163,30 @@ Rótulos novos com prefixo `act` em `strings.js` (já nos termos da UI-09: recor
 | `case.addFiles` | `actCaseAddFiles` ("Add files…") | case | | `main.js:567-574` | UI-12 (diálogo na UI-22) |
 | `case.close` | `actCaseClose` ("Close case") | case | | (novo) | UI-12 |
 | `toggle.filterTree` | `actFilterTree` ("Filter tree") | toggle | | `index.html:39`, `main.js:711-740` | UI-12 |
-| `toggle.highlights` | `actHighlights` ("Highlights") | toggle | | `highlight-panel.js:77-80` | UI-12 |
+| `toggle.highlights` | `actHighlights` ("Highlights") | toggle | | `highlight-panel.js:66-69` | UI-12 |
 | `toggle.bookmarks` | `actBookmarks` ("Bookmarks") | toggle | `B` | `index.html:40`, `main.js:970-1001`, `:1033-1036` | UI-12 |
 | `toggle.alerts` | `actAlerts` ("Alerts") | toggle | | `index.html:46`, `main.js:1074-1101` | UI-12 (indicador só com `--watch`) |
-| `analyze.distinct` | `actDistinct` ("Distinct values") | analyze | | `distinct-panel.js:376` | UI-12 |
-| `analyze.groupByType` | `actGroupByType` ("Group by message type") | analyze | | `distinct-panel.js:376` | UI-12 |
-| `analyze.aggregate` | `actAggregate` ("Aggregate") | analyze | | `aggregate-panel.js:581` | UI-12 |
+| `analyze.distinct` | `actDistinct` ("Distinct values") | analyze | | `distinct-panel.js:364` | UI-12 |
+| `analyze.groupByType` | `actGroupByType` ("Group by message type") | analyze | | `distinct-panel.js:364` | UI-12 |
+| `analyze.aggregate` | `actAggregate` ("Aggregate") | analyze | | `aggregate-panel.js:568` | UI-12 |
 | `analyze.operations` | `actOperations` ("Operations") | analyze | | `index.html:42`, `main.js:1103-1142` | UI-12 |
 | `analyze.dashboard` | `actDashboard` ("Adapter dashboard") | analyze | | `index.html:44`, `main.js:1204-1227` | UI-12 |
 | `analyze.payloads` | `actPayloads` ("Payloads") | analyze | | `index.html:43`, `main.js:863-880` | UI-12 |
 | `analyze.unknownTypes` | `actUnknownTypes` ("Unknown message types") | analyze | | `index.html:41`, `main.js:742-767` | UI-12 |
 | `analyze.config` | `actConfig` ("Effective configuration") | analyze | | `index.html:45`, `main.js:769-793` | UI-12 |
 | `export.report` | `actExportReport` ("Export report…") | export | | `index.html:47`, `main.js:1144-1186` | UI-12 (diálogo na UI-23) |
-| `export.copyAs` | `actCopyAs` ("Copy as…") | export | | `copy-export.js:117` | UI-12 (diálogo na UI-23) |
+| `export.copyAs` | `actCopyAs` ("Copy as…") | export | | `copy-export.js:106` | UI-12 (diálogo na UI-23) |
 | `view.goToTime` | `actGoToTime` ("Go to time…") | view | | `index.html:29-33`, `main.js:615-624` | UI-12 |
 | `view.columns` | `actColumns` ("Columns…") | view | | `index.html:34-37`, `main.js:627-698` | UI-12 |
 | `view.followTail` | `actFollowTail` ("Follow tail") | view | | `index.html:38`, `main.js:1057-1072` | UI-12 (`pressed`) |
 | `view.theme` | `actTheme` ("Theme", `children` System/Light/Dark) | view | | `index.html:48`, `main.js:153-161` | UI-12 |
-| `views.back` / `views.forward` | `actViewBack` / `actViewForward` | views | `Alt+ArrowLeft` / `Alt+ArrowRight` | `views-stack.js:215-226` | UI-12 (despacho na UI-28) |
-| `views.narrow` | `actNarrow` ("Narrow this view") | views | | `views-stack.js:139-157` | UI-12 |
-| `views.rename` | `actRenameView` ("Rename view…") | views | | `views-stack.js:192-198` | UI-12 |
-| `views.showInParent` / `views.showInRoot` | `actShowInParent` / `actShowInRoot` | views | | `views-stack.js:160-187` | UI-12 |
+| `views.back` / `views.forward` | `actViewBack` / `actViewForward` | views | `Alt+ArrowLeft` / `Alt+ArrowRight` | `views-stack.js:203-214` | UI-12 (despacho na UI-28) |
+| `views.narrow` | `actNarrow` ("Narrow this view") | views | | `views-stack.js:127-145` | UI-12 |
+| `views.rename` | `actRenameView` ("Rename view…") | views | | `views-stack.js:180-186` | UI-12 |
+| `views.showInParent` / `views.showInRoot` | `actShowInParent` / `actShowInRoot` | views | | `views-stack.js:148-175` | UI-12 |
 | `navigate.nextError` / `prevError` | `actNextError` / `actPrevError` | navigate | `n` / `N` | `main.js:1243-1280` | UI-12 (despacho na UI-28) |
 | `navigate.nextType` / `prevType` | `actNextType` / `actPrevType` | navigate | `t` / `T` | `main.js:1243-1280` | UI-12 (despacho na UI-28) |
-| `navigate.nextHighlight` / `prevHighlight` | `actNextHighlight` / `actPrevHighlight` | navigate | `]` / `[` | `highlight-panel.js:331-366` | UI-12 (despacho na UI-28) |
+| `navigate.nextHighlight` / `prevHighlight` | `actNextHighlight` / `actPrevHighlight` | navigate | `]` / `[` | `highlight-panel.js:320-355` | UI-12 (despacho na UI-28) |
 | `navigate.focusSearch` | `actFocusSearch` ("Go to search") | navigate | `/` | (novo) | UI-28 |
 | `navigate.nextRegion` / `prevRegion` | `actNextRegion` / `actPrevRegion` | navigate | `F6` / `Shift+F6` | (novo) | UI-28 |
 | `record.bookmark` | `actBookmark` ("Bookmark") | record | `b` | `main.js:1044-1049` | UI-12 (`pressed`) |
@@ -194,8 +194,8 @@ Rótulos novos com prefixo `act` em `strings.js` (já nos termos da UI-09: recor
 | `record.copy` | `actCopyRecord` ("Copy text") | record | | `index.html:142` | UI-20 |
 | `record.context` | `actContext` ("Context", `children` Same source/Same thread/All sources) | record | | `index.html:139-141` | UI-20 |
 | `record.filterType` | `actOnlyThisType` ("Only this message type") | record | | `main.js:343` (`onTemplate`) | UI-20 |
-| `record.highlightType` | `actHighlightType` ("Highlight this message type") | record | | `highlight-panel.js:318-327` | UI-20 |
-| `record.sameKey` | `actSameKey` ("Same key", `children` = chaves do registro) | record | | `links.js:83`, `main.js:839` | UI-24 |
+| `record.highlightType` | `actHighlightType` ("Highlight this message type") | record | | `highlight-panel.js:307-316` | UI-20 |
+| `record.sameKey` | `actSameKey` ("Same key", `children` = chaves do registro) | record | | `links.js:72`, `main.js:839` | UI-24 |
 | `record.sideBySide` | `actSideBySide` ("Normal and sensitive side by side") | record | | `main.js:838` | UI-24 |
 | `record.onlySource` | `actOnlySource` ("Only this source") | record | | (novo) | UI-29 |
 | `record.hideType` | `actHideType` ("Hide this message type") | record | | (novo) | UI-29 |
@@ -203,7 +203,7 @@ Rótulos novos com prefixo `act` em `strings.js` (já nos termos da UI-09: recor
 | `help.shortcuts` | `actShortcuts` ("Keyboard shortcuts") | help | `?` | `index.html:132` | UI-13 (lista simples), UI-28 (diálogo) |
 | `help.palette` | `actPalette` ("Command palette…") | help | `Ctrl+k` | (novo) | UI-29 |
 
-Regra de despacho na transição: **o campo `shortcut` é só declarativo até a UI-28.** Os ouvintes antigos (`main.js:1028`, `main.js:1244`, `highlight-panel.js:332`, `views-stack.js:215`) continuam funcionando até a UI-28 trocá-los, no mesmo PR, pelo despachante único. Nunca dois despachantes para a mesma tecla.
+Regra de despacho na transição: **o campo `shortcut` é só declarativo até a UI-28.** Os ouvintes antigos (`main.js:1028`, `main.js:1244`, `highlight-panel.js:321`, `views-stack.js:203`) continuam funcionando até a UI-28 trocá-los, no mesmo PR, pelo despachante único. Nunca dois despachantes para a mesma tecla.
 
 ## 2. Doca inferior
 
@@ -221,7 +221,9 @@ Regra de despacho na transição: **o campo `shortcut` é só declarativo até a
  */
 
 /**
- * @typedef {Object} PanelInstance       // o que mount devolve; tudo opcional
+ * @typedef {Object} PanelInstance       // o que mount devolve; tudo opcional, exceto reset (ver abaixo)
+ * @property {() => void} [reset]        // OBRIGATÓRIO se o painel guarda dado do caso: limpa conteúdo e cancela
+ *                                       // pedidos, síncrono e sem pedir nada ao servidor (dock.caseChanged, 2.4)
  * @property {() => void|Promise<void>} [refresh]        // 1ª abertura, reabertura, ativação com dado velho
  * @property {(reason: string) => void} [update]         // aviso de listens com a aba ativa; padrão = refresh()
  * @property {(args: any) => void|Promise<void>} [show]  // abertura com argumentos (Compare, Same key, Operation)
@@ -248,7 +250,7 @@ export function createDock({ root, before = null, storage, onFocusOut }) -> Dock
 //   storage: localStorage ou null; onFocusOut(): devolve o foco ao grid
 // dock.bind(ctx)                                                                    // etapa 2: bind(ctx)
 //   uma vez, logo depois de criar o AppContext; register() pode vir antes ou depois;
-//   open()/notify() antes de bind() lançam Error (erro de programação, não de uso)
+//   open()/notify()/caseChanged() antes de bind() lançam Error (erro de programação, não de uso)
 
 Dock = {
   bind(ctx: AppContext): void          // etapa 2; chamar duas vezes lança
@@ -264,7 +266,8 @@ Dock = {
   maximize(on?: boolean): void         // sem argumento alterna
   isOpen(id): boolean
   active(): string | null
-  notify(reason: DockReason): void     // ver 2.4
+  caseChanged(): void                  // fase 1 da troca de caso: fecha closeOnCase e reset() em TODO painel montado (2.4)
+  notify(reason: DockReason): void     // atualização visual por listens (2.4); "case" = fase 2 da troca de caso
   on(event: "open"|"close"|"activate"|"resize", fn): () => void
       // open/close/activate: {id}; resize: {height, fraction, maximized}
 }
@@ -301,24 +304,62 @@ export function tabsAfterClose(tabs, active, id) -> { tabs, active }  // ativa a
 - Abas: `role="tablist"` com roving tabindex (só a ativa com `tabindex=0`; setas mudam, Home/End); o `×` de cada aba é botão irmão com `tabindex=-1` e `aria-label` = `format(S.dockCloseTab, {title})` (botão dentro de `role="tab"` é interativo aninhado); Delete com foco na aba fecha. À direita: Maximize/Restore (`aria-pressed`) e Close all.
 - Esc com foco dentro do painel fecha a aba e devolve o foco, a menos que o evento já tenha sido tratado (`defaultPrevented`) por um menu, popover ou campo do painel.
 
-### 2.4 Avisos (`notify`)
+### 2.4 Troca de caso e avisos (`caseChanged`, `notify`)
 
-`notify(reason)` roda em duas passadas, nesta ordem:
+A troca de caso tem duas fases, chamadas por `main.js` em pontos diferentes de `onCase` (ordem em 2.4.2):
 
-1. **Só com `reason === "case"`: fechamento, independente de `listens`.** Todo painel montado com `closeOnCase: true` e aba aberta é fechado (`close(id)`, que chama `closed()`). Aba já fechada: nada (o `closed()` já rodou ao fechar). Painéis fechados nesta passada não recebem a passada 2.
-2. **Aviso, só para painéis montados cujo `listens` inclui o motivo:**
+1. **`dock.caseChanged()`: invalidação imediata, de todo painel montado.** Para cada painel já montado, esteja a aba ativa, inativa ou fechada:
+   - se `closeOnCase` e a aba está aberta: `close(id)` (que chama `closed()`);
+   - em seguida, **sempre**: `instance.reset()`, que limpa o conteúdo mostrado e cancela pedidos, sem pedir nada ao servidor.
+
+   Nada do caso anterior sobrevive num painel montado, nem num fechado que será reaberto depois. `reset` é obrigatório em todo painel que guarda dado do caso (tabela abaixo); painel sem `reset` é um defeito de contrato (teste de fluxo da UI-12).
+2. **`dock.notify("case")`: só a atualização visual**, igual aos outros motivos.
+
+`notify(reason)`, para qualquer motivo, avisa só os painéis montados cujo `listens` inclui o motivo; nunca fecha nem limpa nada:
 
 | Situação da aba | Ação |
 |---|---|
 | aberta e ativa | `update(reason)` (padrão `refresh()`) |
 | aberta e inativa | marca "velha"; ao ativar, `refresh()` uma vez |
-| fechada | nada (reabrir sempre chama `refresh()`) |
+| fechada | nada (reabrir sempre chama `refresh()`; o conteúdo já foi limpo pelo `reset` da fase 1) |
 
-`closeOnCase` e `listens: ["case"]` são independentes: `payloads`, `compare`, `sideBySide` e `sameKey` fecham na troca de caso sem declarar `"case"`.
+`closeOnCase`, `reset` e `listens: ["case"]` são independentes: `payloads`, `compare`, `sideBySide` e `sameKey` fecham e são limpos na fase 1 sem declarar `"case"`; os painéis sem `"case"` em `listens` voltam a ter dado pelos seus próprios motivos (`view`, `derived`) ou ao reabrir.
 
-#### 2.4.1 Inventário das chamadas de `main.js`: o que vira `notify` e o que fica
+Cenário que o teste de fluxo cobre para cada painel com estado: gerar conteúdo no caso A, fechar a aba (ou deixá-la inativa), trocar para B e reabrir/ativar: nada de A aparece, nem durante o pedido.
 
-`dock.notify` só substitui chamadas a **painéis da doca**. Tudo o que não é painel da doca continua chamado diretamente por `main.js`, nos mesmos ganchos, e continua executando na troca de caso e depois da indexação. A ordem dentro de cada gancho é a de hoje; o `dock.notify(...)` entra no lugar da 1ª chamada de painel substituída.
+#### 2.4.1 Invalidação na troca de caso, por painel
+
+| Painel | Estado do caso que guarda | `reset()` | Atualização visual depois |
+|---|---|---|---|
+| `filterTree` | árvore, filtros salvos do caso | não usa: `main.js` invalida direto (`filterTree.setCase`/`setFilter(null)`, `:455-458`), montado em qualquer estado | já feita pelo próprio `setCase` |
+| `highlights` | lista de regras e status | **novo**: limpa lista e status | `storeChanged` quando a loja carrega o caso novo |
+| `bookmarks` | lista de bookmarks | existente: `bookmarksPanel.reset()` (`bookmarks-panel.js:449`, `reset: close`) | `listens` `case`/`indexed` |
+| `distinct` / `groupByType` | tabela de valores | existente (`distinct-panel.js:340`) só cancela; **UI-12 faz limpar também a tabela** | `view` (o `applyView` que segue a troca de caso) |
+| `aggregate` | resultado e gráfico | **novo**: cancela e limpa o resultado (hoje `close()` só cancela) | `view` (marca velho; o usuário roda de novo) |
+| `operations` | lista de eventos e evento aberto | **novo**: limpa lista e detalhe | `derived` (`refreshDerived` no fim de `onCase`) |
+| `dashboard` | gráficos e tabelas | **novo**: limpa | `derived` |
+| `payloads` | lista de payloads | existente: `close()` (`payload-list.js:203`); `closeOnCase` | reabrir |
+| `unknownTypes` / `config` | tabelas | **novo**: limpa (hoje só há `refresh()`, que mostra A até a resposta) | `listens` `case`/`indexed` |
+| `alerts` | lista e regras | não usa: o painel desenha a partir do `alertsFlow`, que `main.js` zera com `alertsFlow.onCase()` (`:492-494`) e repinta pelo `onChange` | idem |
+| `export` | prévia, partes e downloads | existente: `exportPanel.reset()` (`export-panel.js:270-272`) | `listens` `case` (`refresh()` atualiza as opções de seleção) |
+| `compare` / `sideBySide` / `sameKey` | registros comparados ou listados | existente: `reset()` = `flow.close()`; `closeOnCase` | reabrir com `show(args)` |
+
+"Novo" = método a implementar no módulo no PR em que ele vira painel da doca (UI-12 para os que a UI-12 converte; UI-15 para os demais).
+
+#### 2.4.2 Inventário das chamadas de `main.js`: o que vira `notify` e o que fica
+
+`dock.caseChanged` e `dock.notify` só substituem chamadas a **painéis da doca**. Tudo o que não é painel da doca continua chamado diretamente por `main.js`, nos mesmos ganchos, e continua executando na troca de caso e depois da indexação. Em `refreshDerived`, `applyView` e `onDone` a ordem é a de hoje (o `notify` entra no lugar das chamadas substituídas, que já são contíguas). Em `onCase` a ordem nova é explícita:
+
+| Passo de `onCase` | O quê | Linhas de hoje |
+|---|---|---|
+| 1 | `caseId`, `applyPending`, `collectionsPanel.setCase()`, `add-files-host`, `detail.clear()`, `bookmarkStore.reset()`, `compareSelection.reset()` | `:439-447` (ficam) |
+| 2 | **`dock.caseChanged()`** | no lugar de `:448-453`; absorve também `:467-472` e `:476-481` |
+| 3 | `userFilter = null`, `filterTree.setCase/setFilter`, `viewsUi.onCase` + `restoreLive`, `loadTemplates(id)`, `knowledge.reset()` | `:454-466` (ficam) |
+| 4 | `copyExport.reset()` | `:473-475` (fica) |
+| 5 | **`dock.notify("case")`** | no lugar de `:482-487`: mesma posição de hoje em relação a `restoreLive` e `knowledge.reset()` |
+| 6 | `refreshDerived()`, `followTail.onCase()`, `alertsFlow.onCase()` | `:488-494` (ficam) |
+
+Única mudança de ordem: as limpezas de `keyPanel`, `exportPanel`, `sideBySide` e `payloadList` (`:467-481`) sobem para o passo 2, antes do passo 3. São limpezas síncronas, sem pedido, e nada do passo 3 lê esses painéis. Os `refresh()` de `unknownPanel`/`configPanel` continuam depois de `restoreLive` e `knowledge.reset()`.
 
 | Gancho (`main.js`) | Chamada hoje | Depois |
 |---|---|---|
@@ -331,15 +372,15 @@ export function tabsAfterClose(tabs, active, id) -> { tabs, active }  // ativa a
 | | `aggregateUi.viewChanged()` (`:418-420`) | idem (`aggregate`) |
 | | `viewsUi.changed()` (`:421-423`) | **fica** (trilha; na UI-18 também `paintStrip()`) |
 | `onCase` (`:438-495`) | `collectionsPanel.setCase()`, `add-files-host`, `detail.clear()`, `bookmarkStore.reset()`, `compareSelection.reset()` (`:440-447`) | **ficam** |
-| | `bookmarksPanel.reset()` (`:448-450`) | `dock.notify("case")` (`bookmarks`: `update("case")`→`reset()`) |
-| | `compare.reset()` (`:451-453`) | idem (`compare`, `closeOnCase`) |
+| | `bookmarksPanel.reset()` (`:448-450`) | `dock.caseChanged()` (passo 2; `reset()` de todo montado) |
+| | `compare.reset()` (`:451-453`) | idem (`compare`: fecha por `closeOnCase` e `reset()`) |
 | | `userFilter = null`, `filterTree.setCase/setFilter` (`:454-458`) | **ficam** (`filterTree` é guardado por `main`) |
 | | `viewsUi.onCase` + `restoreLive` (`:459-464`) | **fica** |
 | | `loadTemplates(id)`, `knowledge.reset()` (`:465-466`) | **ficam** |
-| | `keyPanel.reset()` (`:467-469`), `sideBySide.reset()` (`:476-478`), `payloadList.close()` (`:479-481`) | `dock.notify("case")` (`closeOnCase`) |
-| | `exportPanel.reset()` (`:470-472`) | idem (`export`: `update("case")`→`reset()`) |
+| | `keyPanel.reset()` (`:467-469`), `sideBySide.reset()` (`:476-478`), `payloadList.close()` (`:479-481`) | `dock.caseChanged()` (passo 2: `closeOnCase` + `reset()`) |
+| | `exportPanel.reset()` (`:470-472`) | `dock.caseChanged()` (passo 2: `reset()` mesmo com a aba fechada ou inativa) |
 | | `copyExport.reset()` (`:473-475`) | **fica** (não é painel da doca; popover e depois diálogo) |
-| | `unknownPanel.refresh()`, `configPanel.refresh()` (`:482-487`) | `dock.notify("case")` (`listens` com `"case"`) |
+| | `unknownPanel.refresh()`, `configPanel.refresh()` (`:482-487`) | `dock.notify("case")` (passo 5; `listens` com `"case"`) |
 | | `refreshDerived()` (`:488`) | **fica** (que chama `dock.notify("derived")` por dentro) |
 | | `followTail.onCase()` (`:489-491`) | **fica** |
 | | `alertsUi.onCase()` (`:492-494`) | **fica**, como `alertsFlow.onCase()` (SSE e banner, `startAlerts`) |
@@ -370,20 +411,20 @@ export function topAfterResize({ selected, top, visibleBefore, visibleAfter, len
 | Painel (`id`) | Módulo e montagem nova | `listens` / outros | Hoje (inserção) | Mudança no módulo |
 |---|---|---|---|---|
 | `filterTree` | `filter-tree.js:244` `initFilterTree(host, …)` (sem mudança) | `[]`; `main` guarda `filterTree` | `index.html:90`, `main.js:711-740` | nenhuma |
-| `highlights` | `highlight-panel.js`: `mountHighlightPanel(host, opts)` | `[]`; `main` chama `storeChanged` | botão `:80`, painel `:138`, ajuda `:270` | UI-12 separa `mountHighlights` (`:72`) em painel, seção do detalhe (`:274-278`, fica) e navegação `[`/`]` (`:331-366`, sai na UI-28) |
-| `bookmarks` | `bookmarks-panel.js:174` `initBookmarksPanel(host, {…, onRequestClose})` | `["case","indexed"]`; `update("case")`→`reset()`; `refresh`→`open()`, `closed`→`close()` | `index.html:100` | UI-15: `:287` (`host.hidden = true` no estado `idle`) passa a `onRequestClose()` |
-| `distinct` / `groupByType` | `distinct-panel.js`: `mountDistinctPanel(host, opts)` e `mountGroupPanel(host, opts)` | `["view"]`; `closed`→`reset()` | botões e hosts `:376-377` | UI-12 troca `mountDistinct` (`:365-407`) pelas duas montagens; `initDistinct`/`initGroup` não mudam |
-| `aggregate` | `aggregate-panel.js`: `mountAggregatePanel(host, opts)` | `["view"]`; `update("view")`→`markStale`; `refresh`→`open()`; `closed`→`close()` | `:581-582` | UI-12 troca `mountAggregate` (`:571-601`); `initPanel` não muda |
-| `operations` | `events-panel.js:57` `initEventsPanel(host, …)` (sem mudança) | `["derived"]`; `show({eventId})`→`open(eventId)` | `index.html:93`, `main.js:1103-1142` | nenhuma; `openOperation` (`main.js:1130`) vira `ctx.dock.open("operations", {eventId})` |
-| `dashboard` | `dashboard.js:64` `initDashboard(host, …)` | `["derived"]` | `index.html:95`, `main.js:1204-1227` | nenhuma |
-| `payloads` | `payload-list.js:39` `initPayloadList(host, {…, onRequestClose})` | `[]`; `closeOnCase` | `index.html:94`, `main.js:863-880` | UI-15: `:209-213` (`host.hidden` + evento `payload-list-closed`) vira `onRequestClose()`; o ouvinte `main.js:867` sai |
-| `unknownTypes` | `unknown-panel.js:57` `initUnknownPanel(host, …)` | `["case","indexed"]` | `index.html:91`, `main.js:742-767` | nenhuma |
-| `config` | `config-panel.js:55` `initConfigPanel(host, …)` | `["case","indexed"]` | `index.html:92`, `main.js:769-793` | nenhuma |
-| `alerts` | `alerts-panel.js`: `startAlerts({slot, …}) -> flow` (abertura) e `mountAlertsPanel(host, {flow, …})` (doca) | `[]` | `index.html:102`, `:52`, `main.js:1074-1101` | UI-12 separa `initAlerts` (`:99-425`): banner e SSE ficam na abertura; painel vai para a doca; `:394-411` (`host.hidden`, Esc próprio) saem na UI-15 |
-| `export` | `export-panel.js:79` + `redaction-panel.js:42`, num host com dois filhos | `["case"]`; `update("case")`→`reset()` | `index.html:98-99`, `main.js:1144-1186` | UI-15: `redaction-panel.js:165` vira `onRequestClose`; vira diálogo na UI-23 e sai da doca |
-| `compare` | `compare.js:32` `initCompare(host, {…, onRequestClose})` | `closeOnCase`; `show({a, b})` | `index.html:101`, `main.js:1021-1025` | UI-15: `:110-116` |
-| `sideBySide` | `side-by-side.js:32` `initSideBySide(host, {…, onRequestClose})` | `closeOnCase`; `show({entryId})` | `index.html:96`, `main.js:833` | UI-15: `:76-82` |
-| `sameKey` | `key-panel.js:34` `initKeyPanel(host, {…, onRequestClose})` | `closeOnCase`; `show({type, value})` | `index.html:97`, `main.js:834` | UI-15: `:103-110`; colunas e "Show in grid" na UI-24 |
+| `highlights` | `highlight-panel.js`: `mountHighlightPanel(host, opts)` | `[]`; `reset` novo; `main` chama `storeChanged` | botão `:69`, painel `:127`, ajuda `:259` | UI-12 separa `mountHighlights` (`:62`) em painel, seção do detalhe (`:263-267`, fica) e navegação `[`/`]` (`:320-355`, sai na UI-28) |
+| `bookmarks` | `bookmarks-panel.js:162` `initBookmarksPanel(host, {…, onRequestClose})` | `["case","indexed"]`; `reset`→`reset()`; `refresh`→`open()`, `closed`→`close()` | `index.html:100` | UI-15: `:274` (`host.hidden = true` no estado `idle`) passa a `onRequestClose()` |
+| `distinct` / `groupByType` | `distinct-panel.js`: `mountDistinctPanel(host, opts)` e `mountGroupPanel(host, opts)` | `["view"]`; `reset`/`closed`→`reset()` (passa a limpar a tabela) | botões e hosts `:364-365` | UI-12 troca `mountDistinct` (`:354-395`) pelas duas montagens; `initDistinct`/`initGroup` não mudam |
+| `aggregate` | `aggregate-panel.js`: `mountAggregatePanel(host, opts)` | `["view"]`; `reset` novo; `update("view")`→`markStale`; `refresh`→`open()`; `closed`→`close()` | `:568-569` | UI-12 troca `mountAggregate` (`:559-589`); `initPanel` não muda |
+| `operations` | `events-panel.js:46` `initEventsPanel(host, …)` (+ `reset` novo) | `["derived"]`; `show({eventId})`→`open(eventId)` | `index.html:93`, `main.js:1103-1142` | `reset` novo (UI-15); `openOperation` (`main.js:1130`) vira `ctx.dock.open("operations", {eventId})` |
+| `dashboard` | `dashboard.js:52` `initDashboard(host, …)` | `["derived"]`; `reset` novo | `index.html:95`, `main.js:1204-1227` | `reset` novo (UI-15) |
+| `payloads` | `payload-list.js:28` `initPayloadList(host, {…, onRequestClose})` | `[]`; `closeOnCase`; `reset`→`close()` | `index.html:94`, `main.js:863-880` | UI-15: `:197-201` (`host.hidden` + evento `payload-list-closed`) vira `onRequestClose()`; o ouvinte `main.js:867` sai |
+| `unknownTypes` | `unknown-panel.js:47` `initUnknownPanel(host, …)` | `["case","indexed"]`; `reset` novo | `index.html:91`, `main.js:742-767` | `reset` novo (UI-15) |
+| `config` | `config-panel.js:44` `initConfigPanel(host, …)` | `["case","indexed"]`; `reset` novo | `index.html:92`, `main.js:769-793` | `reset` novo (UI-15) |
+| `alerts` | `alerts-panel.js`: `startAlerts({slot, …}) -> flow` (abertura) e `mountAlertsPanel(host, {flow, …})` (doca) | `[]`; sem `reset` (desenha do `alertsFlow`) | `index.html:102`, `:52`, `main.js:1074-1101` | UI-12 separa `initAlerts` (`:89-414`): banner e SSE ficam na abertura; painel vai para a doca; `:383-400` (`host.hidden`, Esc próprio) saem na UI-15 |
+| `export` | `export-panel.js:69` + `redaction-panel.js:31`, num host com dois filhos | `["case"]`; `reset`→`reset()` (fase 1, mesmo fechada) | `index.html:98-99`, `main.js:1144-1186` | UI-15: `redaction-panel.js:153` vira `onRequestClose`; vira diálogo na UI-23 e sai da doca |
+| `compare` | `compare.js:22` `initCompare(host, {…, onRequestClose})` | `closeOnCase`; `reset`→`reset()`; `show({a, b})` | `index.html:101`, `main.js:1021-1025` | UI-15: `:99-105` |
+| `sideBySide` | `side-by-side.js:21` `initSideBySide(host, {…, onRequestClose})` | `closeOnCase`; `reset`→`reset()`; `show({entryId})` | `index.html:96`, `main.js:833` | UI-15: `:64-70` |
+| `sameKey` | `key-panel.js:23` `initKeyPanel(host, {…, onRequestClose})` | `closeOnCase`; `reset`→`reset()`; `show({type, value})` | `index.html:97`, `main.js:834` | UI-15: `:91-98`; colunas e "Show in grid" na UI-24 |
 
 Fora da doca: `copy-export.js` (popover ancorado no menu Export a partir da UI-12, diálogo na UI-23; exporta `open()`/`close()`), o banner de relógio (`clock-banner.js`, vai para a barra de status), a seção de payload do detalhe (`payload.js`), conhecimento, links e bookmark do detalhe (UI-20).
 
@@ -434,7 +475,7 @@ Uma só região viva de mensagem (`role="status"`, `aria-live="polite"`) e um an
 | Barra de progresso da lateral (`index.html:76-79`, `sources.js:389-431`) | `SourcesPanel` ganha `handlers.onProgress(value|null)` → `ctx.status.progress` |
 | `#clock-banner` (`index.html:88`, `main.js:1229-1241`) | `initClockBanner(ctx.status.slot("clock"), …)` (sem mudança no módulo além do contêiner) |
 | `#alert-banner` (`index.html:52`) | `startAlerts({slot: ctx.status.slot("alerts"), …})` |
-| `.shortcuts-help` (`index.html:132`, `highlight-panel.js:268-271`, `views-stack.js:75-78`) | sai; botão `?` da barra chama `help.shortcuts` (lista simples gerada do registro; diálogo na UI-28) |
+| `.shortcuts-help` (`index.html:132`, `highlight-panel.js:257-260`, `views-stack.js:63-66`) | sai; botão `?` da barra chama `help.shortcuts` (lista simples gerada do registro; diálogo na UI-28) |
 | Erros de formulário longe do campo (`sources.js:366`, `case-files.js:208-232`, `main.js:597`, `:619`) | junto do campo: `setFieldError(input, text|null)` em `js/field-error.js` (UI-13; `aria-invalid`, `.ui-field-error` da UI-10, `aria-describedby`) |
 
 ### 3.4 Erros
@@ -608,8 +649,10 @@ dock.bind(ctx);                                                  // etapa 2: bin
 registerAppPanels(dock, deps);
 registerAppActions(actions, deps);
 mountToolbar(byId("toolbar"), { actions, dock, ctx });
-// substituir SÓ as chamadas marcadas como dock.notify no inventário 2.4.1; as marcadas "fica"
-// (clockBanner, copyExport, followTail, alertsFlow, filterTree, viewsUi, timeline...) continuam
+// substituir SÓ as chamadas marcadas como dock.caseChanged/dock.notify no inventário 2.4.2; as marcadas
+// "fica" (clockBanner, copyExport, followTail, alertsFlow, filterTree, viewsUi, timeline...) continuam.
+// onCase na ordem nova de 2.4.2: ...:447; dock.caseChanged(); :454-466; copyExport.reset();
+//   dock.notify("case"); refreshDerived(); followTail.onCase(); alertsFlow.onCase();
 ```
 
 ```js
@@ -725,7 +768,7 @@ actions.register({ id: "record.sameKey", labelKey: "actSameKey", group: "record"
 
 - `views-stack-model.js` ganha `openChild(state)`: com filtro próprio na visão ativa, empilha uma filha com `state`; sem filtro próprio, aplica `state` na visão ativa (nível vazio não vale a pena). Retorna `{ ok, reason, state, pushed }`; o limite `maxDepth` vale igual.
 - `main.js`: `deps.openChildView` faz `openChild` → `restoreLive` → `applyView` → `viewsUi.changed()`.
-- `links.js:83`: `onSameKey` passa a `ctx.actions.invoke("record.sameKey", ctx, {type, value})`.
+- `links.js:72`: `onSameKey` passa a `ctx.actions.invoke("record.sameKey", ctx, {type, value})`.
 
 ### UI-28 (teclado)
 
@@ -821,7 +864,7 @@ Nenhum módulo novo declara cor ou tamanho literal: tudo por token.
 Desenho completo em `docs/notas/ui-contratos.md`. Resumo do que é contrato:
 
 - **Registro de ações** (`web/js/actions.js`, puro): `{ id, labelKey, group, shortcut, enabled(ctx), run(ctx), load?() }`, mais `scope`, `disabledKey`, `pressed` e `children` opcionais. Alimenta a barra (menus Case, Analyze, Export, View e as alternâncias), o diálogo `?`, o menu de contexto da linha e a paleta (`Ctrl+K`). Atalho em KeySpec canônica; atalhos de uma letra obedecem a `dmslog.singleKeys` e nunca disparam em campo de texto; atalho repetido no mesmo escopo é erro de registro. `load()` é o gancho do carregamento sob demanda: chamado no hover/foco do item e antes de `run`; falha deixa o item desabilitado com motivo.
-- **Doca inferior** (`web/js/dock.js`; regras em `dock-model.js`, puro): inicialização em duas etapas, idêntica na doca provisória da UI-12 (`dock-legacy.js`) e na definitiva da UI-15: `createDock({ root, before?, storage, onFocusOut })` e depois `dock.bind(ctx)`. API: `register({ id, titleKey, mount(host, ctx), listens, closeOnCase, needsCase })`, `open(id, args)`, `close`, `closeAll`, `maximize`, `isOpen`, `active`, `notify(case|view|indexed|derived)`, eventos `open`/`close`/`activate`/`resize`. `notify("case")` primeiro fecha todo painel aberto com `closeOnCase` (independente de `listens`) e depois avisa os que têm o motivo em `listens`. `notify` substitui só as chamadas a painéis da doca; o que não é painel (aviso de relógio, Copy as, Follow tail, alertas, árvore de filtros, trilha, timeline) continua chamado por `main.js` nos mesmos ganchos (inventário em `docs/notas/ui-contratos.md`, 2.4.1). Doca ≥ 160 px; grid ≥ 8 linhas + cabeçalho; janela < 640 px abre maximizada; altura inicial `clamp(160 px, conteúdo, 40%)`; altura lembrada em `localStorage` `dmslog.dockHeight` (fração). O grid mantém a linha selecionada visível em qualquer redimensionamento pelo próprio `ResizeObserver` (`Grid.ensureSelectedVisible()`, `topAfterResize` em `grid-model.js`), nunca durante a rolagem e nunca com altura 0.
+- **Doca inferior** (`web/js/dock.js`; regras em `dock-model.js`, puro): inicialização em duas etapas, idêntica na doca provisória da UI-12 (`dock-legacy.js`) e na definitiva da UI-15: `createDock({ root, before?, storage, onFocusOut })` e depois `dock.bind(ctx)`. API: `register({ id, titleKey, mount(host, ctx), listens, closeOnCase, needsCase })`, `open(id, args)`, `close`, `closeAll`, `maximize`, `isOpen`, `active`, `caseChanged()`, `notify(case|view|indexed|derived)`, eventos `open`/`close`/`activate`/`resize`. A troca de caso tem duas fases: `dock.caseChanged()` invalida na hora todo painel já montado (aberto, inativo ou fechado): fecha os `closeOnCase` e chama `reset()`, obrigatório em painel que guarda dado do caso; depois, `dock.notify("case")` faz só a atualização visual, como os outros motivos (aba ativa atualiza, inativa marca velha, fechada atualiza ao reabrir). `notify` substitui só as chamadas a painéis da doca; o que não é painel (aviso de relógio, Copy as, Follow tail, alertas, árvore de filtros, trilha, timeline) continua chamado por `main.js` nos mesmos ganchos (inventário em `docs/notas/ui-contratos.md`, 2.4.1 e 2.4.2). Doca ≥ 160 px; grid ≥ 8 linhas + cabeçalho; janela < 640 px abre maximizada; altura inicial `clamp(160 px, conteúdo, 40%)`; altura lembrada em `localStorage` `dmslog.dockHeight` (fração). O grid mantém a linha selecionada visível em qualquer redimensionamento pelo próprio `ResizeObserver` (`Grid.ensureSelectedVisible()`, `topAfterResize` em `grid-model.js`), nunca durante a rolagem e nunca com altura 0.
 - **Barra de status** (`web/js/status-bar.js`): `count`, `position`, `progress`, `message(text, { kind, timeoutMs })`, `connection(state)`, `slot(id)`; substitui `#message`, `#grid-status`, o banner de relógio, o banner de alertas e a ajuda fixa de atalhos. Uma região viva de mensagem e um anunciador de contagem; erro global troca o conteúdo da própria barra (`role="alert"`).
 - **Fichas de filtro** (`web/js/filter-chips-model.js`, puro): `chipsFromState(live, selection, lookups, S)` e `removeChip(live, selection, chipId)` sobre o estado vivo da visão (o mesmo de `views-stack-model.js`) e a seleção da lateral, não sobre o JSON composto. Folhas simples do topo do `userFilter` viram fichas removíveis; o resto vira uma ficha "Filter tree (n conditions)" que abre a árvore.
 - **Regiões e foco**: F6/Shift+F6 na ordem do DOM: barra, lateral, faixa de filtro, grid, doca, detalhe (só as disponíveis); última posição de foco lembrada por região; uma parada de Tab por componente composto (menus, abas, fichas, grid) com roving tabindex; skip link para o grid.
