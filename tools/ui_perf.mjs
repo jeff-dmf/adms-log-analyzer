@@ -97,7 +97,8 @@ export function validateBudgets(doc) {
   }
   for (const [key, b] of Object.entries(doc.budgets)) {
     if (!b || typeof b !== "object") { problems.push(`${key}: must be an object`); continue; }
-    if (typeof b.max !== "number" || !Number.isFinite(b.max)) problems.push(`${key}: max must be a number`);
+    if (b.info === true) { if (b.max !== undefined) problems.push(`${key}: an info entry has no max`); }
+    else if (typeof b.max !== "number" || !Number.isFinite(b.max)) problems.push(`${key}: max must be a number`);
     if (typeof b.unit !== "string" || !b.unit) problems.push(`${key}: unit must be a non-empty string`);
     if (typeof b.label !== "string" || !b.label) problems.push(`${key}: label must be a non-empty string`);
     if (b.warn !== undefined && (typeof b.warn !== "number" || b.warn > b.max)) {
@@ -114,13 +115,15 @@ export function compareBudgets(measures, budgets) {
   for (const [key, b] of Object.entries(budgets.budgets)) {
     const value = measures[key];
     let status = "n/a";
-    if (typeof value === "number" && Number.isFinite(value)) {
+    if (b.info === true) {
+      status = typeof value === "number" ? "info" : "n/a";
+    } else if (typeof value === "number" && Number.isFinite(value)) {
       if (value > b.max) status = "fail";
       else if (b.warn !== undefined && value > b.warn) status = "warn";
       else status = "pass";
     }
     rows.push({
-      key, label: b.label, unit: b.unit, value: value ?? null, max: b.max, warn: b.warn ?? null,
+      key, label: b.label, unit: b.unit, value: value ?? null, max: b.max ?? null, warn: b.warn ?? null,
       baseline: b.baseline ?? null, status,
     });
   }
@@ -133,7 +136,8 @@ export function deltaPercent(value, baseline) {
 }
 
 export function hasFailures(rows) {
-  return rows.some((r) => r.status === "fail");
+  // A measure that could not be taken ("n/a") fails too: a guard must not pass on missing data.
+  return rows.some((r) => r.status === "fail" || r.status === "n/a");
 }
 
 export function formatTable(rows) {
@@ -142,7 +146,7 @@ export function formatTable(rows) {
   const body = rows.map((r) => {
     const d = deltaPercent(r.value, r.baseline);
     return [
-      `${r.label} (${r.unit})`, fmt(r.value), `<= ${fmt(r.max)}`, fmt(r.baseline),
+      `${r.label} (${r.unit})`, fmt(r.value), r.max === null ? "-" : `<= ${fmt(r.max)}`, fmt(r.baseline),
       d === null ? "-" : `${d >= 0 ? "+" : ""}${d.toFixed(0)}%`, r.status.toUpperCase(),
     ];
   });
@@ -151,13 +155,46 @@ export function formatTable(rows) {
   return [line(header), widths.map((w) => "-".repeat(w)).join("  "), ...body.map(line)].join("\n");
 }
 
+/** Merges [start, end] intervals into disjoint ones (so nested work is never counted twice). */
+export function mergeIntervals(intervals) {
+  const sorted = [...intervals].sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const merged = [];
+  for (const [start, end] of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+  return merged;
+}
+
+/**
+ * Groups disjoint work intervals by real frame. Frame boundaries are the timestamps of frame events
+ * (the frame that presents the work is the first boundary at or after the end of the interval; work after
+ * the last boundary belongs to the last frame). Returns the work, in microseconds, of every frame.
+ */
+export function workByFrame(intervals, frameTimes) {
+  const frames = [...frameTimes].sort((a, b) => a - b);
+  if (!frames.length) return [];
+  const work = new Array(frames.length).fill(0);
+  for (const [start, end] of intervals) {
+    let index = frames.findIndex((t) => t >= end);
+    if (index === -1) index = frames.length - 1;
+    work[index] += end - start;
+  }
+  return work;
+}
+
+// Frames that were really drawn (the compositor submitted a frame); aborted main frames do not count.
+const FRAME_EVENTS = new Set(["DrawFrame"]);
+
 /**
  * Reduces DevTools trace events of one scroll window to per-frame numbers.
- * A layout is "forced" when it runs inside a script (FunctionCall/EventDispatch/...) on the renderer
- * main thread; layouts of the normal frame lifecycle are not. `frames` is the number of frames the
- * window produced (one wheel event per frame in this tool); work per frame divides by it.
+ * A layout is "forced" when it runs inside a script (FunctionCall/EventDispatch/...) on the renderer main
+ * thread; layouts of the normal frame lifecycle are not. Work per frame is the union of script, style and
+ * layout intervals (a layout nested in a script counts once), grouped by real frames taken from the trace
+ * frame events (`frameEvents` overrides which event names count as a frame).
  */
-export function analyzeTrace(events, frames) {
+export function analyzeTrace(events, frameEvents = FRAME_EVENTS) {
   const mainThreads = new Set();
   for (const e of events) {
     if (e.ph === "M" && e.name === "thread_name" && e.args && e.args.name === MAIN_THREAD) {
@@ -171,32 +208,98 @@ export function analyzeTrace(events, frames) {
   const styles = onMain.filter((e) => e.name === "UpdateLayoutTree" || e.name === "RecalculateStyles");
   const tasks = onMain.filter((e) => e.name === "RunTask");
   const inside = (outer, inner) => inner.ts >= outer.ts && inner.ts + inner.dur <= outer.ts + outer.dur;
-  const forced = layouts.filter((l) => scripts.some((s) => inside(s, l)));
-  // Script time without double counting nested script events: keep only outermost intervals.
-  const sorted = [...scripts].sort((a, b) => a.ts - b.ts || b.dur - a.dur);
-  let scriptUs = 0;
-  let end = -Infinity;
-  for (const s of sorted) {
-    const sEnd = s.ts + s.dur;
-    if (sEnd <= end) continue;
-    scriptUs += sEnd - Math.max(s.ts, end);
-    end = sEnd;
-  }
-  const sum = (list) => list.reduce((acc, e) => acc + e.dur, 0);
-  const layoutUs = sum(layouts);
-  const styleUs = sum(styles);
-  const workUs = scriptUs + layoutUs + styleUs;
+  const forced = layouts.filter((l) => scripts.some((sc) => inside(sc, l)));
+  const span = (e) => [e.ts, e.ts + e.dur];
+  const merged = mergeIntervals([...scripts, ...layouts, ...styles].map(span));
+  const unionUs = merged.reduce((acc, [a, b]) => acc + (b - a), 0);
+  const frameTimes = events.filter((e) => frameEvents.has(e.name) && typeof e.ts === "number").map((e) => e.ts);
+  const perFrame = workByFrame(merged, frameTimes);
+  const sumDur = (list) => mergeIntervals(list.map(span)).reduce((acc, [a, b]) => acc + (b - a), 0);
   return {
     forced_layouts: forced.length,
     layouts: layouts.length,
-    frames,
-    script_ms: scriptUs / 1000,
-    style_ms: styleUs / 1000,
-    layout_ms: layoutUs / 1000,
+    frames: perFrame.length,
+    script_ms: sumDur(scripts) / 1000,
+    style_ms: sumDur(styles) / 1000,
+    layout_ms: sumDur(layouts) / 1000,
+    work_ms: unionUs / 1000,
     max_layout_ms: layouts.reduce((m, e) => Math.max(m, e.dur), 0) / 1000,
-    work_per_frame_ms: workUs / 1000 / Math.max(1, frames),
+    work_per_frame_ms: perFrame.length ? unionUs / 1000 / perFrame.length : null,
+    max_frame_work_ms: perFrame.reduce((m, w) => Math.max(m, w), 0) / 1000,
     long_tasks: tasks.filter((t) => t.dur > 50_000).length,
   };
+}
+
+/**
+ * Summarizes the Network.* events of one page load. Counts come from the network layer: a request is
+ * "not modified" when the real response status is 304, and "from cache" when it never reached the network.
+ */
+export function classifyRequests(events) {
+  const reqs = new Map();
+  let failed = 0;
+  for (const { method, params } of events) {
+    if (method === "Network.requestWillBeSent") {
+      if (!reqs.has(params.requestId)) {
+        reqs.set(params.requestId, { url: params.request.url, type: params.type, status: null, fromCache: false, bytes: 0 });
+      }
+    } else if (method === "Network.responseReceived") {
+      const r = reqs.get(params.requestId);
+      if (r) {
+        r.status = params.response.status;
+        r.type = params.type || r.type;
+        if (params.response.fromDiskCache || params.response.fromPrefetchCache || params.response.fromServiceWorker) r.fromCache = true;
+      }
+    } else if (method === "Network.requestServedFromCache") {
+      const r = reqs.get(params.requestId);
+      if (r) r.fromCache = true;
+    } else if (method === "Network.loadingFinished") {
+      const r = reqs.get(params.requestId);
+      if (r) r.bytes = params.encodedDataLength || 0;
+    } else if (method === "Network.loadingFailed") {
+      failed++;
+    }
+  }
+  const list = [...reqs.values()];
+  const isApi = (r) => new URL(r.url).pathname.startsWith("/api/") || r.type === "EventSource";
+  const statics = list.filter((r) => !isApi(r));
+  const notModified = (r) => r.status === 304 && !r.fromCache;
+  return {
+    total: list.length,
+    static: statics.length,
+    api: list.length - statics.length,
+    notModified: statics.filter(notModified).length,
+    fromCache: statics.filter((r) => r.fromCache).length,
+    // static requests that were neither revalidated (304) nor served from cache: full downloads
+    staticFull: statics.filter((r) => !notModified(r) && !r.fromCache).length,
+    bytes: list.reduce((acc, r) => acc + r.bytes, 0),
+    failed,
+  };
+}
+
+/** State of a wait for the grid rows to be updated: pending, done (quiet after a change) or timeout. */
+export function rowsUpdateState({ t0, lastChange, now, quietMs = 150, timeoutMs = 5000 }) {
+  if (lastChange !== null && lastChange !== undefined && now - lastChange >= quietMs) return "done";
+  if (now - t0 >= timeoutMs) return "timeout";
+  return "pending";
+}
+
+/** Rejects when `promise` does not settle within `ms`. */
+export function withTimeout(promise, ms, what) {
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`timeout (${ms} ms) waiting for ${what}`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Kills a process tree and waits (bounded) until it is gone. Returns true when confirmed gone. */
+export async function terminateTree({ kill, isAlive, sleepMs, timeoutMs = 5000, stepMs = 50 }) {
+  try { kill(); } catch { /* may already be gone */ }
+  let waited = 0;
+  while (isAlive()) {
+    if (waited >= timeoutMs) return false;
+    await sleepMs(stepMs); // async on purpose: the event loop must reap the killed leader (a zombie still counts as alive)
+    waited += stepMs;
+  }
+  return true;
 }
 
 /** Largest duration of the interaction events (Event Timing entries with an interactionId). */
@@ -211,8 +314,10 @@ export function buildMeasures(raw) {
   const reload = raw.reload;
   m.first_row_cold_ms = open.firstRowMs;
   m.first_row_reload_ms = reload.firstRowMs;
-  m.requests_open = open.staticRequests + 1; // static files plus the document, as in analysis 3
-  m.requests_reload_non_304 = reload.staticRequests + 1 - reload.notModified;
+  m.requests_open = open.net.static; // static files plus the document, as in analysis 3
+  m.requests_reload_non_304 = reload.net.staticFull; // not 304 and not served from cache
+  m.bytes_open_kb = open.net.bytes / 1024;
+  m.bytes_reload_kb = reload.net.bytes / 1024;
   m.js_kb_open = open.jsBytes / 1024;
   m.js_modules_open = open.jsFiles;
   m.css_files_open = open.cssFiles;
@@ -235,46 +340,97 @@ export function buildMeasures(raw) {
 // Process, temp and browser plumbing
 // ---------------------------------------------------------------------------------------------------
 
-const children = new Set();
+const procs = []; // every spawned process stays tracked until cleanup, even after its leader exits
 const tempDirs = new Set();
 let cleaned = false;
 
-function killTree(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null || !child.pid) return;
-  try {
-    if (process.platform === "win32") {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-    } else {
-      process.kill(-child.pid, "SIGKILL"); // own process group (detached), takes the browser helpers too
-    }
-  } catch {
-    try { child.kill("SIGKILL"); } catch { /* already gone */ }
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function groupAlive(pid) {
+  try { process.kill(-pid, 0); return true; } catch (err) { return err.code === "EPERM"; }
+}
+
+function windowsPidAlive(pid) {
+  const r = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"], { encoding: "utf-8" });
+  return typeof r.stdout === "string" && r.stdout.includes(`"${pid}"`);
+}
+
+/** Windows: PIDs whose command line mentions the marker (our unique temp folder), e.g. orphaned browser helpers. */
+function windowsPidsByMarker(marker) {
+  const script = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${marker.replace(/'/g, "''")}*' } | ForEach-Object { $_.ProcessId }`;
+  const r = spawnSync("powershell", ["-NoProfile", "-Command", script], { encoding: "utf-8" });
+  return (r.stdout || "").split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number).filter((pid) => pid !== process.pid);
+}
+
+async function killProc(proc) {
+  if (process.platform === "win32") {
+    return terminateTree({
+      kill: () => spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" }),
+      isAlive: () => windowsPidAlive(proc.pid),
+      sleepMs: sleep,
+    });
   }
+  // Own process group (detached): SIGKILL reaches the leader and any descendant, also after the leader exited.
+  return terminateTree({
+    kill: () => process.kill(-proc.pid, "SIGKILL"),
+    isAlive: () => groupAlive(proc.pid),
+    sleepMs: sleep,
+  });
 }
 
 function removeDir(dir) {
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 10; attempt++) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
-      return;
+      return true;
     } catch {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200); // Windows may hold handles briefly
+      sleepSync(300); // Windows may hold handles briefly
     }
   }
   console.error(`ui_perf: could not remove ${dir}`);
+  return false;
 }
 
+let cleanupPromise = null;
+
+/** Stops every spawned process (confirming they are gone) and only then removes the temporary folders. */
 function cleanup() {
-  if (cleaned) return;
-  cleaned = true;
-  for (const child of children) killTree(child);
-  for (const dir of tempDirs) removeDir(dir);
+  cleanupPromise ||= (async () => {
+    const stuck = [];
+    for (const proc of procs) if (!(await killProc(proc))) stuck.push(proc.pid);
+    if (process.platform === "win32") {
+      for (const dir of tempDirs) {
+        for (const pid of windowsPidsByMarker(path.basename(dir))) {
+          if (!(await killProc({ pid }))) stuck.push(pid);
+        }
+      }
+    }
+    if (stuck.length) {
+      process.exitCode = 2;
+      console.error(`ui_perf: processes still running (${stuck.join(", ")}); temporary folders kept:\n  ${[...tempDirs].join("\n  ")}`);
+      return;
+    }
+    for (const dir of tempDirs) if (!removeDir(dir)) process.exitCode = 2;
+  })();
+  return cleanupPromise;
+}
+
+/** Last resort in a synchronous exit handler: kill the groups, no waiting possible. */
+function cleanupNow() {
+  if (cleanupPromise) return;
+  for (const proc of procs) {
+    try {
+      if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+      else process.kill(-proc.pid, "SIGKILL");
+    } catch { /* already gone */ }
+  }
 }
 
 function spawnTracked(command, args, options = {}) {
   const child = spawn(command, args, { detached: process.platform !== "win32", windowsHide: true, ...options });
-  children.add(child);
-  child.once("exit", () => children.delete(child));
+  if (child.pid) procs.push({ pid: child.pid, name: command });
   return child;
 }
 
@@ -330,46 +486,76 @@ function findBrowser(explicit) {
   return found;
 }
 
-/** Minimal DevTools protocol client over the native WebSocket. */
-class Cdp {
-  constructor(url) {
-    this.ws = new WebSocket(url);
+/** Minimal DevTools protocol client over a WebSocket. Every command has a timeout; losing the socket rejects all pending ones. */
+export class Cdp {
+  constructor(url, { WS = WebSocket, timeoutMs = 30_000 } = {}) {
+    this.timeoutMs = timeoutMs;
     this.nextId = 1;
     this.pending = new Map();
     this.listeners = [];
+    this.closeListeners = [];
+    this.closed = false;
+    this.ws = new WS(url);
     this.ws.addEventListener("message", (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.id !== undefined) {
         const p = this.pending.get(msg.id);
         if (!p) return;
         this.pending.delete(msg.id);
+        clearTimeout(p.timer);
         if (msg.error) p.reject(new Error(`${p.method}: ${msg.error.message}`));
         else p.resolve(msg.result);
       } else {
         for (const l of this.listeners) l(msg);
       }
     });
+    this.ws.addEventListener("close", () => this.failAll(new Error("DevTools connection closed")));
+    this.ws.addEventListener("error", () => this.failAll(new Error("DevTools connection failed")));
   }
+
+  failAll(error) {
+    this.closed = true;
+    for (const [id, p] of this.pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error(`${p.method}: ${error.message}`));
+      this.pending.delete(id);
+    }
+    for (const l of this.closeListeners) l(error);
+  }
+
+  onClose(handler) { this.closeListeners.push(handler); }
 
   open() {
     return new Promise((resolve, reject) => {
-      this.ws.addEventListener("open", () => resolve(), { once: true });
-      this.ws.addEventListener("error", () => reject(new Error("DevTools WebSocket failed")), { once: true });
+      const timer = setTimeout(() => reject(new Error("timeout opening the DevTools WebSocket")), this.timeoutMs);
+      this.ws.addEventListener("open", () => { clearTimeout(timer); resolve(); }, { once: true });
+      this.ws.addEventListener("error", () => { clearTimeout(timer); reject(new Error("DevTools WebSocket failed")); }, { once: true });
     });
   }
 
-  send(method, params = {}, sessionId) {
+  send(method, params = {}, sessionId, timeoutMs = this.timeoutMs) {
+    if (this.closed) return Promise.reject(new Error(`${method}: DevTools connection closed`));
     const id = this.nextId++;
     const payload = { id, method, params };
     if (sessionId) payload.sessionId = sessionId;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, method });
-      this.ws.send(JSON.stringify(payload));
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method}: no response in ${timeoutMs} ms`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve, reject, method, timer });
+      try {
+        this.ws.send(JSON.stringify(payload));
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(new Error(`${method}: ${err.message}`));
+      }
     });
   }
 
   on(handler) { this.listeners.push(handler); }
-  close() { try { this.ws.close(); } catch { /* ignore */ } }
+  close() { try { this.ws.close(); } catch { /* ignore */ } this.failAll(new Error("DevTools connection closed")); }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -415,27 +601,25 @@ async function waitFor(cdp, session, expression, timeoutMs, what) {
   throw new Error(`timeout waiting for ${what}`);
 }
 
-async function collectLoad(cdp, session) {
+async function collectLoad(cdp, session, netLog) {
   await waitFor(cdp, session, "window.__perf && window.__perf.firstRow !== null", 60_000, "first grid row");
   await sleep(SETTLE_MS);
-  return evaluate(cdp, session, `(() => {
+  const net = classifyRequests(netLog);
+  const page = await evaluate(cdp, session, `(() => {
     const P = window.__perf;
     const res = performance.getEntriesByType("resource");
     const own = res.filter((r) => r.name.startsWith(location.origin));
     const stat = own.filter((r) => !r.name.includes("/api/"));
     const api = own.filter((r) => r.name.includes("/api/"));
     const byExt = (ext) => stat.filter((r) => new URL(r.name).pathname.endsWith(ext));
-    const nav = performance.getEntriesByType("navigation")[0];
     return {
       firstRowMs: P.firstRow, cls: P.cls, fcp: P.fcp, cssLateInjections: P.lateCss,
-      requests: own.length + 1, staticRequests: stat.length, apiRequests: api.length,
-      bytes: own.reduce((a, r) => a + (r.transferSize || 0), 0) + (nav.transferSize || 0),
       jsBytes: byExt(".js").reduce((a, r) => a + (r.decodedBodySize || 0), 0),
       jsFiles: byExt(".js").length, cssFiles: byExt(".css").length,
-      notModified: own.filter((r) => r.responseStatus === 304).length,
       apiMaxMs: api.reduce((m, r) => Math.max(m, r.responseEnd - r.requestStart), 0),
     };
   })()`);
+  return { ...page, net };
 }
 
 async function mouse(cdp, session, type, x, y, extra = {}) {
@@ -466,16 +650,27 @@ async function pressKey(cdp, session, key, code, vk, text) {
 }
 
 /** Runs an interaction and returns { inp, toRows } using Event Timing and the grid mutation clock. */
-async function measureInteraction(cdp, session, action) {
+async function measureInteraction(cdp, session, action, waitRows = false) {
   const mark = () => evaluate(cdp, session, "window.__perf.rowsChangedAt = null; window.__perf.t0 = performance.now(); 0");
   await evaluate(cdp, session, "window.__perf.events = []; 0");
   await mark();
   await action(mark);
   await sleep(SETTLE_MS / 3);
-  const res = await evaluate(cdp, session, `({ events: window.__perf.events, rowsChangedAt: window.__perf.rowsChangedAt, t0: window.__perf.t0 })`);
+  const read = () => evaluate(cdp, session, `({ events: window.__perf.events, rowsChangedAt: window.__perf.rowsChangedAt, t0: window.__perf.t0, now: performance.now() })`);
+  let res = await read();
+  if (waitRows) {
+    // Wait for the grid to change and go quiet; no change within the timeout is a failure, never 0 ms.
+    while (rowsUpdateState({ t0: res.t0, lastChange: res.rowsChangedAt, now: res.now }) === "pending") {
+      await sleep(50);
+      res = await read();
+    }
+    if (rowsUpdateState({ t0: res.t0, lastChange: res.rowsChangedAt, now: res.now }) === "timeout") {
+      throw new Error("the grid rows did not update within 5 s after the interaction (use --search with a term that changes the rows)");
+    }
+  }
   return {
     inp: interactionDuration(res.events),
-    toRows: res.rowsChangedAt === null ? 0 : Math.max(0, res.rowsChangedAt - res.t0),
+    toRows: res.rowsChangedAt === null ? null : Math.max(0, res.rowsChangedAt - res.t0),
   };
 }
 
@@ -495,7 +690,7 @@ async function measureInteractions(cdp, session, searchTerm) {
     0;
   })()`);
   const apply = await centerOf(cdp, session, "#filter-form button[type=submit]");
-  const filter = await measureInteraction(cdp, session, () => click(cdp, session, apply.x, apply.y));
+  const filter = await measureInteraction(cdp, session, () => click(cdp, session, apply.x, apply.y), true);
   out.inp.filter = filter.inp;
   out.toRows.filter = filter.toRows;
   await evaluate(cdp, session, `document.getElementById("filter-reset").click(); 0`);
@@ -506,7 +701,7 @@ async function measureInteractions(cdp, session, searchTerm) {
     for (const ch of searchTerm) { await pressKey(cdp, session, ch, `Key${ch.toUpperCase()}`, ch.toUpperCase().charCodeAt(0), ch); await sleep(20); }
     await mark(); // time to rows counts from Enter, not from typing
     await pressKey(cdp, session, "Enter", "Enter", 13, "\r");
-  });
+  }, true);
   out.inp.search = search.inp;
   out.toRows.search = search.toRows;
   await evaluate(cdp, session, `document.getElementById("search-clear").click(); 0`);
@@ -520,8 +715,9 @@ async function measureScroll(cdp, session) {
   const onMsg = (msg) => { if (msg.method === "Tracing.dataCollected") events.push(...msg.params.value); };
   cdp.on(onMsg);
   const done = new Promise((resolve) => cdp.on((msg) => { if (msg.method === "Tracing.tracingComplete") resolve(); }));
+  done.catch(() => {});
   await cdp.send("Tracing.start", {
-    traceConfig: { includedCategories: ["devtools.timeline"], recordMode: "recordAsMuchAsPossible" },
+    traceConfig: { includedCategories: ["devtools.timeline", "disabled-by-default-devtools.timeline.frame"], recordMode: "recordAsMuchAsPossible" },
     transferMode: "ReportEvents",
   });
   await sleep(200);
@@ -531,8 +727,8 @@ async function measureScroll(cdp, session) {
   }
   await sleep(300);
   await cdp.send("Tracing.end");
-  await done;
-  return analyzeTrace(events, WHEEL_EVENTS);
+  await withTimeout(done, 60_000, "the trace to complete");
+  return analyzeTrace(events);
 }
 
 async function launchBrowser(opts, profileDir) {
@@ -596,31 +792,37 @@ export async function measure(opts) {
     for (const domain of ["Page", "Runtime", "Network"]) await cdp.send(`${domain}.enable`, {}, session);
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 900, deviceScaleFactor: 1, mobile: false }, session);
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: INSTRUMENTATION }, session);
-    const settleLoad = async () => collectLoad(cdp, session);
+    const netLog = [];
+    cdp.on((msg) => { if (msg.sessionId === session && msg.method.startsWith("Network.")) netLog.push(msg); });
+    // Every load starts a fresh network window, so counts and bytes belong to that load only.
+    const settleLoad = async () => collectLoad(cdp, session, netLog);
+    const navigate = async (url) => { netLog.length = 0; await cdp.send("Page.navigate", { url }, session); };
 
     // Warm-up: exchanges the start token for the session cookie; not measured.
-    await cdp.send("Page.navigate", { url: server.url }, session);
+    await navigate(server.url);
     await settleLoad();
     if (opts.cpu > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: opts.cpu }, session);
 
     console.error("ui_perf: measuring open");
     await cdp.send("Network.clearBrowserCache", {}, session);
-    await cdp.send("Page.navigate", { url: server.base }, session);
+    await navigate(server.base);
     const open = await settleLoad();
     console.error("ui_perf: measuring reload");
+    netLog.length = 0;
     await cdp.send("Page.reload", {}, session);
     const reload = await settleLoad();
     console.error("ui_perf: measuring interactions");
     const inter = await measureInteractions(cdp, session, opts.searchTerm);
     console.error(`ui_perf: measuring scroll (${WHEEL_EVENTS} wheel events)`);
-    await cdp.send("Page.navigate", { url: server.base }, session);
+    await navigate(server.base);
     await settleLoad();
+    const records = await evaluate(cdp, session, `fetch("/api/cases").then((r) => r.json()).then((j) => j.cases.reduce((a, c) => a + (c.records || 0), 0))`, true);
     const scroll = await measureScroll(cdp, session);
-    const raw = { open, reload, inp: inter.inp, toRows: inter.toRows, scroll };
-    return { raw, measures: buildMeasures(raw), browser: await cdp.send("Browser.getVersion").then((v) => v.product).catch(() => "unknown") };
+    const raw = { open, reload, inp: inter.inp, toRows: inter.toRows, scroll, records };
+    return { records, raw, measures: buildMeasures(raw), browser: await cdp.send("Browser.getVersion").then((v) => v.product).catch(() => "unknown") };
   } finally {
     if (cdp) cdp.close();
-    cleanup();
+    await cleanup();
   }
 }
 
@@ -643,11 +845,11 @@ export async function main(argv) {
   const result = await measure(opts);
   const rows = compareBudgets(result.measures, budgets);
   const report = {
-    schema: 1, browser: result.browser, cpu: opts.cpu, case: opts.large || opts.sizeMb ? "custom" : "quick",
+    schema: 1, browser: result.browser, records: result.records, cpu: opts.cpu, case: opts.large || opts.sizeMb ? "custom" : "quick",
     measures: result.measures, raw: result.raw, comparison: rows, status: hasFailures(rows) ? "FAIL" : "PASS",
   };
   console.log(formatTable(rows));
-  console.log(`\nBrowser: ${report.browser}; CPU ${opts.cpu}x; case: ${report.case}. Baseline column: analysis 3 (3.5M records, CPU 4x).`);
+  console.log(`\nBrowser: ${report.browser}; CPU ${opts.cpu}x; case: ${report.case} (${result.records} records). Baseline column: analysis 3 (3.5M records, CPU 4x).`);
   console.log(`Overall: ${report.status}`);
   console.log("\nJSON:");
   console.log(JSON.stringify(report, null, 2));
@@ -657,10 +859,12 @@ export async function main(argv) {
 
 const isMain = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
 if (isMain) {
-  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { cleanup(); process.exit(130); });
-  process.on("exit", cleanup);
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(sig, () => { cleanup().finally(() => process.exit(130)); });
+  }
+  process.on("exit", cleanupNow);
   main(process.argv.slice(2)).then(
-    (code) => { cleanup(); process.exitCode = code; },
-    (err) => { console.error(`ui_perf: ${err.stack || err.message}`); cleanup(); process.exitCode = 2; },
+    async (code) => { await cleanup(); process.exitCode = process.exitCode || code; },
+    async (err) => { console.error(`ui_perf: ${err.stack || err.message}`); await cleanup(); process.exitCode = 2; },
   );
 }
