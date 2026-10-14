@@ -113,3 +113,66 @@ def test_etag_matches_helper():
     assert etag_matches("*", '"a"')
     assert not etag_matches(None, '"a"')
     assert not etag_matches('"b"', '"a"')
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda e: f"garbage, {e}",
+        lambda e: "garbage, *",
+        lambda e: '*, "x"',
+        lambda e: '"x", *',
+        lambda e: f'"unbalanced, {e}',
+        lambda e: f"{e} garbage",
+        lambda e: f"{e},",
+        lambda e: "",
+        lambda e: f"w/{e}",
+    ],
+)
+def test_invalid_if_none_match_is_ignored(server, auth, etag, method, build):
+    status, _, _ = call(server, method, "/", {**auth, "If-None-Match": build(etag)})
+    assert status == 200
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_valid_forms_match_for_get_and_head(server, auth, etag, method):
+    for value in (f'"a,b", {etag}', f"W/{etag}", f" {etag} ", f'W/"x" ,{etag}', "*"):
+        status, _, body = call(server, method, "/", {**auth, "If-None-Match": value})
+        assert status == 304 and body == b"", value
+
+
+def test_comma_inside_tag_is_not_a_separator():
+    assert not etag_matches('"a,"b"', '"b"')
+    assert etag_matches('"a,b"', '"a,b"')
+    assert not etag_matches('"a,b"', '"b"')
+
+
+def test_concurrent_requests_fill_each_resource_once(server, monkeypatch):
+    from pathlib import Path
+
+    from dmslog.server.app import find_web_resource
+
+    reads: list[str] = []
+    original = Path.read_bytes
+
+    def slow_read(self):
+        reads.append(str(self))
+        threading.Event().wait(0.05)
+        return original(self)
+
+    monkeypatch.setattr(Path, "read_bytes", slow_read)
+    resources = [find_web_resource("/"), find_web_resource("/js/main.js")]
+    assert all(isinstance(r, Path) for r in resources)
+    results = []
+    threads = [
+        threading.Thread(target=lambda r=r: results.append(server.static_entry(r)))
+        for r in resources
+        for _ in range(8)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(results) == 16
+    assert sorted(reads) == sorted(str(r) for r in resources)

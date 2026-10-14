@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import select
 import socket
@@ -72,6 +73,7 @@ class DmslogServer(ThreadingHTTPServer):
         self._lock = threading.Lock()
         # url-independent cache of static assets: resource path -> (stamp, body, etag)
         self._static: dict[str, tuple[tuple[int, int] | None, bytes, str]] = {}
+        self._static_locks: dict[str, threading.Lock] = {}
         self.allowed_hosts = frozenset({f"127.0.0.1:{self.port}", f"localhost:{self.port}"})
         self.allowed_origins = frozenset(f"http://{host}" for host in self.allowed_hosts)
 
@@ -97,13 +99,19 @@ class DmslogServer(ThreadingHTTPServer):
         key = str(resource)
         with self._lock:
             cached = self._static.get(key)
+            fill_lock = self._static_locks.setdefault(key, threading.Lock())
         if cached is not None and cached[0] == stamp:
             return cached[1], cached[2]
-        body = resource.read_bytes()
-        etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
-        with self._lock:
-            self._static[key] = (stamp, body, etag)
-        return body, etag
+        with fill_lock:  # one fill per resource: concurrent requests wait and reuse the result
+            with self._lock:
+                cached = self._static.get(key)
+            if cached is not None and cached[0] == stamp:
+                return cached[1], cached[2]
+            body = resource.read_bytes()
+            etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+            with self._lock:
+                self._static[key] = (stamp, body, etag)
+            return body, etag
 
     def token_is_valid(self, candidate: str) -> bool:
         return hmac.compare_digest(candidate.encode("utf-8"), self.token.encode("utf-8"))
@@ -428,16 +436,26 @@ def health_payload() -> dict[str, Any]:
     }
 
 
+_ENTITY_TAG = r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"'
+_IF_NONE_MATCH_LIST = re.compile(rf"{_ENTITY_TAG}(?:[ \t]*,[ \t]*{_ENTITY_TAG})*")
+_ENTITY_TAG_RE = re.compile(_ENTITY_TAG)
+
+
 def etag_matches(header: str | None, etag: str) -> bool:
-    """Weak comparison of an If-None-Match header (list, weak/strong forms, ``*``) against ``etag``."""
+    """Weak comparison of an If-None-Match header against ``etag`` (RFC 9110 section 13.1.2).
+
+    The whole header must be valid: either ``*`` alone or a comma-separated list of entity-tags
+    (commas are allowed inside the quotes). Any invalid header counts as no header (no match).
+    """
     if header is None:
         return False
+    value = header.strip(" \t")
+    if value == "*":
+        return True
+    if _IF_NONE_MATCH_LIST.fullmatch(value) is None:
+        return False
     wanted = etag.removeprefix("W/")
-    for candidate in header.split(","):
-        candidate = candidate.strip()
-        if candidate == "*" or candidate.removeprefix("W/") == wanted:
-            return True
-    return False
+    return any(tag.removeprefix("W/") == wanted for tag in _ENTITY_TAG_RE.findall(value))
 
 
 def find_web_resource(url_path: str) -> Traversable | None:
