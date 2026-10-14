@@ -266,7 +266,7 @@ function auditComponents(cssText, themes) {
   return { failures, checks };
 }
 
-const COMPONENTS_CSS = readFileSync(new URL("components.css", CSS), "utf8");
+const COMPONENTS_CSS = readFileSync(new URL("components.css", CSS), "utf8").replace(/\r\n?/g, "\n"); // LF so the string-based mutations below also work on a CRLF checkout (Windows)
 
 test("component states: the colors components.css applies meet 4.5:1 for text and 3:1 for edges, in both themes", () => {
   const { failures, checks } = auditComponents(COMPONENTS_CSS, THEMES);
