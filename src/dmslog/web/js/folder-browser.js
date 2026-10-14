@@ -2,7 +2,7 @@
 // and resolves to the chosen ZIPs. File names are untrusted data: textContent only.
 import { FolderBrowser, breadcrumbs, restoreFocusKey, trapTarget } from "./folder-browser-model.js";
 import { formatSize } from "./case-files-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 const SHORTCUT_LABELS = {
   home: () => S.fbHome,
@@ -349,13 +349,13 @@ export function openFolderBrowser({ fs, storage, host }) {
         notes.push(model.entries.length === 0 ? S.fbEmpty : S.fbNoZips);
       }
       if (model.truncated) {
-        notes.push(format(S.fbTruncated, { n: model.entries.length.toLocaleString("en-US") }));
+        notes.push(format(S[pluralKey("fbTruncated", model.entries.length)], { n: model.entries.length.toLocaleString("en-US") }));
       }
       if (model.otherFiles > 0) {
-        notes.push(format(S.fbOtherFiles, { n: model.otherFiles.toLocaleString("en-US") }));
+        notes.push(format(S[pluralKey("fbOtherFiles", model.otherFiles)], { n: model.otherFiles.toLocaleString("en-US") }));
       }
       if (model.skipped > 0) {
-        notes.push(format(S.fbSkipped, { n: model.skipped.toLocaleString("en-US") }));
+        notes.push(format(S[pluralKey("fbSkipped", model.skipped)], { n: model.skipped.toLocaleString("en-US") }));
       }
       status.textContent = notes.join(" · ");
       errorBox.textContent = model.status === "error" && model.error

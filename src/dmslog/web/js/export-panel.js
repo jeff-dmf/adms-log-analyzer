@@ -11,7 +11,7 @@ import {
   defaultSelectionKind,
   selectionAvailability,
 } from "./export-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 const SELECTION_LABELS = { filter: "exportSelFilter", record: "exportSelRecord", event: "exportSelEvent" };
 
@@ -198,7 +198,11 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
     downloadAllButton.hidden = total < 2;
     const counts = state.counts || { records: 0, events: 0, payloads: 0 };
     summary.textContent =
-      (state.anonymized ? S.exportAnonymized : S.exportNotAnonymized) + ". " + format(S.exportCounts, counts) +
+      (state.anonymized ? S.exportAnonymized : S.exportNotAnonymized) + ". " + format(S.exportCounts, {
+        records: format(S[pluralKey("nRecord", counts.records)], { count: counts.records }),
+        events: format(S[pluralKey("nEvent", counts.events)], { count: counts.events }),
+        payloads: format(S[pluralKey("nPayload", counts.payloads)], { count: counts.payloads }),
+      }) +
       (state.mapSaved ? ". " + S.exportMapSaved : "");
     const part = state.parts[state.active];
     preview.textContent = part ? part.text : "";

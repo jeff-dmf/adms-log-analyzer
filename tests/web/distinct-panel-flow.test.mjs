@@ -115,7 +115,7 @@ test("distinct panel: opens, lists values as text and drills down", async () => 
   assert.equal(calls.distinct.at(-1)[2], "fields.op");
   const cells = host.byClass("dst-value");
   assert.equal(cells[0].textContent, HOSTILE); // literal text, no markup
-  assert.match(host.byClass("dst-others")[0].textContent, /^Others: 1 in 1 more values$/);
+  assert.match(host.byClass("dst-others")[0].textContent, /^Others: 1 in 1 more value$/);
   host.byClass("dst-include")[0].click();
   host.byClass("dst-exclude")[0].click();
   assert.deepEqual(calls.drill, [

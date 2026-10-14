@@ -6,7 +6,7 @@ import {
   DEBOUNCE_MS, DERIVED_DEBOUNCE_MS, DERIVED_MAX_WAIT_MS, MAX_WAIT_MS, createDebounce, createFollowFlow,
   parseWatchEvent,
 } from "./follow-tail-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, onChanged, onError }) {
   let events = null;
@@ -36,7 +36,7 @@ export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, on
     },
     onState: (state) => {
       newButton.hidden = !(state.on && state.pending > 0);
-      newButton.textContent = format(S.followNew, { count: Number(state.pending).toLocaleString("en-US") });
+      newButton.textContent = format(S[pluralKey("followNew", state.pending)], { count: Number(state.pending).toLocaleString("en-US") });
       toggle.checked = state.on;
     },
   });

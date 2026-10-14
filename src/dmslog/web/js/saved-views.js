@@ -3,7 +3,7 @@
 import { andFilters } from "./filters.js";
 import { MAX_NAME, MAX_VIEWS } from "./filter-tree-model.js";
 import { createViewsGuard, planSave } from "./saved-views-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -77,7 +77,7 @@ export function initSavedViews(container, { api, caseId, getFilter, getExtraFilt
       empty: S.svErrorEmpty,
       tooLong: format(S.svErrorTooLong, { limit: MAX_NAME }),
       duplicate: S.svErrorDuplicate,
-      tooMany: format(S.svErrorTooMany, { limit: MAX_VIEWS }),
+      tooMany: format(S[pluralKey("svErrorTooMany", MAX_VIEWS)], { limit: MAX_VIEWS }),
     };
     return map[error] || "";
   }

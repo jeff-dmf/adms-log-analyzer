@@ -1,6 +1,6 @@
 // Pure helpers of the "Effective configuration" panel (no DOM): rows for the key table and the
 // operation table from the GET /api/config answer. Values come from the ERS (untrusted text).
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
 
 const MAX_WINDOWS_SHOWN = 5;
@@ -165,9 +165,9 @@ export function windowsText(windows, dropped) {
   }
   const expected = list.filter((w) => w[2] === true);
   const omitted = Number(dropped) || 0;
-  let head = format(S.cfgWindowsLine, { n: expected.length, total: list.length });
+  let head = format(S[pluralKey("cfgWindowsLine", list.length)], { n: expected.length, total: list.length });
   if (omitted > 0) {
-    head += " " + format(S.cfgWindowsOmitted, { n: omitted });
+    head += " " + format(S[pluralKey("cfgWindowsOmitted", omitted)], { n: omitted });
   }
   if (expected.length === 0) {
     return head;

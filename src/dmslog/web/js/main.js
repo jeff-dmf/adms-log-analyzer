@@ -152,7 +152,7 @@ function start() {
 
   const themeButton = byId("theme-button");
   const paintTheme = () => {
-    themeButton.textContent = currentTheme() === "dark" ? S.themeDark : S.themeLight;
+    themeButton.textContent = format(S.themeCurrent, { theme: currentTheme() === "dark" ? S.themeDark : S.themeLight });
   };
   paintTheme();
   themeButton.addEventListener("click", () => {

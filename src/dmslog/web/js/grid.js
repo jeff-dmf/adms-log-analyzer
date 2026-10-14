@@ -9,7 +9,7 @@ import { ColumnResizer } from "./column-resize.js";
 import { baseName } from "./source-filter-model.js";
 import { markerLabel } from "./bookmarks-model.js";
 import { renderHighlighted } from "./search.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
 
 export const COLUMNS = [
@@ -284,7 +284,7 @@ export class Grid {
       const result = await api.count(this.caseId, this.filter, controller.signal);
       if (generation === this.countGeneration) {
         this.total = Number(result.count);
-        const template = result.exact ? S.gridCount : S.gridCountApprox;
+        const template = S[pluralKey(result.exact ? "gridCount" : "gridCountApprox", result.count)];
         this.countText = format(template, { count: Number(result.count).toLocaleString("en-US") });
         this.updateStatus();
       }
@@ -593,7 +593,7 @@ export class Grid {
       if (row.nlines > 1) {
         const extra = document.createElement("span");
         extra.className = "extra-lines";
-        extra.textContent = format(S.extraLines, { count: row.nlines - 1 });
+        extra.textContent = format(S[pluralKey("extraLines", row.nlines - 1)], { count: row.nlines - 1 });
         cells.msg.appendChild(extra);
       }
     }

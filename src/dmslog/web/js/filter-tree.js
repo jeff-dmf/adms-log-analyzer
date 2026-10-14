@@ -15,7 +15,7 @@ import {
 } from "./filter-tree-model.js";
 import { initPresets } from "./presets.js";
 import { initSavedViews } from "./saved-views.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { formatTs, parseTs } from "./time.js";
 
 const COUNT_DELAY_MS = 400;
@@ -469,13 +469,13 @@ export function initFilterTree(container, { api, caseId, onChange, initial, getE
     if (built.errors.length > 0) {
       info.textContent = S.ftFixErrors;
     } else if (built.limit === "depth") {
-      info.textContent = format(S.ftLimitDepth, { limit: MAX_DEPTH });
+      info.textContent = format(S[pluralKey("ftLimitDepth", MAX_DEPTH)], { limit: MAX_DEPTH });
     } else if (built.limit === "nodes") {
-      info.textContent = format(S.ftLimitNodes, { limit: MAX_NODES, nodes: built.nodes });
+      info.textContent = format(S[pluralKey("ftLimitNodes", MAX_NODES)], { limit: MAX_NODES, nodes: built.nodes });
     } else if (built.filter === null) {
       info.textContent = S.ftNoConditions;
     } else {
-      info.textContent = format(S.ftNodesInfo, { nodes: built.nodes, depth: built.depth });
+      info.textContent = format(S[pluralKey("ftNodesInfo", built.nodes)], { nodes: built.nodes, depth: built.depth });
     }
     info.classList.toggle("ft-bad", invalid);
     scheduleCount(COUNT_DELAY_MS);
@@ -501,7 +501,7 @@ export function initFilterTree(container, { api, caseId, onChange, initial, getE
       countLine.textContent = S.ftCountLoading;
       try {
         const result = await api.count(currentCase, built.filter, signal);
-        countLine.textContent = format(result.exact ? S.gridCount : S.gridCountApprox, {
+        countLine.textContent = format(S[pluralKey(result.exact ? "gridCount" : "gridCountApprox", result.count)], {
           count: Number(result.count).toLocaleString(),
         });
       } catch (err) {
