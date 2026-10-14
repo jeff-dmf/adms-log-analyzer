@@ -229,7 +229,7 @@
   --z-toast: 60;
 
   /* Density (variant R). --row-height equals ROW_HEIGHT in js/grid-model.js (a test checks both). */
-  --row-height: 22px;
+  --row-height: 20px;
   --grid-head: 22px;
   --control-height: 26px; /* buttons and fields; chips and row buttons use 24px */
   --bar-height: 36px;
