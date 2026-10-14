@@ -271,4 +271,8 @@ export const api = {
     history: (caseId, signal) => request("GET", "/api/alerts/history" + query({ case: caseId }), undefined, signal),
     clearHistory: (caseId) => request("DELETE", "/api/alerts/history" + query({ case: caseId })),
   },
+  // Declarative aggregation (store/aggregate.py): JSON result, or the same result as CSV text.
+  aggregate: (caseId, body, signal) => request("POST", "/api/entries/aggregate", { ...body, case: caseId }, signal),
+  aggregateCsv: (caseId, body, signal) =>
+    requestFile("/api/entries/aggregate", { ...body, case: caseId, format: "csv" }, "text", signal),
 };

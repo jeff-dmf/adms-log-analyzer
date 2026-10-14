@@ -206,6 +206,7 @@ function start() {
   let compare = null;
   let alertsUi = null; // local alerts: banner and panel (alerts-panel.js)
   let distinctUi = null; // "Distinct values" and "Group by template" (distinct-panel.js)
+  let aggregateUi = null; // "Aggregate" panel (aggregate-panel.js)
   let collectionsPanel = null; // the Collections panel (collections-panel.js)
   let collections = []; // collections of the open case (GET /collections)
   let collectionColumnPref = loadColumnPref(safeLocalStorage());
@@ -413,6 +414,9 @@ function start() {
     }
     if (distinctUi) {
       distinctUi.viewChanged();
+    }
+    if (aggregateUi) {
+      aggregateUi.viewChanged();
     }
     if (viewsUi) {
       viewsUi.changed();
@@ -913,6 +917,22 @@ function start() {
     });
   }).catch(() => {
     // Module missing or failing: no buttons.
+  });
+  // Declarative aggregation over the view (table, chart, CSV, drill-down): optional module.
+  Promise.all([import("./aggregate-panel.js"), import("./aggregate-model.js")]).then(([panelModule, model]) => {
+    aggregateUi = panelModule.mountAggregate({
+      toolbar: byId("toolbar"),
+      beforeButton: byId("theme-button"),
+      panelParent: byId("grid-panel"),
+      beforePanel: byId("filter-form"),
+      api,
+      getCase: () => caseId,
+      getFilter: () => currentFilter,
+      getFieldNames: () => Array.from(seenFields),
+      onDrill: (drill) => setUserFilter(model.drillFilter(userFilter, drill)),
+    });
+  }).catch(() => {
+    // Module missing or failing: no Aggregate button.
   });
   // Chained views (breadcrumbs, Narrow this view, Show in parent/root): optional modules.
   Promise.all([import("./views-stack.js"), import("./views-stack-model.js")]).then(([uiModule, model]) => {

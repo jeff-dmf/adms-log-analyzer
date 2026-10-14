@@ -165,6 +165,8 @@ STREAM_SENSITIVE = {1: 0, 2: 1, 3: 0}
 TPL_CODES = {"TST-001": 1, "TST-002": 2}
 KEYS = {30: {("msgid", "m-1")}, 140: {("msgid", "m-1")}, 31: {("gid", "g-9")}}
 EVENT_STATUS = {1: "fail", 2: "ok"}
+EVENT_NAME = {1: "GetIncidents", 2: "SendWorks"}
+EVENT_KIND = {1: "operation", 2: "operation"}
 PAYLOADS = {
     40: {
         "role": "response",
@@ -257,6 +259,9 @@ def py_match(tree, row) -> bool:
         return any(t == arg["type"] for t, _ in keys)
     if op == "event_status":
         return row["event_id"] is not None and EVENT_STATUS.get(row["event_id"]) in _lst(arg)
+    if op in ("event_name", "event_kind"):
+        attrs = EVENT_NAME if op == "event_name" else EVENT_KIND
+        return row["event_id"] is not None and attrs.get(row["event_id"]) in _lst(arg)
     if op == "flags":
         mask = 0
         for name in _lst(arg):

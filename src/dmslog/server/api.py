@@ -934,6 +934,7 @@ class Api:
             ("GET", re.compile(r"/api/alerts/history\Z"), self.alert_history),
             ("DELETE", re.compile(r"/api/alerts/history\Z"), self.clear_alert_history),
         ]
+        self._routes += [("POST", re.compile(r"/api/entries/aggregate\Z"), self.entries_aggregate)]
 
     def shutdown(self) -> None:
         self.picker.close()
@@ -2152,6 +2153,45 @@ class Api:
         cid = _case_from_query(self.store, request)
         self.jobs.alerts.clear_history(cid)
         return Response(204)
+
+    # -- declarative aggregation (store/aggregate.py; ARQUITETURA 10.6)
+
+    def entries_aggregate(self, request: Request) -> Response | Download:
+        """``{case, filter, rows, events, group_by, measures, order, limit, lookups, exact, format, bom}``:
+        JSON result, or the same result as CSV with ``format: "csv"``."""
+        from ..report import aggexport
+        from ..store import aggregate
+
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        fmt = body.get("format", "json")
+        if fmt not in ("json", "csv"):
+            raise aggregate.AggregateError("bad_format", "$.format")
+        bom = body.get("bom", False)
+        if not isinstance(bom, bool):
+            raise aggregate.AggregateError("bad_bom", "$.bom")
+        req = aggregate.parse_request(body)
+        _check_scan_filter(req.tree)
+        try:
+            with self.store.reader(cid) as conn:
+                knowledge = self._knowledge(conn, cid, with_ers=True) if req.lookups else None
+                result = aggregate.aggregate(conn, req, knowledge=knowledge)
+        except aggregate.AggregateTimeout as exc:
+            rows = exc.estimated_rows
+            text = (
+                messages.API_AGGREGATE_TIMEOUT
+                if rows is None
+                else messages.API_AGGREGATE_TIMEOUT_ROWS.format(rows=f"{rows:,}")
+            )
+            raise ApiError(408, "aggregate_timeout", text, estimated_rows=rows) from None
+        if fmt == "json":
+            return Response(200, aggregate.as_json(result))
+        text = "".join(aggexport.stream_csv(result, bom))
+        headers = {
+            "X-Dmslog-Rows": str(len(result.rows)),
+            "X-Dmslog-Truncated": "1" if result.truncated else "0",
+        }
+        return Download("text/csv; charset=utf-8", iter([text.encode("utf-8")]), headers)
 
 
 _PRESET_STATUS = {

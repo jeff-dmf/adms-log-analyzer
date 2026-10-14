@@ -86,6 +86,8 @@ EXPECTED_MODULES = {
     "collections-panel.js",
     "alerts-model.js",
     "alerts-panel.js",
+    "aggregate-model.js",
+    "aggregate-panel.js",
 }
 
 FORBIDDEN_JS = [
