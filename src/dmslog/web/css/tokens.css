@@ -38,8 +38,8 @@
   --chart-critical: #8e0f3a;
   --chart-error: #c8352a;
   --chart-warning: #9a6a00;
-  --chart-normal: #848fa0;
-  --chart-noise: #c3c9d2;
+  --chart-normal: #6f7a8c;
+  --chart-noise: #848fa0;
 
   /* Status and filter surfaces */
   --status-info-bg: #e5eefb;
@@ -100,7 +100,7 @@
     --chart-error: #e5574a;
     --chart-warning: #d9a23a;
     --chart-normal: #6f7b8c;
-    --chart-noise: #3a424e;
+    --chart-noise: #5b6677;
     --status-info-bg: #17304f;
     --status-info-ink: #b8d4ff;
     --status-error-bg: #4a1d1d;
@@ -118,14 +118,14 @@
     --cat-6: #a79cf0;
     --cat-7: #4fc3d4;
     --cat-8: #f08aa3;
-    --cat-1-bg: #21447a;
-    --cat-2-bg: #6a4215;
-    --cat-3-bg: #675710;
-    --cat-4-bg: #1f5530;
-    --cat-5-bg: #57305f;
-    --cat-6-bg: #3a3170;
-    --cat-7-bg: #1b5656;
-    --cat-8-bg: #692538;
+    --cat-1-bg: #192f4f;
+    --cat-2-bg: #43290d;
+    --cat-3-bg: #332c00;
+    --cat-4-bg: #173520;
+    --cat-5-bg: #3d1a33;
+    --cat-6-bg: #2e2550;
+    --cat-7-bg: #0d343a;
+    --cat-8-bg: #3f1d24;
     --shadow-overlay: 0 4px 16px rgb(0 0 0 / 0.5);
   }
 }
@@ -154,7 +154,7 @@
   --chart-error: #e5574a;
   --chart-warning: #d9a23a;
   --chart-normal: #6f7b8c;
-  --chart-noise: #3a424e;
+  --chart-noise: #5b6677;
   --status-info-bg: #17304f;
   --status-info-ink: #b8d4ff;
   --status-error-bg: #4a1d1d;
@@ -172,14 +172,14 @@
   --cat-6: #a79cf0;
   --cat-7: #4fc3d4;
   --cat-8: #f08aa3;
-  --cat-1-bg: #21447a;
-  --cat-2-bg: #6a4215;
-  --cat-3-bg: #675710;
-  --cat-4-bg: #1f5530;
-  --cat-5-bg: #57305f;
-  --cat-6-bg: #3a3170;
-  --cat-7-bg: #1b5656;
-  --cat-8-bg: #692538;
+  --cat-1-bg: #192f4f;
+  --cat-2-bg: #43290d;
+  --cat-3-bg: #332c00;
+  --cat-4-bg: #173520;
+  --cat-5-bg: #3d1a33;
+  --cat-6-bg: #2e2550;
+  --cat-7-bg: #0d343a;
+  --cat-8-bg: #3f1d24;
   --shadow-overlay: 0 4px 16px rgb(0 0 0 / 0.5);
 }
 

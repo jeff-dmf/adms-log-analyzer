@@ -129,7 +129,7 @@ for (const theme of Object.keys(THEMES)) {
 
   test(`${theme}: categorical fills keep --ink at 4.5:1 and strokes keep 3:1 on the panel`, () => {
     for (const n of CATS) {
-      check(theme, "--ink", `--cat-${n}-bg`, 4.5);
+      for (const fg of ["--ink", "--ink-muted", "--sev-critical", "--sev-error", "--sev-warning"]) check(theme, fg, `--cat-${n}-bg`, 4.5);
       check(theme, `--cat-${n}`, "--surface-panel", 3);
       check(theme, `--cat-${n}-fg`, "--surface-panel", 3);
     }
@@ -140,9 +140,16 @@ for (const theme of Object.keys(THEMES)) {
     check(theme, "--line-strong", "--surface-field", 3);
     check(theme, "--accent", "--row-selected", 3);
     check(theme, "--focus-ring", "--surface-panel", 3);
-    for (const chart of ["critical", "error", "warning", "normal"]) check(theme, `--chart-${chart}`, "--surface-panel", 3);
+    for (const chart of ["critical", "error", "warning", "normal", "noise"]) check(theme, `--chart-${chart}`, "--surface-panel", 3);
   });
 }
+
+test("--chart-noise stays more discreet than --chart-normal on the panel", () => {
+  for (const theme of Object.keys(THEMES)) {
+    const panel = resolve(THEMES[theme], "--surface-panel");
+    assert.ok(contrast(resolve(THEMES[theme], "--chart-noise"), panel) < contrast(resolve(THEMES[theme], "--chart-normal"), panel), theme);
+  }
+});
 
 test("dark: the tightest pair (Critical on the selection) keeps at least 4.7:1", () => {
   assert.ok(check("dark", "--sev-critical", "--row-selected", 4.7) >= 4.7);
