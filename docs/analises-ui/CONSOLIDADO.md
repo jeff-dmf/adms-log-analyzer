@@ -1092,7 +1092,7 @@ Regra: um PR por vez a partir da `main` atual, só depois do merge do anterior; 
 | 24 | UI-24 Seguir uma chave | L5 | sonnet | UI-22 |
 | 25 | UI-25 Falha sem perder contexto | L6 | sonnet | UI-28 |
 | 26 | UI-26 ARIA do grid | L6 | sonnet | UI-28 |
-| 27 | UI-27 Rolagem sem layout forçado | L6 | sonnet | UI-28, UI-29 |
+| 27 | UI-27 Rolagem sem layout forçado | L6 | sonnet | UI-28 |
 | 28 | UI-28 Teclado | L7 | sonnet | (já desenvolvida) |
 | 29 | UI-29 Menu de contexto e paleta | L7 | sonnet | UI-30 |
 | 30 | UI-30 Follow tail | L8 | sonnet | (já desenvolvida) |
@@ -1111,7 +1111,7 @@ Podem (arquivos exclusivos disjuntos; nenhum ponto compartilhado editado pelos a
 
 - **UI-02 ∥ UI-03 ∥ UI-04 ∥ UI-01**: `server/api.py` + `store/` × `server/app.py` × `tools/` × `web/css/`. As duas de servidor tocam `docs/ARQUITETURA.md`, aplicado pela sessão principal em cada PR.
 - **UI-05 ∥ teste de tokens (haiku) ∥ inventário de textos (UI-09, haiku) ∥ UI-11 (opus)**: `css/tokens.css` + `app.css` × `tests/web/tokens-contrast.test.mjs` × `docs/notas/ux-copy-inventario.md` × `docs/notas/ui-contratos.md`. UI-11 é a única tarefa de Opus nesse lote e não depende das outras.
-- **UI-19 (timeline)** a partir do PR 5: só `timeline*.js` e `css/timeline.css`, que nenhuma das UI-10 a UI-17 toca. Integra na sua vez (PR 19).
+- **UI-19 (timeline)** só depois do PR 6 (UI-06 também edita `timeline.js` ao mover o CSS injetado para o HTML): só `timeline*.js` e `css/timeline.css`, que nenhuma das UI-10 a UI-17 toca. Integra na sua vez (PR 19).
 - **UI-18 ∥ UI-20** no L5: `views-stack.js`, `filters.js`, `filter-chips*` × `detail.js`, `payload*`, `knowledge.css`, `links.css`, `bookmarks.css`, seção do detalhe em `highlight-panel.js`.
 - **UI-23 ∥ UI-21**: módulos de painel × `sources.js`, `collections-panel.js`, `collections.css`, `sources.css`. Dentro da UI-23, um agente por painel (arquivos disjuntos), integrados um PR por vez.
 - **UI-28 ∥ UI-25/26/27** e **UI-29 ∥ UI-30**: `shortcuts*` e `commands*`/`context-menu.js` não tocam `grid.js`, `follow-tail*` nem `timeline.js`.
@@ -1158,7 +1158,7 @@ Não podem (mesmo arquivo exclusivo ou acoplamento forte):
 | D5 | Cor de Info | **Neutra** (UI-05, UI-07, UI-19) | Azul: trocar `--sev-info` e `--chart-normal` (um token cada); a timeline continua com escala própria para o anormal |
 | D6 | Menu de contexto na linha | **Sim**, junto da paleta de comandos, que usa o mesmo registro de ações (UI-29) | Não: a UI-29 fica só com a paleta; "Same key" segue só pelo detalhe (UI-24) |
 | D7 | Atalhos de uma letra | **Ligados, com opção de desligar** (UI-28) | Desligados por padrão: muda um valor padrão; quem usa `n`/`t`/`b` precisa ligar no diálogo `?` |
-| D8 | Escopo antes da 0.1.0 | **Revista: PRs 1 a 17 (L0 a L4, que fecham os 4 P0) mais UI-25 e UI-30 (defeitos que destroem contexto ou mostram números divergentes)**. O resto entra depois, incremental | (b) tudo antes: a 0.1.0 e o UAT esperam os 30 PRs. Só L0 a L4, sem UI-25 e UI-30: o UAT encontra os dois defeitos já conhecidos |
+| D8 | Escopo antes da 0.1.0 | **Revista: PRs 1 a 17 (L0 a L4, que fecham os 4 P0) mais UI-25 e UI-30 (defeitos que destroem contexto ou mostram números divergentes) e as dependências delas, UI-18 (faixa de filtro) e UI-21 (lateral)**. O resto entra depois, incremental | (b) tudo antes: a 0.1.0 e o UAT esperam os 30 PRs. Só L0 a L4, sem UI-25 e UI-30: o UAT encontra os dois defeitos já conhecidos |
 | D9 (nova) | Cache do código estático no navegador | **Sim**, só para estáticos, com ETag e `no-cache` (UI-03); API e SSE continuam `no-store` | Não: a UI-03 sai; o orçamento de recarga (≤ 300 ms, só `304`) deixa de valer |
 
 Decisões tomadas aqui com dados (não precisam do Jefferson, mas ficam registradas): dimensões de R (UI-05); timeline como faixa de alarme (UI-19); erro global na barra de status (UI-13); trilho abaixo de 1500 px somado às gavetas (UI-17); larguras em `ch` (UI-16); seleção com `box-shadow` + bloco `forced-colors` (UI-07); coluna `source.last_line` (UI-02, esquema definido pelo Opus).
