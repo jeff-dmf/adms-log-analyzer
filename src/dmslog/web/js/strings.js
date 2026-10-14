@@ -296,7 +296,7 @@ export const S = {
   cfgRefresh: "Refresh",
   cfgNoCase: "Open a case first.",
   cfgLoading: "Loading…",
-  cfgNoProducts: "No configuration found: the ERS has no Registry export.",
+  cfgNoProducts: "No stored configuration for the selected sources.",
   cfgError: "Could not load the configuration. Press Refresh to try again.",
   cfgSummaryOne: "{shown} of {total} key, {diverging} diverging",
   cfgSummaryOther: "{shown} of {total} keys, {diverging} diverging",
@@ -664,9 +664,9 @@ export const S = {
     no_request_for_correlation_id: "no request has this correlation id",
     no_operation_ending_nearby: "no operation ends near this payload",
     no_failed_operation_nearby: "no failed operation is near this payload",
-    ambiguous: "more than one operation matches",
+    ambiguous: "more than one request or operation matches",
     not_in_operation: "the record is outside any operation",
-    too_many_payloads: "too many payloads in this operation",
+    too_many_payloads: "too many payloads for this process",
     scan_limit: "the scan stopped at its limit",
   },
 
@@ -1226,7 +1226,7 @@ export const S = {
   colFollowedTag: "Cannot remove {tag}: the viewer is following this folder. Stop following it first.",
   colGone: "{tag} is no longer in the case; the list was reloaded.",
   columnCollection: "Collection",
-  colPanelsOne: "Operations, Dashboard and the clock banner filter by one collection at a time; while several are chosen they show all collections.",
+  colPanelsOne: "Operations and events, Dashboard and the clock banner filter by one collection at a time; while several are chosen they show all collections.",
   cfAddTitle: "Add ERS files to this case",
   cfAddHelp: "Add more ERS ZIPs to the open case. A file from another server or another capture becomes a new collection; the Enterprise and Sensitive zips of one capture join the same collection. Use Browse to pick them in a file dialog.",
   cfAddEmpty: "No file chosen yet.",
@@ -1293,7 +1293,7 @@ export const S = {
   alKindMatch: "Matches new records",
   alKindThreshold: "More than N records in a window",
   alKindOpen: "Operation without an end after the timeout",
-  alSummaryMatchOne: "1 or more new record matches the filter.",
+  alSummaryMatchOne: "1 or more new records match the filter.",
   alSummaryMatchOther: "{count} or more new records match the filter.",
   alSummaryThreshold: "more than {threshold} matches in {window} s",
   alSummaryOpenParam: "operation open longer than {param}",
@@ -1431,13 +1431,19 @@ export const S = {
 };
 
 // Picks the One or Other form of a plural pair: format(S[pluralKey("keyCount", n)], { count: n }).
+// Accepts a number or a formatted string such as "1,234".
+function toCount(n) {
+  const value = typeof n === "string" ? Number(n.replace(/[,\s]/g, "")) : Number(n);
+  return Number.isFinite(value) ? value : 0;
+}
+
 export function pluralKey(base, n) {
-  return base + (Number(n) === 1 ? "One" : "Other");
+  return base + (toCount(n) === 1 ? "One" : "Other");
 }
 
 // "N noun" phrase with the right form and a thousands separator: countNoun("nRecord", 1234) = "1,234 records".
 export function countNoun(base, n) {
-  const value = Number(n) || 0;
+  const value = toCount(n);
   return format(S[pluralKey(base, value)], { count: value.toLocaleString("en-US") });
 }
 

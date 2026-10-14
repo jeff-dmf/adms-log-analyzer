@@ -107,3 +107,10 @@ test("payload reason codes sent by the server all have a sentence", () => {
     assert.ok(S.plReasonNames[code], code);
   }
 });
+
+test("countNoun and pluralKey accept formatted numbers", () => {
+  assert.equal(countNoun("nRecord", "1,234"), "1,234 records");
+  assert.equal(countNoun("nRecord", "1"), "1 record");
+  assert.equal(pluralKey("x", "1,234"), "xOther");
+  assert.equal(pluralKey("x", " 1 "), "xOne");
+});
