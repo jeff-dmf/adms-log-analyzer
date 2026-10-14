@@ -891,7 +891,7 @@ function start() {
       getCase: () => caseId,
       getFilter: () => currentFilter,
       getSelectedRow: () => grid.selectedRow(),
-      getTemplateCode: (id) => templateCodes.get(id) || "",
+      getTemplateCode: (id) => templateLabels.get(id) || "",
       reveal: (row) => grid.revealRow(row),
       showMessage,
     });
