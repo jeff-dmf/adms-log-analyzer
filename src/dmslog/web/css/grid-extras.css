@@ -44,10 +44,16 @@
    base rules, loaded with the page, keep its first layout equal to the final one. */
 #views-stack-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap; /* one line at every width, so the 36px reserved above is always the final height */
   gap: 6px;
   align-items: center;
   margin: 4px 0;
+  min-height: 28px;
+  overflow-x: auto;
+}
+
+#views-stack-bar .vs-crumbs {
+  flex-wrap: nowrap;
 }
 
 #grid-panel:not(:has(#views-stack-bar)) #filter-form {

@@ -510,6 +510,7 @@ mark {
 
 .detail-text {
   flex: none;
+  min-height: 123px; /* fallback: 6 lines of content plus padding and border, for engines without lh */
   min-height: calc(6lh + 18px); /* 6 lines of content plus padding and border */
   line-height: 1.4;
   margin: 8px 0;
