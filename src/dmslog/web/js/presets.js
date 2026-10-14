@@ -8,7 +8,7 @@ import {
   presetBody,
 } from "./presets-model.js";
 import { createViewsGuard } from "./saved-views-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -150,7 +150,7 @@ export function initPresets(container, { api, caseId, getFilter, onApply, onErro
       tooLong: format(S.prErrorTooLong, { limit: MAX_NAME }),
       duplicate: S.prErrorDuplicate,
       reserved: S.prErrorReserved,
-      tooMany: format(S.prErrorTooMany, { limit: MAX_USER_PRESETS }),
+      tooMany: format(S[pluralKey("prErrorTooMany", MAX_USER_PRESETS)], { limit: MAX_USER_PRESETS }),
     };
     return map[error] || "";
   }
@@ -248,7 +248,7 @@ export function initPresets(container, { api, caseId, getFilter, onApply, onErro
         notes.push(S.prInvalidFile);
       }
       if (Array.isArray(data.problems) && data.problems.length > 0) {
-        notes.push(format(S.prProblems, { count: data.problems.length }));
+        notes.push(format(S[pluralKey("prProblems", data.problems.length)], { count: data.problems.length }));
       }
       say(notes.join(" "), notes.length > 0);
     } catch (err) {
@@ -290,7 +290,7 @@ export function initPresets(container, { api, caseId, getFilter, onApply, onErro
       }
       const file = exportFile(answer);
       saveFile(fmt === "toml" ? S.prExportNameToml : S.prExportNameJson, file.text, file.type);
-      say(format(S.prExported, { count: answer.count }), false);
+      say(format(S[pluralKey("prExported", answer.count)], { count: answer.count }), false);
     } catch (err) {
       say(err.message, true);
     }

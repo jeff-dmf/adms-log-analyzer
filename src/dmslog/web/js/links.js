@@ -4,7 +4,7 @@
 // listener on the host.
 import { api } from "./api.js";
 import { PREVIEW_LINES, buildKeyChips, createLinksFlow, revealLabel } from "./links-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -187,7 +187,7 @@ export class LinksSection {
     } else {
       box.appendChild(element("pre", "lnk-pre", preview.text));
       if (preview.truncated) {
-        box.appendChild(element("div", "lnk-muted", format(S.lnkPreviewMore, { count: PREVIEW_LINES })));
+        box.appendChild(element("div", "lnk-muted", format(S[pluralKey("lnkPreviewMore", PREVIEW_LINES)], { count: PREVIEW_LINES })));
       }
     }
     return box;

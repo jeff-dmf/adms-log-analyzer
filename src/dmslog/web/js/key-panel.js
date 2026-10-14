@@ -3,7 +3,7 @@
 // (untrusted): textContent only; the table body has ONE delegated listener.
 import { api } from "./api.js";
 import { buildKeyRow, createKeyFlow, keyHeading } from "./key-panel-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -110,7 +110,7 @@ export function initKeyPanel(host, { getCase, onSelect }) {
     } else if (state.records.length === 0) {
       status.textContent = S.keyEmpty;
     } else {
-      status.textContent = format(state.next === null ? S.keyCount : S.keyCountMore, { count: state.records.length });
+      status.textContent = format(S[pluralKey(state.next === null ? "keyCount" : "keyCountMore", state.records.length)], { count: state.records.length });
     }
   }
 

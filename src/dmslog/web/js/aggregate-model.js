@@ -2,7 +2,7 @@
 // (store/aggregate.py, ARQUITETURA 10.6). The panel builds a declarative request from choices of
 // fixed lists; values in the answer come from untrusted logs and are only turned into plain strings.
 import { andFilters } from "./filters.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
 
 export const BUCKETS = ["1m", "5m", "15m", "1h", "1d"];
@@ -335,8 +335,8 @@ export function buildView(data, exactRequested = false, extra = null) {
   }
   const shown = rows.length;
   const total = data ? data.groups : 0;
-  let summary = data && data.truncated ? format(S.aggSummaryTruncated, { shown, groups: formatNumber(total) })
-    : format(S.aggSummary, { groups: formatNumber(total) });
+  let summary = data && data.truncated ? format(S[pluralKey("aggSummaryTruncated", total)], { shown, groups: formatNumber(total) })
+    : format(S[pluralKey("aggSummary", total)], { groups: formatNumber(total) });
   if (data && data.total !== null && data.total !== undefined) {
     summary += " " + format(data.exact ? S.aggTotal : S.aggTotalApprox, { total: formatNumber(data.total) });
   }

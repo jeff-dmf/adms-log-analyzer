@@ -1,6 +1,6 @@
 // Pure model of "Compare two records" (no DOM): the two-step selection and the loading flow of the
 // side-by-side diff. Record text comes from the ERS (untrusted): it is only shaped here.
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
 
 export const CONTEXT_LINES = 3; // unchanged lines kept around a change when unchanged runs are hidden
@@ -100,7 +100,7 @@ export function buildSideHeader(record) {
 }
 
 export function statsText(stats) {
-  return format(S.cmpStats, {
+  return format(S[pluralKey("cmpStats", stats.equal)], {
     changed: stats.changed, removed: stats.removed, added: stats.added, equal: stats.equal,
   });
 }

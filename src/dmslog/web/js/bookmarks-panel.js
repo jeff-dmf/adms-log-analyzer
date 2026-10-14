@@ -5,7 +5,7 @@ import { api } from "./api.js";
 import {
   BOOKMARK_COLORS, MAX_NOTE, buildBookmarkRow, checkNote, colorLabel, createBookmarksFlow,
 } from "./bookmarks-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -295,7 +295,7 @@ export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) 
     } else if (state.items.length === 0) {
       status.textContent = state.color || state.text ? S.bmNoMatch : S.bmEmpty;
     } else {
-      status.textContent = format(state.next === null ? S.bmCount : S.bmCountMore, { count: state.items.length });
+      status.textContent = format(S[pluralKey(state.next === null ? "bmCount" : "bmCountMore", state.items.length)], { count: state.items.length });
     }
   }
 

@@ -3,7 +3,7 @@
 // plain-language outcome of removing one. The DOM layer lives in collections-panel.js.
 // Everything that comes from the API is untrusted text: callers write it with textContent only.
 import { formatTs } from "./time.js";
-import { S, format } from "./strings.js";
+import { S, format, countNoun } from "./strings.js";
 
 export const TAG_COLORS = 8; // fixed palette: collection number n always uses color ((n - 1) % 8) + 1
 
@@ -102,8 +102,8 @@ export function statusLine(item) {
 
 export function countsLine(item) {
   return format(S.colRecords, {
-    records: Number(item.records || 0).toLocaleString("en-US"),
-    sources: Number(item.sources || 0).toLocaleString("en-US"),
+    records: countNoun("nRecord", item.records),
+    sources: countNoun("nSource", item.sources),
   });
 }
 
@@ -199,8 +199,8 @@ export function removeConfirmText(item) {
   return format(S.colRemoveConfirm, {
     tag: d.tag,
     title: d.title,
-    sources: Number(item.sources || 0).toLocaleString("en-US"),
-    records: Number(item.records || 0).toLocaleString("en-US"),
+    sources: countNoun("nSource", item.sources),
+    records: countNoun("nRecord", item.records),
   });
 }
 
@@ -223,9 +223,9 @@ export function removedMessage(tag, summary) {
   const s = summary || {};
   return format(S.colRemoved, {
     tag,
-    sources: Number(s.sources || 0).toLocaleString("en-US"),
-    records: Number(s.records || 0).toLocaleString("en-US"),
-    bookmarks: Number(s.bookmarks || 0).toLocaleString("en-US"),
+    sources: countNoun("nSource", s.sources),
+    records: countNoun("nRecord", s.records),
+    bookmarks: countNoun("nBookmark", s.bookmarks),
   });
 }
 

@@ -2,7 +2,7 @@
 // rename, and "Show in parent" / "Show in root" for the selected record. The model is
 // views-stack-model.js; everything written to the page is text (names may contain user text).
 import { isTypingTarget } from "./filters.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { MAX_NAME, loadStack, saveStack, viewsKey } from "./views-stack-model.js";
 
 function element(tag, className, text) {
@@ -130,7 +130,7 @@ export function mountViewsStack(options) {
     }
     const result = stack.narrow();
     if (!result.ok) {
-      showMessage(result.reason === "full" ? format(S.vsFull, { n: stack.maxDepth }) : S.vsNeedFilter, result.reason === "full");
+      showMessage(result.reason === "full" ? format(S[pluralKey("vsFull", stack.maxDepth)], { n: stack.maxDepth }) : S.vsNeedFilter, result.reason === "full");
       return;
     }
     showMessage("", false);
