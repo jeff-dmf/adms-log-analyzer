@@ -797,11 +797,12 @@ class _Run:
             nonlocal batch_start
             assert grouper is not None
             w.flush()
-            n, first_ts, last_ts = w.source_totals(row.id)
+            n, first_ts, last_ts, last_line = w.source_totals(row.id)
             w.update_source(
                 row.id, indexed_bytes=fed, tail_hash=tail.hexdigest(),
                 head_hash=head.hexdigest(span_for(fed)),
-                n_entries=n, first_ts=first_ts, last_ts=last_ts, status=status, error=None,
+                n_entries=n, first_ts=first_ts, last_ts=last_ts, last_line=last_line,
+                status=status, error=None,
                 envelope=grouper.envelope.name, mtime=info.mtime, zip_crc=info.zip_crc,
                 size=info.size if fixed_size else fed,
             )  # fmt: skip

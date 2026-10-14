@@ -1045,11 +1045,16 @@ class Api:
     def list_sources(self, request: Request) -> Response:
         cid = _case_from_query(self.store, request)
         with self.store.reader(cid) as conn:
+            # source.last_line (schema 7) is written by the indexer; NULL (a source without records) and a
+            # case older than schema 7, read before any write migrated it, fall back to the lookup by max(id).
+            lookup = db.LAST_LINE_SQL.format(source="s.id")
+            has_column = conn.execute(
+                "SELECT 1 FROM pragma_table_info('source') WHERE name = 'last_line'"
+            ).fetchone()
+            last_line = f"coalesce(s.last_line, ({lookup}))" if has_column else f"({lookup})"
             rows = conn.execute(
                 "SELECT s.id, s.file_name, s.member, t.family, t.process, t.pid, t.sensitive, s.rotation,"
-                " s.status, s.error, s.n_entries, s.first_ts, s.last_ts, s.size,"
-                " (SELECT e.line_no + e.nlines - 1 FROM entry e WHERE e.source_id = s.id"
-                "  ORDER BY e.id DESC LIMIT 1),"
+                f" s.status, s.error, s.n_entries, s.first_ts, s.last_ts, s.size, {last_line},"  # noqa: S608
                 " (SELECT c.ers_group FROM collection c WHERE c.id = s.collection_id)"
                 " FROM source s LEFT JOIN stream t ON t.id = s.stream_id ORDER BY s.id"
             ).fetchall()

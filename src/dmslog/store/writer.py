@@ -92,7 +92,7 @@ _BUCKET_SEV_SQL = (
 _SOURCE_FIELDS = frozenset(
     {
         "stream_id", "envelope", "size", "mtime", "zip_crc", "head_hash", "indexed_bytes", "tail_hash",
-        "first_ts", "last_ts", "n_entries", "status", "error", "rotation", "member", "file_name",
+        "first_ts", "last_ts", "n_entries", "last_line", "status", "error", "rotation", "member", "file_name",
     }
 )  # fmt: skip
 
@@ -486,11 +486,21 @@ class IndexWriter:
                 (member, file_name, rotation, sid),
             )
 
-    def source_totals(self, source_id: int) -> tuple[int, int | None, int | None]:
+    def source_totals(self, source_id: int) -> tuple[int, int | None, int | None, int | None]:
+        """``(n_entries, first_ts, last_ts, last_line)`` of the source as stored now.
+
+        One pass over the source's slice of ``ix_entry_src_ts`` (``max(id)`` comes with it), then one
+        primary-key lookup for the last line; ``last_line`` is None when the source has no record.
+        """
         row = self.conn.execute(
-            "SELECT count(*), min(ts), max(ts) FROM entry WHERE source_id=?", (source_id,)
+            "SELECT count(*), min(ts), max(ts), max(id) FROM entry WHERE source_id=?", (source_id,)
         ).fetchone()
-        return int(row[0]), row[1], row[2]
+        last_line = None
+        if row[3] is not None:
+            last_line = self.conn.execute(
+                "SELECT line_no + nlines - 1 FROM entry WHERE id=?", (row[3],)
+            ).fetchone()[0]
+        return int(row[0]), row[1], row[2], last_line
 
     def last_entry(self, source_id: int) -> LastEntry | None:
         """The last record of a source in file order (highest id)."""

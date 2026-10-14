@@ -41,6 +41,7 @@ CREATE TABLE source(                                           -- physical file 
   first_ts INTEGER, last_ts INTEGER, n_entries INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',                      -- pending|indexing|ready|error|skipped
   error TEXT,
+  last_line INTEGER,                                           -- line_no + nlines - 1 of the highest-id record; NULL = not recorded (v7)
   UNIQUE(collection_id, member));
 
 -- Records -------------------------------------------------------------------
