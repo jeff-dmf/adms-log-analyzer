@@ -21,15 +21,59 @@
   white-space: nowrap;
 }
 
-.host-panel {
+.host-panel,
+#grid-panel > .host-panel {
+  flex: 0 1 auto; /* yields before the grid viewport, which keeps 8 rows */
   max-height: 40vh;
+  min-height: 0;
   overflow: auto;
   border: 1px solid var(--border);
   margin-bottom: 6px;
 }
 
-.timeline-host:empty {
+/* Heights reserved from the first paint so late-mounted parts do not shift the grid. */
+.timeline-host {
+  min-height: 185px; /* final height: head + 120px plot + legend */
+}
+
+#filter-form {
+  min-height: 79px; /* two rows of fields once the labels are filled in */
+}
+
+/* The chained-views bar is built before its lazy stylesheet (views-stack.css) arrives: these
+   base rules, loaded with the page, keep its first layout equal to the final one. */
+#views-stack-bar {
+  display: flex;
+  flex-wrap: nowrap; /* one line at every width, so the 36px reserved above is always the final height */
+  gap: 6px;
+  align-items: center;
+  box-sizing: content-box;
+  min-height: 28px;
+  margin: 2px 0; /* 28px + 2 x 2px padding + 2 x 2px margin = the 36px reserved above */
+  padding: 2px; /* room for the focus outline of the controls */
+  overflow-x: auto;
+  scrollbar-width: none; /* a visible scrollbar would add height; the bar still scrolls by wheel and focus */
+}
+
+#views-stack-bar::-webkit-scrollbar {
   display: none;
+}
+
+#views-stack-bar .vs-crumbs {
+  flex-wrap: nowrap;
+}
+
+#views-stack-bar button {
+  flex: none;
+  white-space: nowrap;
+}
+
+#grid-panel:not(:has(#views-stack-bar)) #filter-form {
+  margin-top: 36px; /* the chained-views bar (28px + 2 x 4px margin) mounts here */
+}
+
+#grid-panel:not(:has(#views-stack-bar)) .shortcuts-help {
+  margin-bottom: 18px; /* the bar adds its own shortcut help line */
 }
 
 .detail-fields {
