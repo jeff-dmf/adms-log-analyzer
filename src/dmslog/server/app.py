@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
@@ -69,6 +70,8 @@ class DmslogServer(ThreadingHTTPServer):
         self.token = secrets.token_urlsafe(32)
         self._sessions: set[str] = set()
         self._lock = threading.Lock()
+        # url-independent cache of static assets: resource path -> (stamp, body, etag)
+        self._static: dict[str, tuple[tuple[int, int] | None, bytes, str]] = {}
         self.allowed_hosts = frozenset({f"127.0.0.1:{self.port}", f"localhost:{self.port}"})
         self.allowed_origins = frozenset(f"http://{host}" for host in self.allowed_hosts)
 
@@ -80,6 +83,27 @@ class DmslogServer(ThreadingHTTPServer):
     @property
     def start_url(self) -> str:
         return f"http://{LOOPBACK_HOST}:{self.port}/?{TOKEN_PARAM}={self.token}"
+
+    def static_entry(self, resource: Traversable) -> tuple[bytes, str]:
+        """Return ``(bytes, strong ETag)`` of a packaged asset, hashed once and kept in memory.
+
+        Files on disk (source tree) are re-hashed when their mtime or size changes; assets inside
+        the zipapp never change while the process runs.
+        """
+        stamp: tuple[int, int] | None = None
+        if isinstance(resource, Path):
+            info = resource.stat()
+            stamp = (info.st_mtime_ns, info.st_size)
+        key = str(resource)
+        with self._lock:
+            cached = self._static.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1], cached[2]
+        body = resource.read_bytes()
+        etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+        with self._lock:
+            self._static[key] = (stamp, body, etag)
+        return body, etag
 
     def token_is_valid(self, candidate: str) -> bool:
         return hmac.compare_digest(candidate.encode("utf-8"), self.token.encode("utf-8"))
@@ -117,16 +141,18 @@ class RequestHandler(BaseHTTPRequestHandler):
     ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        if status != HTTPStatus.NO_CONTENT:
+        if status not in (HTTPStatus.NO_CONTENT, HTTPStatus.NOT_MODIFIED):
             self.send_header("Content-Length", str(len(body)))
         self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Cache-Control", "no-store")
+        overrides = {name.lower() for name, _ in extra_headers or []}
+        if "cache-control" not in overrides:
+            self.send_header("Cache-Control", "no-store")
         for name, value in extra_headers or []:
             self.send_header(name, value)
         self.end_headers()
-        if self.command != "HEAD":
+        if self.command != "HEAD" and status != HTTPStatus.NOT_MODIFIED:
             self.wfile.write(body)
 
     def _send_text(self, status: HTTPStatus, text: str) -> None:
@@ -216,7 +242,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if split.path.startswith("/api/"):
             self._route_api(split.path, query)
-        elif self.command == "GET":
+        elif self.command in ("GET", "HEAD"):
             self._serve_static(split.path)
         else:
             self._send_text(HTTPStatus.METHOD_NOT_ALLOWED, messages.HTTP_METHOD_NOT_ALLOWED)
@@ -380,7 +406,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         if content_type is None:
             self._send_text(HTTPStatus.NOT_FOUND, messages.HTTP_NOT_FOUND)
             return
-        self._send(HTTPStatus.OK, resource.read_bytes(), content_type)
+        body, etag = self.server.static_entry(resource)
+        headers = [("ETag", etag), ("Cache-Control", "no-cache")]
+        if etag_matches(self.headers.get("If-None-Match"), etag):
+            self._send(HTTPStatus.NOT_MODIFIED, b"", content_type, headers)
+            return
+        self._send(HTTPStatus.OK, body, content_type, headers)
 
     do_GET = do_POST = do_DELETE = do_PUT = do_PATCH = do_HEAD = _handle  # noqa: N815
 
@@ -395,6 +426,18 @@ def health_payload() -> dict[str, Any]:
         "fts5": check["fts5"],
         "commit": get_commit(),
     }
+
+
+def etag_matches(header: str | None, etag: str) -> bool:
+    """Weak comparison of an If-None-Match header (list, weak/strong forms, ``*``) against ``etag``."""
+    if header is None:
+        return False
+    wanted = etag.removeprefix("W/")
+    for candidate in header.split(","):
+        candidate = candidate.strip()
+        if candidate == "*" or candidate.removeprefix("W/") == wanted:
+            return True
+    return False
 
 
 def find_web_resource(url_path: str) -> Traversable | None:
