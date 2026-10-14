@@ -201,7 +201,7 @@ test("rename shows the new name; limit message", () => {
   }
   t.setLive({ userFilter: { tid: [99] } });
   t.btn("vs-narrow").click();
-  assert.deepEqual(t.calls.messages.at(-1), [format(S.vsFull, { n: t.stack.maxDepth }), true]);
+  assert.deepEqual(t.calls.messages.at(-1), [format(S.vsFullOther, { n: t.stack.maxDepth }), true]);
 });
 
 test("the stack is saved per case and comes back on onCase", () => {

@@ -143,7 +143,7 @@ test("several collections: the approximate-order warning shows and the panel say
   assert.equal(note.hidden, false);
   assert.equal(note.attrs["aria-live"], "polite");
   assert.match(note.textContent, /order across collections is approximate/);
-  assert.match(host.textContent, /clocks are not synchronized/);
+  assert.match(host.textContent, /servers with different clocks/);
   assert.match(host.textContent, /Folder Log<b>/); // text, never markup
   assert.equal(byClass(host, "col-item").length, 2);
   assert.deepEqual(calls.lists.at(-1), [2, "approximate"]);
@@ -190,7 +190,7 @@ test("Remove takes two steps, names the collection, and reloads through onRemove
   await tick();
   await tick();
   assert.deepEqual(calls.removed, [["case1", 9]]);
-  assert.match(calls.messages.at(-1)[0], /Removed C2: 3 sources, 200 records and 1 bookmarks\./);
+  assert.match(calls.messages.at(-1)[0], /Removed C2: 3 sources, 200 records and 1 bookmark\./);
   assert.equal(calls.removedCb, 1);
   assert.equal(byClass(host, "col-item").length, 1);
 });
@@ -296,7 +296,7 @@ test("add mode: its own title and button, no case creation, per-file results", a
   assert.equal(button.type, "button"); // inside the open form: never submits it
   assert.equal(button.disabled, true);
   files.state.add([ENT, OTHER]);
-  assert.match(button.textContent, /Add 2 file\(s\) to the case/);
+  assert.match(button.textContent, /Add 2 files to case/);
   button.fire("click");
   assert.equal(added, 1);
   const opened = [];
@@ -310,12 +310,12 @@ test("add mode: its own title and button, no case creation, per-file results", a
   });
   assert.deepEqual(opened, [ENT, OTHER]);
   assert.deepEqual([result.state, result.ok, result.total], ["partial", 1, 2]);
-  assert.match(messages.at(-1)[0], /1 of 2 file\(s\) added/);
+  assert.match(messages.at(-1)[0], /1 of 2 files added/);
   assert.equal(files.state.items.length, 2); // kept so the user can fix and add again
   const second = await files.submitAdd({ openPath: async () => ({ status: "ok" }) });
   assert.equal(second.state, "ok");
   assert.equal(files.state.items.length, 0);
-  assert.match(messages.at(-1)[0], /2 file\(s\) added to the case/);
+  assert.match(messages.at(-1)[0], /2 files added to the case/);
 });
 
 test("add mode with nothing chosen asks for a file", async () => {

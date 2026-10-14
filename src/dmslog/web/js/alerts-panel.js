@@ -5,7 +5,7 @@ import { api as defaultApi } from "./api.js";
 import {
   DEFAULT_MIN_INTERVAL, KINDS, SEVERITIES, connectAlertStream, createAlertsFlow, createNotifier, validateDraft,
 } from "./alerts-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 const CONFIRM_MS = 4000;
 
@@ -66,14 +66,14 @@ const ERROR_TEXT = {
 
 function whatFor(alert) {
   if (alert.kind === "open_operation") {
-    return S.alWhatOperations;
+    return S[pluralKey("alWhatOperations", alert.count)];
   }
-  return alert.kind === "threshold" ? S.alWhatWindow : S.alWhatRecords;
+  return S[pluralKey(alert.kind === "threshold" ? "alWhatWindow" : "alWhatRecords", alert.count)];
 }
 
 function summarize(rule) {
   if (rule.kind === "match") {
-    return format(S.alSummaryMatch, { count: rule.min_count || 1 });
+    return format(S[pluralKey("alSummaryMatch", rule.min_count || 1)], { count: rule.min_count || 1 });
   }
   if (rule.kind === "threshold") {
     return format(S.alSummaryThreshold, { threshold: rule.threshold, window: rule.window_s });
@@ -127,7 +127,7 @@ export function initAlerts(host, { banner, api = defaultApi, getCase, getFilter,
     banner.className = "al-banner al-sev-" + alert.severity;
     banner.appendChild(el("span", "al-banner-text", describe(alert).title));
     if (more > 0) {
-      banner.appendChild(el("span", "al-banner-more", format(S.alBannerMore, { count: more })));
+      banner.appendChild(el("span", "al-banner-more", format(S[pluralKey("alBannerMore", more)], { count: more })));
     }
     banner.append(
       button(S.alShowRecords, "al-banner-show", () => showRecords(alert)),
@@ -332,7 +332,7 @@ export function initAlerts(host, { banner, api = defaultApi, getCase, getFilter,
       rulesList.appendChild(ruleRow(rule));
     }
     if (problems.length > 0) {
-      rulesList.appendChild(el("li", "al-muted", format(S.alProblems, { count: problems.length })));
+      rulesList.appendChild(el("li", "al-muted", format(S[pluralKey("alProblems", problems.length)], { count: problems.length })));
     }
     historyHead.textContent = "";
     historyHead.append(el("h4", "", S.alHistory), button(S.alClearHistory, "al-clear", () => flow.clearHistory()));

@@ -1,7 +1,7 @@
 // Source filter box above the source list: type part of a log file name and the list below narrows
 // down as you type (case-insensitive, no server calls). Only text nodes and <mark> built by the DOM.
 import { DEBOUNCE_MS, isFiltering, loadQuery, saveQuery } from "./source-filter-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 export class SourceFilter {
   // host: element that receives the box; panel: SourcesPanel (setQuery / focusList / toggleFirst).
@@ -87,9 +87,9 @@ export class SourceFilter {
 
   showCount(visible, total) {
     if (!isFiltering(this.input.value) || total === 0) {
-      this.status.textContent = total === 0 ? "" : format(S.sourceFilterAll, { total });
+      this.status.textContent = total === 0 ? "" : format(S[pluralKey("sourceFilterAll", total)], { total });
     } else {
-      this.status.textContent = format(S.sourceFilterCount, { visible, total });
+      this.status.textContent = format(S[pluralKey("sourceFilterCount", total)], { visible, total });
     }
   }
 }

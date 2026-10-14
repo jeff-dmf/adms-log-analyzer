@@ -5,7 +5,7 @@
 import {
   PAYLOAD_DIRECTIONS, PAYLOAD_FORMATS, PAYLOAD_ROLES, buildPayloadRow, createPayloadListFlow,
 } from "./payload-list-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -166,7 +166,7 @@ export function initPayloadList(host, { api, getCase, onOpen }) {
     } else if (state.payloads.length === 0) {
       status.textContent = S.plgEmpty;
     } else {
-      status.textContent = format(state.next === null ? S.plgCount : S.plgCountMore, { count: state.payloads.length });
+      status.textContent = format(S[pluralKey(state.next === null ? "plgCount" : "plgCountMore", state.payloads.length)], { count: state.payloads.length });
     }
   }
 

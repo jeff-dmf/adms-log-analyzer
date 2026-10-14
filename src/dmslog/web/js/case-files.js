@@ -6,7 +6,7 @@ import {
   STATUS_WORKING, formatSize,
 } from "./case-files-model.js";
 import { openFolderBrowser } from "./folder-browser.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -173,7 +173,7 @@ export class CaseFiles {
         state.addErrors(outcome.errors);
         break;
       case "timed_out":
-        state.addNotice("info", format(S.cfDialogTimeout, { minutes: outcome.minutes }));
+        state.addNotice("info", format(S[pluralKey("cfDialogTimeout", outcome.minutes)], { minutes: outcome.minutes }));
         break;
       case "busy":
         this.dialogBusy = true;
@@ -215,9 +215,9 @@ export class CaseFiles {
     const result = await this.state.create(name, deps);
     if (result.state === "ok") {
       this.nameInput.value = "";
-      this.onMessage(format(S.cfCreatedAll, { total: result.total }), false);
+      this.onMessage(format(S[pluralKey("cfCreatedAll", result.total)], { total: result.total }), false);
     } else if (result.state === "partial") {
-      this.onMessage(format(S.cfPartial, { ok: result.ok, total: result.total }), true);
+      this.onMessage(format(S[pluralKey("cfPartial", result.total)], { ok: result.ok, total: result.total }), true);
     } else if (result.reason === "busy") {
       this.onMessage(S.cfQueueBusy, true);
     } else if (result.reason === "case") {
@@ -234,9 +234,9 @@ export class CaseFiles {
     }
     const result = await this.state.addAll(deps, caseId);
     if (result.state === "ok") {
-      this.onMessage(format(S.cfAddedAll, { total: result.total }), false);
+      this.onMessage(format(S[pluralKey("cfAddedAll", result.total)], { total: result.total }), false);
     } else if (result.state === "partial") {
-      this.onMessage(format(S.cfAddPartial, { ok: result.ok, total: result.total }), true);
+      this.onMessage(format(S[pluralKey("cfAddPartial", result.total)], { ok: result.ok, total: result.total }), true);
     } else if (result.reason === "busy") {
       this.onMessage(S.cfQueueBusy, true);
     }
@@ -259,11 +259,11 @@ export class CaseFiles {
     const adding = this.mode === "add";
     if (adding) {
       this.createButton.textContent = state.items.length > 0
-        ? format(S.cfAddWith, { n: state.items.length })
+        ? format(S[pluralKey("cfAddWith", state.items.length)], { n: state.items.length })
         : S.cfAddFiles;
     } else {
       this.createButton.textContent = state.items.length > 0
-        ? format(S.cfCreateWith, { n: state.items.length })
+        ? format(S[pluralKey("cfCreateWith", state.items.length)], { n: state.items.length })
         : S.cfCreate;
     }
     this.count.textContent = state.items.length > 0

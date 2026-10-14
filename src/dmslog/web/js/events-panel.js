@@ -6,7 +6,7 @@ import {
   EVENT_KINDS, OPERATION_KIND, STATUS_VALUES, buildDetailView, buildEventRow, createEventsFlow, kindLabel, statusLabel,
 } from "./events-model.js";
 import { createPayloadNoticeFlow } from "./payload-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -204,7 +204,7 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
       return wrap;
     }
     if (view.entriesPartial) {
-      wrap.appendChild(element("div", "ev-muted", format(S.evEntriesPartial, {
+      wrap.appendChild(element("div", "ev-muted", format(S[pluralKey("evEntriesPartial", view.entriesTotal)], {
         shown: view.entries.length, total: view.entriesTotal,
       })));
     }
@@ -291,7 +291,7 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
     } else if (state.events.length === 0) {
       setStatus(S.evEmpty, false);
     } else {
-      setStatus(format(state.next === null ? S.evCount : S.evCountMore, { count: state.events.length }), false);
+      setStatus(format(S[pluralKey(state.next === null ? "evCount" : "evCountMore", state.events.length)], { count: state.events.length }), false);
     }
     const detailKey = state.detail.status + ":" + String(state.selectedId);
     if (detailKey !== renderedDetailKey) {
