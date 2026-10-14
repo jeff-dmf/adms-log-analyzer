@@ -104,13 +104,23 @@ def snapshot(conn) -> dict:
     sources = conn.execute(
         "SELECT member, status, error, n_entries, indexed_bytes, size, head_hash, tail_hash, envelope,"
         " first_ts,"
-        " last_ts FROM source ORDER BY member"
+        " last_ts, last_line FROM source ORDER BY member"
     ).fetchall()
     fts = conn.execute("SELECT count(*) FROM entry_fts_docsize").fetchone()[0]
     return {"entries": entries, "buckets": buckets, "sources": sources, "fts": fts}
 
 
+def assert_last_line_matches_records(conn) -> None:
+    """``source.last_line`` (schema 7) is the last line of the source's highest-id record (NULL: none)."""
+    rows = conn.execute(
+        "SELECT s.id, s.last_line, (SELECT e.line_no + e.nlines - 1 FROM entry e WHERE e.source_id = s.id"
+        " ORDER BY e.id DESC LIMIT 1) FROM source s"
+    ).fetchall()
+    assert [(sid, stored) for sid, stored, _ in rows] == [(sid, ref) for sid, _, ref in rows]
+
+
 def assert_consistent(conn) -> None:
+    assert_last_line_matches_records(conn)
     conn.execute("INSERT INTO entry_fts(entry_fts) VALUES('integrity-check')")
     n_entries = conn.execute("SELECT count(*) FROM entry").fetchone()[0]
     assert conn.execute("SELECT count(*) FROM entry_fts_docsize").fetchone()[0] == n_entries
@@ -388,7 +398,8 @@ def db_changes(conn, action) -> int:
 
 
 def assert_consistent_partial(conn) -> None:
-    """After a rollback the committed rows are still coherent (FTS and buckets match entries)."""
+    """After a rollback the committed rows are still coherent (FTS, buckets and last lines match entries)."""
+    assert_last_line_matches_records(conn)
     conn.execute("INSERT INTO entry_fts(entry_fts) VALUES('integrity-check')")
     assert (
         conn.execute("SELECT count(*) FROM entry_fts_docsize").fetchone()[0]
