@@ -1,0 +1,491 @@
+[
+  {
+    "rec": "REC-01",
+    "title": "UI-01 Corrigir o layout que esmaga grid, detalhe e lista de fontes",
+    "labels": [
+      "dev",
+      "bug",
+      "area:ui",
+      "prioridade:alta",
+      "modelo:sonnet"
+    ],
+    "depends_on": [],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** nenhuma · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P0 · **Lote:** L0 · **Esforço:** S · **Recomendação:** REC-01\n\n**Problema.** Todos os filhos de `#grid-panel` têm `flex-shrink: 1`: com qualquer painel aberto (`.host-panel`, `max-height: 40vh` em `css/grid-extras.css:24`) o `#grid-header` cai para 9 px e o grid para 5 linhas. `#sources-panel` não rola: `#source-list` fica com altura 0 e a página inteira rola, levando a barra junto. Num registro com payload, `#detail-text` encolhe para 18 px. A timeline e a trilha de visões aparecem depois da primeira pintura e deslocam o grid (parte do CLS de 1,58).\n\n**Proposta.**\n\nSó CSS (e um marcador estático no HTML):\n- `.grid-header, .filter-bar, #views-stack-bar, .timeline-host, .grid-status { flex: none; }` e `.grid-viewport { flex: 1 1 auto; min-height: calc(var(--row-height) * 8); }`.\n- Painéis atuais cedem antes do grid: `.host-panel { flex: 0 1 40vh; min-height: 120px; overflow: auto; }`.\n- `#sources-panel { overflow: auto; }` e `#source-list { flex: 1 0 240px; overflow: auto; }`.\n- `#detail-panel > * { flex: none; }` e `#detail-text { min-height: 6lh; max-height: 45vh; resize: vertical; overflow: auto; }`.\n- A página nunca rola: `html, body { height: 100%; overflow: hidden; }` e `#app { height: 100dvh; }`; só regiões internas rolam.\n- Reservar altura desde a primeira pintura: `min-height` da timeline igual à altura final e um marcador vazio da trilha de visões no `index.html` com a altura da faixa (o banner de relógio sai do fluxo na UI-13).\n\n## Aceite\n\n- [ ] Com Distinct values aberto em 1600×900: `#grid-header` = 22 px e grid com ≥ 8 linhas (captura 07 depois).\n- [ ] Registro com payload: `#detail-text` com ≥ 6 linhas visíveis (captura 20 depois).\n- [ ] Caso com 2 coletas: `#source-list` com ≥ 240 px e `document.scrollingElement.scrollHeight === innerHeight` (captura 27 depois).\n- [ ] CLS da abertura menor que 1,58, sem deslocamento causado pela timeline nem pela trilha (trace); a meta final ≤ 0,05 fecha na UI-14.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP0-2 (correção imediata), P0-3 (correção imediata), P0-4, VC-02 (b), UX-01\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `css/app.css`; `css/grid-extras.css`\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html (marcador da trilha de visões)\n"
+  },
+  {
+    "rec": "REC-02",
+    "title": "UI-02 Tornar /api/sources independente do volume de registros",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:opus"
+    ],
+    "depends_on": [],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** nenhuma · **Modelo:** opus (esquema e migração) + sonnet (consulta e testes)\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L0 (servidor, paralelo) · **Esforço:** M · **Recomendação:** REC-02\n\n**Problema.** `list_sources` (`src/dmslog/server/api.py`, perto da linha 1050) calcula a última linha de cada fonte com `SELECT e.line_no + e.nlines - 1 FROM entry e WHERE e.source_id = s.id ORDER BY e.id DESC LIMIT 1`, que usa `ix_entry_tid` e uma B-tree temporária: lê todos os registros de cada fonte. São 480 ms com 3,47 milhões de registros, crescendo de forma linear; o grid, que tem a página pronta em 3 ms, espera por essa resposta, e a Follow tail repete a consulta a cada ~6 s.\n\n**Proposta.**\n\nEm dois passos, no mesmo PR:\n1. Paliativo (sonnet): `(SELECT e.line_no + e.nlines - 1 FROM entry e WHERE e.id = (SELECT max(x.id) FROM entry x WHERE x.source_id = s.id))`, medido em 80 ms; conferir no `EXPLAIN QUERY PLAN` que não há B-tree temporária.\n2. Definitivo (opus define esquema e migração): coluna `source.last_line INTEGER` gravada ao fim de cada lote de indexação (inclusive incremental e `--watch`); casos antigos preenchidos uma vez na abertura com a consulta do passo 1 (ou `NULL` com fallback), sem reindexar. Registro do esquema e da mudança em `docs/ARQUITETURA.md` pela sessão principal.\n\n**Divergência entre as análises.** Só a análise 3 mediu. O paliativo sozinho (80 ms) não atinge o orçamento de 50 ms; por isso a coluna nova.\n\n## Aceite\n\n- [ ] `/api/sources` ≤ 50 ms no caso de 3,5 milhões (`tools/bench.py --size-mb 500 --adapters 8 --profile info`).\n- [ ] Resultado idêntico ao atual: teste unitário com fontes com continuação de linhas (`nlines > 1`), com rotação e vazias.\n- [ ] Caso indexado antes da mudança abre sem reindexar e com o mesmo `last_line`.\n- [ ] `pytest` verde em Linux e Windows.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVC-01 (a)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `src/dmslog/server/api.py`; `src/dmslog/store/` (esquema, indexação, migração); `tests/unit/`\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): docs/ARQUITETURA.md (esquema e seção 15)\n"
+  },
+  {
+    "rec": "REC-03",
+    "title": "UI-03 Cache dos arquivos estáticos com ETag",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:baixa",
+      "modelo:sonnet"
+    ],
+    "depends_on": [],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** nenhuma · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P2 · **Lote:** L0 (servidor, paralelo) · **Esforço:** S · **Recomendação:** REC-03\n\n**Problema.** `_send` aplica `Cache-Control: no-store` a todas as respostas (`src/dmslog/server/app.py:125`), inclusive aos estáticos: cada F5 baixa 92 arquivos e 1,0 MB, e no `.pyz` cada arquivo custa 1,8 ms para sair do zip.\n\n**Proposta.**\n\n- Só em `_serve_static`: `ETag` forte (hash do conteúdo) calculado uma vez por arquivo e guardado em memória junto dos bytes (o app tem ~1 MB de estáticos); `Cache-Control: no-cache`; resposta `304` sem corpo quando `If-None-Match` casa (aceitar lista e `*`).\n- API e SSE continuam com `no-store` (dados de log).\n- Não usar URL versionada com `immutable`: uma URL sem `?v=` ao lado de uma versionada instancia o módulo duas vezes.\n\n## Aceite\n\n- [ ] F5 com todas as respostas estáticas em `304` sem corpo (captura do Network).\n- [ ] Teste unitário do servidor: `If-None-Match` igual, diferente, lista e `*`; API continua `no-store`.\n- [ ] `pytest` verde em Linux e Windows.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVC-08\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `src/dmslog/server/app.py`; `tests/unit/` (servidor)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): docs/ARQUITETURA.md (rever a regra \"nada em cache\": vale para dados, não para o código do app)\n\n## Decisão do Jefferson\n\nD9 (nova): permitir cache do código estático no perfil do navegador. Recomendação: sim; o cache não contém dado de log. Se não: a UI-03 sai e o orçamento de recarga da UI-14 fica sem efeito.\n"
+  },
+  {
+    "rec": "REC-04",
+    "title": "UI-04 Guarda local de desempenho da interface",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:baixa",
+      "modelo:sonnet"
+    ],
+    "depends_on": [],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** nenhuma · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P2 · **Lote:** L0 (ferramenta, paralelo) · **Esforço:** M · **Recomendação:** REC-04\n\n**Problema.** Nenhum teste mede abertura, CLS, requisições ou rolagem; os números das análises vieram de scripts descartáveis. Sem guarda, as UI-14 e UI-27 não têm como provar o aceite e qualquer lote pode regredir a rolagem.\n\n**Proposta.**\n\n`tools/ui_perf.mjs` (Node ≥ 22, sem dependência; `WebSocket` nativo e o Chrome ou Edge instalado, perfil temporário próprio apagado no fim):\n- sobe `dmslog serve` num caso gerado por `tools/bench.py` (`--quick` ou o caso grande) e mede: primeira linha do grid, número de requisições e bytes na abertura e na recarga, CLS da abertura, layouts forçados e trabalho por quadro em 120 eventos de roda, INP de clique, setas, filtro e busca; opcionalmente CPU 4× mais lenta;\n- compara com `tools/ui_perf_budgets.json` (tabela de orçamentos da análise 3, seção 5) e sai com código ≠ 0 quando estoura;\n- passo manual antes de cada release em `docs/RELEASE.md`; job de CI só em Linux, sem bloquear merge, fica para depois.\n\n## Aceite\n\n- [ ] Roda em Linux com `bench.py --quick` e imprime todas as medidas numa tabela e em JSON.\n- [ ] Reproduz a linha de base da análise 3 (caso de 3,5 milhões, 4×) com diferença ≤ 20%.\n- [ ] Não deixa processo nem pasta temporária para trás; usa só dados sintéticos.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVC-11, REVISAO-UI-UX §14 (desempenho com milhões de linhas não medido), UI-HANDOFF §10 (perfil de rolagem)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `tools/ui_perf.mjs` (novo); `tools/ui_perf_budgets.json` (novo); `docs/RELEASE.md`\n- Pontos de integração compartilhados: nenhum.\n"
+  },
+  {
+    "rec": "REC-05",
+    "title": "UI-05 Arquivo único de tokens com paleta AA",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-01"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-01 · **Modelo:** sonnet (tokens) + haiku (teste de contraste, em paralelo)\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L1 · **Esforço:** M · **Recomendação:** REC-05\n\n**Problema.** Noise/VERBOSE, Warning e Critical ficam abaixo de 4,5:1 sobre seleção e hover; bordas de campo têm 1,48:1; há 11 tamanhos de fonte (com `em` que acumula), 6 raios, 25 `padding`, duas pilhas mono, tokens repetidos 3 vezes por arquivo e 7 paletas paralelas.\n\n**Proposta.**\n\n- `css/tokens.css`, primeiro `<link>` do `index.html`, com primitivos e semânticos da seção 2 do `UI-HANDOFF.md` (cores, `--font-ui`, `--font-mono`, 4 tamanhos em px, espaço 2/4/8/12/16/24, raios 3/4/6, camadas `--z-*`, `--shadow-overlay`, movimento 120 ms com `prefers-reduced-motion`).\n- Dimensões da variante R no lugar das do handoff: `--bar-height: 36px`, `--strip-height: 30px`, `--status-height: 22px`, `--control-height: 26px` (fichas e botões de linha 24 px), `--grid-head: 22px`, `--timeline-h: 40px` (expandida 120), `--side-w: 248px`, `--detail-w: 380px`, `--cell-pad: 4px`.\n- Tokens novos de R: `--abn-row` (`#f8eceb` / `#2a1a1a`), `--filtered-bg`/`--filtered-ink` (`#e3ecfa`/`#163f78`; `#17304f`/`#b8d4ff`), `--chart-warning` (`#9a6a00` / `#d9a23a`), `--chart-normal` (`#848fa0` / `#6f7b8c`).\n- Info sem cor (`--sev-info: var(--ink)`, `--sev-noise: var(--ink-muted)`), conforme D5.\n- Paleta categórica única `--cat-1..8` com `-bg`/`-fg`; `--tl-c*`, `--agg-c*`, `--hl-*`, `--bm-*`, `--col-*` viram apelidos (os módulos migram quando cada UI tocar neles).\n- Anel de foco duplo: `outline: 2px solid var(--focus-ring); outline-offset: 1px; box-shadow: 0 0 0 3px var(--surface-panel)`.\n- `--row-height` continua 22 px aqui (a mudança é a UI-08). `app.css` migra para os tokens.\n- Tarefa paralela (haiku, arquivo disjunto): `tests/web/tokens-contrast.test.mjs`, no padrão de `highlight-contrast.test.mjs`.\n\n**Divergência entre as análises.** A análise 1 propôs barra 40, faixa 32, status 24 e controle 28 px; a análise 2 mediu que essas medidas, somadas às colunas, deixam a mensagem sem largura em ≤ 1366 px (VR-01). Decidido pelos números de R.\n\n## Aceite\n\n- [ ] Teste de tokens: texto ≥ 4,5:1 (`--ink`, `--ink-muted`, `--sev-*` sobre `--surface-panel`, `--row-selected`, `--row-hover`, `--abn-row` e `--cat-n-bg`); ≥ 3:1 para `--line-strong`, barra de seleção sobre `--row-selected` e `--chart-*` sobre o painel; claro e escuro.\n- [ ] O mesmo teste falha se os dois blocos escuros (`@media` e `[data-theme=\"dark\"]`) divergirem ou se `--row-height` ≠ `ROW_HEIGHT` de `js/grid-model.js`.\n- [ ] Margem no par mais justo: Critical sobre seleção no escuro ≥ 4,7:1 (R mediu 4,92).\n- [ ] `highlight-contrast.test.mjs` continua verde; nenhuma cor literal em `app.css` fora de `tokens.css` (grep).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-10, P2-1, P2-2, P2-3, REVISAO-UI-UX §8 #1, #2, #10, REVISAO-UI-UX §9, ANALISE-VARIANTES §6.1 (tokens de R), UX-02, UX-03, D3, D5\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `css/tokens.css` (novo); `css/app.css`; `tests/web/tokens-contrast.test.mjs` (novo, haiku)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html (link do tokens.css)\n\n## Decisão do Jefferson\n\nD3 (fonte: pilhas do sistema) e D5 (Info neutra).\n"
+  },
+  {
+    "rec": "REC-06",
+    "title": "UI-06 Carregar todas as folhas de estilo pelo HTML",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-05"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-05 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L1 · **Esforço:** S · **Recomendação:** REC-06\n\n**Problema.** 23 módulos injetam o próprio `<link rel=\"stylesheet\">` depois de carregar (por exemplo `timeline.js`, `presets.js`, `clock-banner.js`), mudando estilos depois da pintura: parte do CLS de 1,58 e mais viagens na abertura.\n\n**Proposta.**\n\n- Remover a injeção dos 23 módulos (`alerts-panel`, `clock-banner`, `bookmarks-panel`, `aggregate-panel`, `compare`, `copy-export`, `config-panel`, `dashboard`, `distinct-panel`, `events-panel`, `export-panel`, `highlight-panel`, `key-panel`, `links`, `knowledge`, `payload-list`, `payload`, `presets`, `redaction-panel`, `unknown-panel`, `side-by-side`, `views-stack`, `timeline`).\n- O `index.html` lista as folhas na ordem `tokens.css` → `components.css` (quando existir) → `app.css` → módulos.\n- Teste de convenção que falha se algum `js/*.js` criar `link` de stylesheet.\n\n**Divergência entre as análises.** O orçamento da análise 3 (≤ 12 arquivos CSS) não é meta aqui: só zero injeções. A contagem cai à medida que as UI-10 e UI-23 consolidarem estilos de painel.\n\n## Aceite\n\n- [ ] 0 folhas de estilo criadas por JS (teste de convenção).\n- [ ] Trace da abertura sem recálculo de estilo provocado por injeção de CSS.\n- [ ] Testes de fluxo que dependiam da injeção ajustados e verdes.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVC-02 (c)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: os 23 módulos listados (só a função de injeção); `tests/unit/test_conventions.py` ou teste node equivalente\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html (lista de links)\n"
+  },
+  {
+    "rec": "REC-07",
+    "title": "UI-07 Seleção sempre visível, destaques em faixa e alto contraste do Windows",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-05"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-05 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L1 · **Esforço:** S · **Recomendação:** REC-07\n\n**Problema.** A seleção é só `background: var(--selected)` (`css/app.css:383-385`): some sob destaque amarelo, confunde-se com a célula azul da coluna Collection e desaparece no modo de alto contraste do Windows (nenhum `@media (forced-colors: active)` no CSS). As linhas Error/Critical não se distinguem ao rolar.\n\n**Proposta.**\n\nPrioridade dos fundos: seleção > destaque do usuário > linha anormal > hover.\n```css\n.grid-row:hover:not(.selected) { background: var(--row-hover); }\n.grid-row[data-sev=\"1\"], .grid-row[data-sev=\"2\"] { background: var(--abn-row); }\n.grid-row.<destaque> { background: var(--hl-bg); box-shadow: inset 4px 0 0 var(--hl-bar); }\n.grid-row.selected { background: var(--row-selected); box-shadow: inset 3px 0 0 var(--accent); }\n.grid-row.selected.<destaque> { box-shadow: inset 3px 0 0 var(--accent), inset 7px 0 0 var(--hl-bar); }\n.grid-viewport:focus-visible .grid-row.selected { outline: 1px solid var(--focus-ring); outline-offset: -1px; }\n@media (forced-colors: active) {\n  .grid-row.selected { forced-color-adjust: none; background: Highlight; color: HighlightText;\n                       outline: 2px solid Highlight; outline-offset: -2px; }\n  [aria-pressed=\"true\"], [aria-expanded=\"true\"] { border: 2px solid ButtonText; }\n}\n```\n- Severidade como cor do texto de Level e Message; Critical e Error com peso 600 na coluna Level (sinal não cromático, vale também no modo forçado).\n- Coluna Collection: célula sem fundo, etiqueta `C1` com ponto `--cat-n-fg` (variável CSS posta por `style.setProperty`, sem `innerHTML`).\n- Bookmark: ★ na margem (14 px), sem mexer no fundo.\n\n**Divergência entre as análises.** A análise 1 usa barra em `box-shadow`; a análise 3 mostrou que `box-shadow` some no modo forçado. Decisão: `box-shadow` no modo normal e `outline` + `Highlight` dentro de `@media (forced-colors: active)`. O selo cheio de alarme da variante C fica só no cabeçalho do detalhe (UI-20).\n\n## Aceite\n\n- [ ] Captura 21 depois: linha selecionada com destaque continua inconfundível (barra de 3 px visível).\n- [ ] Emulação `forced-colors: active` (claro e escuro) mostra a linha selecionada (captura antes/depois); conferir no Edge do Windows no UAT.\n- [ ] Pares do teste de tokens cobrem `--abn-row`, seleção e destaque (≥ 4,5:1 para texto).\n- [ ] Nenhuma mudança de largura ou layout na rolagem (só `box-shadow` e `outline`).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-2, VR-06, VC-04, REVISAO-UI-UX §8 #7, #10, UI-HANDOFF §4.1\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `css/app.css` (estados da linha); `css/highlight.css`; `css/bookmarks.css`; `css/collections.css`; `js/grid.js` (célula Collection)\n- Pontos de integração compartilhados: nenhum.\n\n## Decisão do Jefferson\n\nD5 (Info neutra; só o anormal tem cor e fundo).\n"
+  },
+  {
+    "rec": "REC-08",
+    "title": "UI-08 Linha do grid com 20 px",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:baixa",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-05"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-05 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P2 · **Lote:** L1 · **Esforço:** S · **Recomendação:** REC-08\n\n**Problema.** Com 22 px, em 1366×768 com a doca aberta o layout proposto mostra 13 linhas; com 20 px, 16 (medido nos protótipos). `ROW_HEIGHT = 22` está duplicado em `js/grid-model.js:4` e em `--row-height` (`css/app.css:24`).\n\n**Proposta.**\n\n`--row-height: 20px` e `ROW_HEIGHT = 20` em `js/grid-model.js` (o teste da UI-05 confere os dois); `line-height` 20 px com fonte mono de 12 px; cabeçalho do grid continua 22 px (`--grid-head`). Densidade fixa, sem alternância Compact/Comfortable.\n\n**Divergência entre as análises.** Divergência entre a análise 1 (D4: manter 22 px) e a análise 2 (VR-07: 20 px). Decidido por 20 px com os números de VR-07 (+3 a +6 linhas sobre 22 px); 18 px (variante B) foi descartado porque deixa 3 px de entrelinha e enfraquece a severidade. A palavra final é do Jefferson.\n\n## Aceite\n\n- [ ] `grid-model.test.mjs` e testes de rolagem verdes com o novo valor.\n- [ ] Em 1366×768 sem painel, +9% de linhas sobre o estado anterior ao PR (mesma captura, mesmo caso).\n- [ ] Se o Jefferson escolher 22 px (D4), a issue é fechada como não planejada.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVR-07, D4, REVISAO-UI-UX §9 (ROW_HEIGHT duplicado)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `css/tokens.css`; `js/grid-model.js`; `tests/web/grid-model.test.mjs`\n- Pontos de integração compartilhados: nenhum.\n\n## Decisão do Jefferson\n\nD4 (densidade). Recomendação revista: 20 px fixos.\n"
+  },
+  {
+    "rec": "REC-09",
+    "title": "UI-09 Textos: terminologia única, plural, reticências e códigos traduzidos",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:baixa",
+      "modelo:haiku"
+    ],
+    "depends_on": [],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** nenhuma · **Modelo:** haiku (inventário); aplicação pela sessão principal\n\n## Descrição\n\n**Prioridade:** P2 · **Lote:** L1 · **Esforço:** M · **Recomendação:** REC-09\n\n**Problema.** \"entry\" (24) e \"record\" (53) misturados; \"template\" (20) e \"message type\" (9); \"(s)\" em 17 textos (\"1 records\"); \"...\" (30) e \"…\" (7); códigos internos crus (`no_operation_for_key`); progresso que termina em \": 235,230 records\"; \"Noise or worse\".\n\n**Proposta.**\n\n- Haiku gera `docs/notas/ux-copy-inventario.md`: cada chave de `js/strings.js` com texto atual e proposto, pelas regras do handoff (seção 7) e da tabela de reescritas da análise 1.\n- Termos: **record**, **message type**, **operations**, **collection**, **source**; reticências \"…\"; botões que abrem diálogo terminam em \"…\"; severidade \"At least {name}\"; fim de indexação \"Indexed {n} records.\"; cada código interno com frase própria.\n- Plural por duas chaves (`fooOne`/`fooOther`) e um auxiliar em `strings.js` que escolhe pelo `n`.\n- A sessão principal aplica no `strings.js` e ajusta os testes; as UI seguintes já usam os termos novos.\n\n## Aceite\n\n- [ ] Inventário cobre 100% das chaves com texto visível (contagem conferida contra `strings.js`).\n- [ ] Depois de aplicado: 0 ocorrências de \"(s)\", \"...\", \"entry/entries\" e \"template\" em valores visíveis (grep; exceções só para textos literais de log).\n- [ ] Teste do auxiliar de plural (0, 1, 2).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nREVISAO-UI-UX §10, UI-HANDOFF §7, P2-12, P2-13 (rótulos), UX-04, D2\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `docs/notas/ux-copy-inventario.md` (novo, haiku); testes que conferem textos\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/strings.js (aplicação pela sessão principal)\n\n## Decisão do Jefferson\n\nD2 (termo da linha do log): recomendação mantida, **record**.\n"
+  },
+  {
+    "rec": "REC-10",
+    "title": "UI-10 Componentes comuns de interface",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-05"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-05 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L2 · **Esforço:** M · **Recomendação:** REC-10\n\n**Problema.** 16 módulos repetem cabeçalho, status, vazio e erro com estilos próprios; 10 variações de selo e ficha; `aria-expanded=\"true\"` sem estilo; botão primário desabilitado com opacidade (2,05:1); fichas de 20 px.\n\n**Proposta.**\n\n`css/components.css` (prefixo `ui-`) e `js/ui-menu.js`:\n- `.ui-button` secundário, `.is-primary`, `.is-ghost`, `.is-danger`; `[aria-pressed=\"true\"]` e `[aria-expanded=\"true\"]` com fundo `--row-selected` e borda `--accent`; foco `outline 2px` + offset 1; desabilitado sem `opacity` (`--ink-disabled`, borda `--line`, `cursor: not-allowed`); carregando com `aria-busy`.\n- `.ui-input`/`.ui-select` com `aria-invalid` e `.ui-field-error` ligado por `aria-describedby`.\n- `.ui-badge` (`.is-sensitive`, `.is-curated`, `.is-estimate`) e `.ui-chip` (24 px de altura, alvo ≥ 24×24, remover com `aria-label` \"Remove {label}\").\n- `.ui-panel` (head/tools/body/foot), `.ui-table` (cabeçalho fixo, números à direita com `tabular-nums`, `min-width` nas colunas de texto), `.ui-status`, `.ui-empty`, `.ui-error`, `.ui-estimate` (barra fina depois de 400 ms; sem animação com `prefers-reduced-motion`).\n- `.ui-menu` com comportamento em `js/ui-menu.js` (setas, Home/End, letra inicial, Enter/Espaço, Esc devolve o foco) e `.ui-dialog` sobre `<dialog>` nativo.\n- Nenhum módulo migra aqui; cada UI migra os seus.\n\n## Aceite\n\n- [ ] `tests/web/ui-menu.test.mjs`: setas, Home/End, letra inicial, Esc com retorno de foco.\n- [ ] Página de demonstração sintética (só em teste ou captura) com hover, foco, desabilitado e pressed, claro e escuro; bordas e estados ≥ 3:1 no teste de tokens.\n- [ ] Alvos interativos ≥ 24×24 px.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-9 (componente), P1-1 (estilo de estado ativo), P2-1, REVISAO-UI-UX §8 #7, #11, UI-HANDOFF §5, UX-05\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `css/components.css` (novo); `js/ui-menu.js` (novo); `tests/web/ui-menu.test.mjs` (novo)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html (link)\n"
+  },
+  {
+    "rec": "REC-11",
+    "title": "UI-11 Contratos de interface: ações, doca, barra de status e fichas de filtro",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:opus"
+    ],
+    "depends_on": [],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** nenhuma · **Modelo:** opus\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L2 (paralelo à UI-10) · **Esforço:** M · **Recomendação:** REC-11\n\n**Problema.** Barra de menus, doca, barra de status, menu de contexto, paleta e diálogo de atalhos precisam da mesma fonte de ações e de APIs estáveis; sem contrato definido antes, cada PR reinventa a ligação em `main.js` (ponto de integração mais disputado).\n\n**Proposta.**\n\nOpus escreve `docs/notas/ui-contratos.md` (a sessão principal leva o essencial para `docs/ARQUITETURA.md`, seção 11 \"Viewer\", e registra na seção 15):\n- Registro de ações: `{ id, labelKey, group, shortcut, enabled(ctx), run(ctx), load?() }`; consumidores: menus da barra, diálogo `?`, menu de contexto, paleta; `load()` é o gancho do carregamento sob demanda (UI-14).\n- Doca: `register({ id, titleKey, mount(host, ctx) })`, `open`, `close`, `maximize`, eventos; alturas mínimas; chaves de `localStorage`; contrato com o grid (`ensureSelectedVisible()` no redimensionamento).\n- Barra de status: `count`, `position`, `progress`, `message(text, { kind, timeoutMs })`, `connection(state)`; substitui `#message`.\n- Fichas de filtro: funções puras filtro → fichas e remoção de ficha → filtro.\n- Lista de regiões para `F6`.\n- Para cada módulo atual: como migra (lista), o que fica em modelo puro testável.\n\n## Aceite\n\n- [ ] Documento cobre as 5 interfaces com tipos, pontos de chamada e caminho de migração de cada módulo que hoje insere botão ou painel.\n- [ ] Aprovado na revisão cruzada; a sessão principal registra em `docs/ARQUITETURA.md` (seções 11 e 15).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP0-2 (`dock.register`), VC-10 (registro único de ações), P1-1, P1-5, P1-7, D6, UX-07 (desenho)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `docs/notas/ui-contratos.md` (novo)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): docs/ARQUITETURA.md\n"
+  },
+  {
+    "rec": "REC-12",
+    "title": "UI-12 Barra superior de uma linha com menus e estado ativo",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-10",
+      "REC-11"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-10, UI-11 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L3 · **Esforço:** M · **Recomendação:** REC-12\n\n**Problema.** 22 botões de mesmo peso em `#toolbar` (`flex-wrap: wrap`, `css/app.css:144-150`): 2 linhas em 1600 px, 3 em 1366 e 4 em 200%; sem estado ativo; cada módulo tira o `hidden` do seu botão ao carregar, e a barra ganha a 2ª linha depois da pintura (deslocamento de 0,70 do CLS).\n\n**Proposta.**\n\nBarra de 36 px (`--bar-height`), sem quebra: nome do app · seletor de caso ▾ (New case…, recentes, Close case) · busca (flexível, até 560 px) · Go to time · espaçador · alternâncias Filter tree, Highlights, Bookmarks (`aria-pressed`) · menu **Analyze** (Distinct values, Group by message type, Aggregate, Operations, Adapter dashboard, Payloads, Unknown message types, Effective configuration) · **Export** (Export report…, Copy as…) · **View** (Columns…, Follow tail, Theme ▸ System/Light/Dark, Shortcuts).\n- Alerts como indicador com contagem só com `serve --watch`.\n- Todos os itens existem desde o HTML ou o registro síncrono de ações; módulo indisponível = item `disabled` com `title`, nunca `hidden` → visível.\n- Sem caso: só caso, busca desabilitada com dica e View.\n- Os módulos deixam de inserir botões na barra e passam a registrar ações (UI-11).\n\n## Aceite\n\n- [ ] Barra com 1 linha em 1280, 1366 e 1600 px de largura (capturas).\n- [ ] Trace da abertura: nenhum deslocamento causado pela barra.\n- [ ] Menus por teclado (testes da UI-10) e estado aberto/pressionado visível.\n- [ ] Tema System/Light/Dark persiste; testes de fluxo dos painéis abrem pelo menu.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-1, P0-1 (a), VC-02 (a), P2-8, REVISAO-UI-UX §8 #7, UX-06\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/toolbar-menu.js` e js/toolbar-menu-model.js (novos, com teste); `css/toolbar.css` (novo); `js/theme.js`; montagem do botão em distinct-panel.js, aggregate-panel.js, highlight-panel.js, copy-export.js e nos demais que inserem botão\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html:21-49; js/main.js; js/strings.js\n"
+  },
+  {
+    "rec": "REC-13",
+    "title": "UI-13 Barra de status fixa e mensagens no lugar da ação",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-10",
+      "REC-11",
+      "REC-12"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-10, UI-11, UI-12 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L3 · **Esforço:** M · **Recomendação:** REC-13\n\n**Problema.** O banner `#message` (`index.html:51`) aparece e some empurrando tudo 28 px, fica até a próxima mensagem e mostra erros longe do campo; a ajuda de atalhos ocupa 3 linhas fixas; `#grid-status` com `aria-live` fala a cada rolagem.\n\n**Proposta.**\n\nRodapé de 22 px (`--status-height`) com segmentos: contagem (\"285,093 records\" ou \"about 1.2M records\" com `.is-estimate`), posição (sem live), indexação (`<progress>` + \"Indexing 3 of 28 files\"), aviso de relógio entre coletas, mensagem (`role=\"status\"`, `aria-live=\"polite\"`; sucesso some em 8 s; erro fica com fechar) e botão `?`.\n- Erro global (conexão) troca o conteúdo da própria barra: `.is-error` com `--status-error-bg`/`--status-error-ink`, `role=\"alert\"`, \"Retry now\"; nada é sobreposto à faixa de filtro.\n- Erro de formulário junto do campo (`aria-invalid` + `.ui-field-error`); erro de painel no corpo do painel (`.ui-error`).\n- A ajuda fixa de atalhos sai da tela; o `?` mostra o texto atual até a UI-28 entregar o diálogo.\n\n**Divergência entre as análises.** A análise 1 punha o erro global num banner sobre o topo da coluna central; a análise 2 mediu que esse banner cobre a faixa de filtro (VR-04). Decidido: erro global dentro da barra de status. O lote da barra de status sobe de L8 para L3 porque várias UI seguintes (faixa de filtro, estado vazio, falha de rede) dependem dela.\n\n## Aceite\n\n- [ ] Mostrar e esconder mensagem não muda a posição de nenhum elemento (retângulo do grid igual antes/depois, em teste).\n- [ ] \"Path does not exist\" aparece abaixo do campo, com `aria-invalid`.\n- [ ] Com o servidor parado, a barra de status mostra o erro e a interseção com a faixa de filtro é 0 px.\n- [ ] `#grid-status` deixa de ser região live.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-7, VR-04, P0-1 (e), VC-02 (b, banner de relógio), REVISAO-UI-UX §8 #8, #9, UX-15\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/status-bar.js` (novo, com teste); `css/status-bar.css` (novo); `js/clock-banner.js`; `js/sources.js` e js/case-files.js (só erros de campo); `js/views-stack.js` (mensagem junto do botão Narrow)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html:51; js/main.js:144-150; js/strings.js\n"
+  },
+  {
+    "rec": "REC-14",
+    "title": "UI-14 Abertura rápida: módulos sob demanda e requisições em paralelo",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-02",
+      "REC-04",
+      "REC-06",
+      "REC-12",
+      "REC-13"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-02, UI-04, UI-06, UI-12, UI-13 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L3 · **Esforço:** M · **Recomendação:** REC-14\n\n**Problema.** 92 requisições e 1,0 MB na abertura; 36 `import()` disparados no `start()` (`main.js:745-1229`) mesmo para painéis nunca abertos; `/api/cases` fica 208 ms na fila das 6 conexões; `/collections` só começa depois de `/sources`; primeira linha em 1.236 ms.\n\n**Proposta.**\n\n- `js/boot.js` mínimo: dispara `/api/cases` (e, havendo caso salvo, `/sources` e `/collections` em `Promise.all`) e então `import(\"./main.js\")`, entregando as promessas; `applyView` uma vez só, quando os dois chegam.\n- `<link rel=\"modulepreload\">` no `index.html` para o grafo estático de `main.js` (4 viagens viram 1).\n- Painéis sob demanda pelo `load()` do registro de ações: `modulepreload` no `pointerenter`/`focus` do item, `await import()` no clique; falha de import = item desabilitado com mensagem (mantém a tolerância de \"optional module\").\n- Na abertura ficam só: grid, detalhe, fontes, filtros, timeline, trilha (se houver estado salvo), Follow tail, alertas e aviso de relógio.\n- Nunca misturar URL com e sem `?v=`.\n\n## Aceite\n\n- [ ] Com `tools/ui_perf.mjs` no caso de 3,5 milhões, CPU 4×: primeira linha ≤ 600 ms (com a UI-02); ≤ 45 requisições e ≤ 450 KB de JS na abertura; ≤ 2 viagens em série antes de `/page`.\n- [ ] CLS da abertura ≤ 0,05 e da sessão ≤ 0,1.\n- [ ] Abrir um painel pela primeira vez ≤ 100 ms depois do hover; teste de fluxo para cada painel carregado sob demanda.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVC-07, VC-01 (b, c), VC-02 (orçamento de CLS), ANALISE-VERCEL §5\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/boot.js` (novo); `js/sources.js` (pedido em paralelo)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html; js/main.js; js/strings.js\n"
+  },
+  {
+    "rec": "REC-15",
+    "title": "UI-15 Doca inferior com abas para os painéis de análise",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:alta",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-10",
+      "REC-11",
+      "REC-12"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-10, UI-11, UI-12 · **Modelo:** sonnet (API desenhada pelo Opus na UI-11)\n\n## Descrição\n\n**Prioridade:** P0 · **Lote:** L4 · **Esforço:** L · **Recomendação:** REC-15\n\n**Problema.** Os painéis entram em `#grid-panel` antes do filtro (`insertBefore` em `distinct-panel.js:377`, `aggregate-panel.js:582`, `highlight-panel.js:138`, `views-stack.js:73`) e empurram o grid; o painel também não cabe (coluna quebrada letra por letra, ação abaixo da dobra). Na primeira rodada dos protótipos, abrir a doca escondeu a linha selecionada.\n\n**Proposta.**\n\nPelo contrato da UI-11:\n- Abas (`role=\"tablist\"`, `×` por aba), Maximize/Restore e Close all; divisor `role=\"separator\"` horizontal com `aria-valuenow` em %, setas 5%, Home/End, duplo clique alterna 40%/maximizado.\n- Altura inicial `clamp(160px, conteúdo, 40%)`; depois do primeiro arraste vale a altura lembrada (`dmslog.dockHeight`, com `try/catch`). Grid com mínimo de 8 linhas + cabeçalho; doca com mínimo de 160 px; altura da janela < 640 px abre maximizada.\n- Ao abrir, redimensionar, maximizar ou mudar de breakpoint: se a linha selecionada estava visível, preserva a distância do topo; se sairia, rola para 1/3 da altura do grid (`ResizeObserver` no viewport chamando o mesmo \"garantir visível\" do teclado; nada roda durante a rolagem).\n- Abrir move o foco para o título do painel (`h2`); Esc com foco dentro fecha e devolve o foco.\n- Os módulos passam a montar no host da doca, sem mudar a lógica; Export report e Copy as viram diálogos (UI-23).\n\n## Aceite\n\n- [ ] Em 1366×768 com qualquer painel aberto: grid ≥ 8 linhas e cabeçalho de 22 px (R mediu 16 linhas).\n- [ ] Linha selecionada continua visível depois de abrir, redimensionar e maximizar (teste do modelo + fluxo).\n- [ ] Divisor operável por teclado; altura lembrada; teste de `dock-model` (mínimos, `clamp`, persistência).\n- [ ] Capturas 07, 10, 13, 15 e 17 refeitas.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP0-2 (solução), P0-1 (mínimo de linhas), VR-02, VR-09, D1, UI-HANDOFF §5.8, UX-07\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/dock.js`, js/dock-model.js, css/dock.css (novos, com teste); `js/grid.js` (ensureSelectedVisible); só a função de montagem em distinct-panel.js, aggregate-panel.js, highlight-panel.js, events-panel.js, dashboard.js, payload-list.js, alerts-panel.js, unknown-panel.js, config-panel.js, key-panel.js, compare.js, side-by-side.js\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/main.js; index.html (host da doca)\n\n## Decisão do Jefferson\n\nD1 (onde abrem os painéis): recomendação mantida, doca inferior com abas.\n"
+  },
+  {
+    "rec": "REC-16",
+    "title": "UI-16 Colunas do grid que deixam a mensagem legível em notebook",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:alta",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-05",
+      "REC-07",
+      "REC-08"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-05, UI-07, UI-08 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P0 · **Lote:** L4 · **Esforço:** M · **Recomendação:** REC-16\n\n**Problema.** Colunas fixas somam 668 px (horário 190, PID e TID 72+72, Level 84, Source 160, Collection 90; `css/app.css:418-440`): com as laterais, a coluna Message fica com 0 a 12 caracteres em 1280–1366 px. A coluna Source corta o fim do nome e esconde exatamente `.sensitive`, `.log` e o índice de rotação.\n\n**Proposta.**\n\n- Larguras padrão em `ch` da fonte do grid (as que o usuário arrastou continuam salvas em px, 9.18): horário `HH:MM:SS.mmm` 12ch (≈ 100 px); `MM-DD HH:MM:SS.mmm` 18ch só quando o caso cobre mais de um dia (decidido uma vez por caso); PID e TID 6ch (≈ 44 px); Level 9ch (≈ 72 px); Source 20ch (≈ 148 px); Collection 5ch (≈ 36 px, etiqueta da UI-07).\n- Data completa no detalhe, no intervalo da faixa de filtro e no `title` da célula.\n- Source com reticências no meio (`Adapter_10…sensitive.log.0`): função pura `middleEllipsis(name, maxChars)` em `grid-model.js`, com cache por `source_id` + largura em caracteres; largura do caractere mono medida uma vez por mudança de fonte ou de coluna, nunca por linha.\n- Selo `S` (`--text-xs`, borda `--line-strong`) antes do nome das fontes sensitive; `title` com o nome completo.\n\n**Divergência entre as análises.** VR-01 dá as larguras em px e VR-08 em `ch`; decidido `ch` com os mesmos valores aproximados, porque a fonte mono efetiva muda entre Windows e Linux. Sobe para L4 (era L6 na análise 1) por ser P0.\n\n## Aceite\n\n- [ ] Teste de `middleEllipsis`: nome curto, exato, 120 caracteres, preserva `.sensitive`, `.log` e `.log.0`.\n- [ ] Em 1600×900 com coluna Collection, Message com ≥ 60 caracteres; o aceite de ≥ 50 em 1280×720 e 1366×768 fecha na UI-17.\n- [ ] Trace de rolagem sem medição de texto; larguras salvas pelo usuário preservadas (testes de `column-resize`).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVR-01 (colunas e horário), VR-08, P1-3, UI-HANDOFF §4.2\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/grid.js` (fillCells, formato do horário); `js/grid-model.js` (+ teste); `js/column-resize.js`; `css/app.css` (larguras de coluna); `css/collections.css`\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/strings.js (rótulo acessível do selo S)\n"
+  },
+  {
+    "rec": "REC-17",
+    "title": "UI-17 Layout responsivo sem sobreposição: trilho da lateral e gavetas",
+    "labels": [
+      "dev",
+      "bug",
+      "accessibility",
+      "area:ui",
+      "prioridade:alta",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-12",
+      "REC-15",
+      "REC-16"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-12, UI-15, UI-16 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P0 · **Lote:** L4 · **Esforço:** M · **Recomendação:** REC-17\n\n**Problema.** No breakpoint de 1100 px (`css/app.css:535-546`) o grid transborda por cima do detalhe em 900×800; em 200% a timeline cobre o detalhe e \"Create case\" cobre o texto (WCAG 1.4.10 e 1.4.4). A regra \"três colunas a partir de 1280 px\" do handoff não garante largura para a mensagem.\n\n**Proposta.**\n\n- ≥ 1500 px: lateral 248 · centro `minmax(0, 1fr)` · detalhe 380.\n- 1280–1499 px: lateral vira **trilho de 44 px** (botão vertical \"Sources\" com `3/14`, `aria-expanded`, abre a lateral como gaveta sobreposta de 280 px; Esc fecha e devolve o foco); detalhe 360.\n- 960–1279 px: trilho + detalhe como gaveta à direita (420 px, `--surface-overlay`, `--shadow-overlay`, `--z-drawer`), aberta por Enter no grid ou pelo botão \"Detail\" na faixa de filtro.\n- < 960 px: idem, e as três alternâncias da barra entram no menu View.\n- Altura < 640 px: timeline recolhida e doca maximizada.\n- Zoom 200% em 1600 px = 800 px CSS: cai na regra < 960.\n\n**Divergência entre as análises.** Análise 1: gaveta do detalhe abaixo de 1280 px e da lateral abaixo de 960. Análise 2: trilho já abaixo de 1500 px. Decidido somar os dois: trilho < 1500, gaveta do detalhe < 1280. Sobe de L7 para L4 por ser P0.\n\n## Aceite\n\n- [ ] 900×800 e 200%: interseção 0 px entre barra, timeline, grid e detalhe (capturas 26 e 32 refeitas).\n- [ ] Message com ≥ 50 caracteres em 1280×720 e em 1366×768 com 2 coletas (R mediu 56 e 68).\n- [ ] Gavetas e trilho por teclado (Enter, Esc, retorno de foco), com teste do modelo das gavetas.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP0-5, VR-01 (trilho e breakpoints), REVISAO-UI-UX §8 #3, UI-HANDOFF §3.1, UX-14\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `css/app.css` (seção responsiva); `js/drawers.js` (novo, com teste)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html (trilho e botões); js/main.js; js/strings.js\n"
+  },
+  {
+    "rec": "REC-18",
+    "title": "UI-18 Faixa de filtro com estado Filtered, trilha e fichas removíveis",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-09",
+      "REC-10",
+      "REC-11",
+      "REC-13",
+      "REC-17"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-09, UI-10, UI-11, UI-13, UI-17 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L5 · **Esforço:** M · **Recomendação:** REC-18\n\n**Problema.** Em \"View 2\" a busca volta vazia e os selects ficam em \"Any\", mas o grid continua filtrado; árvore de filtros, fontes e coletas não aparecem perto do grid. Nos protótipos, fichas que não cabem são cortadas sem aviso em 1366 px.\n\n**Proposta.**\n\nFaixa única de 30 px (`--strip-height`):\n- Esquerda: trilha (`nav aria-label=\"Views\"`, `ol`, atual com `aria-current=\"page\"`), Back/Forward como ícones com `aria-label`.\n- Direita: fichas do filtro efetivo da visão atual (`Severity ≥ Error ×`, `3 sources ×`, `C2 ×`, `text \"Validation\" ×`, `Filter tree (4 conditions)`), \"Filters ▾\" (popover com Severity \"At least…\", From, To, Hide noise, Unclassified only, Level em \"Advanced\", Apply), Narrow e `⋯` (Rename, Show in parent, Show in root).\n- Com filtro: `.is-filtered { background: var(--filtered-bg); box-shadow: inset 3px 0 0 var(--accent); }` e rótulo \"Filtered\"; sem filtro: \"No filters\" em `--ink-muted`.\n- Contagem `1,204 of 235,230 records` com `flex: none`; fichas que não cabem viram \"+N more\" (abre o popover); medir só quando o filtro ou a largura da faixa muda.\n- Modelo puro filtro ↔ fichas (contrato da UI-11).\n\n## Aceite\n\n- [ ] Teste do modelo: busca, severidade, nível, intervalo, fontes, coletas, árvore, unclassified e hide noise viram fichas; remover a ficha remove a condição.\n- [ ] Em 1366×768 com 3 ou mais condições: nenhuma ficha cortada e contagem inteira (captura).\n- [ ] Cenário da captura 19 mostra `text \"Validation\"` em View 2.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-5, VR-03, P2-13 (Level em Advanced), UI-HANDOFF §5.9, UX-08\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/views-stack.js`; `css/views-stack.css`; `js/filters.js`; `js/filter-chips.js` e js/filter-chips-model.js (novos, com teste)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html:103-124; js/main.js; js/strings.js\n"
+  },
+  {
+    "rec": "REC-19",
+    "title": "UI-19 Timeline como faixa de alarme compacta",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-05"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-05 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L5 · **Esforço:** M · **Recomendação:** REC-19\n\n**Problema.** Info (160 mil) em azul saturado ocupa quase toda a área (185 px) e Error (20,6 mil) vira faixa de 2 a 4 px; mesmo em cinza, com a escala comum o pico de erro continua um traço (protótipo A); o texto fixo de ajuda ocupa uma linha; eixo em `1/15/30`.\n\n**Proposta.**\n\n- Altura 40 px (`--timeline-h`), expansível a 120 px (lembrada).\n- Barras empilhadas só de Critical, Error e Warning (`--chart-critical`, `--chart-error`, `--chart-warning`), com escala própria; Info + Verbose como linha de 1,5 px em `--chart-normal`, escala própria até 40% da altura; lacunas continuam visíveis.\n- Legenda numa linha à direita, com contagens, séries alternáveis (`aria-pressed`) e \"Errors only\"; \"N undated records\" quando houver.\n- Eixo com data ISO (`2030-01-15`); arrastar para filtrar continua; a dica vai para o `title` e para o diálogo `?`.\n\n**Divergência entre as análises.** Análise 1: 64 px (expande a 160), séries empilhadas na mesma escala com Info cinza. Análise 2: 40 px (120), anormal com escala própria e normal como linha. Decidido pela análise 2: é a única forma medida em que o pico aparece.\n\n## Aceite\n\n- [ ] Caso sintético com pico de erro: barra do pico ≥ 50% da altura da timeline.\n- [ ] Cores dos gráficos ≥ 3:1 sobre o painel (teste de tokens); teste do `timeline-model` para as duas escalas.\n- [ ] Densidade final (com UI-12 a UI-18 integradas), sem doca: ≥ 24 linhas em 1600×900, ≥ 18 em 1366×768, ≥ 12 em 1280×720; com doca: ≥ 8 (R mediu 37, 30, 28 e 15 a 20).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-4, VR-05, P2-10, P0-1 (b), UX-09, D5\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/timeline.js`; `js/timeline-model.js` (+ teste); `css/timeline.css`\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/strings.js\n\n## Decisão do Jefferson\n\nD5 (Info neutra): recomendação mantida.\n"
+  },
+  {
+    "rec": "REC-20",
+    "title": "UI-20 Detalhe do registro em ordem de investigação",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-01",
+      "REC-10"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-01, UI-10 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L5 · **Esforço:** M · **Recomendação:** REC-20\n\n**Problema.** Metadados em texto corrido com \" - \"; botões quebram em 2 linhas; \"What it means\" vem depois de Bookmark e dos destaques; as chaves ficam no fim, abaixo do payload; XML largo corta à direita.\n\n**Proposta.**\n\nOrdem: (1) cabeçalho (horário mono 600, selo de nível na cor da severidade, nome da fonte + selo `sensitive`, PID, TID, coleta); (2) ações `.is-ghost` com ícone + rótulo curto (Context ▾, Copy, Compare, Bookmark ★, Highlight ▾); (3) título do tipo de mensagem (código no `title`); (4) texto (`min-height: 6lh; max-height: 45vh; resize: vertical`); (5) What it means + nota (some sem pack); (6) Fields e Keys (fichas \"Same key\"); (7) Links; (8) Payload recolhível com Formatted/Raw/Wrap lines (lembrado)/Copy; (9) nota do bookmark.\n- Seções 5 a 9 com `h3` recolhível (`button` + `aria-expanded`), estado lembrado.\n- Sem registro: `.ui-empty` \"Select a record to see its full text, meaning and links.\"\n\n## Aceite\n\n- [ ] Em 1600×900, registro com payload: texto e \"What it means\" visíveis sem rolar.\n- [ ] `detail-flow` e `knowledge-flow` atualizados e verdes; Wrap lines persiste.\n- [ ] Capturas 05, 20 e 29 refeitas.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-6, P2-9, P0-4 (regras definitivas), VR-06 (selo só no detalhe), UI-HANDOFF §6, UX-10\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/detail.js`; `css/knowledge.css`; `css/links.css`; `css/payload.css`; `js/payload.js`; `css/bookmarks.css` (parte do detalhe); `js/highlight-panel.js` (só a seção do detalhe)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html:135-160; js/strings.js\n"
+  },
+  {
+    "rec": "REC-21",
+    "title": "UI-21 Lateral com o caso aberto, coletas compactas e fontes com espaço",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-09",
+      "REC-10",
+      "REC-17"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-09, UI-10, UI-17 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L5 · **Esforço:** M · **Recomendação:** REC-21\n\n**Problema.** Com caso aberto a lateral mostra formulário de novo caso, campo de caminho, \"Add ERS files\" e o painel de coletas (459 px) acima das fontes; meta \"HOST - pid - -\" quando falta o PID; progresso \": 235,230 records\"; arquivo ilegível avisado longe da fonte; `renderSources()` recria a lista inteira a cada atualização e quem usa o teclado perde o foco (WCAG 2.4.3).\n\n**Proposta.**\n\n- Cabeçalho fixo do caso (nome + \"Add files…\" + menu `⋯`); coletas recolhíveis (abertas com mais de uma; uma linha por coleta: `C1`, servidor, contagem, aviso) com `⋯` → \"Remove C2…\" (`.is-danger`, confirmação em dois passos já existente); filtro de fontes fixo; lista com rolagem e `min-height: 240px`.\n- Meta sem o segmento ausente; progresso \"{source}: {n} records\" e, no fim, \"Indexed {n} records.\".\n- Fonte ilegível: marcador `!` (`--status-error-ink` sobre `--status-error-bg`) antes do nome, `title` com o motivo e \"1 file unreadable\" no cabeçalho de Collections.\n- Renderização por reconciliação por `id`: conjunto igual = só atualiza textos; mudou = insere/remove só os itens afetados, preservando `document.activeElement` e a rolagem; um listener delegado de `change`/`keydown` no `<ul>`.\n- Regras da lateral saem de `app.css` para `css/sources.css`.\n\n**Divergência entre as análises.** A reconciliação da lista (VC-05 a, b) entra aqui, e não na UI-30, para reescrever `renderSources()` uma vez só.\n\n## Aceite\n\n- [ ] Com 2 coletas, a lista de fontes ocupa ≥ 60% da altura da lateral e mostra ≥ 26 linhas em 1600×900 (R: 31).\n- [ ] Teste: foco num checkbox continua no mesmo checkbox depois de 3 atualizações.\n- [ ] Capturas 25 e 27 refeitas; testes de texto de P2-11 e P2-12.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP0-3 (solução), P2-7, P2-11, P2-12, VR-10, VC-05 (a, b), UX-11, UX-16 (P2-7, P2-11, P2-12)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/sources.js`; `js/collections-panel.js`; `css/collections.css`; `css/sources.css` (novo)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html:55-83; js/main.js; js/strings.js\n"
+  },
+  {
+    "rec": "REC-22",
+    "title": "UI-22 Diálogos de caso e estado vazio sem caso",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-10",
+      "REC-16",
+      "REC-21"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-10, UI-16, UI-21 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L5 · **Esforço:** M · **Recomendação:** REC-22\n\n**Problema.** Três caminhos para abrir arquivos visíveis ao mesmo tempo; \"Add\" e \"Add 1 file(s) to the case\" com o mesmo verbo para ações diferentes; \"Create case\" desabilitado com 2,05:1; sem caso, grid vazio com filtros e timeline soltos; no navegador de pastas, nomes de ZIP cortados no fim.\n\n**Proposta.**\n\n- Sem caso: estado vazio no centro (\"Open an ERS to start\", **New case…** primário, casos recentes com nome, coletas e data, dica \"Paste a path or use Browse\"); lateral e detalhe com 0 px; filtros, trilha e timeline escondidos; barra de status \"No case open.\".\n- New case… e Add files… em `.ui-dialog` com o componente `CaseFiles`; Add files… inclui a seção \"Folder or single file\" (campo + escopo Default/All logs) que substitui o formulário \"Open\"; rótulos \"Add to list\" e \"Add 2 files to case\".\n- Navegador de pastas em `<dialog>`, nomes com `middleEllipsis` (UI-16) e selo Enterprise/Sensitive (tipo já calculado em `case-files-model.js`).\n\n**Divergência entre as análises.** VR-11 tira os casos recentes da lateral (a análise 1 deixava nos dois lugares). Decidido pela análise 2.\n\n## Aceite\n\n- [ ] Com caso aberto, nenhum formulário na lateral (captura 04 refeita).\n- [ ] Botão primário desabilitado legível, sem `opacity`; diálogo prende o foco e fecha com Esc (nativo).\n- [ ] `case-files-flow` e `folder-browser-model` atualizados; capturas do estado vazio claro e escuro.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-8, P2-4, VR-11, P2-5, UX-16 (P2-5)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/case-files.js`; `js/case-files-model.js`; `css/case-files.css`; `js/folder-browser.js`; `js/sources.js` (remoção dos formulários)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html:55-83; js/main.js; js/strings.js\n"
+  },
+  {
+    "rec": "REC-23",
+    "title": "UI-23 Painéis no padrão comum e diálogos de exportação",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-10",
+      "REC-15"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-10, UI-15 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L5 · **Esforço:** M · **Recomendação:** REC-23\n\n**Problema.** Alguns painéis têm Close, outros não; títulos em 3 tamanhos; Refresh em posições diferentes; ação principal abaixo da dobra (Export, Aggregate); Compare com \"Record 14941\", caminho completo e código do template; Operations com rótulo \"Search\" sem campo ao lado.\n\n**Proposta.**\n\n- Cada painel migra para `.ui-panel` (cabeçalho fixo com título `h2`, resumo, ações e Close; corpo com rolagem; rodapé com a ação principal) e `.ui-table`; estados `.ui-status`, `.ui-empty`, `.ui-error` com próximo passo (\"Could not load operations. {reason} Try Refresh.\").\n- Esc com foco dentro fecha e devolve o foco.\n- Export report… e Copy as… viram `.ui-dialog` com a ação fixa no rodapé.\n- Compare: cabeçalho A/B com horário, nome da fonte e tipo de mensagem; diff primeiro.\n- Operations: rótulo associado ao campo; filtros numa linha.\n- Pode ser dividida por painel (arquivos disjuntos), integrando um PR por vez.\n\n## Aceite\n\n- [ ] Todo painel com Close e Esc (teste de fluxo por painel).\n- [ ] Com a doca em 160 px, a ação principal de cada painel visível sem rolar.\n- [ ] Coluna Name de Operations sem quebra letra por letra; capturas 08 a 17 refeitas.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-9 (migração), P2-6, P2-14, UX-16 (P2-6), UI-HANDOFF §5.4, §5.5, REVISAO-UI-UX §6 (fluxo Exportar)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: os módulos de painel e seus CSS: distinct-panel, aggregate-panel, events-panel, dashboard, payload-list, alerts-panel, export-panel, copy-export, config-panel, unknown-panel, compare, side-by-side, presets, bookmarks-panel, filter-tree\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/strings.js\n"
+  },
+  {
+    "rec": "REC-24",
+    "title": "UI-24 Seguir uma chave entre fontes",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-15",
+      "REC-18",
+      "REC-20",
+      "REC-23"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-15, UI-18, UI-20, UI-23 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L5 · **Esforço:** M · **Recomendação:** REC-24\n\n**Problema.** As fichas de chave ficam no fim do detalhe, abaixo de um payload de 600 px; o painel \"Records with the same key\" mostra caminho completo e código do template (contra a decisão da 9.19), horário em 3 linhas e \"1 records\".\n\n**Proposta.**\n\n- Fichas de chave no bloco 6 do detalhe (UI-20).\n- Painel de mesma chave na doca com as colunas do grid (Time, nome da fonte + selo S, Level, tipo de mensagem, Message), uma linha por registro, plural correto.\n- \"Show in grid\" cria visão encadeada com o filtro da chave (vira ficha na faixa).\n- Entrada \"Same key ▸\" no menu de contexto chega com a UI-29.\n\n## Aceite\n\n- [ ] Em 1600×900, a partir de um registro com payload, seguir uma chave leva ≤ 2 ações sem rolar o detalhe.\n- [ ] Teste: o painel não mostra caminho completo nem código de template.\n- [ ] \"Show in grid\" cria a visão com a ficha; `key-panel-flow` verde.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-13, REVISAO-UI-UX §6 (fluxo seguir um GUID), ANALISE-VARIANTES §5.1 (passo 5)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/key-panel.js`; `js/key-panel-model.js`; `css/key-panel.css`; `js/links.js`\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/main.js (criação da visão); js/strings.js\n"
+  },
+  {
+    "rec": "REC-25",
+    "title": "UI-25 Falha de rede ou de consulta sem perder o que está na tela",
+    "labels": [
+      "dev",
+      "bug",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-13",
+      "REC-18",
+      "REC-21"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-13, UI-18, UI-21 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L6 · **Esforço:** M · **Recomendação:** REC-25\n\n**Problema.** `Grid.reload()` (`js/grid.js:253-271`) zera a janela e renderiza antes de pedir a página: se o pedido falha, o grid fica vazio, o filtro novo já está na trilha e a timeline continua com dados antigos; o `EventSource` tenta reconectar sem parar (9 falhas em 20 s); não há `aria-busy`.\n\n**Proposta.**\n\n- Manter os dados anteriores: o grid só troca a janela quando a nova página chega; enquanto isso, linhas antigas com `opacity: .6`, `aria-busy=\"true\"` no `role=\"grid\"` e, depois de 400 ms, barra fina de progresso.\n- Filtro e trilha só são confirmados depois do sucesso; em erro, voltam ao estado anterior e a mensagem fica junto do grid com \"Retry\".\n- Erro de rede: estado \"Disconnected\" na barra de status (\"dmslog is not running. Start it again, then Retry.\"), \"Retry\" chama `/api/health`.\n- SSE para depois de 3 falhas seguidas e volta no Retry; timeline com falha fica marcada como desatualizada, sem misturar dados.\n\n## Aceite\n\n- [ ] Teste que simula falha de `api.page`: linhas e filtro anteriores mantidos, nenhuma visão nova na trilha.\n- [ ] Com o servidor parado: no máximo 3 tentativas de SSE; captura 03 refeita.\n- [ ] `aria-busy` alterna durante a recarga (teste).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVC-03, VR-04 (estado Disconnected), UI-HANDOFF §9 (servidor indisponível)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/grid.js`; `js/grid-model.js` (+ teste); `js/views-stack.js`; `js/follow-tail.js` (limite de reconexão); `js/sources.js` (recarga das fontes)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/main.js (aplicação do filtro e da trilha); js/strings.js\n"
+  },
+  {
+    "rec": "REC-26",
+    "title": "UI-26 Grid legível por leitor de tela",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-13",
+      "REC-25"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-13, UI-25 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L6 · **Esforço:** M · **Recomendação:** REC-26\n\n**Problema.** Cada linha tem `aria-label=\"Entry {id}\"` (`js/grid.js:537`), que substitui as células; o cabeçalho fica fora do `role=\"grid\"`; `aria-rowcount` vale o tamanho da janela carregada (`grid.js:519`); sem `aria-activedescendant`.\n\n**Proposta.**\n\n- Sem `aria-label` na linha; bookmark e destaque como texto oculto numa célula.\n- `#grid-viewport` com `role=\"grid\"`, `aria-rowcount` = total (ou `-1` quando estimado), `aria-colcount`; cabeçalho dentro do grid em `role=\"rowgroup\"`; linhas com `aria-rowindex` quando a posição é exata.\n- Ids estáveis por slot do pool e `aria-activedescendant` = linha selecionada.\n- Região live só na barra de status, para contagem e filtro (UI-13).\n\n## Aceite\n\n- [ ] Teste DOM confere os atributos depois de rolar e selecionar.\n- [ ] Árvore de acessibilidade (CDP) mostra o conteúdo das células na linha selecionada.\n- [ ] Conferência com NVDA no Windows registrada no PR antes do merge.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-11, REVISAO-UI-UX §8 #4, #8, UI-HANDOFF §4.3\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/grid.js`; `tests/web/` (testes de grid)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): index.html:125-131\n"
+  },
+  {
+    "rec": "REC-27",
+    "title": "UI-27 Rolagem do grid sem layout forçado",
+    "labels": [
+      "dev",
+      "enhancement",
+      "area:ui",
+      "prioridade:baixa",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-04",
+      "REC-26"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-04, UI-26 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P2 · **Lote:** L6 · **Esforço:** S · **Recomendação:** REC-27\n\n**Problema.** 120 eventos de roda geram 120 layouts forçados: `syncScroll` escreve `scrollTop` e lê de volta (`js/grid.js:430-431`) e `ensurePool` lê `clientHeight` a cada `render()` (`grid.js:491`). Com 30 ou mais linhas visíveis e `<mark>`, o custo cresce.\n\n**Proposta.**\n\n- `syncScroll`: `const top = tsToScroll(row.ts, this.range); this.viewport.scrollTop = top; this.lastScroll = top;`.\n- `ensurePool` usa a altura guardada do `ResizeObserver` que já existe (`entry.contentRect.height`).\n- Deltas de roda acumulados e uma renderização por `requestAnimationFrame`.\n- `#grid-viewport { contain: strict; }` e `.grid-row { contain: layout paint style; }`; `content-visibility: auto` só em painéis fechados e seções do detalhe, nunca nas linhas do pool.\n\n## Aceite\n\n- [ ] `tools/ui_perf.mjs` no caso de 3,5 milhões, CPU 4×: 0 layouts forçados em 120 eventos de roda; ≤ 4 ms de script + estilo + layout por quadro; 0 tarefas > 50 ms.\n- [ ] INP continua ≤ 100 ms (hoje ≤ 24).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVC-09, UI-HANDOFF §10 (perfil de rolagem), UX-12 (aceite de desempenho)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/grid.js`; `css/app.css` (contain)\n- Pontos de integração compartilhados: nenhum.\n"
+  },
+  {
+    "rec": "REC-28",
+    "title": "UI-28 Teclado: regiões, busca, diálogo de atalhos e letras desligáveis",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-11",
+      "REC-12",
+      "REC-15",
+      "REC-17"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-11, UI-12, UI-15, UI-17 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L7 · **Esforço:** M · **Recomendação:** REC-28\n\n**Problema.** 24 Tabs até o primeiro campo da lateral; sem skip link; nenhum atalho para a busca; atalhos de uma letra globais em `document` (`main.js:1028`, `1244`; `highlight-panel.js:332`) sem opção de desligar (WCAG 2.1.4); `n` sem seleção responde \"Select an entry first.\".\n\n**Proposta.**\n\n- `F6`/`Shift+F6` alternam regiões (barra, lateral, faixa, grid, detalhe, doca); `/` foca a busca; `?` abre o diálogo de atalhos (tabela tecla × ação gerada do registro de ações) com \"Single-key shortcuts: on/off\" (`dmslog.singleKeys`, padrão ligado).\n- `n`/`N` sem seleção começam do primeiro/último registro visível.\n- Skip link \"Skip to log entries\" como primeiro focável, visível só no foco.\n- Atalhos de letra centralizados em `js/shortcuts.js`, ignorados com foco em campo de texto.\n\n## Aceite\n\n- [ ] Teste do `shortcuts-model`: letras desligadas, foco em campo ignora, `n` sem seleção.\n- [ ] Do topo até o grid em ≤ 2 Tabs pelo skip link; teste de fluxo do diálogo `?`.\n- [ ] WCAG 2.1.4 atendido (opção persistida).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nP1-12, P0-1 (d), P2-10 (dica no diálogo), REVISAO-UI-UX §8 #5, #6, UI-HANDOFF §8, UX-13, D7\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/shortcuts.js` e js/shortcuts-model.js (novos, com teste); `js/highlight-panel.js` (remove o handler)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/main.js; index.html (skip link); js/strings.js\n\n## Decisão do Jefferson\n\nD7 (atalhos de uma letra): recomendação mantida, ligados com opção de desligar.\n"
+  },
+  {
+    "rec": "REC-29",
+    "title": "UI-29 Menu de contexto da linha e paleta de comandos",
+    "labels": [
+      "dev",
+      "enhancement",
+      "accessibility",
+      "area:ui",
+      "prioridade:baixa",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-11",
+      "REC-12",
+      "REC-24",
+      "REC-28"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-11, UI-12, UI-24, UI-28 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P2 · **Lote:** L7 · **Esforço:** M · **Recomendação:** REC-29\n\n**Problema.** `t`/`T`, `[`/`]`, `c`, `Alt+←/→`, \"Same key\" e o ajuste de coluna só são achados por memória; não há busca de ações por nome.\n\n**Proposta.**\n\n- Menu de contexto na linha (clique direito, `Shift+F10`, tecla Menu): Same key ▸ (chaves do registro), Only this source, Hide this message type, Bookmark, Compare, Copy, com a tecla ao lado; usa `.ui-menu` e o registro de ações.\n- Paleta `Ctrl+K` (e View → Command palette…): `.ui-dialog` com combobox + listbox, `aria-activedescendant`, filtro por rótulo (modelo puro), atalho ao lado, Enter executa, Esc devolve o foco. JS puro, sem `cmdk`.\n\n## Aceite\n\n- [ ] Teste do `commands-model` (filtro, ordem, itens desabilitados) e de teclado.\n- [ ] Teste: toda ação dos menus aparece na paleta (mesmo registro).\n- [ ] Menu de contexto operável por teclado (teste de fluxo).\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nD6, REVISAO-UI-UX §7 (descobribilidade), VC-10, P1-13 (Same key no menu)\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/commands.js`, js/commands-model.js, css/commands.css, js/context-menu.js (novos, com teste)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/main.js; js/strings.js\n\n## Decisão do Jefferson\n\nD6 (menu de contexto): recomendação mantida, sim; a paleta entra junto porque usa o mesmo registro.\n"
+  },
+  {
+    "rec": "REC-30",
+    "title": "UI-30 Follow tail: ir ao fim, contagem única e pausa com aba oculta",
+    "labels": [
+      "dev",
+      "bug",
+      "area:ui",
+      "prioridade:media",
+      "modelo:sonnet"
+    ],
+    "depends_on": [
+      "REC-13",
+      "REC-21",
+      "REC-25"
+    ],
+    "body": "**Marco:** M9 (UI/UX, ver docs/analises-ui/CONSOLIDADO.md) · **Depende de:** UI-13, UI-21, UI-25 · **Modelo:** sonnet\n\n## Descrição\n\n**Prioridade:** P1 · **Lote:** L8 · **Esforço:** M · **Recomendação:** REC-30\n\n**Problema.** Ligar Follow tail fora do fim não leva ao fim; depois de 60 s há três números para a mesma coisa (status \"32,187 entries\", coleção 45.637, botão \"13,900 new records\"); a timeline não atualiza; 8 `/api/sources` e 53 `/count` em 60 s, inclusive com a aba oculta (nenhum `visibilitychange`).\n\n**Proposta.**\n\n- Ligar Follow tail fora do fim chama `grid.goEnd()` (rolar para cima continua parando de seguir).\n- Status com o total atual (\"45,637 records (+13,450 since view)\") ou a contagem marcada como \"updating\"; a timeline entra no `refreshDerived` com o mesmo debounce.\n- Com `document.hidden`: pausa atualizações derivadas e contagem, mantém o SSE e faz uma atualização ao voltar.\n- `/sources` só quando o SSE indicar fonte nova ou rotação; contagens pelo próprio evento `watch` (endpoint novo só com desenho aprovado pelo Opus).\n\n## Aceite\n\n- [ ] 10 min de Follow tail: heap e nós estáveis; ≤ 2 ms por atualização; 0 perdas de foco.\n- [ ] Aba oculta por 30 s: 0 `/api/sources` e 0 `/count`.\n- [ ] Depois de 60 s, status, timeline e coleção mostram o mesmo total (captura 02 refeita); teste do `follow-tail-model`.\n- [ ] Aceite comum: `node --test tests/web/` e `pytest` verdes no CI (Linux e Windows); nenhum `innerHTML` novo (`tests/unit/test_conventions.py`); todo texto visível em `js/strings.js`; capturas sintéticas antes/depois dos estados tocados (claro e escuro); sem regressão no perfil de rolagem (a partir da UI-04, `tools/ui_perf.mjs`).\n\n## Origem\n\nVC-05 (c, d), VC-06\n\n## Arquivos\n\nCaminhos de front-end relativos a `src/dmslog/web/`.\n\n- Exclusivos da tarefa: `js/follow-tail.js`; `js/follow-tail-model.js` (+ teste); `js/grid.js` (updateStatus); `js/timeline.js` (gancho de atualização)\n- Pontos de integração compartilhados (dono único: sessão principal; a tarefa entrega um trecho no relatório): js/main.js; js/strings.js; js/api.js (só se houver endpoint novo)\n"
+  }
+]
