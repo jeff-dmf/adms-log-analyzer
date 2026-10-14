@@ -5,7 +5,7 @@ import fs from "node:fs";
 import {
   parseArgs, validateBudgets, compareBudgets, deltaPercent, hasFailures, formatTable, analyzeTrace,
   interactionDuration, buildMeasures, browserCandidates, classifyRequests, rowsUpdateState, withTimeout,
-  terminateTree, Cdp, mergeIntervals, workByFrame,
+  terminateTree, Cdp, mergeIntervals, workByFrame, probeResult, tasklistHasPid, parsePids,
 } from "../../tools/ui_perf.mjs";
 
 const budgets = JSON.parse(fs.readFileSync(new URL("../../tools/ui_perf_budgets.json", import.meta.url), "utf-8"));
@@ -79,6 +79,9 @@ test("mergeIntervals and workByFrame", () => {
   assert.deepEqual(mergeIntervals([[0, 5], [2, 3], [4, 8], [10, 12]]), [[0, 8], [10, 12]]);
   assert.deepEqual(workByFrame([[0, 2], [3, 4], [20, 25]], [5, 10]), [3, 5]); // late work joins the last frame
   assert.deepEqual(workByFrame([[0, 2]], []), []);
+  // an interval crossing several frames is split at the boundaries
+  assert.deepEqual(workByFrame([[0, 30000]], [10000, 20000, 30000]), [10000, 10000, 10000]);
+  assert.deepEqual(workByFrame([[5, 15]], [10, 20]), [5, 5]);
 });
 
 test("classifyRequests counts from network events: 304, cache and full downloads", () => {
@@ -112,6 +115,10 @@ test("rowsUpdateState never turns a missing update into success", () => {
   assert.equal(rowsUpdateState({ t0: 0, lastChange: null, now: 6000 }), "timeout");
   assert.equal(rowsUpdateState({ t0: 0, lastChange: 40, now: 100 }), "pending"); // still changing
   assert.equal(rowsUpdateState({ t0: 0, lastChange: 40, now: 200 }), "done");
+  // a change at 5050 ms cannot be stable before the 5 s deadline, even if observed later
+  assert.equal(rowsUpdateState({ t0: 0, lastChange: 5050, now: 5250 }), "timeout");
+  assert.equal(rowsUpdateState({ t0: 0, lastChange: 4800, now: 5000 }), "done");
+  assert.equal(rowsUpdateState({ t0: 0, lastChange: 4900, now: 5100 }), "timeout");
 });
 
 test("withTimeout rejects a promise that never settles", async () => {
@@ -179,4 +186,50 @@ test("browserCandidates covers Windows Edge and Chrome without assuming POSIX", 
   const list = browserCandidates("win32", { PROGRAMFILES: "C:\\Program Files", LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" });
   assert.ok(list.some((p) => p.endsWith("msedge.exe")));
   assert.ok(list.some((p) => p.endsWith("chrome.exe")));
+});
+
+test("classifyRequests takes the real 304 from ExtraInfo, in any event order", () => {
+  const origin = "http://127.0.0.1:1";
+  const req = (id, path) => ({ method: "Network.requestWillBeSent", params: { requestId: id, type: "Script", request: { url: origin + path } } });
+  const res = (id, status) => ({ method: "Network.responseReceived", params: { requestId: id, response: { status } } });
+  const extra = (id, statusCode) => ({ method: "Network.responseReceivedExtraInfo", params: { requestId: id, statusCode } });
+  const after = classifyRequests([req("a", "/a.js"), res("a", 200), extra("a", 304)]);
+  const before = classifyRequests([req("a", "/a.js"), extra("a", 304), res("a", 200)]);
+  const first = classifyRequests([extra("a", 304), req("a", "/a.js"), res("a", 200)]);
+  for (const r of [after, before, first]) {
+    assert.equal(r.notModified, 1);
+    assert.equal(r.staticFull, 0);
+  }
+  assert.equal(classifyRequests([req("b", "/b.js"), res("b", 200), extra("b", 200)]).staticFull, 1);
+});
+
+test("analyzeTrace reports absence when the main thread cannot be identified", () => {
+  const events = [
+    { ph: "X", name: "Layout", pid: 1, tid: 2, ts: 0, dur: 100 },
+    { ph: "I", name: "DrawFrame", pid: 1, tid: 3, ts: 200 },
+  ];
+  const r = analyzeTrace(events);
+  assert.equal(r.main_thread, false);
+  assert.equal(r.forced_layouts, null);
+  assert.equal(r.work_per_frame_ms, null);
+  assert.equal(r.long_tasks, null);
+  // null measures make the guard fail instead of passing as zeros
+  const rows = compareBudgets({ scroll_forced_layouts: r.forced_layouts, scroll_work_per_frame_ms: r.work_per_frame_ms, scroll_long_tasks: r.long_tasks }, budgets);
+  assert.equal(hasFailures(rows), true);
+  assert.equal(rows.find((x) => x.key === "scroll_forced_layouts").status, "n/a");
+});
+
+test("process probes: failures are inconclusive, never 'gone'", async () => {
+  assert.deepEqual(probeResult({ status: 0, stdout: "x" }), { ok: true, stdout: "x" });
+  assert.equal(probeResult({ status: 1, stdout: "x" }).ok, false);
+  assert.equal(probeResult({ status: null, signal: "SIGTERM", stdout: "" }).ok, false); // timeout kill
+  assert.equal(probeResult({ error: new Error("ENOENT"), status: null, stdout: null }).ok, false);
+  assert.equal(tasklistHasPid(probeResult({ status: 1, stdout: "" }), 10), null);
+  assert.equal(tasklistHasPid({ ok: true, stdout: '"chrome.exe","10","Console"' }, 10), true);
+  assert.equal(tasklistHasPid({ ok: true, stdout: "INFO: nenhuma tarefa" }, 10), false);
+  assert.deepEqual(parsePids("12\r\n34\r\n\r\n"), [12, 34]);
+  // an inconclusive or throwing probe means the tree is not confirmed gone
+  assert.equal(await terminateTree({ kill: () => {}, isAlive: () => null, sleepMs: async () => {} }), false);
+  assert.equal(await terminateTree({ kill: () => {}, isAlive: () => { throw new Error("probe"); }, sleepMs: async () => {} }), false);
+  assert.equal(await terminateTree({ kill: () => {}, isAlive: () => false, sleepMs: async () => {} }), true);
 });

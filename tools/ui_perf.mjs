@@ -168,18 +168,22 @@ export function mergeIntervals(intervals) {
 }
 
 /**
- * Groups disjoint work intervals by real frame. Frame boundaries are the timestamps of frame events
- * (the frame that presents the work is the first boundary at or after the end of the interval; work after
- * the last boundary belongs to the last frame). Returns the work, in microseconds, of every frame.
+ * Groups disjoint work intervals by real frame. Frame boundaries are the timestamps of frame events.
+ * Frame i owns the time in (boundary i-1, boundary i]; work before the first boundary belongs to the first
+ * frame and work after the last one to the last frame. An interval that crosses boundaries is split at
+ * them. Returns the work, in microseconds, of every frame.
  */
 export function workByFrame(intervals, frameTimes) {
   const frames = [...frameTimes].sort((a, b) => a - b);
   if (!frames.length) return [];
   const work = new Array(frames.length).fill(0);
   for (const [start, end] of intervals) {
-    let index = frames.findIndex((t) => t >= end);
-    if (index === -1) index = frames.length - 1;
-    work[index] += end - start;
+    for (let i = 0; i < frames.length; i++) {
+      const lower = i === 0 ? -Infinity : frames[i - 1];
+      const upper = i === frames.length - 1 ? Infinity : frames[i];
+      const overlap = Math.min(end, upper) - Math.max(start, lower);
+      if (overlap > 0) work[i] += overlap;
+    }
   }
   return work;
 }
@@ -201,6 +205,14 @@ export function analyzeTrace(events, frameEvents = FRAME_EVENTS) {
       mainThreads.add(`${e.pid}:${e.tid}`);
     }
   }
+  if (!mainThreads.size) {
+    // Without the renderer main thread nothing can be measured: report absence, never zeros.
+    return {
+      main_thread: false, forced_layouts: null, layouts: null, frames: null, script_ms: null, style_ms: null,
+      layout_ms: null, work_ms: null, max_layout_ms: null, work_per_frame_ms: null, max_frame_work_ms: null,
+      long_tasks: null,
+    };
+  }
   const onMain = events.filter((e) => mainThreads.has(`${e.pid}:${e.tid}`) && e.ph === "X" && typeof e.dur === "number");
   const SCRIPT = new Set(["FunctionCall", "EventDispatch", "RunMicrotasks", "TimerFire", "FireAnimationFrame", "V8.Execute"]);
   const scripts = onMain.filter((e) => SCRIPT.has(e.name));
@@ -216,6 +228,7 @@ export function analyzeTrace(events, frameEvents = FRAME_EVENTS) {
   const perFrame = workByFrame(merged, frameTimes);
   const sumDur = (list) => mergeIntervals(list.map(span)).reduce((acc, [a, b]) => acc + (b - a), 0);
   return {
+    main_thread: true,
     forced_layouts: forced.length,
     layouts: layouts.length,
     frames: perFrame.length,
@@ -236,6 +249,7 @@ export function analyzeTrace(events, frameEvents = FRAME_EVENTS) {
  */
 export function classifyRequests(events) {
   const reqs = new Map();
+  const extraStatus = new Map(); // requestId -> network status from ExtraInfo, whatever the event order
   let failed = 0;
   for (const { method, params } of events) {
     if (method === "Network.requestWillBeSent") {
@@ -249,6 +263,8 @@ export function classifyRequests(events) {
         r.type = params.type || r.type;
         if (params.response.fromDiskCache || params.response.fromPrefetchCache || params.response.fromServiceWorker) r.fromCache = true;
       }
+    } else if (method === "Network.responseReceivedExtraInfo") {
+      if (typeof params.statusCode === "number") extraStatus.set(params.requestId, params.statusCode);
     } else if (method === "Network.requestServedFromCache") {
       const r = reqs.get(params.requestId);
       if (r) r.fromCache = true;
@@ -259,10 +275,12 @@ export function classifyRequests(events) {
       failed++;
     }
   }
+  for (const [id, r] of reqs) r.networkStatus = extraStatus.get(id) ?? r.status;
   const list = [...reqs.values()];
   const isApi = (r) => new URL(r.url).pathname.startsWith("/api/") || r.type === "EventSource";
   const statics = list.filter((r) => !isApi(r));
-  const notModified = (r) => r.status === 304 && !r.fromCache;
+  // CDP may report status 200 in responseReceived and the real 304 only in ExtraInfo
+  const notModified = (r) => (r.networkStatus === 304 || r.status === 304) && !r.fromCache;
   return {
     total: list.length,
     static: statics.length,
@@ -278,9 +296,11 @@ export function classifyRequests(events) {
 
 /** State of a wait for the grid rows to be updated: pending, done (quiet after a change) or timeout. */
 export function rowsUpdateState({ t0, lastChange, now, quietMs = 150, timeoutMs = 5000 }) {
-  if (lastChange !== null && lastChange !== undefined && now - lastChange >= quietMs) return "done";
-  if (now - t0 >= timeoutMs) return "timeout";
-  return "pending";
+  if (lastChange !== null && lastChange !== undefined) {
+    if (lastChange + quietMs - t0 > timeoutMs) return "timeout"; // stability could only complete after the deadline
+    if (now - lastChange >= quietMs) return "done";
+  }
+  return now - t0 >= timeoutMs ? "timeout" : "pending";
 }
 
 /** Rejects when `promise` does not settle within `ms`. */
@@ -294,12 +314,15 @@ export function withTimeout(promise, ms, what) {
 export async function terminateTree({ kill, isAlive, sleepMs, timeoutMs = 5000, stepMs = 50 }) {
   try { kill(); } catch { /* may already be gone */ }
   let waited = 0;
-  while (isAlive()) {
+  for (;;) {
+    let alive;
+    try { alive = isAlive(); } catch { return false; }
+    if (alive === null || alive === undefined) return false; // inconclusive probe: never claim it is gone
+    if (!alive) return true;
     if (waited >= timeoutMs) return false;
     await sleepMs(stepMs); // async on purpose: the event loop must reap the killed leader (a zombie still counts as alive)
     waited += stepMs;
   }
-  return true;
 }
 
 /** Largest duration of the interaction events (Event Timing entries with an interactionId). */
@@ -352,22 +375,41 @@ function groupAlive(pid) {
   try { process.kill(-pid, 0); return true; } catch (err) { return err.code === "EPERM"; }
 }
 
-function windowsPidAlive(pid) {
-  const r = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"], { encoding: "utf-8" });
-  return typeof r.stdout === "string" && r.stdout.includes(`"${pid}"`);
+const PROBE_TIMEOUT_MS = 15_000;
+
+/** Interprets a spawnSync result: { ok, stdout }; ok is false on spawn error, timeout, signal or non-zero exit. */
+export function probeResult(r) {
+  if (!r || r.error || r.signal || r.status !== 0 || typeof r.stdout !== "string") return { ok: false, stdout: "" };
+  return { ok: true, stdout: r.stdout };
 }
 
-/** Windows: PIDs whose command line mentions the marker (our unique temp folder), e.g. orphaned browser helpers. */
+/** tasklist CSV output: true/false when the probe succeeded (language independent), null when it failed. */
+export function tasklistHasPid(probe, pid) {
+  if (!probe.ok) return null;
+  return probe.stdout.includes(`"${pid}"`);
+}
+
+export function parsePids(stdout) {
+  return stdout.split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number);
+}
+
+function windowsPidAlive(pid) {
+  const r = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"], { encoding: "utf-8", timeout: PROBE_TIMEOUT_MS, windowsHide: true });
+  return tasklistHasPid(probeResult(r), pid); // null = inconclusive
+}
+
+/** Windows: PIDs whose command line mentions the marker (our unique temp folder). Throws when the probe fails. */
 function windowsPidsByMarker(marker) {
   const script = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${marker.replace(/'/g, "''")}*' } | ForEach-Object { $_.ProcessId }`;
-  const r = spawnSync("powershell", ["-NoProfile", "-Command", script], { encoding: "utf-8" });
-  return (r.stdout || "").split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number).filter((pid) => pid !== process.pid);
+  const r = probeResult(spawnSync("powershell", ["-NoProfile", "-Command", script], { encoding: "utf-8", timeout: PROBE_TIMEOUT_MS, windowsHide: true }));
+  if (!r.ok) throw new Error("could not list processes (PowerShell probe failed)");
+  return parsePids(r.stdout).filter((pid) => pid !== process.pid);
 }
 
 async function killProc(proc) {
   if (process.platform === "win32") {
     return terminateTree({
-      kill: () => spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" }),
+      kill: () => spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore", timeout: PROBE_TIMEOUT_MS, windowsHide: true }),
       isAlive: () => windowsPidAlive(proc.pid),
       sleepMs: sleep,
     });
@@ -402,8 +444,12 @@ function cleanup() {
     for (const proc of procs) if (!(await killProc(proc))) stuck.push(proc.pid);
     if (process.platform === "win32") {
       for (const dir of tempDirs) {
-        for (const pid of windowsPidsByMarker(path.basename(dir))) {
-          if (!(await killProc({ pid }))) stuck.push(pid);
+        try {
+          for (const pid of windowsPidsByMarker(path.basename(dir))) {
+            if (!(await killProc({ pid }))) stuck.push(pid);
+          }
+        } catch (err) {
+          stuck.push(`unverified (${err.message})`); // inconclusive probe: keep the folders and exit 2
         }
       }
     }
@@ -422,7 +468,7 @@ function cleanupNow() {
   if (cleanupPromise) return;
   for (const proc of procs) {
     try {
-      if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+      if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore", timeout: PROBE_TIMEOUT_MS });
       else process.kill(-proc.pid, "SIGKILL");
     } catch { /* already gone */ }
   }

@@ -33,13 +33,15 @@ Aceite da issue #144: reproduzir a linha de base da análise 3 (caso de cerca de
 
 ## Leitura
 
-**Dentro de 20% (tolerância atendida):** primeira linha (abertura e recarga), requisições, JS, módulos, CSS, API mais lenta, layouts forçados, INP e filtro até as linhas. São as medidas que o aceite pede para reproduzir (abertura, requisições e rolagem).
+**Dentro de 20% (tolerância atendida):** primeira linha (abertura e recarga), requisições, JS, módulos, CSS, API mais lenta, layouts forçados e INP de clique e setas. São as medidas que o aceite pede para reproduzir (abertura, requisições e rolagem).
 
 **Fora de 20%, e por quê:**
 
+- **Filtro até as linhas (16 contra 24 ms, -33%) e INP de filtro e busca (16 contra 24 ms).** A ferramenta ficou mais rápida que a linha de base, em 8 ms, que é a resolução do Event Timing e dos relógios usados. Está fora da faixa de 20% só nominalmente, na direção favorável, e muito abaixo dos orçamentos (200 e 100 ms); não indica descalibração.
+
 - **CLS (0,91 contra 1,58).** O CLS varia entre rodadas na mesma versão: 0,89 a 1,62 em oito execuções da ferramenta neste código. A linha de base foi medida na `main` `8969d94`, antes da UI-01 (#172), que mexeu no layout. Não é erro da ferramenta; o orçamento (≤ 0,05) fica muito abaixo de qualquer valor observado, então a guarda decide igual.
 - **Folhas injetadas depois da pintura (8 contra 23).** A análise contou os módulos que injetam o próprio `<link>`; a ferramenta conta os `<link rel=stylesheet>` inseridos por script depois do First Contentful Paint. São definições diferentes; a ferramenta mede o que o orçamento pede (zero injeções depois da pintura).
-- **Busca até as linhas (63 contra 40 ms).** A ferramenta mede de Enter até a grade ficar 150 ms sem mudar; a análise mediu até as primeiras linhas. A diferença é de 23 ms e o orçamento é de 200 ms.
+- **Busca até as linhas (63 contra 40 ms).** A ferramenta mede de Enter até a última mutação da grade (o instante dessa mutação, e não a espera de 150 ms de calmaria, que só confirma que a atualização terminou); a análise mediu até as primeiras linhas. A diferença é de 23 ms e o orçamento é de 200 ms.
 - **Bytes (+11%).** A ferramenta soma `encodedDataLength` de todas as respostas da abertura, incluindo as 11 chamadas de API; a linha de base de 1,0 MB citava só os estáticos. A coluna é informativa (sem orçamento).
 - **Trabalho por quadro.** A análise 3 só publicou o custo de layout (cerca de 1,5 ms por evento a 4×), então não há linha de base comparável. A ferramenta mede a união de script, estilo e layout por quadro realmente desenhado (evento `DrawFrame`), com o trace ligado, o que o encarece.
 
