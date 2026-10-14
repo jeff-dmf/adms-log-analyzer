@@ -1,6 +1,6 @@
 // Unknown-templates panel: signatures of records no template matched (GET /api/unknown).
 // Signatures come from untrusted logs: only textContent and class names are written to the DOM.
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { buildRows, buildTomlSketch, filterRows, formatShare, sortRows } from "./unknown-panel-model.js";
 
 const LIMIT = 500;
@@ -84,7 +84,11 @@ export function initUnknownPanel(container, { api, getCase, getFamily, onOpenEnt
 
   function render() {
     const shown = sortRows(filterRows(rows, filterText), sortKey, sortDesc);
-    summary.textContent = format(S.unkSummary, { shown: shown.length, total: rows.length, records: totalRecords });
+    summary.textContent = format(S.unkSummary, {
+      shown: shown.length,
+      signatures: format(S[pluralKey("nSignature", rows.length)], { count: rows.length }),
+      records: format(S[pluralKey("nUnclassifiedRecord", totalRecords)], { count: totalRecords }),
+    });
     dirButton.textContent = sortDesc ? "↓" : "↑";
     tableHost.textContent = "";
     if (shown.length === 0) {

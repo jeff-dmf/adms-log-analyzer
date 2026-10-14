@@ -30,9 +30,9 @@ test("selection: mark, compare, cancel, ignore bad ids", () => {
 });
 
 test("button label names the first record only while choosing the second", () => {
-  assert.match(compareButtonLabel(null, 3), /\.\.\./);
+  assert.match(compareButtonLabel(null, 3), /…/);
   assert.match(compareButtonLabel(5, 3), /5/);
-  assert.match(compareButtonLabel(5, 5), /\.\.\./);
+  assert.match(compareButtonLabel(5, 5), /…/);
 });
 
 const op = (tag, a, b, aStart, bStart) => ({ tag, a, b, a_start: aStart, b_start: bStart });

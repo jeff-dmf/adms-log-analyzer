@@ -47,7 +47,7 @@ test("describeCondition and defaultName are short plain text", () => {
   assert.equal(describeCondition({ text: { fts: "x" } }), "words: x");
   assert.equal(describeCondition({ text: { substr: "x" } }), 'text: "x"');
   assert.equal(describeCondition({ tpl: ["A", 2] }), "message type A, 2");
-  assert.equal(describeCondition({ sev: { le: 2 } }), "severity " + S.severityNames[2] + " or worse");
+  assert.equal(describeCondition({ sev: { le: 2 } }), S.hlDescSev.replace("{value}", S.severityNames[2]));
   assert.equal(describeCondition({ field: { name: "op", eq: null } }), "op = null");
   const long = describeCondition({ and: [{ text: { fts: "y".repeat(400) } }] });
   assert.ok(long.startsWith("filter {") && long.length < 180 && long.endsWith("…"));

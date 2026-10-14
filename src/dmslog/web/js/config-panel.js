@@ -1,7 +1,7 @@
 // "Effective configuration" panel: Registry keys with layers, the value the process logged, the
 // divergence flag, and per-operation payload expectation (GET /api/config).
 // Everything comes from the ERS (untrusted text): textContent and class names only.
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import {
   buildKeyRows, buildOperationRows, countDiverging, createConfigFlow, filterKeyRows, logLevelText, productOptions,
 } from "./config-panel-model.js";
@@ -204,7 +204,7 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
       return;
     }
     const shown = filterKeyRows(keyRows, filterText, onlyDiverging);
-    summary.appendChild(element("div", "", format(S.cfgSummary, {
+    summary.appendChild(element("div", "", format(S[pluralKey("cfgSummary", keyRows.length)], {
       shown: shown.length, total: keyRows.length, diverging: countDiverging(keyRows),
     })));
     summary.appendChild(element("div", "", logLevelText(config.log_level)));

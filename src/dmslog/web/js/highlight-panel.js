@@ -7,7 +7,7 @@ import {
   nextColor,
 } from "./highlight-model.js";
 import { isTypingTarget } from "./filters.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 const MAX_KEY_CHIPS = 8;
 
@@ -148,7 +148,7 @@ export function mountHighlights(options) {
 
   function full() {
     if (store.rules().length >= MAX_RULES) {
-      setStatus(format(S.hlLimit, { max: MAX_RULES }), true);
+      setStatus(format(S[pluralKey("hlLimit", MAX_RULES)], { max: MAX_RULES }), true);
       return true;
     }
     return false;
@@ -204,7 +204,7 @@ export function mountHighlights(options) {
   function renderList() {
     list.textContent = "";
     const rules = store.rules();
-    count.textContent = format(S.hlCount, { count: rules.length, max: MAX_RULES });
+    count.textContent = format(S[pluralKey("hlCount", MAX_RULES)], { count: rules.length, max: MAX_RULES });
     if (!getCase()) {
       list.appendChild(element("li", "hl-empty", S.needCase));
       return;
@@ -298,7 +298,7 @@ export function mountHighlights(options) {
         store.highlightKey(key.key_type, key.value).then(
           () => showMessage(format(S.hlKeyDone, { type: key.key_type, value: key.value }), false),
           (error) => showMessage(
-            error && error.code === "too_many_rules" ? format(S.hlLimit, { max: MAX_RULES }) : errorText(error), true,
+            error && error.code === "too_many_rules" ? format(S[pluralKey("hlLimit", MAX_RULES)], { max: MAX_RULES }) : errorText(error), true,
           ),
         );
       });

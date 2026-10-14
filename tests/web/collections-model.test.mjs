@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { S } from "../../src/dmslog/web/js/strings.js";
 import { buildFilter } from "../../src/dmslog/web/js/filters.js";
 import { fieldOptions, valueText } from "../../src/dmslog/web/js/distinct-model.js";
 import {
@@ -62,7 +63,7 @@ test("a half capture says what is there and what is missing", () => {
   assert.equal(d.counts, "3,456 records in 12 sources");
   assert.equal(d.window, "2026-01-01 12:00:00.000 to 2026-01-01 13:00:00.000");
   assert.equal(d.members[0].variant, "Enterprise");
-  assert.equal(describe(ers(4, 1, { status: "indexing" })).status, "Indexing...");
+  assert.equal(describe(ers(4, 1, { status: "indexing" })).status, S.colIndexing);
   assert.equal(describe(ers(4, 1, { status: "error" })).status, "Some sources failed");
 });
 

@@ -2,7 +2,7 @@
 // POST /api/export/view from the form, name the file, describe the outcome. Text of the log is
 // untrusted: it only goes to the clipboard or a Blob, never to the page as markup.
 import { copyText } from "./export-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
 
 export const CX_KINDS = Object.freeze(["values", "lines", "record", "view_csv", "events_csv"]);
@@ -156,12 +156,12 @@ export function recordText(entry) {
 export function resultMessage(kind, result, how, file) {
   const parts = [];
   if (how === "copy") {
-    parts.push(format(S.cxCopied, { rows: result.rows }));
+    parts.push(format(S[pluralKey("cxCopied", result.rows)], { rows: result.rows }));
   } else {
-    parts.push(format(S.cxDownloaded, { rows: result.rows, file }));
+    parts.push(format(S[pluralKey("cxDownloaded", result.rows)], { rows: result.rows, file }));
   }
   if (result.truncated) {
-    parts.push(format(S.cxTruncated, { rows: result.rows }));
+    parts.push(format(S[pluralKey("cxTruncated", result.rows)], { rows: result.rows }));
   }
   return parts.join(" ");
 }

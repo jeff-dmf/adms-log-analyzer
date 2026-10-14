@@ -3,7 +3,7 @@
 // Texts come from the ERS (untrusted): textContent only.
 import { api } from "./api.js";
 import { SIDE_BY_SIDE_LINES, buildSideView, createSideBySideFlow } from "./links-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -53,7 +53,7 @@ export function initSideBySide(host, { getCase }) {
     box.appendChild(dl);
     box.appendChild(element("pre", "sbs-text", pane.text));
     if (pane.truncated) {
-      box.appendChild(element("div", "lnk-muted", format(S.sbsTruncated, { count: SIDE_BY_SIDE_LINES })));
+      box.appendChild(element("div", "lnk-muted", format(S[pluralKey("sbsTruncated", SIDE_BY_SIDE_LINES)], { count: SIDE_BY_SIDE_LINES })));
     }
     return box;
   }

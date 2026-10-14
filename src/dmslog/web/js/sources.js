@@ -2,7 +2,7 @@
 import { ApiError, api } from "./api.js";
 import { filterSources, highlightParts, isFiltering } from "./source-filter-model.js";
 import { refusalResult } from "./case-files-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 export function conflictMessage(error) {
   const key = "conflict_" + error.code;
@@ -264,7 +264,7 @@ export class SourcesPanel {
       name.title = source.name;
       const meta = document.createElement("span");
       meta.className = "source-meta";
-      meta.textContent = format(S.sourceMeta, {
+      meta.textContent = format(S[pluralKey("sourceMeta", source.records)], {
         family: source.family === null || source.family === undefined ? "" : source.family,
         pid: source.pid === null || source.pid === undefined ? "-" : source.pid,
         records: Number(source.records).toLocaleString("en-US"),
@@ -339,7 +339,8 @@ export class SourcesPanel {
     if (data.status === "error") {
       this.handlers.onMessage(S.progressFailed + (data.message ? ": " + data.message : ""), true);
     } else {
-      this.handlers.onMessage(S.progressDone, false);
+      this.handlers.onMessage(
+        format(S[pluralKey("progressDone", data.records || 0)], { records: Number(data.records || 0).toLocaleString("en-US") }), false);
     }
     await this.refreshSources();
     this.handlers.onDone();
@@ -401,7 +402,7 @@ export class SourcesPanel {
         bar.max = data.bytes_total;
         bar.value = data.bytes_done;
       }
-      this.refs.progressText.textContent = format(S.progressLine, {
+      this.refs.progressText.textContent = format(S[pluralKey("progressLine", data.records || 0)], {
         source: data.source === null || data.source === undefined ? "" : data.source,
         records: Number(data.records || 0).toLocaleString("en-US"),
       });

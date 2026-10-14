@@ -2,7 +2,7 @@
 // Server side: POST /api/entries/distinct (store/distinct.py). Values come from untrusted logs:
 // this module only turns them into plain strings; the panel writes them with textContent.
 import { andFilters } from "./filters.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 export const DEFAULT_TOP = 20; // same default as the server
 export const MAX_TOP = 500;
@@ -95,13 +95,13 @@ export function buildView(field, data, exactRequested = false) {
   if (!data || data.method === "none" || total === null || total === undefined) {
     summary = S.dstTooSlow;
   } else {
-    summary = format(data.exact ? S.dstSummary : S.dstSummaryApprox, {
+    summary = format(S[pluralKey(data.exact ? "dstSummary" : "dstSummaryApprox", data.groups)], {
       total: formatCount(total), groups: formatCount(data.groups),
     });
   }
   return {
     rows,
-    others: others.count > 0 ? format(S.dstOthers, { count: formatCount(others.count), groups: formatCount(others.groups) }) : "",
+    others: others.count > 0 ? format(S[pluralKey("dstOthers", others.groups)], { count: formatCount(others.count), groups: formatCount(others.groups) }) : "",
     summary,
     approximate: Boolean(data) && !data.exact,
     // Estimates may miss rare values: warn, and offer the exact count unless it was just tried.

@@ -2,7 +2,7 @@
 // Drag selects a time range (reported through onRangeSelected), double-click clears it.
 // Only text nodes and class names are written to the DOM; log-derived values never reach HTML.
 import uPlot from "../vendor/uplot/uPlot.esm.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import {
   TimelineLoader,
   chooseBucketMs,
@@ -247,7 +247,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
   function describeTotals() {
     const w = widthParts(response.bucket_ms);
     const width = format(S[w.key], { n: w.n });
-    const template = response.exact ? S.timelineTotal : S.timelineTotalApprox;
+    const template = S[pluralKey(response.exact ? "timelineTotal" : "timelineTotalApprox", response.total)];
     return format(template, { count: response.total, width });
   }
 

@@ -2,7 +2,7 @@
 // (computed by the server). Texts come from the ERS (untrusted): textContent only.
 import { api } from "./api.js";
 import { buildDiffRows, buildSideHeader, createCompareFlow, statsText } from "./compare-model.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 
 const MARKS = { change: "~", remove: "-", add: "+", equal: "", skip: "" };
 
@@ -73,7 +73,7 @@ export function initCompare(host, { getCase }) {
     for (const row of rows) {
       const tr = element("tr", "cmp-row cmp-" + row.kind);
       if (row.kind === "skip") {
-        const td = element("td", "cmp-skip", format(S.cmpSkipped, { count: row.count }));
+        const td = element("td", "cmp-skip", format(S[pluralKey("cmpSkipped", row.count)], { count: row.count }));
         td.colSpan = 4;
         tr.appendChild(td);
       } else {
@@ -119,7 +119,7 @@ export function initCompare(host, { getCase }) {
       stats.textContent = statsText(data.diff.stats);
       renderRows(data);
       if (data.diff.truncated) {
-        note.textContent = format(S.cmpTruncated, { count: data.diff.max_lines, chars: 4000 });
+        note.textContent = format(S[pluralKey("cmpTruncated", data.diff.max_lines)], { count: data.diff.max_lines, chars: 4000 });
       }
     }
   }

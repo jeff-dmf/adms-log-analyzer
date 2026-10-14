@@ -181,7 +181,7 @@ test("quick form validates, builds the leaf and adds the current filter", async 
   panel.byClass("hl-add-filter")[0].click();
   await tick();
   assert.deepEqual(calls.create[1].cond, { sev: { le: 3 } });
-  assert.equal(calls.create[1].name, "severity " + S.severityNames[3] + " or worse");
+  assert.equal(calls.create[1].name, S.hlDescSev.replace("{value}", S.severityNames[3]));
 });
 
 test("detail offers Highlight this key per key and tells which rule colors the record", async () => {
@@ -221,7 +221,7 @@ test("Highlight this key at the rule limit still asks the server, and shows the 
   section.byClass("hl-chip")[0].click(); // the key already has a rule: the server recolors it
   await tick();
   assert.deepEqual(calls.key[0], ["gid", "7", "yellow"]);
-  assert.equal(calls.messages.some(([text]) => text === S.hlLimit.replace("{max}", "20")), false);
+  assert.equal(calls.messages.some(([text]) => text === S.hlLimitOther.replace("{max}", "20")), false);
 });
 
 test("footer documents ] and [, and the keys walk the highlighted records", async () => {
