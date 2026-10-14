@@ -62,7 +62,11 @@ def test_aggregate_events_percentiles_and_csv(client, server, monkeypatch):  # n
     status, body, _ = post(client, req)
     assert status == 200 and body["rows_kind"] == "events"
     assert body["rows"] == [
-        {"values": ["SendWorks", 11, 50, 90, 100], "labels": [None], "drill": {"and": [{"event_name": ["SendWorks"]}, {"event_name": "SendWorks"}]}}
+        {
+            "values": ["SendWorks", 11, 50, 90, 100],
+            "labels": [None],
+            "drill": {"and": [{"event_name": ["SendWorks"]}, {"event_name": "SendWorks"}]},
+        }
     ]
     status, _, headers = post(client, {**req, "format": "csv", "bom": True})
     assert status == 200 and headers["content-type"].startswith("text/csv")
