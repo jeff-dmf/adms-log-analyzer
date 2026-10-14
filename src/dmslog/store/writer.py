@@ -34,6 +34,7 @@ from dmslog.parse.payload import extract_payload, payload_keys
 from dmslog.parse.records import Record
 from dmslog.parse.signature import signature
 from dmslog.store import bookmarks
+from dmslog.store.db import LAST_LINE_SQL
 
 if TYPE_CHECKING:
     from dmslog.parse.templates import Catalog, TemplateSet
@@ -83,6 +84,8 @@ _BUCKET_SQL = (
     "INSERT INTO bucket(source_id, minute, sev, tpl_id, n) VALUES (?,?,?,?,?)"
     " ON CONFLICT(source_id, minute, sev, tpl_id) DO UPDATE SET n = n + excluded.n"
 )
+
+_SET_LAST_LINE_SQL = "UPDATE source SET last_line = ? WHERE id = ?"
 
 _BUCKET_SEV_SQL = (
     "INSERT INTO bucket_sev(source_id, minute, sev, n) VALUES (?,?,?,?)"
@@ -492,6 +495,13 @@ class IndexWriter:
         ).fetchone()
         return int(row[0]), row[1], row[2]
 
+    def _refresh_last_line(self, source_id: int) -> None:
+        """Recompute ``source.last_line`` from the records left (NULL when none): after any deletion."""
+        self.conn.execute(
+            f"UPDATE source SET last_line = ({LAST_LINE_SQL.format(source='?')}) WHERE id = ?",  # noqa: S608
+            (source_id, source_id),
+        )
+
     def last_entry(self, source_id: int) -> LastEntry | None:
         """The last record of a source in file order (highest id)."""
         row = self.conn.execute(
@@ -604,6 +614,7 @@ class IndexWriter:
             (first[0], first[0], source_id),
         )
         conn.execute(f"DELETE FROM entry WHERE {where}", params)
+        self._refresh_last_line(source_id)  # same transaction as the deletion
         if stale:
             self._repair_unknown_first(stale)
         return int(first[1])
@@ -903,6 +914,9 @@ class IndexWriter:
         self.begin()
         conn = self.conn
         conn.executemany(_ENTRY_SQL, self._rows)
+        # source.last_line (schema 7): ids only grow, so the last buffered row of a source is its highest id.
+        last_lines = {r[1]: r[2] + r[4] - 1 for r in self._rows}
+        conn.executemany(_SET_LAST_LINE_SQL, [(line, sid) for sid, line in last_lines.items()])
         if self._bodies:
             conn.executemany(_BODY_SQL, self._bodies)
         conn.execute(_FTS_INSERT_SQL, (self._batch_first_id, self._next_id))
