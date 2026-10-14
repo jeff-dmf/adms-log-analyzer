@@ -984,7 +984,7 @@ Ordem: (1) cabeçalho (horário mono 600, selo de nível na cor da severidade, n
 
 **Proposta.**
 
-- `F6`/`Shift+F6` alternam regiões (barra, lateral, faixa, grid, detalhe, doca); `/` foca a busca; `?` abre o diálogo de atalhos (tabela tecla × ação gerada do registro de ações) com "Single-key shortcuts: on/off" (`dmslog.singleKeys`, padrão ligado).
+- `F6`/`Shift+F6` alternam regiões na ordem do DOM e do Tab (barra, lateral, faixa, grid, doca, detalhe; doca antes do detalhe para o F6 e o Tab andarem na mesma ordem, WCAG 2.4.3; decidido na UI-11, `docs/notas/ui-contratos.md` §5.1); `/` foca a busca; `?` abre o diálogo de atalhos (tabela tecla × ação gerada do registro de ações) com "Single-key shortcuts: on/off" (`dmslog.singleKeys`, padrão ligado).
 - `n`/`N` sem seleção começam do primeiro/último registro visível.
 - Skip link "Skip to log entries" como primeiro focável, visível só no foco.
 - Atalhos de letra centralizados em `js/shortcuts.js`, ignorados com foco em campo de texto.

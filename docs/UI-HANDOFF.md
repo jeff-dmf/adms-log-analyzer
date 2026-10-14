@@ -247,7 +247,7 @@ Seções 5 a 9 com cabeçalho `h3` recolhível (`button` com `aria-expanded`), e
 
 | Tecla | Ação | Onde |
 |---|---|---|
-| `F6` / `Shift+F6` | Próxima/anterior região (barra, lateral, faixa de filtro, grid, detalhe, doca) | Global |
+| `F6` / `Shift+F6` | Próxima/anterior região (barra, lateral, faixa de filtro, grid, doca, detalhe; ordem do DOM, WCAG 2.4.3, decidida na UI-11) | Global |
 | `/` | Foca a busca | Global, fora de campo de texto |
 | `?` | Abre o diálogo de atalhos | Global, fora de campo de texto |
 | `Esc` | Fecha menu, diálogo, gaveta ou painel com foco; no grid, limpa a seleção de intervalo da timeline | Contextual |
