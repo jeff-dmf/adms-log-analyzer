@@ -1,0 +1,333 @@
+/* Design tokens: the single source of colors, type, space, radii, layers and motion (UI-05).
+   Two levels: primitives (raw sizes, the categorical palette) and semantics (what a color means).
+   Components use semantic tokens only. The two dark blocks below MUST stay identical:
+   tests/web/tokens-contrast.test.mjs fails when they diverge and checks every contrast pair. */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --surface-app: #eceef1;
+  --surface-panel: #f8f9fa;
+  --surface-raised: #e4e7eb;
+  --surface-overlay: #ffffff;
+  --surface-field: #ffffff;
+
+  /* Ink and lines */
+  --ink: #1b1f24;
+  --ink-muted: #5c6470;
+  --ink-disabled: #8f96a0; /* disabled controls: never the only signal */
+  --line: #d0d5dc; /* decorative dividers */
+  --line-strong: #7d8591; /* field, button and box borders (>= 3:1) */
+
+  /* Interaction */
+  --accent: #1a5bb8;
+  --accent-ink: #ffffff;
+  --row-hover: #eef1f5;
+  --row-selected: #e3ecfa; /* always paired with the 3 px accent bar */
+  --abn-row: #f8eceb; /* Critical and Error rows */
+
+  /* Severity (text); Info has no color of its own */
+  --sev-critical: #a1001c;
+  --sev-error: #b8261b;
+  --sev-warning: #875700;
+  --sev-info: var(--ink);
+  --sev-noise: var(--ink-muted);
+
+  /* Charts */
+  --chart-critical: #8e0f3a;
+  --chart-error: #c8352a;
+  --chart-warning: #9a6a00;
+  --chart-normal: #848fa0;
+  --chart-noise: #c3c9d2;
+
+  /* Status and filter surfaces */
+  --status-info-bg: #e5eefb;
+  --status-info-ink: #163f78;
+  --status-error-bg: #fbe7e7;
+  --status-error-ink: #8a1c1c;
+  --filtered-bg: #e3ecfa;
+  --filtered-ink: #163f78;
+
+  /* Search term and user highlight */
+  --mark: #ffe58a;
+  --hl-bg: #fff3c4;
+  --hl-bar: #b07800;
+
+  /* One categorical palette: --cat-n (stroke and text, >= 3:1 on the panel), -bg (fill under --ink text, >= 4.5:1), -fg */
+  --cat-1: #1a5bb8;
+  --cat-2: #9c4f00;
+  --cat-3: #8a6d00;
+  --cat-4: #00795a;
+  --cat-5: #a63f7c;
+  --cat-6: #5b4fb5;
+  --cat-7: #00788a;
+  --cat-8: #b0305a;
+  --cat-1-bg: #d4e5ff;
+  --cat-2-bg: #ffe0c2;
+  --cat-3-bg: #fff0b0;
+  --cat-4-bg: #d3f0da;
+  --cat-5-bg: #f6d9ea;
+  --cat-6-bg: #e3dcff;
+  --cat-7-bg: #cdeeee;
+  --cat-8-bg: #ffd9e0;
+
+  --shadow-overlay: 0 4px 16px rgb(0 0 0 / 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-app: #0e1115;
+    --surface-panel: #15191f;
+    --surface-raised: #1d222a;
+    --surface-overlay: #20262f;
+    --surface-field: #0e1115;
+    --ink: #dde3ea;
+    --ink-muted: #98a2af;
+    --ink-disabled: #6a7380;
+    --line: #2b323c;
+    --line-strong: #6c7685;
+    --accent: #7aa7ff;
+    --accent-ink: #0e1115;
+    --row-hover: #1b2028;
+    --row-selected: #1c2f4b;
+    --abn-row: #2a1a1a;
+    --sev-critical: #ff6b80;
+    --sev-error: #ff8a70;
+    --sev-warning: #e9b44c;
+    --chart-critical: #ff4d7a;
+    --chart-error: #e5574a;
+    --chart-warning: #d9a23a;
+    --chart-normal: #6f7b8c;
+    --chart-noise: #3a424e;
+    --status-info-bg: #17304f;
+    --status-info-ink: #b8d4ff;
+    --status-error-bg: #4a1d1d;
+    --status-error-ink: #ffb4b4;
+    --filtered-bg: #17304f;
+    --filtered-ink: #b8d4ff;
+    --mark: #7a6100;
+    --hl-bg: #3d3412;
+    --hl-bar: #d9a23a;
+    --cat-1: #7aa7ff;
+    --cat-2: #f0a35e;
+    --cat-3: #e9b44c;
+    --cat-4: #3cc49a;
+    --cat-5: #e09ac4;
+    --cat-6: #a79cf0;
+    --cat-7: #4fc3d4;
+    --cat-8: #f08aa3;
+    --cat-1-bg: #21447a;
+    --cat-2-bg: #6a4215;
+    --cat-3-bg: #675710;
+    --cat-4-bg: #1f5530;
+    --cat-5-bg: #57305f;
+    --cat-6-bg: #3a3170;
+    --cat-7-bg: #1b5656;
+    --cat-8-bg: #692538;
+    --shadow-overlay: 0 4px 16px rgb(0 0 0 / 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-app: #0e1115;
+  --surface-panel: #15191f;
+  --surface-raised: #1d222a;
+  --surface-overlay: #20262f;
+  --surface-field: #0e1115;
+  --ink: #dde3ea;
+  --ink-muted: #98a2af;
+  --ink-disabled: #6a7380;
+  --line: #2b323c;
+  --line-strong: #6c7685;
+  --accent: #7aa7ff;
+  --accent-ink: #0e1115;
+  --row-hover: #1b2028;
+  --row-selected: #1c2f4b;
+  --abn-row: #2a1a1a;
+  --sev-critical: #ff6b80;
+  --sev-error: #ff8a70;
+  --sev-warning: #e9b44c;
+  --chart-critical: #ff4d7a;
+  --chart-error: #e5574a;
+  --chart-warning: #d9a23a;
+  --chart-normal: #6f7b8c;
+  --chart-noise: #3a424e;
+  --status-info-bg: #17304f;
+  --status-info-ink: #b8d4ff;
+  --status-error-bg: #4a1d1d;
+  --status-error-ink: #ffb4b4;
+  --filtered-bg: #17304f;
+  --filtered-ink: #b8d4ff;
+  --mark: #7a6100;
+  --hl-bg: #3d3412;
+  --hl-bar: #d9a23a;
+  --cat-1: #7aa7ff;
+  --cat-2: #f0a35e;
+  --cat-3: #e9b44c;
+  --cat-4: #3cc49a;
+  --cat-5: #e09ac4;
+  --cat-6: #a79cf0;
+  --cat-7: #4fc3d4;
+  --cat-8: #f08aa3;
+  --cat-1-bg: #21447a;
+  --cat-2-bg: #6a4215;
+  --cat-3-bg: #675710;
+  --cat-4-bg: #1f5530;
+  --cat-5-bg: #57305f;
+  --cat-6-bg: #3a3170;
+  --cat-7-bg: #1b5656;
+  --cat-8-bg: #692538;
+  --shadow-overlay: 0 4px 16px rgb(0 0 0 / 0.5);
+}
+
+/* Theme-independent tokens */
+:root {
+  --focus-ring: var(--accent);
+  --cat-1-fg: var(--cat-1);
+  --cat-2-fg: var(--cat-2);
+  --cat-3-fg: var(--cat-3);
+  --cat-4-fg: var(--cat-4);
+  --cat-5-fg: var(--cat-5);
+  --cat-6-fg: var(--cat-6);
+  --cat-7-fg: var(--cat-7);
+  --cat-8-fg: var(--cat-8);
+
+  /* Type: two stacks (system fonts, no downloads), four sizes in px */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --leading-xs: 16px;
+  --leading-sm: 18px;
+  --leading-md: 20px;
+  --leading-lg: 22px;
+  --weight-regular: 400;
+  --weight-strong: 600;
+
+  /* Space, radii */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  /* Layers */
+  --z-sticky: 10;
+  --z-dock: 20;
+  --z-drawer: 30;
+  --z-menu: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+
+  /* Density (variant R). --row-height equals ROW_HEIGHT in js/grid-model.js (a test checks both). */
+  --row-height: 22px;
+  --grid-head: 22px;
+  --control-height: 26px; /* buttons and fields; chips and row buttons use 24px */
+  --bar-height: 36px;
+  --strip-height: 30px;
+  --status-height: 22px;
+  --timeline-h: 40px; /* expanded: 120px */
+  --timeline-h-expanded: 120px;
+  --side-w: 248px;
+  --detail-w: 380px;
+  --cell-pad: 4px;
+
+  /* Motion: only in response to an action */
+  --motion: 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion: 0s linear;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Compatibility aliases: the names the module stylesheets still use. Each module moves to the
+   semantic names when its UI task touches it; a module that defines the same name itself wins. */
+:root {
+  --bg: var(--surface-app);
+  --panel: var(--surface-panel);
+  --panel-alt: var(--surface-raised);
+  --text: var(--ink);
+  --muted: var(--ink-muted);
+  --border: var(--line);
+  --accent-text: var(--accent-ink);
+  --selected: var(--row-selected);
+  --focus: var(--focus-ring);
+  --error-bg: var(--status-error-bg);
+  --error-text: var(--status-error-ink);
+  --info-bg: var(--status-info-bg);
+  --info-text: var(--status-info-ink);
+  --sev-1: var(--sev-critical);
+  --sev-2: var(--sev-error);
+  --sev-3: var(--sev-warning);
+  --sev-4: var(--sev-info);
+  --sev-5: var(--sev-noise);
+
+  --tl-c0: var(--sev-critical);
+  --tl-c1: var(--sev-error);
+  --tl-c2: var(--sev-warning);
+  --tl-c3: var(--chart-normal);
+  --tl-c4: var(--chart-noise);
+  --tl-c5: var(--cat-1);
+  --tl-c6: var(--cat-2);
+  --tl-c7: var(--cat-4);
+  --tl-c8: var(--cat-5);
+  --tl-c9: var(--cat-7);
+  --tl-c10: var(--cat-3);
+  --tl-c11: var(--cat-6);
+  --tl-c12: var(--cat-8);
+  --tl-c13: var(--ink-muted);
+
+  --agg-c0: var(--cat-1);
+  --agg-c1: var(--cat-2);
+  --agg-c2: var(--cat-4);
+  --agg-c3: var(--cat-5);
+  --agg-c4: var(--cat-3);
+  --agg-c5: var(--cat-7);
+  --agg-c6: var(--cat-6);
+  --agg-c7: var(--cat-8);
+
+  --hl-yellow: var(--cat-3-bg);
+  --hl-orange: var(--cat-2-bg);
+  --hl-red: var(--cat-8-bg);
+  --hl-pink: var(--cat-5-bg);
+  --hl-purple: var(--cat-6-bg);
+  --hl-blue: var(--cat-1-bg);
+  --hl-cyan: var(--cat-7-bg);
+  --hl-green: var(--cat-4-bg);
+
+  --bm-red: var(--cat-8);
+  --bm-orange: var(--cat-2);
+  --bm-yellow: var(--cat-3);
+  --bm-green: var(--cat-4);
+  --bm-blue: var(--cat-1);
+  --bm-purple: var(--cat-6);
+  --bm-gray: var(--ink-muted);
+
+  --col-1-bg: var(--cat-1-bg);
+  --col-2-bg: var(--cat-2-bg);
+  --col-3-bg: var(--cat-4-bg);
+  --col-4-bg: var(--cat-5-bg);
+  --col-5-bg: var(--cat-3-bg);
+  --col-6-bg: var(--cat-7-bg);
+  --col-7-bg: var(--cat-8-bg);
+  --col-8-bg: var(--cat-6-bg);
+}

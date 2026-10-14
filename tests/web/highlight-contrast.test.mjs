@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { PALETTE } from "../../src/dmslog/web/js/highlight-model.js";
 
 const CSS = new URL("../../src/dmslog/web/css/", import.meta.url);
-const app = readFileSync(new URL("app.css", CSS), "utf8");
+const app = readFileSync(new URL("tokens.css", CSS), "utf8");
 const hl = readFileSync(new URL("highlight.css", CSS), "utf8");
 
 // Custom properties of the first block that starts with `selector {` (no nested braces inside).
@@ -16,8 +16,31 @@ function tokens(css, selector) {
   assert.ok(start >= 0, selector);
   const body = css.slice(css.indexOf("{", start) + 1, css.indexOf("}", start));
   const out = {};
-  for (const match of body.matchAll(/(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;/g)) {
+  for (const match of body.matchAll(/(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6}|var\(--[\w-]+\))\s*;/g)) {
     out[match[1]] = match[2].toLowerCase();
+  }
+  return out;
+}
+
+// Every `:root {` block of a file merged (tokens.css keeps the theme-independent tokens and aliases in later blocks).
+function allRoots(css) {
+  const out = {};
+  let at = css.indexOf(":root {");
+  while (at >= 0) {
+    Object.assign(out, tokens(css.slice(at), ":root"));
+    at = css.indexOf(":root {", at + 1);
+  }
+  return out;
+}
+
+// The app tokens are semantic names plus aliases (`--text: var(--ink)`): resolve the chains in one theme.
+function resolved(...layers) {
+  const all = Object.assign({}, ...layers);
+  const out = {};
+  for (const name of Object.keys(all)) {
+    let value = all[name];
+    while (value.startsWith("var(")) value = all[value.slice(4, -1)];
+    out[name] = value;
   }
   return out;
 }
@@ -37,8 +60,11 @@ function contrast(a, b) {
 
 const TEXT_TOKENS = ["--text", "--sev-1", "--sev-2", "--muted"];
 const THEMES = {
-  light: { app: tokens(app, ":root"), hl: tokens(hl, ":root") },
-  dark: { app: tokens(app, ':root[data-theme="dark"]'), hl: tokens(hl, ':root[data-theme="dark"]') },
+  light: { app: resolved(allRoots(app)), hl: tokens(hl, ":root") },
+  dark: {
+    app: resolved(allRoots(app), tokens(app, ':root[data-theme="dark"]')),
+    hl: tokens(hl, ':root[data-theme="dark"]'),
+  },
 };
 
 test("contrast helper agrees with known WCAG values", () => {
