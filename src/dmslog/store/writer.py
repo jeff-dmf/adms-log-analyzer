@@ -34,6 +34,7 @@ from dmslog.parse.payload import extract_payload, payload_keys
 from dmslog.parse.records import Record
 from dmslog.parse.signature import signature
 from dmslog.store import bookmarks
+from dmslog.store.db import LAST_LINE_SQL
 
 if TYPE_CHECKING:
     from dmslog.parse.templates import Catalog, TemplateSet
@@ -84,6 +85,8 @@ _BUCKET_SQL = (
     " ON CONFLICT(source_id, minute, sev, tpl_id) DO UPDATE SET n = n + excluded.n"
 )
 
+_SET_LAST_LINE_SQL = "UPDATE source SET last_line = ? WHERE id = ?"
+
 _BUCKET_SEV_SQL = (
     "INSERT INTO bucket_sev(source_id, minute, sev, n) VALUES (?,?,?,?)"
     " ON CONFLICT(source_id, minute, sev) DO UPDATE SET n = n + excluded.n"
@@ -92,7 +95,7 @@ _BUCKET_SEV_SQL = (
 _SOURCE_FIELDS = frozenset(
     {
         "stream_id", "envelope", "size", "mtime", "zip_crc", "head_hash", "indexed_bytes", "tail_hash",
-        "first_ts", "last_ts", "n_entries", "last_line", "status", "error", "rotation", "member", "file_name",
+        "first_ts", "last_ts", "n_entries", "status", "error", "rotation", "member", "file_name",
     }
 )  # fmt: skip
 
@@ -486,21 +489,18 @@ class IndexWriter:
                 (member, file_name, rotation, sid),
             )
 
-    def source_totals(self, source_id: int) -> tuple[int, int | None, int | None, int | None]:
-        """``(n_entries, first_ts, last_ts, last_line)`` of the source as stored now.
-
-        One pass over the source's slice of ``ix_entry_src_ts`` (``max(id)`` comes with it), then one
-        primary-key lookup for the last line; ``last_line`` is None when the source has no record.
-        """
+    def source_totals(self, source_id: int) -> tuple[int, int | None, int | None]:
         row = self.conn.execute(
-            "SELECT count(*), min(ts), max(ts), max(id) FROM entry WHERE source_id=?", (source_id,)
+            "SELECT count(*), min(ts), max(ts) FROM entry WHERE source_id=?", (source_id,)
         ).fetchone()
-        last_line = None
-        if row[3] is not None:
-            last_line = self.conn.execute(
-                "SELECT line_no + nlines - 1 FROM entry WHERE id=?", (row[3],)
-            ).fetchone()[0]
-        return int(row[0]), row[1], row[2], last_line
+        return int(row[0]), row[1], row[2]
+
+    def _refresh_last_line(self, source_id: int) -> None:
+        """Recompute ``source.last_line`` from the records left (NULL when none): after any deletion."""
+        self.conn.execute(
+            f"UPDATE source SET last_line = ({LAST_LINE_SQL.format(source='?')}) WHERE id = ?",  # noqa: S608
+            (source_id, source_id),
+        )
 
     def last_entry(self, source_id: int) -> LastEntry | None:
         """The last record of a source in file order (highest id)."""
@@ -614,6 +614,7 @@ class IndexWriter:
             (first[0], first[0], source_id),
         )
         conn.execute(f"DELETE FROM entry WHERE {where}", params)
+        self._refresh_last_line(source_id)  # same transaction as the deletion
         if stale:
             self._repair_unknown_first(stale)
         return int(first[1])
@@ -913,6 +914,9 @@ class IndexWriter:
         self.begin()
         conn = self.conn
         conn.executemany(_ENTRY_SQL, self._rows)
+        # source.last_line (schema 7): ids only grow, so the last buffered row of a source is its highest id.
+        last_lines = {r[1]: r[2] + r[4] - 1 for r in self._rows}
+        conn.executemany(_SET_LAST_LINE_SQL, [(line, sid) for sid, line in last_lines.items()])
         if self._bodies:
             conn.executemany(_BODY_SQL, self._bodies)
         conn.execute(_FTS_INSERT_SQL, (self._batch_first_id, self._next_id))

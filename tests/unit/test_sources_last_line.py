@@ -8,12 +8,16 @@ import threading
 
 import pytest
 import test_pipeline as tp
+import test_writer as tw
 from test_api import Client
 
 from dmslog.ingest.pipeline import run_ingest
 from dmslog.ingest.watch import Watcher
+from dmslog.parse.envelope import get_envelope
+from dmslog.parse.records import parse_bytes
 from dmslog.server.app import DmslogServer
 from dmslog.store import db as store_db
+from dmslog.store.writer import IndexWriter
 
 WFM, WFM_ROTATED = tp.WFM, tp.WFM_ROTATED
 EMPTY = f"{tp.LOGDIR}/WfmAdapter_2222.log"
@@ -182,3 +186,98 @@ def test_incremental_and_watch_cycles_keep_the_column_up_to_date(tmp_path, clien
     finally:
         conn.close()
     assert api_lines(client) == expected
+
+
+# --------------------------------------------------------------------------- every IndexWriter path
+
+
+def last_line_of(conn, sid: int) -> int | None:
+    return conn.execute("SELECT last_line FROM source WHERE id = ?", (sid,)).fetchone()[0]
+
+
+def checked(conn, sid: int, expected: int | None) -> None:
+    """The column holds ``expected`` and equals the reference lookup for every source."""
+    assert last_line_of(conn, sid) == expected
+    tp.assert_last_line_matches_records(conn)
+
+
+def test_every_writer_insert_and_delete_keeps_the_column_equal_to_the_records(tmp_path):
+    conn = store_db.create_case_db(tmp_path / "case.sqlite")
+    try:
+        w, sid, _ = tw.load(conn)  # lines 1, 2-4 (continuation), 5, 6
+        checked(conn, sid, 6)
+        w.begin()
+        w.start_source(sid, None)
+        w.append(sid, parse_bytes(tw.DATA, get_envelope("adms"), start_off=len(tw.DATA), start_line=7))
+        w.flush()  # visible inside the open transaction, before the commit
+        checked(conn, sid, 12)
+        w.commit()
+        checked(conn, sid, 12)  # direct append (review reproduction: stayed at 6)
+        third = conn.execute(
+            "SELECT id, byte_off FROM entry WHERE source_id = ? ORDER BY id LIMIT 1 OFFSET 2", (sid,)
+        ).fetchone()
+        w.begin()
+        w.truncate_from(sid, third[1], min_id=third[0])
+        w.commit()
+        checked(conn, sid, 4)  # truncation (review reproduction: stayed at 6)
+        w.begin()
+        assert w.truncate_from(sid, 10**9) == 0  # nothing at or after the cut: nothing changes
+        w.commit()
+        checked(conn, sid, 4)
+        w.begin()
+        w.delete_source_entries(sid)
+        w.commit()
+        checked(conn, sid, None)  # full deletion (review reproduction: stayed at 6); /api/sources says 0
+        w.begin()
+        w.start_source(sid, None)
+        w.append(sid, parse_bytes(tw.DATA, get_envelope("adms")))
+        w.commit()
+        checked(conn, sid, 6)  # reload after the deletion
+        w.begin()
+        w.start_source(sid, None)
+        w.append(sid, parse_bytes(tw.DATA, get_envelope("adms"), start_off=len(tw.DATA), start_line=7))
+        w.flush()
+        w.rollback()
+        checked(conn, sid, 6)  # a rolled-back batch leaves the committed value
+    finally:
+        conn.close()
+
+
+def test_removing_a_group_or_renaming_sources_leaves_the_other_sources_right(tmp_path):
+    conn = store_db.create_case_db(tmp_path / "case.sqlite")
+    try:
+        w, first, _ = tw.load(conn)
+        second = tw.new_source(w)  # a collection (and group) of its own
+        w.begin()
+        w.start_source(second, None)
+        w.append(second, parse_bytes(tw.DATA[: tw.DATA.index(b"\n") + 1], get_envelope("adms")))
+        w.commit()
+        checked(conn, second, 1)
+        w.rename_sources({first: ("a.log.0", "a.log.0", 0)})  # rotation moves the source, not its records
+        w.commit()
+        checked(conn, first, 6)
+        group = conn.execute(
+            "SELECT c.ers_group FROM source s JOIN collection c ON c.id = s.collection_id WHERE s.id = ?",
+            (first,),
+        ).fetchone()[0]
+        assert w.remove_group(group) is not None
+        assert conn.execute("SELECT count(*) FROM source WHERE id = ?", (first,)).fetchone()[0] == 0
+        checked(conn, second, 1)
+    finally:
+        conn.close()
+
+
+def test_the_listing_reports_zero_after_a_direct_full_deletion(client, case_path):
+    conn = store_db.create_case_db(case_path)
+    try:
+        sid = conn.execute("SELECT id FROM source WHERE member = ?", (WFM,)).fetchone()[0]
+        w = IndexWriter(conn)
+        w.begin()
+        w.delete_source_entries(sid)
+        w.commit()
+        assert last_line_of(conn, sid) is None
+        expected = reference(conn)
+    finally:
+        conn.close()
+    lines = api_lines(client)
+    assert lines == expected and lines[sid] == 0
