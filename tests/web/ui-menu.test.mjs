@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { parseRules } from "./fixtures/css-cascade.mjs";
+import { literalColors } from "./fixtures/css-named-colors.mjs";
 import { createChip, createMenu, indexByInitial, navigate, normalizeItem, stepIndex } from "../../src/dmslog/web/js/ui-menu.js";
 
 // ---- Fake DOM -------------------------------------------------------------------------------------
@@ -398,10 +399,9 @@ function rules(text, out = []) {
 const RULES = rules(css);
 const rulesFor = (sel) => RULES.filter((r) => r.selector.split(",").map((s) => s.trim()).includes(sel));
 
-test("components.css has no literal colors, only tokens (no color keyword, not even in color-mix)", () => {
-  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/);
-  assert.doesNotMatch(css, /\b(?:rgba?|hsla?)\(/);
-  assert.deepEqual([...css.matchAll(/(?<![-\w])(black|white|red|blue|green|gray|grey|yellow|orange)(?![-\w])/g)].map((m) => m[0]), []);
+test("components.css has no literal colors, only tokens (no hex, color function or CSS named color)", () => {
+  assert.deepEqual(literalColors(readFileSync(new URL("../../src/dmslog/web/css/components.css", import.meta.url), "utf8")), []);
+  assert.deepEqual(literalColors("a { color: rebeccapurple; background: Coral; border-color: #fff; outline-color: oklch(1 0 0) }"), ["#fff", "oklch(", "rebeccapurple", "Coral"]);
 });
 
 test("every custom property components.css reads is defined in tokens.css", () => {
@@ -488,29 +488,6 @@ test("forced colors: a hovered disabled menu item keeps GrayText and never turns
   for (const r of FORCED.filter((r) => r.decls["background-color"] === "Highlight" && r.selector.includes(".ui-menu-item"))) {
     assert.ok(r.selector.includes(':not([aria-disabled="true"])'), r.selector);
   }
-});
-
-test("forced colors: the focus indicator differs from the pressed indicator in thickness and offset", () => {
-  const pressed = FORCED.find((r) => r.selector === '.ui-button:is([aria-pressed="true"], [aria-expanded="true"])');
-  const focus = FORCED.find((r) => r.selector === ".ui-button:focus-visible");
-  const both = FORCED.find((r) => r.selector.includes(":focus-visible") && r.selector.includes("aria-pressed"));
-  assert.ok(pressed && focus && both, "the three rules exist");
-  const raw = (sel) => FORCED.filter((r) => r.selector === sel);
-  const body = (re, text) => re.exec(text)?.[0];
-  const cssText = readFileSync(new URL("../../src/dmslog/web/css/components.css", import.meta.url), "utf8").replace(/\r\n?/g, "\n");
-  const forcedText = cssText.slice(cssText.indexOf("@media (forced-colors: active)"));
-  const ringOf = (selectorStart) => {
-    const i = forcedText.indexOf(selectorStart);
-    const block = forcedText.slice(i, forcedText.indexOf("}", i));
-    return { width: body(/outline:\s*(\d+)px/, block)?.match(/\d+/)[0], offset: body(/outline-offset:\s*(-?\d+)px/, block)?.match(/-?\d+/)[0] };
-  };
-  const pressedRing = ringOf('.ui-button:is([aria-pressed="true"], [aria-expanded="true"]),\n  .ui-chip[aria-pressed');
-  const focusRing = ringOf(".ui-button:focus-visible,\n  .ui-input");
-  assert.notEqual(pressedRing.width, focusRing.width);
-  assert.ok(Number(focusRing.offset) > Number(pressedRing.offset), "focus ring is outside, pressed ring inside");
-  // Focus wins over pressed when both apply (later and at least as specific).
-  assert.ok(both.order > pressed.order);
-  assert.equal(raw(both.selector).length, 1);
 });
 
 test("the menu item focus ring is the documented inside exception to the 1 px offset; everything else uses offset 1", () => {

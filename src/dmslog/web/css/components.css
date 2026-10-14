@@ -617,13 +617,17 @@ button.ui-chip:hover,
     border-color: ButtonText;
   }
 
-  /* Pressed/expanded: inner 2 px outline. Focus: a thicker 3 px ring drawn outside (offset 2), so a focused
-     pressed button shows both indicators and focus is never mistaken for the state. */
-  .ui-button:is([aria-pressed="true"], [aria-expanded="true"]),
-  .ui-chip[aria-pressed="true"] {
+  /* Pressed/expanded: a thick Highlight border (the state). Focus: a separate 3 px Highlight ring outside
+     (offset 2). A focused pressed button shows both, because the state is a border and focus is an outline.
+     The selectors repeat the normal pressed block (same specificity, later in the file) so the system
+     border color also wins over the hover and variant rules, which have higher specificity than a bare
+     attribute selector. */
+  .ui-button:is([aria-pressed="true"], [aria-expanded="true"]):not(:disabled, [aria-disabled="true"]),
+  .ui-button:is([aria-pressed="true"], [aria-expanded="true"]):not(:disabled, [aria-disabled="true"]):hover,
+  .ui-chip[aria-pressed="true"],
+  .ui-chip[aria-pressed="true"]:hover {
     border-color: Highlight;
-    outline: 2px solid Highlight;
-    outline-offset: -3px;
+    border-width: 3px;
   }
 
   .ui-button.is-primary {
@@ -645,13 +649,14 @@ button.ui-chip:hover,
   .ui-input:focus-visible,
   .ui-select:focus-visible,
   .ui-chip-remove:focus-visible,
-  .ui-menu-item:focus-visible,
   .ui-button:is([aria-pressed="true"], [aria-expanded="true"]):focus-visible {
     outline: 3px solid Highlight;
     outline-offset: 2px;
   }
 
+  /* The focused item is filled with Highlight, so its inner ring must use HighlightText to be visible. */
   .ui-menu-item:focus-visible {
+    outline: 2px solid HighlightText;
     outline-offset: -3px;
   }
 

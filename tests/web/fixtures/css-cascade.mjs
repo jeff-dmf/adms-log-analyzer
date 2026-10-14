@@ -70,7 +70,7 @@ export function parseRules(text, out = [], media = null) {
 // ---- Selectors ------------------------------------------------------------------------------------
 
 function parseCompound(src) {
-  const c = { tag: null, classes: [], attrs: [], pseudos: [], pseudoElement: false };
+  const c = { tag: null, classes: [], attrs: [], pseudos: [], pseudoElement: null };
   let i = 0;
   const ident = () => /^[\w-]+/.exec(src.slice(i))[0];
   while (i < src.length) {
@@ -82,7 +82,7 @@ function parseCompound(src) {
       c.attrs.push({ name: m[1], value: m[2] ?? null });
       i = end + 1;
     } else if (ch === ":") {
-      if (src[i + 1] === ":") { c.pseudoElement = true; i += 2; i += ident().length; continue; }
+      if (src[i + 1] === ":") { i += 2; c.pseudoElement = ident(); i += c.pseudoElement.length; continue; }
       i++;
       const name = ident();
       i += name.length;
@@ -139,7 +139,7 @@ export function specificity(parts) {
 
 // An element: { tag, classes: [], attrs: {name: value}, states: [] } ("hover", "focus", "focus-visible", "disabled", "checked").
 function matchCompound(c, el) {
-  if (c.pseudoElement) return false;
+  if (c.pseudoElement !== (el.pseudo ?? null)) return false; // ::before and ::after are elements of their own
   if (c.tag && c.tag !== "*" && c.tag !== el.tag) return false;
   if (!c.classes.every((k) => el.classes.includes(k))) return false;
   if (!c.attrs.every((a) => (a.value === null ? a.name in el.attrs : el.attrs[a.name] === a.value))) return false;
@@ -163,8 +163,9 @@ export function matchComplex(parts, chain, end = chain.length - 1, idx = parts.l
   return false;
 }
 
-export function compile(rules) {
-  return rules.filter((r) => r.media === null).map((r) => {
+/** Rules of the base cascade; with `forced` also the @media (forced-colors: active) rules, in source order. */
+export function compile(rules, { forced = false } = {}) {
+  return rules.filter((r) => r.media === null || (forced && /forced-colors:\s*active/.test(r.media))).map((r) => {
     const parts = parseComplex(r.selector);
     return { ...r, parts, spec: specificity(parts) };
   });
@@ -188,6 +189,7 @@ const rgbToHex = (v) => "#" + v.map((x) => Math.round(x).toString(16).padStart(2
 /** Resolves a color value to "#rrggbb"; "transparent" -> null; throws on anything else it cannot compute. */
 export function resolveColor(value, theme, current = null, depth = 0) {
   const v = value.trim();
+  if (/^[A-Z][A-Za-z]+$/.test(v) && v in theme) return theme[v].toLowerCase(); // system color of a forced palette
   if (depth > 8) throw new Error(`color recursion: ${value}`);
   if (/^#[0-9a-f]{6}$/i.test(v)) return v.toLowerCase();
   if (v === "transparent") return null;
@@ -227,20 +229,26 @@ export function contrast(a, b) {
  * Effective painted values of the last element of `chain`: text color (inherited down the chain), the
  * background (nearest non-transparent ancestor, else `surface`), border and outline colors (null = none/transparent).
  */
-export function computed(compiled, chain, theme, surface) {
+export function computed(compiled, chain, theme, surface, forced = false) {
+  // Forced colors: the UA replaces author colors that are not system colors; approximate the replacement.
+  const FALLBACK = { color: "CanvasText", "background-color": "Canvas", "border-color": "ButtonText", "outline-color": "ButtonText" };
+  const value = (prop, v) => {
+    if (forced && v !== "transparent" && !(/^[A-Z][A-Za-z]+$/.test(v.trim()) && v.trim() in theme)) return FALLBACK[prop];
+    return v;
+  };
   let color = null;
   for (let k = 0; k < chain.length; k++) {
     const own = winning(compiled, chain.slice(0, k + 1), "color");
-    if (own !== undefined) color = resolveColor(own, theme, color);
+    if (own !== undefined) color = resolveColor(value("color", own), theme, color);
   }
   let background = null;
   for (let k = chain.length - 1; k >= 0 && background === null; k--) {
     const own = winning(compiled, chain.slice(0, k + 1), "background-color");
-    if (own !== undefined) background = resolveColor(own, theme, color);
+    if (own !== undefined) background = resolveColor(value("background-color", own), theme, color);
   }
   const pick = (prop) => {
     const v = winning(compiled, chain, prop);
-    return v === undefined ? null : resolveColor(v, theme, color);
+    return v === undefined ? null : resolveColor(value(prop, v), theme, color);
   };
   return { color, background: background ?? surface, ownBackground: background !== null, border: pick("border-color"), outline: pick("outline-color") };
 }

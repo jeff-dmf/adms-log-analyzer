@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { ROW_HEIGHT } from "../../src/dmslog/web/js/grid-model.js";
+import { literalColors } from "./fixtures/css-named-colors.mjs";
 import { compile, computed, contrast as contrastOf, parseRules, resolveColor } from "./fixtures/css-cascade.mjs";
 
 const CSS = new URL("../../src/dmslog/web/css/", import.meta.url);
@@ -116,9 +117,7 @@ test("app.css has no literal colors (tokens.css is the only source)", () => {
 });
 
 test("components.css has no literal colors (tokens.css is the only source)", () => {
-  const stripped = componentsCss.replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.doesNotMatch(stripped, /#[0-9a-fA-F]{3,8}\b/);
-  assert.doesNotMatch(stripped, /\b(?:rgba?|hsla?)\(/);
+  assert.deepEqual(literalColors(componentsCss), []);
 });
 
 // ---- Component audit: pairs come from the declarations components.css actually applies ----------------
@@ -242,6 +241,18 @@ function auditComponents(cssText, themes) {
       need(contrastOf(item.color, item.background) >= 2, `${item.label}: below 2:1`);
     }
 
+    // Pseudo-elements: the check and radio marks and the submenu arrow are drawn with ::before.
+    const pseudo = (host) => ({ ...host, pseudo: "before", host });
+    for (const [what, states] of [["rest", []], ["hover", ["hover"]], ["focus-visible", ["focus", "focus-visible"]]]) {
+      const item = el("div", ["ui-menu-item"], { "aria-checked": "true" }, states);
+      text(run(`menu check mark ${what}`, [menu, item, pseudo(item)], "--surface-overlay"));
+      const radio = el("div", ["ui-menu-item"], { role: "menuitemradio", "aria-checked": "true" }, states);
+      text(run(`menu radio mark ${what}`, [menu, radio, pseudo(radio)], "--surface-overlay"));
+      const parent = el("div", ["ui-menu-item"], {}, states);
+      const arrow = el("span", ["ui-menu-arrow"]);
+      text(run(`menu arrow ${what}`, [menu, parent, arrow, pseudo(arrow)], "--surface-overlay"));
+    }
+
     // Table, dialog.
     const table = el("table", ["ui-table"]);
     const th = run("table header", [table, el("thead"), el("tr"), el("th")]);
@@ -276,18 +287,11 @@ test("--accent-hover is --accent mixed 8% with black, in both themes", () => {
   }
 });
 
-test("components.css uses no literal colors; only transparent is mixed, to get a translucent scrim", () => {
+test("components.css mixes colors only with tokens or transparent (no color keyword inside color-mix)", () => {
   const css = COMPONENTS_CSS.replace(/\r\n?/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/);
-  assert.doesNotMatch(css, /\b(?:rgba?|hsla?)\(/);
-  // Color keywords are allowed only where they carry no color: transparent (a gradient end and the scrim mix),
-  // currentColor/inherit and the forced-colors system colors.
-  const allowed = new Set(["transparent", "currentColor", "inherit", "none", "Highlight", "HighlightText", "ButtonText", "ButtonFace", "GrayText", "CanvasText"]);
-  const keywords = ["black", "white", "red", "green", "blue", "gray", "grey", "orange", "yellow", "purple", "pink", "navy", "silver", "teal", "maroon", "olive"];
-  for (const word of keywords) assert.doesNotMatch(css, new RegExp(`(?<![-\\w])${word}(?![-\\w])`), `${word} is a literal color`);
   for (const m of css.matchAll(/color-mix\(([^;]*)\)/g)) {
     const words = m[1].match(/(?<![-\w(])[a-zA-Z]+(?![-\w(])/g) ?? [];
-    for (const w of words) assert.ok(["in", "srgb", "transparent"].includes(w) || allowed.has(w), `color-mix uses ${w}`);
+    for (const w of words) assert.ok(["in", "srgb", "transparent"].includes(w), `color-mix uses ${w}`);
   }
 });
 
@@ -317,6 +321,90 @@ test("mutations: the audit fails when text equals its background, when the prima
   const f = COMPONENTS_CSS.replace(/\.ui-button:disabled:hover,\s*\.ui-button\[aria-disabled="true"\]:hover \{[^}]*\}/, "");
   assert.notEqual(f, COMPONENTS_CSS);
   assert.ok(auditComponents(f, THEMES).failures.some((m) => m.includes("hover changes a disabled button")), "F");
+});
+
+// ---- Forced colors (Windows high contrast): the same cascade with the forced-colors block applied --------
+const FORCED_PALETTES = {
+  "high contrast black": { Canvas: "#000000", CanvasText: "#ffffff", ButtonFace: "#000000", ButtonText: "#ffffff", Highlight: "#1aebff", HighlightText: "#000000", GrayText: "#3ff23f" },
+  "high contrast white": { Canvas: "#ffffff", CanvasText: "#000000", ButtonFace: "#ffffff", ButtonText: "#000000", Highlight: "#37006e", HighlightText: "#ffffff", GrayText: "#600000" },
+};
+
+function auditForced(cssText) {
+  const compiled = compile(parseRules(cssText), { forced: true });
+  const failures = [];
+  let checks = 0;
+  const need = (ok, msg) => { checks++; if (!ok) failures.push(msg); };
+  for (const [palette, theme] of Object.entries(FORCED_PALETTES)) {
+    const run = (label, chain) => ({ ...computed(compiled, chain, theme, theme.Canvas, true), label: `${palette}: ${label}` });
+    for (const variant of [[], ["is-primary"], ["is-ghost"], ["is-danger"]]) {
+      const name = variant[0] ?? "secondary";
+      const rest = run(`button ${name} rest`, [el("button", ["ui-button", ...variant])]);
+      for (const attr of ["aria-pressed", "aria-expanded"]) {
+        for (const states of [[], ["hover"], ["focus-visible"], ["hover", "focus-visible"]]) {
+          const c = run(`button ${name} ${attr} ${states.join("+")}`, [el("button", ["ui-button", ...variant], { [attr]: "true" }, states)]);
+          // The state is a Highlight border in every combination, distinct from a resting button and from the page.
+          need(c.border === theme.Highlight, `${c.label}: border is ${c.border}, not Highlight`);
+          need(c.border !== rest.border, `${c.label}: border does not differ from the resting button`);
+          need(contrastOf(c.border, theme.Canvas) >= 3, `${c.label}: Highlight border below 3:1 on Canvas`);
+          need(contrastOf(c.color, c.background) >= 4.5, `${c.label}: text ${c.color} on ${c.background} below 4.5:1`);
+          // Focus is a separate outline, so a focused pressed button keeps the border and adds the ring.
+          if (states.includes("focus-visible")) need(c.outline === theme.Highlight && contrastOf(c.outline, theme.Canvas) >= 3, `${c.label}: focus ring is ${c.outline}`);
+          else need(c.outline === null || c.outline === c.border && false, `${c.label}: an outline without focus (${c.outline})`);
+        }
+      }
+      const focus = run(`button ${name} focus`, [el("button", ["ui-button", ...variant], {}, ["focus-visible"])]);
+      need(focus.outline === theme.Highlight, `${focus.label}: no Highlight ring`);
+      for (const states of [[], ["hover"]]) {
+        const d = run(`button ${name} disabled ${states.join("+")}`, [el("button", ["ui-button", ...variant], {}, ["disabled", ...states])]);
+        need(d.color === theme.GrayText && d.border !== theme.Highlight, `${d.label}: not GrayText`);
+      }
+    }
+    const menu = el("div", ["ui-menu"]);
+    for (const [what, states] of [["hover", ["hover"]], ["focus", ["focus"]], ["focus-visible", ["focus", "focus-visible"]]]) {
+      const c = run(`menu item ${what}`, [menu, el("div", ["ui-menu-item"], {}, states)]);
+      need(c.background === theme.Highlight && contrastOf(c.color, c.background) >= 4.5, `${c.label}: text ${c.color} on ${c.background} below 4.5:1`);
+      if (states.includes("focus-visible")) need(c.outline !== null && contrastOf(c.outline, c.background) >= 3, `${c.label}: inner ring ${c.outline} on ${c.background} below 3:1`);
+    }
+    for (const states of [[], ["hover"]]) {
+      const c = run(`menu item disabled ${states.join("+")}`, [menu, el("div", ["ui-menu-item"], { "aria-disabled": "true" }, states)]);
+      need(c.color === theme.GrayText && c.background === theme.Canvas, `${c.label}: ${c.color} on ${c.background}`);
+    }
+  }
+  return { failures, checks };
+}
+
+test("forced colors: pressed, expanded, focus and menu states keep distinct system-color indicators", () => {
+  const { failures, checks } = auditForced(COMPONENTS_CSS);
+  assert.deepEqual(failures, []);
+  assert.ok(checks > 100, `${checks} checks`);
+  assert.deepEqual(auditForced(COMPONENTS_CSS.replace(/\r?\n/g, "\r\n")).failures, []);
+});
+
+test("mutations (forced colors, pseudo-elements, literal colors)", () => {
+  // G1: the pressed block loses its :hover selector in the forced block: the normal hover rule wins again.
+  const g1 = COMPONENTS_CSS.replace(/(@media \(forced-colors: active\)[\s\S]*?)\.ui-button:is\(\[aria-pressed="true"\], \[aria-expanded="true"\]\):not\(:disabled, \[aria-disabled="true"\]\):hover,\n/, "$1");
+  assert.notEqual(g1, COMPONENTS_CSS);
+  assert.ok(auditForced(g1).failures.some((f) => f.includes("pressed") && f.includes("hover") && f.includes("not Highlight")), "G1");
+  // G2: the focused menu item ring is Highlight on a Highlight fill.
+  const g2 = COMPONENTS_CSS.replace("outline: 2px solid HighlightText;", "outline: 2px solid Highlight;");
+  assert.notEqual(g2, COMPONENTS_CSS);
+  assert.ok(auditForced(g2).failures.some((f) => f.includes("inner ring")), "G2");
+  // G3: pressed + focus loses the border (focus rule overrides the state).
+  const g3 = COMPONENTS_CSS.replace("    border-color: Highlight;\n    border-width: 3px;", "    border-width: 3px;");
+  assert.notEqual(g3, COMPONENTS_CSS);
+  assert.ok(auditForced(g3).failures.some((f) => f.includes("focus-visible") && f.includes("Highlight")), "G3");
+  // P: the submenu arrow drawn in the menu background color (pseudo-element rule).
+  const p = COMPONENTS_CSS.replace(/(\.ui-menu-arrow::before \{[^}]*?)color: var\(--ink-muted\);/, "$1color: var(--surface-overlay);");
+  assert.notEqual(p, COMPONENTS_CSS);
+  assert.ok(auditComponents(p, THEMES).failures.some((f) => f.includes("menu arrow")), "P");
+  // P2: the check mark colored like the hover fill.
+  const p2 = COMPONENTS_CSS.replace(/(\.ui-menu-item\[aria-checked="true"\]::before \{)/, "$1\n  color: var(--row-hover);");
+  assert.notEqual(p2, COMPONENTS_CSS);
+  assert.ok(auditComponents(p2, THEMES).failures.some((f) => f.includes("check mark")), "P2");
+  // L: any CSS named color or color function reaches the literal-color guard.
+  for (const bad of ["coral", "rebeccapurple", "Tomato", "oklch(0.5 0.1 20)", "#abc"]) {
+    assert.ok(literalColors(COMPONENTS_CSS + `\n.x { color: ${bad}; }`).length > 0, bad);
+  }
 });
 
 for (const theme of Object.keys(THEMES)) {
