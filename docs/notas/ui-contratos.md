@@ -113,21 +113,35 @@ export function shortcutLabel(spec, keyNames): string         // "Alt+ArrowLeft"
 export function toMenuItems(registry, defs, ctx, S): MenuItem[]   // ponte com o .ui-menu da UI-10
 ```
 
-`MenuItem` é o formato que o `.ui-menu` da UI-10 (`js/ui-menu.js`) aceita; a UI-10 chega antes da UI-12 e deve aceitar exatamente isto:
+`MenuItem` é o formato que o `.ui-menu` da UI-10 (`js/ui-menu.js`, já entregue) aceita; `toMenuItems` produz exatamente isto:
 
 ```js
-/** @typedef {Object} MenuItem
+/** @typedef {Object} MenuItem          // = typedef de js/ui-menu.js (UI-10)
  * @property {string} id
- * @property {string} label            // textContent
- * @property {string|null} shortcut    // texto à direita, em --ink-muted mono
- * @property {"menuitem"|"menuitemcheckbox"|"menuitemradio"} role
- * @property {boolean|null} checked
- * @property {boolean} disabled
- * @property {string|null} title       // motivo quando desabilitado
- * @property {MenuItem[]} [children]
- * @property {() => void} run          // ui-menu fecha o menu e chama run
- * @property {() => void} [preload]    // ui-menu chama em pointerenter e focus do item
+ * @property {string} label             // textContent
+ * @property {string|null} [shortcut]   // texto à direita, já formatado (shortcutLabel)
+ * @property {"menuitem"|"menuitemcheckbox"|"menuitemradio"} [role]
+ * @property {boolean|null} [checked]
+ * @property {boolean} [pressed]        // atalho de ui-menu para item checkbox (alternâncias)
+ * @property {boolean} [disabled]
+ * @property {string|null} [title]      // motivo quando desabilitado
+ * @property {MenuItem[]} [children]    // submenu
+ * @property {boolean} [separator]      // divisor entre grupos; os demais campos são ignorados
+ * @property {() => void} [run]         // ui-menu fecha o menu e chama run
+ * @property {() => void} [preload]     // ui-menu chama em pointerenter e focus do item
  */
+```
+
+Os consumidores usam a API da UI-10 como ela é:
+
+```js
+// js/ui-menu.js (UI-10)
+createMenu({ trigger, getItems, label = null, onOpenChange = null, doc = trigger.ownerDocument })
+  -> { open, close, toggle, isOpen }
+//   getItems() é chamado a cada abertura: é ali que entra toMenuItems(registry, defs, ctx, S),
+//   e por isso enabled/pressed são calculados na hora de mostrar (1.5)
+createChip({ doc, label, removeLabel = null, onRemove = null, title = null }) -> HTMLElement
+//   removeLabel = format(S.chipRemove, { label }); usado pelas fichas de filtro (seção 4)
 ```
 
 ### 1.5 Estados e erros
@@ -226,10 +240,18 @@ Regra de despacho na transição: **o campo `shortcut` é só declarativo até a
 ### 2.2 API (`js/dock.js`, DOM; regras em `js/dock-model.js`, puro)
 
 ```js
-export function createDock({ root, ctx, storage, onFocusOut }) -> Dock
-//   root: #dock (index.html, UI-15); storage: localStorage ou null; onFocusOut(): devolve o foco ao grid
+// Inicialização em duas etapas, IDÊNTICA em js/dock-legacy.js (UI-12) e js/dock.js (UI-15):
+// a doca existe antes do AppContext (que a contém) e recebe o contexto depois.
+export function createDock({ root, before = null, storage, onFocusOut }) -> Dock     // etapa 1: create(deps)
+//   root: contêiner da doca. dock.js (UI-15): #dock; dock-legacy.js (UI-12): #grid-panel, com os hosts
+//         inseridos antes de `before` (#filter-form). dock.js ignora `before`.
+//   storage: localStorage ou null; onFocusOut(): devolve o foco ao grid
+// dock.bind(ctx)                                                                    // etapa 2: bind(ctx)
+//   uma vez, logo depois de criar o AppContext; register() pode vir antes ou depois;
+//   open()/notify() antes de bind() lançam Error (erro de programação, não de uso)
 
 Dock = {
+  bind(ctx: AppContext): void          // etapa 2; chamar duas vezes lança
   register(def: PanelDef): void        // síncrono, na abertura; id repetido lança
   open(id, args?, { focus = true } = {}): Promise<boolean>
       // sem caso e needsCase: ctx.status.message(S.needCase) e false
@@ -281,15 +303,53 @@ export function tabsAfterClose(tabs, active, id) -> { tabs, active }  // ativa a
 
 ### 2.4 Avisos (`notify`)
 
-Para cada painel montado cujo `listens` inclui o motivo:
+`notify(reason)` roda em duas passadas, nesta ordem:
 
-| Situação da aba | `case` com `closeOnCase` | Demais motivos |
+1. **Só com `reason === "case"`: fechamento, independente de `listens`.** Todo painel montado com `closeOnCase: true` e aba aberta é fechado (`close(id)`, que chama `closed()`). Aba já fechada: nada (o `closed()` já rodou ao fechar). Painéis fechados nesta passada não recebem a passada 2.
+2. **Aviso, só para painéis montados cujo `listens` inclui o motivo:**
+
+| Situação da aba | Ação |
+|---|---|
+| aberta e ativa | `update(reason)` (padrão `refresh()`) |
+| aberta e inativa | marca "velha"; ao ativar, `refresh()` uma vez |
+| fechada | nada (reabrir sempre chama `refresh()`) |
+
+`closeOnCase` e `listens: ["case"]` são independentes: `payloads`, `compare`, `sideBySide` e `sameKey` fecham na troca de caso sem declarar `"case"`.
+
+#### 2.4.1 Inventário das chamadas de `main.js`: o que vira `notify` e o que fica
+
+`dock.notify` só substitui chamadas a **painéis da doca**. Tudo o que não é painel da doca continua chamado diretamente por `main.js`, nos mesmos ganchos, e continua executando na troca de caso e depois da indexação. A ordem dentro de cada gancho é a de hoje; o `dock.notify(...)` entra no lugar da 1ª chamada de painel substituída.
+
+| Gancho (`main.js`) | Chamada hoje | Depois |
 |---|---|---|
-| aberta e ativa | fecha | `update(reason)` (padrão `refresh()`) |
-| aberta e inativa | fecha | marca "velha"; ao ativar, `refresh()` uma vez |
-| fechada | nada | nada (reabrir sempre chama `refresh()`) |
+| `refreshDerived` (`:251-261`) | `clockBanner.refresh()` (`:252-254`) | **fica** (aviso de relógio, barra de status) |
+| | `eventsPanel.refresh()` se visível (`:255-257`) | `dock.notify("derived")` (`operations`) |
+| | `dashboard.refresh()` se visível (`:258-260`) | idem (`dashboard`) |
+| `applyView` (`:398-425`) | `grid.setTerms`, `detail.setTerms`, `detail.clear`, `grid.setView` (`:408-411`) | **ficam** |
+| | `timeline.refresh()` (`:412-414`) | **fica** |
+| | `distinctUi.viewChanged()` (`:415-417`) | `dock.notify("view")` (`distinct`, `groupByType`) |
+| | `aggregateUi.viewChanged()` (`:418-420`) | idem (`aggregate`) |
+| | `viewsUi.changed()` (`:421-423`) | **fica** (trilha; na UI-18 também `paintStrip()`) |
+| `onCase` (`:438-495`) | `collectionsPanel.setCase()`, `add-files-host`, `detail.clear()`, `bookmarkStore.reset()`, `compareSelection.reset()` (`:440-447`) | **ficam** |
+| | `bookmarksPanel.reset()` (`:448-450`) | `dock.notify("case")` (`bookmarks`: `update("case")`→`reset()`) |
+| | `compare.reset()` (`:451-453`) | idem (`compare`, `closeOnCase`) |
+| | `userFilter = null`, `filterTree.setCase/setFilter` (`:454-458`) | **ficam** (`filterTree` é guardado por `main`) |
+| | `viewsUi.onCase` + `restoreLive` (`:459-464`) | **fica** |
+| | `loadTemplates(id)`, `knowledge.reset()` (`:465-466`) | **ficam** |
+| | `keyPanel.reset()` (`:467-469`), `sideBySide.reset()` (`:476-478`), `payloadList.close()` (`:479-481`) | `dock.notify("case")` (`closeOnCase`) |
+| | `exportPanel.reset()` (`:470-472`) | idem (`export`: `update("case")`→`reset()`) |
+| | `copyExport.reset()` (`:473-475`) | **fica** (não é painel da doca; popover e depois diálogo) |
+| | `unknownPanel.refresh()`, `configPanel.refresh()` (`:482-487`) | `dock.notify("case")` (`listens` com `"case"`) |
+| | `refreshDerived()` (`:488`) | **fica** (que chama `dock.notify("derived")` por dentro) |
+| | `followTail.onCase()` (`:489-491`) | **fica** |
+| | `alertsUi.onCase()` (`:492-494`) | **fica**, como `alertsFlow.onCase()` (SSE e banner, `startAlerts`) |
+| `onDone` (`:512-528`) | `bookmarkStore.invalidate()`, `highlightStore.invalidateMarks()` (`:513-514`) | **ficam** |
+| | `bookmarksPanel.refresh()` se aberto (`:515-517`) | `dock.notify("indexed")` (`bookmarks`) |
+| | `loadTemplates(caseId)`, `knowledge.reset()` (`:518-519`) | **ficam** |
+| | `unknownPanel.refresh()`, `configPanel.refresh()` (`:520-525`) | `dock.notify("indexed")` |
+| | `refreshDerived()`, `applyView()` (`:526-527`) | **ficam** |
 
-Isso substitui as chamadas painel a painel de `main.js` (`:415-420` em `applyView`; `:467-494` em `onCase`; `:515-526` em `onDone`; `:251-261` em `refreshDerived`) por `dock.notify("view"|"case"|"indexed"|"derived")`. Os painéis com que `main.js` conversa diretamente (árvore de filtros: `setFilter`, `setCase`; destaques: `storeChanged`; bookmarks: `refresh` em edição) continuam com a variável em `main.js`, atribuída dentro do `mount`.
+Os painéis com que `main.js` conversa diretamente (árvore de filtros: `setFilter`, `setCase`; destaques: `storeChanged`; bookmarks: `refresh` em edição, `main.js:231-233`) continuam com a variável em `main.js`, atribuída dentro do `mount`. Teste de fluxo da UI-12: trocar de caso com cada painel aberto e conferir que fecha ou recarrega conforme a tabela.
 
 ### 2.5 Contrato com o grid
 
@@ -311,7 +371,7 @@ export function topAfterResize({ selected, top, visibleBefore, visibleAfter, len
 |---|---|---|---|---|
 | `filterTree` | `filter-tree.js:244` `initFilterTree(host, …)` (sem mudança) | `[]`; `main` guarda `filterTree` | `index.html:90`, `main.js:711-740` | nenhuma |
 | `highlights` | `highlight-panel.js`: `mountHighlightPanel(host, opts)` | `[]`; `main` chama `storeChanged` | botão `:80`, painel `:138`, ajuda `:270` | UI-12 separa `mountHighlights` (`:72`) em painel, seção do detalhe (`:274-278`, fica) e navegação `[`/`]` (`:331-366`, sai na UI-28) |
-| `bookmarks` | `bookmarks-panel.js:174` `initBookmarksPanel(host, {…, onRequestClose})` | `["indexed"]`; `refresh`→`open()`, `closed`→`close()` | `index.html:100` | UI-15: `:287` (`host.hidden = true` no estado `idle`) passa a `onRequestClose()` |
+| `bookmarks` | `bookmarks-panel.js:174` `initBookmarksPanel(host, {…, onRequestClose})` | `["case","indexed"]`; `update("case")`→`reset()`; `refresh`→`open()`, `closed`→`close()` | `index.html:100` | UI-15: `:287` (`host.hidden = true` no estado `idle`) passa a `onRequestClose()` |
 | `distinct` / `groupByType` | `distinct-panel.js`: `mountDistinctPanel(host, opts)` e `mountGroupPanel(host, opts)` | `["view"]`; `closed`→`reset()` | botões e hosts `:376-377` | UI-12 troca `mountDistinct` (`:365-407`) pelas duas montagens; `initDistinct`/`initGroup` não mudam |
 | `aggregate` | `aggregate-panel.js`: `mountAggregatePanel(host, opts)` | `["view"]`; `update("view")`→`markStale`; `refresh`→`open()`; `closed`→`close()` | `:581-582` | UI-12 troca `mountAggregate` (`:571-601`); `initPanel` não muda |
 | `operations` | `events-panel.js:57` `initEventsPanel(host, …)` (sem mudança) | `["derived"]`; `show({eventId})`→`open(eventId)` | `index.html:93`, `main.js:1103-1142` | nenhuma; `openOperation` (`main.js:1130`) vira `ctx.dock.open("operations", {eventId})` |
@@ -331,7 +391,7 @@ Fora da doca: `copy-export.js` (popover ancorado no menu Export a partir da UI-1
 
 ### 2.7 Doca provisória da UI-12 (`js/dock-legacy.js`)
 
-Mesma API da seção 2.2 sobre o layout atual: `register` guarda o `PanelDef`; o 1º `open` cria `<section class="panel host-panel" id="<id>-host">` em `#grid-panel` antes do formulário de filtro (onde ficam hoje, `index.html:90-102`); `open`/`close` alternam `host.hidden`; `isOpen` lê `!host.hidden` (por isso os módulos que ainda se escondem sozinhos continuam coerentes); `notify` com as regras de 2.4; `maximize` e `on("resize")` não fazem nada. A UI-15 apaga o arquivo e troca uma linha em `main.js`.
+Mesma API da seção 2.2, inclusive a inicialização em duas etapas (`createDock({ root: byId("grid-panel"), before: byId("filter-form"), storage, onFocusOut })` e depois `dock.bind(ctx)`), sobre o layout atual: `register` guarda o `PanelDef`; o 1º `open` cria `<section class="panel host-panel" id="<id>-host">` em `#grid-panel` antes do formulário de filtro (onde ficam hoje, `index.html:90-102`); `open`/`close` alternam `host.hidden`; `isOpen` lê `!host.hidden` (por isso os módulos que ainda se escondem sozinhos continuam coerentes); `notify` com as regras de 2.4; `maximize` e `on("resize")` não fazem nada. A UI-15 apaga o arquivo e troca, em `main.js`, só o caminho do `import { createDock }` e as opções de `createDock` (`root: byId("dock")`, sem `before`); `bind(ctx)` e `app-actions.js` não mudam.
 
 ## 3. Barra de status
 
@@ -443,7 +503,7 @@ export function isFiltered(live, selection, parentsFilter) -> boolean   // estad
 
 | Origem | Ficha | Remover faz |
 |---|---|---|
-| `selection.sourceIds` | 1 fonte: `Source {name}`; várias: `{n} sources` | `sourceIds = []` |
+| `selection.sourceIds` | `S[pluralKey("chipSource", n)]`: 1 fonte = `Source {name}`, várias = `{count} sources` | `sourceIds = []` |
 | `selection.collectionIds` | `C1, C2` (tags) | `collectionIds = []` |
 | `searchText` | `text "{text}"` | `searchText = ""` |
 | `formState.sevMax` | `Severity at least {name}` | `sevMax = null`, `form.sev = ""` |
@@ -483,7 +543,7 @@ export function isFiltered(live, selection, parentsFilter) -> boolean   // estad
 | 5 | `dock` | `#dock` (UI-15) | aba ativa | alguma aba aberta |
 | 6 | `detail` | `#detail-panel` (`aside`, `index.html:135`) | título do detalhe | coluna visível ou gaveta aberta (UI-17) |
 
-- **Decisão:** a ordem do F6 segue a do DOM e a do Tab (doca antes do detalhe). O handoff (`UI-HANDOFF.md`, seção 8) lista detalhe antes da doca; trocar faria o F6 andar numa ordem e o Tab noutra (WCAG 2.4.3).
+- **Decisão:** a ordem do F6 segue a do DOM e a do Tab (doca antes do detalhe), para o F6 e o Tab andarem na mesma ordem (WCAG 2.4.3). A versão anterior (detalhe antes da doca) foi corrigida nas outras fontes para ficarem iguais a esta: `docs/analises-ui/CONSOLIDADO.md` (UI-28, Proposta) e `docs/UI-HANDOFF.md` (seção 8).
 - `F6`/`Shift+F6` vão para a próxima/anterior região **disponível**, com volta ao início. Ao voltar a uma região, o foco pousa no último elemento focado nela, se ainda conectado e visível; senão em `focusTarget`.
 - Com `<dialog>` modal aberto, F6 não age (o diálogo prende o foco). Com menu ou popover aberto, F6 fecha-o e então muda de região.
 - Puro (`js/shortcuts-model.js`, UI-28): `nextRegion(order, availableIds, currentId, dir) -> id`; `currentRegion` é decidido no DOM por `root.contains(document.activeElement)`. As definições (`js/regions.js`, DOM) são da UI-28.
@@ -524,8 +584,8 @@ Só documentação: este arquivo e o bloco da seção 10 deste documento em `doc
 
 ### PR 11 · UI-10 (componentes)
 
-- `js/ui-menu.js` aceita `MenuItem[]` (seção 1.4) e chama `item.preload()` em `pointerenter`/`focus`. Assinatura: `openMenu(button, items, { onClose }) -> { close() }`.
-- `.ui-chip` com `×` de `aria-label` = `format(S.chipRemove, {label})`.
+- `js/ui-menu.js` (já entregue): `createMenu({ trigger, getItems, label, onOpenChange, doc })` aceita `MenuItem[]` (seção 1.4) e chama `item.preload()` em `pointerenter`/`focus`; `createChip({ doc, label, removeLabel, onRemove, title })`.
+- `.ui-chip` com `×` de `aria-label` = `removeLabel` = `format(S.chipRemove, {label})`.
 - `index.html`: `<link rel="stylesheet" href="/css/components.css">` depois de `tokens.css` e antes de `app.css`.
 - `strings.js`: `chipRemove: "Remove {label}"`.
 
@@ -536,18 +596,20 @@ Arquivos do agente: `js/actions.js`, `js/toolbar-menu.js`, `js/toolbar-menu-mode
 ```js
 // main.js, em start(), depois de grid/detail e antes dos painéis
 const actions = createActionRegistry({ onError: (err) => showError(err), singleKeysOn: () => true });
-const dock = createHostDock({ parent: byId("grid-panel"), before: byId("filter-form"), ctx: null });
+// etapa 1: create(deps); a doca existe antes do contexto que a contém
+const dock = createDock({ root: byId("grid-panel"), before: byId("filter-form"), storage: safeLocalStorage(),
+  onFocusOut: () => byId("grid-viewport").focus() });            // import de ./dock-legacy.js
 const ctx = Object.freeze({
   caseId: () => caseId, filter: () => currentFilter, userFilter: () => userFilter,
   selectedRow: () => grid.selectedRow(), entry: () => detail.entry,
   setUserFilter, reveal: revealEntry, actions, dock, status,
 });
-dock.bind(ctx);
+dock.bind(ctx);                                                  // etapa 2: bind(ctx)
 registerAppPanels(dock, deps);
 registerAppActions(actions, deps);
 mountToolbar(byId("toolbar"), { actions, dock, ctx });
-// applyView: no lugar de :415-420 -> dock.notify("view");  onCase: :467-494 -> dock.notify("case")
-// onDone: :515-526 -> dock.notify("indexed");  refreshDerived: :255-260 -> dock.notify("derived")
+// substituir SÓ as chamadas marcadas como dock.notify no inventário 2.4.1; as marcadas "fica"
+// (clockBanner, copyExport, followTail, alertsFlow, filterTree, viewsUi, timeline...) continuam
 ```
 
 ```js
@@ -560,7 +622,6 @@ actions.register({ id: "analyze.distinct", labelKey: "actDistinct", group: "anal
 
 - `index.html`: barra de uma linha (36 px) no lugar de `:21-49`; remover os hosts `:90-102` (a doca provisória os cria).
 - `main.js`: remover os blocos de botão e host de `:742-767`, `:769-793`, `:863-880`, `:882-936` (montagens trocadas), `:970-1001`, `:1074-1101`, `:1103-1142`, `:1144-1202`, `:1204-1227`; `:153-161` (tema) e `:627-698` (Columns vira diálogo, com o mesmo `buildColumnMenu`).
-- Corrigir no mesmo PR o achado de 9.1: `main.js:894` usa `templateCodes`, que não existe (o mapa é `templateLabels`, `main.js:180`).
 - `strings.js`: as chaves `act*` da tabela 1.6 que a UI-12 registra, `actGroup*` (cabeçalhos), `actionUnavailable`, `keyNames` (`ArrowLeft: "Left"`, …), `themeSystem`; tirar as chaves dos botões removidos (`toolbarUnknown`, `toolbarEvents`, `toolbarDashboard`, `toolbarConfig`, `toolbarExport`, `dstButton`, `grpButton`, `aggButton`, `hlButton`, `bmButton`, `plgButton`, `alToolbar`, `themeToggle`, `themeLight`, `themeDark`), conferindo antes que nenhum outro uso resta.
 
 ### PR 13 · UI-13 (barra de status)
@@ -595,8 +656,10 @@ Arquivos do agente: `js/boot.js`, `js/sources.js` (pedidos em paralelo). A sess�
 Arquivos do agente: `js/dock.js`, `js/dock-model.js`, `css/dock.css`, `js/grid.js` e `js/grid-model.js` (2.5), `onRequestClose` em `bookmarks-panel.js`, `payload-list.js`, `compare.js`, `side-by-side.js`, `key-panel.js`, `redaction-panel.js`, e retirada do Esc e do `host.hidden` de `alerts-panel.js`. A sessão principal aplica:
 
 ```js
-// main.js: troca de uma linha; app-actions.js não muda
+// main.js: só muda o import (./dock-legacy.js -> ./dock.js) e as opções; bind(ctx) e app-actions.js não mudam
 const dock = createDock({ root: byId("dock"), storage: safeLocalStorage(), onFocusOut: () => byId("grid-viewport").focus() });
+// ... (ctx criado como antes)
+dock.bind(ctx);
 // app-actions.js: nas opções desses módulos, onRequestClose: () => ctx.dock.close("<id>")
 ```
 
@@ -646,7 +709,7 @@ strip.onRemove((chipId) => {
 - Os `clearSelection` ganham `{ quiet }` para não disparar o próprio `onSelection` (senão a remoção recarrega duas vezes).
 - `index.html`: faixa (`--strip-height`) no lugar de `:103-124`; os campos de Severity, Level, From, To, Hide noise e Unclassified vão para o popover "Filters ▾" (Level em "Advanced").
 - Ações do grupo `views` passam a aparecer no menu `⋯` da faixa.
-- `strings.js`: `stripFiltered`, `stripNoFilters`, `chipMore`, `chipSourceOne`, `chipSourcesOther`, `chipText`, `chipSev`, `chipLevel`, `chipTimeRange`, `chipTimeFrom`, `chipTimeUntil`, `chipHideNoise`, `chipUnclassified`, `chipTreeOne/Other`, `chipNot`, `chipLeaf` (um modelo por tipo de folha), `actFilters`.
+- `strings.js`: `stripFiltered`, `stripNoFilters`, `chipMore`, `chipSourceOne`/`chipSourceOther` (par de `pluralKey("chipSource", n)`: One = `Source {name}`, Other = `{count} sources`), `chipText`, `chipSev`, `chipLevel`, `chipTimeRange`, `chipTimeFrom`, `chipTimeUntil`, `chipHideNoise`, `chipUnclassified`, `chipTreeOne`/`chipTreeOther`, `chipNot`, `chipLeaf` (um modelo por tipo de folha), `actFilters`.
 
 ### UI-24 (seguir uma chave)
 
@@ -693,8 +756,8 @@ actions.register({ id: "record.onlySource", labelKey: "actOnlySource", group: "r
   run: (ctx) => ctx.setUserFilter(andFilters(ctx.userFilter(), { source: [ctx.selectedRow().source_id] })) });
 ```
 
-- O menu de contexto lista `actions.list({ group: "record" })` com `args = { row }`; a paleta lista `actions.list()` menos `help.palette`.
-- O grid precisa de `onContextMenu({ row, x, y })` (clique direito e tecla Menu selecionam a linha antes de abrir). Como a UI-29 pode correr em paralelo com a UI-30 (ambas tocariam `grid.js`), o agente da UI-29 entrega esse trecho de `grid.js` no relatório e a sessão principal aplica depois do merge da UI-30.
+- O menu de contexto lista `actions.list({ group: "record" })` **sem** `record.contextMenu` (o próprio lançador não aparece no menu que ele abre), com `args = { row }`; a paleta lista `actions.list()` menos `help.palette`. Teste do `commands-model`: nenhum dos dois lançadores aparece na própria lista.
+- O grid precisa de `onContextMenu({ row, x, y })` (clique direito e tecla Menu selecionam a linha antes de abrir). O trecho de `grid.js` entra **no próprio PR da UI-29** (que vem antes da UI-30 na sequência canônica); se a UI-30 for desenvolvida em paralelo, ela incorpora a `main` resultante (com o `onContextMenu`) antes de abrir o seu PR.
 - `strings.js`: `actPalette`, `actContextMenu`, `actOnlySource`, `actHideType`, `cmdPlaceholder`, `cmdEmpty`.
 
 ## 8. Compatibilidade
@@ -722,7 +785,6 @@ Nenhum módulo novo declara cor ou tamanho literal: tudo por token.
 
 | Risco ou achado | Mitigação |
 |---|---|
-| **Achado (defeito na `main`):** `main.js:894` passa `getTemplateCode: (id) => templateCodes.get(id)`, mas `templateCodes` não existe (o mapa é `templateLabels`, `main.js:180`). Clicar em "Highlight this template" no detalhe lança `ReferenceError` e não cria a regra (`highlight-panel.js:322`). O teste de fluxo não pega porque injeta o próprio `getTemplateCode` | Corrigir na UI-12 (que reescreve essa ligação) ou antes, num PR de uma linha |
 | Dois despachantes da mesma tecla durante a transição | Seção 1.6: `shortcut` declarativo até a UI-28, que troca todos os ouvintes no mesmo PR |
 | `dock-legacy.js` divergir de `dock.js` | Mesma API e mesmos testes de fluxo por painel (abrem pelo registro) rodam nas duas |
 | Carregamento sob demanda quebra a tolerância a módulo opcional | `preload`/`invoke` nunca rejeitam; falha = item desabilitado com motivo e mensagem (1.5); teste de fluxo por painel |
@@ -759,7 +821,7 @@ Nenhum módulo novo declara cor ou tamanho literal: tudo por token.
 Desenho completo em `docs/notas/ui-contratos.md`. Resumo do que é contrato:
 
 - **Registro de ações** (`web/js/actions.js`, puro): `{ id, labelKey, group, shortcut, enabled(ctx), run(ctx), load?() }`, mais `scope`, `disabledKey`, `pressed` e `children` opcionais. Alimenta a barra (menus Case, Analyze, Export, View e as alternâncias), o diálogo `?`, o menu de contexto da linha e a paleta (`Ctrl+K`). Atalho em KeySpec canônica; atalhos de uma letra obedecem a `dmslog.singleKeys` e nunca disparam em campo de texto; atalho repetido no mesmo escopo é erro de registro. `load()` é o gancho do carregamento sob demanda: chamado no hover/foco do item e antes de `run`; falha deixa o item desabilitado com motivo.
-- **Doca inferior** (`web/js/dock.js`; regras em `dock-model.js`, puro): `register({ id, titleKey, mount(host, ctx), listens, closeOnCase, needsCase })`, `open(id, args)`, `close`, `closeAll`, `maximize`, `isOpen`, `active`, `notify(case|view|indexed|derived)`, eventos `open`/`close`/`activate`/`resize`. Doca ≥ 160 px; grid ≥ 8 linhas + cabeçalho; janela < 640 px abre maximizada; altura inicial `clamp(160 px, conteúdo, 40%)`; altura lembrada em `localStorage` `dmslog.dockHeight` (fração). O grid mantém a linha selecionada visível em qualquer redimensionamento pelo próprio `ResizeObserver` (`Grid.ensureSelectedVisible()`, `topAfterResize` em `grid-model.js`), nunca durante a rolagem e nunca com altura 0.
+- **Doca inferior** (`web/js/dock.js`; regras em `dock-model.js`, puro): inicialização em duas etapas, idêntica na doca provisória da UI-12 (`dock-legacy.js`) e na definitiva da UI-15: `createDock({ root, before?, storage, onFocusOut })` e depois `dock.bind(ctx)`. API: `register({ id, titleKey, mount(host, ctx), listens, closeOnCase, needsCase })`, `open(id, args)`, `close`, `closeAll`, `maximize`, `isOpen`, `active`, `notify(case|view|indexed|derived)`, eventos `open`/`close`/`activate`/`resize`. `notify("case")` primeiro fecha todo painel aberto com `closeOnCase` (independente de `listens`) e depois avisa os que têm o motivo em `listens`. `notify` substitui só as chamadas a painéis da doca; o que não é painel (aviso de relógio, Copy as, Follow tail, alertas, árvore de filtros, trilha, timeline) continua chamado por `main.js` nos mesmos ganchos (inventário em `docs/notas/ui-contratos.md`, 2.4.1). Doca ≥ 160 px; grid ≥ 8 linhas + cabeçalho; janela < 640 px abre maximizada; altura inicial `clamp(160 px, conteúdo, 40%)`; altura lembrada em `localStorage` `dmslog.dockHeight` (fração). O grid mantém a linha selecionada visível em qualquer redimensionamento pelo próprio `ResizeObserver` (`Grid.ensureSelectedVisible()`, `topAfterResize` em `grid-model.js`), nunca durante a rolagem e nunca com altura 0.
 - **Barra de status** (`web/js/status-bar.js`): `count`, `position`, `progress`, `message(text, { kind, timeoutMs })`, `connection(state)`, `slot(id)`; substitui `#message`, `#grid-status`, o banner de relógio, o banner de alertas e a ajuda fixa de atalhos. Uma região viva de mensagem e um anunciador de contagem; erro global troca o conteúdo da própria barra (`role="alert"`).
 - **Fichas de filtro** (`web/js/filter-chips-model.js`, puro): `chipsFromState(live, selection, lookups, S)` e `removeChip(live, selection, chipId)` sobre o estado vivo da visão (o mesmo de `views-stack-model.js`) e a seleção da lateral, não sobre o JSON composto. Folhas simples do topo do `userFilter` viram fichas removíveis; o resto vira uma ficha "Filter tree (n conditions)" que abre a árvore.
 - **Regiões e foco**: F6/Shift+F6 na ordem do DOM: barra, lateral, faixa de filtro, grid, doca, detalhe (só as disponíveis); última posição de foco lembrada por região; uma parada de Tab por componente composto (menus, abas, fichas, grid) com roving tabindex; skip link para o grid.
