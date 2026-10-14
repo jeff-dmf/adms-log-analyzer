@@ -1,7 +1,7 @@
 // Pure model of the virtual grid (no DOM): keyset cursors, the buffered row window and the
 // proportional scroll mapping. The DOM layer lives in grid.js.
 
-export const ROW_HEIGHT = 22;       // px, also used by the CSS through the row elements
+export const ROW_HEIGHT = 20;       // px, also used by the CSS through the row elements
 export const PAGE_LIMIT = 200;      // rows per request (server maximum is 500)
 export const MAX_ROWS = 1200;       // rows kept in memory before trimming the far end
 export const PREFETCH_MARGIN = 60;  // fetch when fewer rows than this remain past the viewport

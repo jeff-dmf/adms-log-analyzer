@@ -4,16 +4,6 @@ import { S, format } from "./strings.js";
 import { buildRows, buildTomlSketch, filterRows, formatShare, sortRows } from "./unknown-panel-model.js";
 
 const LIMIT = 500;
-const STYLESHEET = "/css/unknown-panel.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -55,7 +45,6 @@ async function copyText(text, fallbackHost) {
 //   onOpenEntry(id)  open the example entry in the grid/detail
 // Returns { refresh() }; call it when the case or the family changed.
 export function initUnknownPanel(container, { api, getCase, getFamily, onOpenEntry }) {
-  ensureStylesheet();
   let rows = [];
   let totalRecords = 0;
   let sortKey = "count";

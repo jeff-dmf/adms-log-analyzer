@@ -7,17 +7,7 @@ import {
 } from "./alerts-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/alerts.css";
 const CONFIRM_MS = 4000;
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -97,7 +87,6 @@ function summarize(rule) {
 // banner: the live element (role="status"). options: api, getCase(), getFilter() (current filter or null),
 // onShowRecords(filter), onError(err), onClose() (after Escape), notifier (tests). Returns {open, close, isOpen, onCase, refresh}.
 export function initAlerts(host, { banner, api = defaultApi, getCase, getFilter, onShowRecords, onError, onClose, notifier }) {
-  ensureStylesheet();
   const notes = notifier || createNotifier({ storage: safeStorage() });
   let stream = null;
   let opened = false;

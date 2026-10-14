@@ -162,6 +162,31 @@ def _migrate_to_6(conn: sqlite3.Connection) -> None:
     conn.execute(_HIGHLIGHT_RULE_DDL)
 
 
+# Last physical line of a source: the last line of its highest-id record (ids follow file order), NULL when
+# the source has no record. ``max(id)`` seeks the source's slice of an index once; ordering by id instead
+# would sort every record of the source in a temporary B-tree (ARQUITETURA 5, ``source.last_line``).
+LAST_LINE_SQL = (
+    "SELECT e.line_no + e.nlines - 1 FROM entry e"
+    " WHERE e.id = (SELECT max(x.id) FROM entry x WHERE x.source_id = {source})"
+)
+
+
+def _migrate_to_7(conn: sqlite3.Connection) -> None:
+    """Add ``source.last_line`` and fill it once from the records already stored (no reindex).
+
+    The writer records it at the end of every indexing batch (pipeline ``commit``); ``list_sources`` reads
+    it instead of looking the last record up per request. Only the NULL rows are filled, so running the
+    step again rewrites nothing.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(source)")}
+    if "last_line" not in columns:
+        conn.execute("ALTER TABLE source ADD COLUMN last_line INTEGER")
+    conn.execute(
+        f"UPDATE source SET last_line = ({LAST_LINE_SQL.format(source='source.id')})"  # noqa: S608
+        " WHERE last_line IS NULL"
+    )
+
+
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_1,
@@ -170,6 +195,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_4,
     5: _migrate_to_5,
     6: _migrate_to_6,
+    7: _migrate_to_7,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

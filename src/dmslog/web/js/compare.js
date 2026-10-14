@@ -4,17 +4,7 @@ import { api } from "./api.js";
 import { buildDiffRows, buildSideHeader, createCompareFlow, statsText } from "./compare-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/bookmarks.css";
 const MARKS = { change: "~", remove: "-", add: "+", equal: "", skip: "" };
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -30,7 +20,6 @@ function element(tag, className, text) {
 // host: empty element to fill (hidden until opened). Options: getCase().
 // Returns { open(a, b), close(), reset() }.
 export function initCompare(host, { getCase }) {
-  ensureStylesheet();
   host.textContent = "";
   const head = element("div", "cmp-head");
   head.appendChild(element("h3", "cmp-title", S.cmpTitle));

@@ -5,17 +5,6 @@ import { api } from "./api.js";
 import { SIDE_BY_SIDE_LINES, buildSideView, createSideBySideFlow } from "./links-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/links.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -30,7 +19,6 @@ function element(tag, className, text) {
 // host: empty element to fill (hidden until opened). Options: getCase().
 // Returns { open(entryId), close(), reset() }.
 export function initSideBySide(host, { getCase }) {
-  ensureStylesheet();
   host.textContent = "";
   const head = element("div", "sbs-head");
   head.appendChild(element("h3", "sbs-title", S.sbsTitle));

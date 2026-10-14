@@ -9,20 +9,8 @@ import {
 } from "./aggregate-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEETS = ["/vendor/uplot/uPlot.min.css", "/css/aggregate.css"];
 const CHART_HEIGHT = 220;
 const COLORS = 8; // --agg-c0 .. --agg-c7
-
-function ensureStylesheets() {
-  for (const href of STYLESHEETS) {
-    if (!document.querySelector('link[rel="stylesheet"][href="' + href + '"]')) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = href;
-      document.head.appendChild(link);
-    }
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -569,7 +557,6 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
 //   onDrill(filter)          AND a row's filter into the user filter
 // Returns { viewChanged() } to call whenever the case or the filter changed.
 export function mountAggregate(options) {
-  ensureStylesheets();
   const { toolbar, beforeButton, panelParent, beforePanel } = options;
   const toggle = button("", S.aggButton);
   toggle.id = "aggregate-button";

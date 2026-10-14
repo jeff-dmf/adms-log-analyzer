@@ -15,20 +15,10 @@ import {
 } from "./copy-export-model.js";
 import { S } from "./strings.js";
 
-const STYLESHEET = "/css/copy-export.css";
 const KIND_LABELS = {
   values: "cxKindValues", lines: "cxKindLines", record: "cxKindRecord", view_csv: "cxKindViewCsv",
   events_csv: "cxKindEventsCsv",
 };
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -101,7 +91,6 @@ function isWindows() {
 // getContext(): { caseId, filter, columns, fieldColumns, entry, recordId } of the viewer right now.
 // Returns { reset() }.
 export function initCopyExport(anchor, { getContext }) {
-  ensureStylesheet();
   const wrap = element("div", "menu-wrap");
   const button = element("button", "", S.cxButton);
   button.type = "button";

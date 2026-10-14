@@ -9,17 +9,6 @@ import {
 } from "./payload-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/payload.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -211,7 +200,6 @@ export class PayloadSection {
       return;
     }
     this.renderedKey = key;
-    ensureStylesheet();
     host.hidden = false;
     host.textContent = "";
     host.appendChild(element("h3", "pl-title", S.plTitle));
