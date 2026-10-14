@@ -74,34 +74,68 @@
 .grid-row[data-hl="green"], .hl-c-green { background: var(--hl-green); }
 
 /* Windows high contrast: the fill, box-shadow and the rule colors are replaced by system colors, so the band
-   is a Mark gradient (kept only with forced-color-adjust: none) over Canvas, and the selection is Highlight. */
+   is a Mark gradient (kept only with forced-color-adjust: none) over Canvas, and the selection is Highlight.
+   forced-color-adjust is inherited: descendants with author colors get system pairs here too. */
 @media (forced-colors: active) {
   .grid-row[data-hl] {
     forced-color-adjust: none;
     background: Canvas;
     background-image: linear-gradient(90deg, Mark 0, Mark 4px, transparent 4px);
+    box-shadow: none;
   }
 
   .grid-row[data-hl] .grid-cell,
+  .grid-row[data-hl] .col-level,
+  .grid-row[data-hl] .col-msg,
   .grid-row[data-hl][data-sev="1"] .col-level,
   .grid-row[data-hl][data-sev="1"] .col-msg,
   .grid-row[data-hl][data-sev="2"] .col-level,
-  .grid-row[data-hl][data-sev="2"] .col-msg {
+  .grid-row[data-hl][data-sev="2"] .col-msg,
+  .grid-row[data-hl][data-bm] .grid-cell:first-child {
     color: CanvasText;
+  }
+
+  .grid-row[data-hl] .grid-cell.col-collection[data-tag] {
+    background: transparent;
+    color: CanvasText;
+  }
+
+  .grid-row[data-hl] mark {
+    background: Mark;
+    color: MarkText;
   }
 
   .grid-row.selected[data-hl],
   .grid-row.selected[data-hl]:hover {
     background: Highlight;
     background-image: linear-gradient(90deg, HighlightText 0, HighlightText 4px, transparent 4px);
+    box-shadow: none;
   }
 
   .grid-row.selected[data-hl] .grid-cell,
+  .grid-row.selected[data-hl] .col-level,
+  .grid-row.selected[data-hl] .col-msg,
   .grid-row.selected[data-hl][data-sev="1"] .col-level,
   .grid-row.selected[data-hl][data-sev="1"] .col-msg,
   .grid-row.selected[data-hl][data-sev="2"] .col-level,
-  .grid-row.selected[data-hl][data-sev="2"] .col-msg {
+  .grid-row.selected[data-hl][data-sev="2"] .col-msg,
+  .grid-row.selected[data-hl][data-bm] .grid-cell:first-child {
     color: HighlightText;
+  }
+
+  .grid-row.selected[data-hl] .grid-cell.col-collection[data-tag] {
+    background: transparent;
+    color: HighlightText;
+  }
+
+  .grid-row.selected[data-hl] mark {
+    background: HighlightText;
+    color: Highlight;
+  }
+
+  .grid-viewport:focus-visible .grid-row.selected[data-hl] {
+    outline: 2px solid HighlightText;
+    outline-offset: -2px;
   }
 }
 

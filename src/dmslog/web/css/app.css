@@ -558,17 +558,37 @@ mark {
 
 /* Windows high contrast: box-shadow and fills are replaced by system colors, so the selection is an outline. */
 @media (forced-colors: active) {
+  /* forced-color-adjust is inherited: every descendant that keeps an author color gets a system pair too. */
   .grid-row.selected,
   .grid-row.selected:hover {
     forced-color-adjust: none;
     background: Highlight;
     color: HighlightText;
+    box-shadow: none;
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }
 
-  .grid-row.selected .grid-cell {
+  .grid-viewport:focus-visible .grid-row.selected {
+    outline: 2px solid HighlightText;
+    outline-offset: -2px;
+  }
+
+  .grid-row.selected .grid-cell,
+  .grid-row.selected .col-level,
+  .grid-row.selected .col-msg,
+  .grid-row.selected[data-bm] .grid-cell:first-child {
     color: HighlightText;
+  }
+
+  .grid-row.selected .grid-cell.col-collection[data-tag] {
+    background: transparent;
+    color: HighlightText;
+  }
+
+  .grid-row.selected mark {
+    background: HighlightText;
+    color: Highlight;
   }
 
   [aria-pressed="true"],

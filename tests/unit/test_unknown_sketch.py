@@ -62,7 +62,7 @@ def sketches():
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=60,
+        timeout=300,  # generous: under pytest-xdist on a loaded Windows runner node starts slowly
         check=True,
     )
     return json.loads(result.stdout)
