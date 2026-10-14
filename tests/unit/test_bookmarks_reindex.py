@@ -540,7 +540,8 @@ def test_reindex_cost_follows_orphans_and_bookmarked_records_not_the_table(tmp_p
         f"\nreindex of 60000 records: empty table {empty:.2f}s ({len(empty_statements)} bookmark statements),"
         f" 2000 linked + 2000 orphans {busy:.2f}s ({len(busy_statements)} bookmark statements)"
     )
-    assert busy < 2 * empty + 2.0  # generous: CI machines vary; the measured overhead is about 10 %
+    # No wall-clock assertion: the cost is bounded by the statement counts above, and the elapsed times
+    # printed here are only a diagnostic (shared Windows runners swing by 2x between runs).
 
 
 # --------------------------------------------------------------------------- complete identities never weaken
