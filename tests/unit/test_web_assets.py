@@ -327,7 +327,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         "print(json.dumps(out))\n"
     )
     paths = [
-        "/", "/css/app.css", "/css/timeline.css", "/css/unknown-panel.css",
+        "/", "/css/tokens.css", "/css/app.css", "/css/timeline.css", "/css/unknown-panel.css",
         "/css/grid-extras.css", "/css/filter-tree.css", "/css/config-panel.css", "/css/knowledge.css",
         "/css/events.css", "/css/dashboard.css", "/css/links.css", "/css/key-panel.css",
         "/css/payload.css", "/css/payload-list.css",
