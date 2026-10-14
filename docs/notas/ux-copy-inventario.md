@@ -1412,3 +1412,11 @@ Os demais testes usam `S.<chave>` e continuam valendo. "Copy as" aparece só num
 2. **Frases com duas contagens** (`colRecords`, `colRemoved`, `colRemoveConfirm`, `cfCreated`, `cfPartial`): o plural escolhe pela primeira contagem, então "1 record in 1 sources" pode sair. Aceita, ou reescrevo essas frases sem a segunda contagem?
 3. **"…" em botões de painel (R5):** apliquei a "Export…", "Copy or export…", "Compare…", "Redaction settings…", "Bookmarks…", "Payloads…" e "Alerts…", que abrem painel com botão Fechar. Confirma, ou só para os que abrem diálogo de fato?
 4. **Verbo + objeto (R10):** "Clear search", "Go to time", "Open path", "Apply filter", "Reset filters", "Add to list" e as ações "Delete …" de linhas. Aceita?
+
+
+## Desvios na aplicação (2026-10-14)
+
+- 64 bases de plural (não 69): as 5 frases com duas contagens (`colRecords`, `colRemoveConfirm`, `colRemoved`, `exportCounts`, `unkSummary`) usam substantivos pluralizados à parte (`nRecord`, `nSource`, `nBookmark`, `nEvent`, `nPayload`, `nSignature`, `nUnclassifiedRecord`).
+- R3 (events → operations): só onde o texto fala de operações; o painel de eventos derivados (Restart, Gap, Startup) mantém "events"; título do painel e botão da barra: "Operations and events".
+- Botão de tema: `themeCurrent` = "Theme: {theme}" (`themeLight`/`themeDark` viram "Light"/"Dark").
+- Chaves sem uso: `cfCreated`, `lnkMore`, `themeSystem`.
