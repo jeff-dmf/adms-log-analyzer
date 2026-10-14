@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import { parseRules } from "./fixtures/css-cascade.mjs";
 import { createChip, createMenu, indexByInitial, navigate, normalizeItem, stepIndex } from "../../src/dmslog/web/js/ui-menu.js";
 
 // ---- Fake DOM -------------------------------------------------------------------------------------
@@ -210,13 +211,82 @@ test("Esc closes the menu and returns the focus to the trigger", () => {
   assert.deepEqual(ran, []);
 });
 
-test("Tab closes the menu without stealing the focus", () => {
+test("Tab closes the menu, returns the focus to the trigger and lets the browser move on from there", () => {
   const { doc, trigger } = setup(LIST);
   trigger.dispatch("keydown", { key: "ArrowDown" });
   const e = press(doc, "Tab");
   assert.equal(menuEls(doc).length, 0);
-  assert.equal(e.prevented, false);
-  assert.notEqual(doc.activeElement, trigger);
+  assert.equal(e.prevented, false); // the default Tab then continues after the trigger
+  assert.equal(doc.activeElement, trigger);
+  assert.equal(trigger.attrs["aria-expanded"], "false");
+});
+
+test("opening a submenu by click remembers the item: Esc and ArrowLeft return to it and collapse it", () => {
+  const { doc, trigger } = setup(LIST);
+  trigger.dispatch("keydown", { key: "ArrowDown" }); // focus on the first item, not on Theme
+  const theme = items(menuEls(doc)[0]).at(-1);
+  theme.dispatch("click"); // pointer: opens and focuses the first submenu item
+  assert.equal(menuEls(doc).length, 2);
+  assert.equal(focusedLabel(doc), "System");
+  assert.equal(theme.attrs["aria-expanded"], "true");
+  press(doc, "Escape");
+  assert.equal(menuEls(doc).length, 1);
+  assert.equal(doc.activeElement, theme);
+  assert.equal(theme.attrs["aria-expanded"], "false");
+  assert.equal(theme.attrs.tabindex, "0");
+  theme.dispatch("click");
+  press(doc, "ArrowLeft");
+  assert.equal(doc.activeElement, theme);
+  assert.equal(theme.attrs["aria-expanded"], "false");
+});
+
+test("closing the whole menu from a submenu leaves no item expanded", () => {
+  const { doc, trigger } = setup(LIST);
+  trigger.dispatch("keydown", { key: "ArrowUp" });
+  press(doc, "ArrowRight");
+  const root = menuEls(doc)[0];
+  press(doc, "Tab");
+  assert.equal(menuEls(doc).length, 0);
+  assert.equal(items(root).at(-1).attrs["aria-expanded"], "false");
+});
+
+test("every submenu is named by the item that opened it", () => {
+  const { doc, trigger } = setup(LIST);
+  trigger.dispatch("keydown", { key: "ArrowUp" });
+  press(doc, "ArrowRight");
+  const [root, sub] = menuEls(doc);
+  const theme = items(root).at(-1);
+  assert.ok(theme.attrs.id);
+  assert.equal(sub.attrs["aria-labelledby"], theme.attrs.id);
+  assert.equal(root.attrs["aria-label"], "Analyze");
+});
+
+test("with every item disabled the menu itself takes the focus, and Esc and Tab reach it", () => {
+  const all = [{ id: "a", label: "A", disabled: true }, { id: "b", label: "B", disabled: true }];
+  for (const key of ["Escape", "Tab"]) {
+    for (const opener of ["ArrowDown", "ArrowUp"]) {
+      const { doc, trigger } = setup(all);
+      trigger.focus();
+      trigger.dispatch("keydown", { key: opener });
+      const menu = menuEls(doc)[0];
+      assert.equal(menu.attrs.tabindex, "-1");
+      assert.equal(doc.activeElement, menu, `${opener}: the menu holds the focus`);
+      press(doc, key);
+      assert.equal(menuEls(doc).length, 0, `${key} closes it`);
+      assert.equal(doc.activeElement, trigger, `${key} returns the focus`);
+    }
+  }
+});
+
+test("a submenu whose items are all disabled still takes the focus", () => {
+  const list = [{ id: "p", label: "Parent", children: [{ id: "c", label: "C", disabled: true }] }];
+  const { doc, trigger } = setup(list);
+  trigger.dispatch("keydown", { key: "ArrowDown" });
+  press(doc, "ArrowRight");
+  const sub = menuEls(doc)[1];
+  assert.equal(doc.activeElement, sub);
+  press(doc, "Escape");
+  assert.equal(focusedLabel(doc), "Parent");
 });
 
 test("checkbox and radio items expose aria-checked; separators have role separator", () => {
@@ -328,13 +398,10 @@ function rules(text, out = []) {
 const RULES = rules(css);
 const rulesFor = (sel) => RULES.filter((r) => r.selector.split(",").map((s) => s.trim()).includes(sel));
 
-test("components.css has no literal colors, only tokens (black appears only inside color-mix)", () => {
+test("components.css has no literal colors, only tokens (no color keyword, not even in color-mix)", () => {
   assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/);
   assert.doesNotMatch(css, /\b(?:rgba?|hsla?)\(/);
-  const named = [...css.matchAll(/\b(black|white|red|blue|green|gray|grey|yellow|orange)(?![-\w])/g)].filter(
-    (m) => !css.slice(Math.max(0, m.index - 40), m.index).includes("color-mix"),
-  );
-  assert.deepEqual(named.map((m) => m[0]), []);
+  assert.deepEqual([...css.matchAll(/(?<![-\w])(black|white|red|blue|green|gray|grey|yellow|orange)(?![-\w])/g)].map((m) => m[0]), []);
 });
 
 test("every custom property components.css reads is defined in tokens.css", () => {
@@ -352,11 +419,16 @@ test("disabled controls never use opacity; the cursor is not-allowed", () => {
   }
 });
 
-test("pressed and expanded buttons use the selection fill and the accent border", () => {
-  const body = rulesFor('.ui-button[aria-pressed="true"]').map((r) => r.body).join(";");
-  assert.match(body, /background:\s*var\(--row-selected\)/);
-  assert.match(body, /border-color:\s*var\(--accent\)/);
-  assert.ok(rulesFor('.ui-button[aria-expanded="true"]').length > 0);
+test("pressed and expanded: one rule block after the variants, with enough specificity to beat their hover rules", () => {
+  // The effective colors per variant are audited in tokens-contrast.test.mjs; here the structure is pinned.
+  const press = BASE.filter((r) => r.selector.includes("aria-pressed") && r.selector.startsWith(".ui-button:is("));
+  assert.equal(press.length, 2); // rest and :hover
+  for (const v of ["is-primary", "is-ghost", "is-danger"]) {
+    const lastVariant = Math.max(...BASE.filter((r) => r.selector.startsWith(`.ui-button.${v}`) && !r.selector.includes("disabled")).map((r) => r.order));
+    assert.ok(press[0].order > lastVariant, `${v} rules come before the pressed block`);
+  }
+  assert.equal(press[0].decls["background-color"], "var(--row-selected)");
+  assert.equal(press[0].decls["border-color"], "var(--accent)");
 });
 
 test("focus ring is 2 px with offset 1 on buttons and fields", () => {
@@ -399,4 +471,52 @@ test("the rule parser gives the same rules for a CRLF copy of the file", () => {
   const crlf = raw.replace(/\n/g, "\r\n");
   assert.deepEqual(rules(prep(crlf)), rules(prep(raw)));
   assert.ok(rules(prep(crlf)).length > 50);
+});
+
+// ---- forced-colors and focus-offset contract --------------------------------------------------------
+
+const ALL = parseRules(readFileSync(new URL("../../src/dmslog/web/css/components.css", import.meta.url), "utf8"));
+const BASE = ALL.filter((r) => r.media === null);
+const FORCED = parseRules(readFileSync(new URL("../../src/dmslog/web/css/components.css", import.meta.url), "utf8")).filter((r) => r.media?.includes("forced-colors"));
+const forcedDecl = (needle, prop) => FORCED.filter((r) => r.selector.includes(needle) && prop in r.decls).map((r) => r.decls[prop]);
+
+test("forced colors: a hovered disabled menu item keeps GrayText and never turns into Highlight", () => {
+  const hover = FORCED.filter((r) => r.selector.includes(".ui-menu-item") && r.selector.includes(":hover"));
+  const plain = hover.filter((r) => !r.selector.includes(":not("));
+  assert.ok(plain.length > 0 && plain.every((r) => r.selector.includes('[aria-disabled="true"]') && r.decls.color === "GrayText"), "disabled hover rule keeps GrayText");
+  // The Highlight fill applies only to items that are not disabled.
+  for (const r of FORCED.filter((r) => r.decls["background-color"] === "Highlight" && r.selector.includes(".ui-menu-item"))) {
+    assert.ok(r.selector.includes(':not([aria-disabled="true"])'), r.selector);
+  }
+});
+
+test("forced colors: the focus indicator differs from the pressed indicator in thickness and offset", () => {
+  const pressed = FORCED.find((r) => r.selector === '.ui-button:is([aria-pressed="true"], [aria-expanded="true"])');
+  const focus = FORCED.find((r) => r.selector === ".ui-button:focus-visible");
+  const both = FORCED.find((r) => r.selector.includes(":focus-visible") && r.selector.includes("aria-pressed"));
+  assert.ok(pressed && focus && both, "the three rules exist");
+  const raw = (sel) => FORCED.filter((r) => r.selector === sel);
+  const body = (re, text) => re.exec(text)?.[0];
+  const cssText = readFileSync(new URL("../../src/dmslog/web/css/components.css", import.meta.url), "utf8").replace(/\r\n?/g, "\n");
+  const forcedText = cssText.slice(cssText.indexOf("@media (forced-colors: active)"));
+  const ringOf = (selectorStart) => {
+    const i = forcedText.indexOf(selectorStart);
+    const block = forcedText.slice(i, forcedText.indexOf("}", i));
+    return { width: body(/outline:\s*(\d+)px/, block)?.match(/\d+/)[0], offset: body(/outline-offset:\s*(-?\d+)px/, block)?.match(/-?\d+/)[0] };
+  };
+  const pressedRing = ringOf('.ui-button:is([aria-pressed="true"], [aria-expanded="true"]),\n  .ui-chip[aria-pressed');
+  const focusRing = ringOf(".ui-button:focus-visible,\n  .ui-input");
+  assert.notEqual(pressedRing.width, focusRing.width);
+  assert.ok(Number(focusRing.offset) > Number(pressedRing.offset), "focus ring is outside, pressed ring inside");
+  // Focus wins over pressed when both apply (later and at least as specific).
+  assert.ok(both.order > pressed.order);
+  assert.equal(raw(both.selector).length, 1);
+});
+
+test("the menu item focus ring is the documented inside exception to the 1 px offset; everything else uses offset 1", () => {
+  assert.match(rulesFor(".ui-button:focus-visible")[0].body, /outline-offset:\s*1px/);
+  const menuItem = BASE.filter((r) => r.selector === ".ui-menu-item:focus-visible").at(-1);
+  assert.match(readFileSync(new URL("../../src/dmslog/web/css/components.css", import.meta.url), "utf8"), /\.ui-menu-item:focus-visible \{[^}]*outline-offset:\s*-2px/);
+  assert.ok(menuItem);
+  assert.match(readFileSync(new URL("../../src/dmslog/web/css/components.css", import.meta.url), "utf8"), /Documented exception to the 1 px offset/);
 });

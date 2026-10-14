@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { ROW_HEIGHT } from "../../src/dmslog/web/js/grid-model.js";
+import { compile, computed, contrast as contrastOf, parseRules, resolveColor } from "./fixtures/css-cascade.mjs";
 
 const CSS = new URL("../../src/dmslog/web/css/", import.meta.url);
 const tokensCss = readFileSync(new URL("tokens.css", CSS), "utf8");
@@ -38,14 +39,17 @@ const normalize = (body) => body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g
 
 const darkMediaBody = block(block(tokensCss, MEDIA_DARK), SEL_MEDIA + " {");
 const darkExplicitBody = block(tokensCss, SEL_DARK + " {");
-// Everything outside the two dark blocks is the light theme (tokens that do not depend on the theme included).
-const lightCss = tokensCss.replace(MEDIA_DARK + " {" + block(tokensCss, MEDIA_DARK) + "}", "").replace(
-  SEL_DARK + " {" + darkExplicitBody + "}",
-  "",
-);
-const LIGHT = declarations(lightCss);
-const DARK = { ...LIGHT, ...declarations(darkExplicitBody) };
-const THEMES = { light: LIGHT, dark: DARK };
+
+// Light and dark token maps of a tokens.css text (also used on mutated copies by the component audit).
+function themesOf(text) {
+  const explicit = block(text, SEL_DARK + " {");
+  // Everything outside the two dark blocks is the light theme (tokens that do not depend on the theme included).
+  const lightText = text.replace(MEDIA_DARK + " {" + block(text, MEDIA_DARK) + "}", "").replace(SEL_DARK + " {" + explicit + "}", "");
+  const light = declarations(lightText);
+  return { light, dark: { ...light, ...declarations(explicit) } };
+}
+const THEMES = themesOf(tokensCss);
+const { light: LIGHT, dark: DARK } = THEMES;
 
 // Resolves `var(--x)` chains; only hex values are accepted at the end.
 function resolve(theme, name) {
@@ -117,56 +121,205 @@ test("components.css has no literal colors (tokens.css is the only source)", () 
   assert.doesNotMatch(stripped, /\b(?:rgba?|hsla?)\(/);
 });
 
-// Mixes two hex colors in sRGB, as color-mix(in srgb, a, b pct%) does (pct is the share of b).
-function mix(a, b, pct) {
-  const ch = (hex, i) => parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16);
-  const out = [0, 1, 2].map((i) => Math.round(ch(a, i) * (1 - pct) + ch(b, i) * pct));
-  return "#" + out.map((v) => v.toString(16).padStart(2, "0")).join("");
+// ---- Component audit: pairs come from the declarations components.css actually applies ----------------
+// Every element/state below is run through a small cascade (specificity, source order, var(), color-mix(),
+// inheritance, combined states such as pressed + hover) and the winning colors are checked. Editing a
+// declaration in components.css or a token in tokens.css therefore changes what is tested; the mutation tests
+// at the end prove the audit fails when text equals its background, when the primary hover mix is too dark and
+// when a variant overrides the pressed state.
+
+const el = (tag, classes = [], attrs = {}, states = []) => ({ tag, classes, attrs, states });
+const SURFACES = ["--surface-panel"];
+
+function auditComponents(cssText, themes) {
+  const compiled = compile(parseRules(cssText));
+  const failures = [];
+  let checks = 0;
+  const need = (ok, msg) => { checks++; if (!ok) failures.push(msg); };
+
+  for (const [themeName, theme] of Object.entries(themes)) {
+    const hex = (name) => resolveColor(`var(${name})`, theme);
+    const run = (label, chain, surfaceToken = "--surface-panel") => {
+      const c = computed(compiled, chain, theme, hex(surfaceToken));
+      if (c.color === null) c.color = hex("--ink"); // no rule sets it: the page color of app.css (body { color: var(--ink) })
+      return { ...c, label: `${themeName}: ${label}`, surface: hex(surfaceToken) };
+    };
+    const text = (c, min = 4.5) => need(c.color !== null && contrastOf(c.color, c.background) >= min, `${c.label}: text ${c.color} on ${c.background} is below ${min}:1`);
+    const edge = (c, color, against, what, min = 3) => need(color !== null && contrastOf(color, against) >= min, `${c.label}: ${what} ${color} on ${against} is below ${min}:1`);
+
+    // Buttons: variant x state. Focus and pressed combine with hover; disabled is checked separately.
+    for (const variant of [[], ["is-primary"], ["is-ghost"], ["is-danger"]]) {
+      const name = variant[0] ?? "secondary";
+      for (const pressedAttr of [null, "aria-pressed", "aria-expanded"]) {
+        for (const states of [[], ["hover"], ["focus-visible"], ["hover", "focus-visible"]]) {
+          const attrs = pressedAttr ? { [pressedAttr]: "true" } : {};
+          const c = run(`button ${name} ${pressedAttr ?? "rest"} ${states.join("+")}`, [el("button", ["ui-button", ...variant], attrs, states)]);
+          text(c);
+          if (pressedAttr) {
+            // The state prevails over every variant and over hover.
+            need(c.background === hex("--row-selected"), `${c.label}: background ${c.background} is not --row-selected`);
+            need(c.border === hex("--accent"), `${c.label}: border ${c.border} is not --accent`);
+            need(c.color === hex("--ink"), `${c.label}: text ${c.color} is not --ink`);
+            edge(c, c.border, c.background, "pressed border");
+            edge(c, c.border, c.surface, "pressed border vs surface");
+          } else if (name !== "is-ghost" || states.includes("hover")) {
+            // Visible edge or fill against the surface (ghost at rest is borderless by design).
+            const edgeColor = c.border && c.border !== c.background ? c.border : c.background;
+            if (name === "is-primary") edge(c, c.background, c.surface, "primary fill");
+            else edge(c, edgeColor, c.surface, "border", name === "is-ghost" ? 1 : 3);
+          }
+          if (states.includes("focus-visible")) {
+            edge(c, c.outline, c.surface, "focus ring");
+            // The ring has a 1 px offset: it is drawn on the surface, not on the fill, so only the surface counts.
+          }
+        }
+      }
+      // Disabled: no hover response, readable enough, border flat (--line), never the enabled colors.
+      const rest = run(`button ${name} disabled`, [el("button", ["ui-button", ...variant], {}, ["disabled"])]);
+      const hover = run(`button ${name} disabled hover`, [el("button", ["ui-button", ...variant], {}, ["disabled", "hover"])]);
+      need(JSON.stringify([rest.color, rest.background, rest.border]) === JSON.stringify([hover.color, hover.background, hover.border]), `${rest.label}: hover changes a disabled button`);
+      need(rest.color === hex("--ink-disabled"), `${rest.label}: text is ${rest.color}, not --ink-disabled`);
+      need(contrastOf(rest.color, rest.background) >= 2, `${rest.label}: disabled text below 2:1`);
+    }
+
+    // Fields.
+    for (const tag of ["input", "select"]) {
+      const cls = `ui-${tag}`;
+      for (const [what, attrs, states] of [["rest", {}, []], ["hover", {}, ["hover"]], ["focus", {}, ["focus", "focus-visible"]], ["invalid", { "aria-invalid": "true" }, []]]) {
+        const c = run(`${tag} ${what}`, [el(tag, [cls], attrs, states)]);
+        text(c);
+        edge(c, c.border, c.background, "border");
+        edge(c, c.border, c.surface, "border vs surface");
+        if (what === "invalid") need(c.border === hex("--sev-error"), `${c.label}: invalid border is not --sev-error`);
+        if (what === "focus") edge(c, c.outline, c.surface, "focus ring");
+      }
+    }
+    for (const [cls, token] of [["ui-field-error", "--surface-panel"], ["ui-field-label", "--surface-panel"], ["ui-status", "--surface-panel"], ["ui-empty", "--surface-panel"], ["ui-estimate", "--surface-panel"], ["ui-panel-summary", "--surface-panel"]]) {
+      text(run(cls, [el("div", ["ui-panel"]), el("p", [cls])], token));
+    }
+    const err = run("ui-error", [el("div", ["ui-error"])]);
+    text(err);
+    edge(err, err.border, err.surface, "border");
+
+    // Badges and chips.
+    for (const variant of [[], ["is-sensitive"], ["is-curated"], ["is-estimate"]]) {
+      const c = run(`badge ${variant[0] ?? "plain"}`, [el("span", ["ui-badge", ...variant])]);
+      text(c);
+      edge(c, c.border, c.surface, "border");
+    }
+    for (const states of [[], ["hover"]]) {
+      const chip = run(`chip ${states.join("+")}`, [el("span", ["ui-chip"], {}, states)]);
+      text(chip);
+      edge(chip, chip.border, chip.surface, "border");
+    }
+    const chipPressed = run("chip button pressed", [el("button", ["ui-chip"], { "aria-pressed": "true" })]);
+    text(chipPressed);
+    edge(chipPressed, chipPressed.border, chipPressed.surface, "border");
+    for (const states of [[], ["hover"], ["focus-visible"]]) {
+      const c = run(`chip remove ${states.join("+")}`, [el("span", ["ui-chip"]), el("button", ["ui-chip-remove"], {}, states)]);
+      text(c);
+      if (states.includes("focus-visible")) edge(c, c.outline, c.surface, "focus ring");
+    }
+
+    // Menu: item states, shortcut, border. The text sits on the overlay, hover and selection fills.
+    const menu = el("div", ["ui-menu"]);
+    const menuBox = run("menu", [menu], "--surface-overlay");
+    text(menuBox);
+    edge(menuBox, menuBox.border, menuBox.surface, "border");
+    for (const [what, attrs, states] of [["rest", {}, []], ["hover", {}, ["hover"]], ["focus", {}, ["focus"]], ["focus-visible", {}, ["focus", "focus-visible"]], ["checked", { "aria-checked": "true" }, []]]) {
+      const item = run(`menu item ${what}`, [menu, el("div", ["ui-menu-item"], attrs, states)], "--surface-overlay");
+      text(item);
+      const key = run(`menu shortcut ${what}`, [menu, el("div", ["ui-menu-item"], attrs, states), el("span", ["ui-menu-shortcut"])], "--surface-overlay");
+      text(key);
+      if (states.includes("focus-visible")) {
+        edge(item, item.outline, item.background, "focus ring on the item");
+      }
+    }
+    for (const states of [[], ["hover"]]) {
+      const item = run(`menu item disabled ${states.join("+")}`, [menu, el("div", ["ui-menu-item"], { "aria-disabled": "true" }, states)], "--surface-overlay");
+      need(item.color === hex("--ink-disabled"), `${item.label}: text is ${item.color}, not --ink-disabled`);
+      need(item.background === hex("--surface-overlay"), `${item.label}: hover fills a disabled item (${item.background})`);
+      need(contrastOf(item.color, item.background) >= 2, `${item.label}: below 2:1`);
+    }
+
+    // Table, dialog.
+    const table = el("table", ["ui-table"]);
+    const th = run("table header", [table, el("thead"), el("tr"), el("th")]);
+    text(th);
+    text(run("table cell", [table, el("tbody"), el("tr"), el("td")]));
+    text(run("table cell on a hovered row", [table, el("tbody"), el("tr", [], {}, ["hover"]), el("td")]));
+    const dialog = run("dialog", [el("dialog", ["ui-dialog"])], "--surface-overlay");
+    text(dialog);
+    edge(dialog, dialog.border, dialog.surface, "border");
+  }
+  return { failures, checks };
 }
 
-for (const theme of Object.keys(THEMES)) {
-  test(`${theme}: component states (UI-10) keep text at 4.5:1 and borders and indicators at 3:1`, () => {
-    // Button: secondary text and border, hover border, pressed/expanded (fill + accent border), ghost hover.
-    check(theme, "--ink", "--surface-raised", 4.5);
-    check(theme, "--line-strong", "--surface-raised", 3);
-    check(theme, "--accent", "--surface-raised", 3); // hover border
-    check(theme, "--ink", "--row-selected", 4.5);
-    check(theme, "--accent", "--row-selected", 3); // pressed and expanded border
-    check(theme, "--accent", "--surface-panel", 3);
-    check(theme, "--accent", "--surface-overlay", 3);
-    check(theme, "--ink", "--row-hover", 4.5); // ghost hover, menu item hover, table row hover
-    // Primary: ink on accent, and on the hover fill (accent mixed 8% with black).
-    const t = THEMES[theme];
-    const hover = mix(resolve(t, "--accent"), "#000000", 0.08);
-    const ratio = contrast(resolve(t, "--accent-ink"), hover);
-    assert.ok(ratio >= 4.5, `${theme}: primary hover ${ratio.toFixed(2)}:1`);
-    check(theme, "--accent", "--surface-field", 3); // field hover and focus border
-    // Danger: text and border on the button fill, on the panel and on the hover fill.
-    for (const bg of ["--surface-raised", "--surface-panel", "--abn-row"]) check(theme, "--sev-error", bg, 4.5);
-    // Fields and messages: invalid border and error text.
-    check(theme, "--sev-error", "--surface-field", 3);
-    check(theme, "--ink", "--surface-field", 4.5);
-    // Menu: label, shortcut and radio/check marks, on the overlay and on hover and focus fills.
-    check(theme, "--ink-muted", "--surface-overlay", 4.5);
-    check(theme, "--ink-muted", "--row-hover", 4.5);
-    check(theme, "--ink-muted", "--row-selected", 4.5);
-    check(theme, "--line-strong", "--surface-overlay", 3); // menu and dialog border
-    check(theme, "--focus-ring", "--row-selected", 3); // focus outline on the active menu item
-    check(theme, "--focus-ring", "--surface-overlay", 3);
-    check(theme, "--focus-ring", "--surface-field", 3);
-    // Badges and chips.
-    check(theme, "--accent", "--surface-panel", 4.5); // .is-sensitive text
-    check(theme, "--ink", "--surface-raised", 4.5); // .is-curated and chip text
-    check(theme, "--line-strong", "--surface-panel", 3);
-    check(theme, "--ink-muted", "--surface-raised", 4.5); // chip remove button, table header
-    check(theme, "--status-info-ink", "--status-info-bg", 4.5); // .is-estimate
-    check(theme, "--status-info-ink", "--surface-panel", 3); // .is-estimate border
-    // Content states.
-    check(theme, "--ink-muted", "--surface-panel", 4.5); // .ui-status, .ui-empty
-    check(theme, "--status-error-ink", "--surface-panel", 3); // .ui-error border
-    check(theme, "--accent", "--surface-panel", 3); // loading bar
-  });
+const COMPONENTS_CSS = readFileSync(new URL("components.css", CSS), "utf8");
 
+test("component states: the colors components.css applies meet 4.5:1 for text and 3:1 for edges, in both themes", () => {
+  const { failures, checks } = auditComponents(COMPONENTS_CSS, THEMES);
+  assert.deepEqual(failures, []);
+  assert.ok(checks > 250, `the audit is not vacuous (${checks} checks)`);
+});
+
+test("component states: the audit reads CRLF stylesheets the same way", () => {
+  const { failures } = auditComponents(COMPONENTS_CSS.replace(/\r?\n/g, "\r\n"), THEMES);
+  assert.deepEqual(failures, []);
+});
+
+test("--accent-hover is --accent mixed 8% with black, in both themes", () => {
+  for (const [name, theme] of Object.entries(THEMES)) {
+    const accent = resolve(theme, "--accent");
+    const expected = "#" + [1, 3, 5].map((i) => Math.round(parseInt(accent.slice(i, i + 2), 16) * 0.92).toString(16).padStart(2, "0")).join("");
+    assert.equal(resolve(theme, "--accent-hover"), expected, name);
+  }
+});
+
+test("components.css uses no literal colors; only transparent is mixed, to get a translucent scrim", () => {
+  const css = COMPONENTS_CSS.replace(/\r\n?/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/);
+  assert.doesNotMatch(css, /\b(?:rgba?|hsla?)\(/);
+  // Color keywords are allowed only where they carry no color: transparent (a gradient end and the scrim mix),
+  // currentColor/inherit and the forced-colors system colors.
+  const allowed = new Set(["transparent", "currentColor", "inherit", "none", "Highlight", "HighlightText", "ButtonText", "ButtonFace", "GrayText", "CanvasText"]);
+  const keywords = ["black", "white", "red", "green", "blue", "gray", "grey", "orange", "yellow", "purple", "pink", "navy", "silver", "teal", "maroon", "olive"];
+  for (const word of keywords) assert.doesNotMatch(css, new RegExp(`(?<![-\\w])${word}(?![-\\w])`), `${word} is a literal color`);
+  for (const m of css.matchAll(/color-mix\(([^;]*)\)/g)) {
+    const words = m[1].match(/(?<![-\w(])[a-zA-Z]+(?![-\w(])/g) ?? [];
+    for (const w of words) assert.ok(["in", "srgb", "transparent"].includes(w) || allowed.has(w), `color-mix uses ${w}`);
+  }
+});
+
+test("mutations: the audit fails when text equals its background, when the primary hover mix is too dark, and when a variant overrides pressed", () => {
+  // A: menu text drawn in the menu background color.
+  const a = COMPONENTS_CSS.replace(/(\.ui-menu \{[^}]*?)color: var\(--ink\);/, "$1color: var(--surface-overlay);");
+  assert.notEqual(a, COMPONENTS_CSS);
+  assert.ok(auditComponents(a, THEMES).failures.some((f) => f.includes("menu item rest")), "A");
+  // B: --accent-hover at 95% black (dark theme: --accent-ink on it falls under 4.5:1).
+  const tokensB = tokensCss.replaceAll("--accent-hover: #709aeb;", "--accent-hover: #06080d;");
+  assert.notEqual(tokensB, tokensCss);
+  assert.ok(auditComponents(COMPONENTS_CSS, themesOf(tokensB)).failures.some((f) => f.includes("dark: button is-primary rest hover")), "B");
+  // C: the pressed block removed, so variants and hover override the state.
+  const c = COMPONENTS_CSS.replace(/\.ui-button:is\(\[aria-pressed="true"\][^{]*\{[^}]*\}/, "");
+  assert.notEqual(c, COMPONENTS_CSS);
+  const failC = auditComponents(c, THEMES).failures;
+  assert.ok(failC.some((f) => f.includes("is-primary aria-pressed")) && failC.some((f) => f.includes("is-danger aria-pressed")), "C");
+  // D: the pressed block loses the accent border.
+  const d = COMPONENTS_CSS.replace(/(\.ui-button:is\(\[aria-pressed="true"\][^{]*\{[^}]*?)border-color: var\(--accent\);/, "$1border-color: var(--line);");
+  assert.notEqual(d, COMPONENTS_CSS);
+  assert.ok(auditComponents(d, THEMES).failures.some((f) => f.includes("is not --accent")), "D");
+  // E: a menu hover fill equal to the text.
+  const e = COMPONENTS_CSS.replace(/(\.ui-menu-item:hover,\s*\.ui-menu-item:focus \{\s*)background: var\(--row-hover\);/, "$1background: var(--ink);");
+  assert.notEqual(e, COMPONENTS_CSS);
+  assert.ok(auditComponents(e, THEMES).failures.some((f) => f.includes("menu item hover")), "E");
+  // F: hovering a disabled button changes it.
+  const f = COMPONENTS_CSS.replace(/\.ui-button:disabled:hover,\s*\.ui-button\[aria-disabled="true"\]:hover \{[^}]*\}/, "");
+  assert.notEqual(f, COMPONENTS_CSS);
+  assert.ok(auditComponents(f, THEMES).failures.some((m) => m.includes("hover changes a disabled button")), "F");
+});
+
+for (const theme of Object.keys(THEMES)) {
   test(`${theme}: a disabled control stays distinguishable from an enabled one without opacity`, () => {
     // Disabled text is exempt from the 4.5:1 rule (WCAG 1.4.3), but it must not equal enabled text, and the
     // not-allowed cursor, the flat border and the missing hover response carry the state as well.

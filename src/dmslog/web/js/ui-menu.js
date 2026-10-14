@@ -81,6 +81,8 @@ export function indexByInitial(items, current, char) {
   return -1;
 }
 
+let menuSeq = 0; // unique ids so a submenu can be named by the item that opened it
+
 const isInitialKey = (e) => e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.altKey && !e.metaKey;
 
 /**
@@ -134,9 +136,15 @@ export function createMenu({ trigger, getItems, label = null, onOpenChange = nul
     el.className = "ui-menu";
     el.setAttribute("role", "menu");
     el.setAttribute("tabindex", "-1");
-    const name = label ?? trigger.getAttribute("aria-label") ?? trigger.textContent;
-    if (name && !parent) el.setAttribute("aria-label", name);
-    const level = { el, items, nodes: [], active: -1, parent, anchor };
+    if (parent) {
+      // A submenu is named by the item that opened it.
+      if (!anchor.getAttribute("id")) anchor.setAttribute("id", `ui-menu-item-${++menuSeq}`);
+      el.setAttribute("aria-labelledby", anchor.getAttribute("id"));
+    } else {
+      const name = label ?? trigger.getAttribute("aria-label") ?? trigger.textContent;
+      if (name) el.setAttribute("aria-label", name);
+    }
+    const level = { el, items, nodes: [], active: -1, opened: -1, parent, anchor };
 
     items.forEach((item, index) => {
       if (item.separator) {
@@ -198,8 +206,9 @@ export function createMenu({ trigger, getItems, label = null, onOpenChange = nul
     while (levels.length > 0 && current() !== level) {
       const top = levels.pop();
       top.el.remove();
-      const parentNode = top.parent?.nodes[top.parent.active];
+      const parentNode = top.parent?.nodes[top.parent.opened];
       if (parentNode) parentNode.setAttribute("aria-expanded", "false");
+      if (top.parent) top.parent.opened = -1;
     }
   }
 
@@ -208,6 +217,8 @@ export function createMenu({ trigger, getItems, label = null, onOpenChange = nul
     if (!item.children || item.disabled) return;
     closeLevelsAbove(level);
     const node = level.nodes[index];
+    level.active = index; // a click opens without moving the focus first: the parent must remember the item
+    level.opened = index;
     node.setAttribute("aria-expanded", "true");
     const sub = buildLevel(item.children, node, level);
     const first = firstIndex(sub.items);
@@ -226,27 +237,31 @@ export function createMenu({ trigger, getItems, label = null, onOpenChange = nul
     if (item.run) item.run();
   }
 
+  // Closes `level` and everything above it; the focus and the roving tabindex go back to the item that opened it.
+  function backToParent(level) {
+    const parent = level.parent;
+    const index = parent.opened >= 0 ? parent.opened : parent.active;
+    closeLevelsAbove(parent);
+    setActive(parent, index);
+  }
+
   function onKeydown(level, e) {
     const key = e.key;
     if (key === "Escape") {
       e.preventDefault();
       e.stopPropagation?.();
       if (level.parent) {
-        const parent = level.parent;
-        closeLevelsAbove(parent);
-        setActive(parent, parent.active);
+        backToParent(level);
       } else close(true);
       return;
     }
     if (key === "Tab") {
-      close(false);
+      close(true); // focus goes back to the trigger; the default Tab then moves on from there
       return;
     }
     if (key === "ArrowLeft" && level.parent) {
       e.preventDefault();
-      const parent = level.parent;
-      closeLevelsAbove(parent);
-      setActive(parent, parent.active);
+      backToParent(level);
       return;
     }
     if (key === "ArrowRight") {
@@ -290,15 +305,19 @@ export function createMenu({ trigger, getItems, label = null, onOpenChange = nul
       doc.addEventListener("pointerdown", onOutside, true);
       listening = true;
     }
-    if (where === "first") setActive(level, firstIndex(level.items));
-    else if (where === "last") setActive(level, lastIndex(level.items));
+    const target = where === "first" ? firstIndex(level.items) : where === "last" ? lastIndex(level.items) : -1;
+    // Pointer opening, or no enabled item: the menu itself takes the focus so Esc and Tab still reach it.
+    if (target >= 0) setActive(level, target);
     else level.el.focus();
     onOpenChange?.(true);
   }
 
   function close(restoreFocus = true) {
     if (!isOpen()) return;
-    for (const l of levels) l.el.remove();
+    for (const l of levels) {
+      if (l.opened >= 0) l.nodes[l.opened].setAttribute("aria-expanded", "false");
+      l.el.remove();
+    }
     levels = [];
     trigger.setAttribute("aria-expanded", "false");
     if (listening) {

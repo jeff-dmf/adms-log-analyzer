@@ -23,6 +23,7 @@
   /* Interaction */
   --accent: #1a5bb8;
   --accent-ink: #ffffff;
+  --accent-hover: #1854a9; /* --accent mixed 8% with black: hover fill of primary buttons */
   --row-hover: #eef1f5;
   --row-selected: #e3ecfa; /* always paired with the 3 px accent bar */
   --abn-row: #f8eceb; /* Critical and Error rows */
@@ -90,6 +91,7 @@
     --line-strong: #6c7685;
     --accent: #7aa7ff;
     --accent-ink: #0e1115;
+    --accent-hover: #709aeb;
     --row-hover: #1b2028;
     --row-selected: #1c2f4b;
     --abn-row: #2a1a1a;
@@ -144,6 +146,7 @@
   --line-strong: #6c7685;
   --accent: #7aa7ff;
   --accent-ink: #0e1115;
+  --accent-hover: #709aeb;
   --row-hover: #1b2028;
   --row-selected: #1c2f4b;
   --abn-row: #2a1a1a;

@@ -27,13 +27,6 @@
   border-color: var(--accent);
 }
 
-.ui-button[aria-pressed="true"],
-.ui-button[aria-expanded="true"] {
-  background: var(--row-selected);
-  border-color: var(--accent);
-  color: var(--ink);
-}
-
 .ui-button.is-primary {
   color: var(--accent-ink);
   background: var(--accent);
@@ -41,8 +34,8 @@
 }
 
 .ui-button.is-primary:hover {
-  background: color-mix(in srgb, var(--accent), black 8%);
-  border-color: color-mix(in srgb, var(--accent), black 8%);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .ui-button.is-ghost {
@@ -55,12 +48,6 @@
   border-color: transparent;
 }
 
-.ui-button.is-ghost[aria-pressed="true"],
-.ui-button.is-ghost[aria-expanded="true"] {
-  background: var(--row-selected);
-  border-color: var(--accent);
-}
-
 .ui-button.is-danger {
   color: var(--sev-error);
   border-color: var(--sev-error);
@@ -69,6 +56,15 @@
 .ui-button.is-danger:hover {
   background: var(--abn-row);
   border-color: var(--sev-error);
+}
+
+/* Pressed and expanded win over every variant and over hover (the state is the point of the control).
+   They come after the variants, and :is()/:not() raise the specificity above the variant hover rules. */
+.ui-button:is([aria-pressed="true"], [aria-expanded="true"]):not(:disabled, [aria-disabled="true"]),
+.ui-button:is([aria-pressed="true"], [aria-expanded="true"]):not(:disabled, [aria-disabled="true"]):hover {
+  color: var(--ink);
+  background: var(--row-selected);
+  border-color: var(--accent);
 }
 
 .ui-button:focus-visible,
@@ -503,6 +499,8 @@ button.ui-chip:hover,
 
 .ui-menu-item:focus-visible {
   background: var(--row-selected);
+  /* Documented exception to the 1 px offset: the item fills the menu width, so an outside ring would be
+     painted over the menu border and clipped by the viewport edge; the ring is drawn inside instead. */
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
@@ -619,8 +617,9 @@ button.ui-chip:hover,
     border-color: ButtonText;
   }
 
-  .ui-button[aria-pressed="true"],
-  .ui-button[aria-expanded="true"],
+  /* Pressed/expanded: inner 2 px outline. Focus: a thicker 3 px ring drawn outside (offset 2), so a focused
+     pressed button shows both indicators and focus is never mistaken for the state. */
+  .ui-button:is([aria-pressed="true"], [aria-expanded="true"]),
   .ui-chip[aria-pressed="true"] {
     border-color: Highlight;
     outline: 2px solid Highlight;
@@ -635,21 +634,29 @@ button.ui-chip:hover,
 
   .ui-button:disabled,
   .ui-button[aria-disabled="true"],
-  .ui-menu-item[aria-disabled="true"] {
+  .ui-menu-item[aria-disabled="true"],
+  .ui-menu-item[aria-disabled="true"]:hover {
     color: GrayText;
     border-color: GrayText;
+    background: transparent; /* hover never turns a disabled item into Highlight */
   }
 
   .ui-button:focus-visible,
   .ui-input:focus-visible,
   .ui-select:focus-visible,
   .ui-chip-remove:focus-visible,
-  .ui-menu-item:focus-visible {
-    outline: 2px solid Highlight;
+  .ui-menu-item:focus-visible,
+  .ui-button:is([aria-pressed="true"], [aria-expanded="true"]):focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
   }
 
-  .ui-menu-item:hover,
-  .ui-menu-item:focus {
+  .ui-menu-item:focus-visible {
+    outline-offset: -3px;
+  }
+
+  .ui-menu-item:hover:not([aria-disabled="true"]),
+  .ui-menu-item:focus:not([aria-disabled="true"]) {
     color: HighlightText;
     background: Highlight;
   }
