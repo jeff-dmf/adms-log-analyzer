@@ -47,13 +47,25 @@
   flex-wrap: nowrap; /* one line at every width, so the 36px reserved above is always the final height */
   gap: 6px;
   align-items: center;
-  margin: 4px 0;
+  box-sizing: content-box;
   min-height: 28px;
+  margin: 2px 0; /* 28px + 2 x 2px padding + 2 x 2px margin = the 36px reserved above */
+  padding: 2px; /* room for the focus outline of the controls */
   overflow-x: auto;
+  scrollbar-width: none; /* a visible scrollbar would add height; the bar still scrolls by wheel and focus */
+}
+
+#views-stack-bar::-webkit-scrollbar {
+  display: none;
 }
 
 #views-stack-bar .vs-crumbs {
   flex-wrap: nowrap;
+}
+
+#views-stack-bar button {
+  flex: none;
+  white-space: nowrap;
 }
 
 #grid-panel:not(:has(#views-stack-bar)) #filter-form {
