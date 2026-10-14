@@ -1120,6 +1120,7 @@ export const S = {
   hlKeyChip: "Highlight {type} = {value}",
   hlKeyDone: "Records with {type} = {value} are highlighted (normal and sensitive logs).",
   hlTemplateChip: "Highlight this message type",
+  removeChip: "Remove {label}",
   hlNavNone: "No more highlighted records in this direction of the view.",
   hlNavNoRules: "No highlight rule is on.",
   hlNavFound: "Highlighted by {name}",
