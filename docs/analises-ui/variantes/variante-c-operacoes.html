@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dmslog prototype: Variant C, operations panel</title>
+<!-- Static prototype for UI analysis. Synthetic data only. No scripts, no network. -->
+<style>
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--surface-app); color: var(--ink); font: var(--text-md) var(--font-ui); overflow: hidden; }
+.anchor { position: absolute; top: 0; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.muted { color: var(--ink-muted); }
+.spacer { flex: 1 1 auto; }
+button, input, select { font: inherit; color: var(--ink); }
+button { background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-md); height: var(--control-height); padding: 0 var(--space-3); cursor: pointer; white-space: nowrap; }
+button.ghost { background: transparent; border-color: transparent; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button[aria-pressed="true"], button[aria-expanded="true"] { background: var(--row-selected); border-color: var(--accent); }
+input, select { background: var(--surface-field); border: 1px solid var(--line-strong); border-radius: var(--radius-md); height: var(--control-height); padding: 0 var(--space-2); }
+input::placeholder { color: var(--ink-muted); opacity: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#app { display: flex; flex-direction: column; height: 100dvh; }
+.bar { flex: none; display: flex; align-items: center; gap: var(--space-2); height: var(--bar-height); padding: 0 var(--space-3); background: var(--surface-panel); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 700; margin-right: var(--space-2); }
+.search { position: relative; flex: 0 1 520px; display: flex; }
+.search input { width: 100%; padding-right: 28px; }
+.search kbd { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font: var(--text-xs) var(--font-mono); color: var(--ink-muted); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 4px; }
+.banner { position: absolute; left: 50%; top: calc(var(--bar-height) + 8px); transform: translateX(-50%); z-index: 50; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--status-error-bg); color: var(--status-error-ink); border: 1px solid var(--status-error-ink); border-radius: var(--radius-lg); box-shadow: var(--shadow-overlay); max-width: 720px; }
+.cols { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr) var(--detail-w); }
+body:has(#empty:target) .cols { grid-template-columns: 0 minmax(0, 1fr) 0; }
+body:has(#empty:target) .side { border: 0; }
+.empty-state .recent { padding: 0; width: 100%; }
+.empty-state .side-h { margin: var(--space-4) 0 0; }
+.rail { display: none; }
+.side { min-height: 0; overflow: hidden; background: var(--surface-panel); border-right: 1px solid var(--line); }
+.side-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.case-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line); }
+button.small { height: 24px; padding: 0 var(--space-2); }
+.colls { flex: none; padding: var(--space-1) var(--space-3) var(--space-2); border-bottom: 1px solid var(--line); }
+.colls summary { cursor: pointer; font-weight: 600; padding: var(--space-1) 0; }
+.coll-row { display: flex; align-items: center; gap: var(--space-2); height: 24px; }
+.coll-row .s-count { margin-left: auto; }
+.coll { display: inline-flex; align-items: center; gap: 4px; font: var(--text-xs) var(--font-mono); }
+.coll i { width: 8px; height: 8px; border-radius: 50%; background: var(--cat-1); display: inline-block; }
+.coll.c2 i { background: var(--cat-2); }
+.s-filter { flex: none; padding: var(--space-2) var(--space-3); }
+.s-filter input { width: 100%; }
+.s-list { flex: 1 1 auto; min-height: 0; overflow: auto; list-style: none; margin: 0; padding: 0 0 var(--space-2); }
+.s-list label { display: flex; align-items: center; gap: var(--space-2); height: var(--source-row); padding: 0 var(--space-3); cursor: pointer; }
+.s-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--grid-font); }
+.s-count { color: var(--ink-muted); font: var(--text-xs) var(--font-mono); font-variant-numeric: tabular-nums; }
+.s-tag { display: inline-block; font: 600 10px/14px var(--font-ui); padding: 0 3px; margin-right: 4px; border: 1px solid var(--accent); color: var(--accent); border-radius: var(--radius-sm); vertical-align: 1px; }
+.s-error { flex: none; margin: var(--space-2) var(--space-3); padding: var(--space-2); background: var(--status-error-bg); color: var(--status-error-ink); border-radius: var(--radius-md); font-size: 12px; }
+.side-h { font-size: 13px; margin: var(--space-3) var(--space-3) var(--space-2); }
+.recent { list-style: none; margin: 0; padding: 0 var(--space-2); }
+.recent button { display: flex; flex-direction: column; align-items: flex-start; height: auto; width: 100%; padding: var(--space-2); background: transparent; border-color: transparent; text-align: left; }
+.recent span { color: var(--ink-muted); font-size: 12px; }
+.center { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface-app); }
+.timeline { flex: none; position: relative; height: var(--timeline-h); background: var(--surface-panel); border-bottom: 1px solid var(--line); display: flex; align-items: stretch; }
+.tl-svg { flex: 1 1 auto; height: 100%; width: 100%; display: block; }
+.tl-normal { fill: var(--chart-normal); } .tl-noise { fill: var(--chart-noise); }
+.tl-warn { fill: var(--chart-warning); } .tl-err { fill: var(--chart-error); } .tl-crit { fill: var(--chart-critical); }
+.tl-line { fill: none; stroke: var(--chart-normal); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.tl-range { fill: var(--accent); opacity: .14; }
+.tl-legend { flex: none; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 var(--space-3); font-size: 11px; color: var(--ink-muted); border-left: 1px solid var(--line); }
+.lg::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 1px; vertical-align: 0; }
+.lg-err::before { background: var(--chart-error); } .lg-warn::before { background: var(--chart-warning); } .lg-normal::before { background: var(--chart-normal); }
+.fstrip { flex: none; display: flex; align-items: center; gap: var(--space-2); min-height: var(--strip-height); padding: 0 var(--space-2); background: var(--surface-panel); border-bottom: 1px solid var(--line); overflow: hidden; }
+.crumbs ol { display: flex; list-style: none; margin: 0; padding: 0; gap: 2px; }
+.crumbs li + li::before { content: "›"; color: var(--ink-muted); margin: 0 4px; }
+.crumbs button { height: 24px; background: transparent; border-color: transparent; padding: 0 var(--space-1); }
+.crumbs button[aria-current] { font-weight: 600; }
+.chips { display: flex; gap: var(--space-1); flex-wrap: nowrap; overflow: hidden; }
+.chip { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 0 0 var(--space-2); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); font-size: 12px; white-space: nowrap; }
+.chip button { height: 22px; border: 0; background: transparent; padding: 0 6px; color: var(--ink-muted); }
+.fcount { white-space: nowrap; font-size: 12px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.fcount strong { color: var(--ink); }
+.fbtn { height: 24px; }
+.grid { flex: 1 1 auto; min-height: calc(var(--row-height) * 8 + var(--grid-head)); display: flex; flex-direction: column; background: var(--surface-panel); }
+.grid-head, .row { display: flex; align-items: center; white-space: nowrap; }
+.grid-head { flex: none; height: var(--grid-head); background: var(--surface-raised); border-bottom: 1px solid var(--line-strong); font-weight: 600; font-size: 12px; }
+.grid-vp { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.row { height: var(--row-height); font: var(--grid-font)/var(--row-height) var(--font-mono); font-variant-numeric: tabular-nums; }
+.grid-head > span, .row > span { flex: none; padding: 0 var(--cell-pad); overflow: hidden; text-overflow: ellipsis; }
+.c-mark { width: 14px; padding: 0 !important; text-align: center; }
+.c-time { width: var(--w-time); } .c-pid, .c-tid { width: var(--w-pid); text-align: right; } .c-lvl { width: var(--w-lvl); }
+.c-src { width: var(--w-src); } .c-coll { width: var(--w-coll); } .c-msg { flex: 1 1 auto !important; min-width: 0; }
+.more { margin-left: var(--space-2); font: var(--text-xs) var(--font-ui); color: var(--ink-muted); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 4px; }
+.bm { color: var(--cat-3); }
+.row:hover { background: var(--row-hover); }
+.row.hl { background: var(--hl-bg); box-shadow: inset 4px 0 0 var(--hl-bar); }
+.row.sel { background: var(--row-selected); box-shadow: inset 3px 0 0 var(--accent); }
+.row.sel.hl { box-shadow: inset 3px 0 0 var(--accent), inset 7px 0 0 var(--hl-bar); }
+.row[data-sev="5"] .c-msg, .row[data-sev="5"] .c-lvl { color: var(--sev-noise); }
+.dock { flex: none; height: var(--dock-h); min-height: 160px; display: flex; flex-direction: column; background: var(--surface-panel); border-top: 1px solid var(--line-strong); }
+.dock-split { flex: none; height: 6px; margin-top: -3px; cursor: row-resize; }
+.dock-tabs { flex: none; display: flex; align-items: center; gap: 2px; height: var(--strip-height); padding: 0 var(--space-2); border-bottom: 1px solid var(--line); background: var(--surface-raised); }
+.tab { height: calc(var(--strip-height) - 6px); background: transparent; border-color: transparent; display: inline-flex; align-items: center; gap: 6px; }
+.tab[aria-selected="true"] { background: var(--surface-panel); border-color: var(--line-strong); font-weight: 600; }
+.tab .x { color: var(--ink-muted); }
+.dock-body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.dock-tools { flex: none; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-1) var(--space-3); font-size: 12px; }
+.dock-tools select { height: 24px; }
+.dock-sum { color: var(--ink-muted); }
+.dtable { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.dtable th { position: sticky; top: 0; text-align: left; font-weight: 600; background: var(--surface-raised); height: var(--dock-row); padding: 0 var(--space-2); border-bottom: 1px solid var(--line); }
+.dtable td { height: var(--dock-row); padding: 0 var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--line); }
+.dtable th:nth-child(2), .dtable td:nth-child(2) { width: 84px; } .dtable th:nth-child(3), .dtable td:nth-child(3) { width: 64px; }
+.dtable th:nth-child(4), .dtable td:nth-child(4) { width: 120px; } .dtable th:nth-child(5), .dtable td:nth-child(5) { width: 112px; }
+.d-val { font-family: var(--font-mono); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.d-bar i { display: block; height: 6px; background: var(--chart-normal); border-radius: 1px; }
+.dtable tr[data-sev="2"] .d-bar i, .dtable tr[data-sev="1"] .d-bar i { background: var(--chart-error); }
+.dtable tr[data-sev="3"] .d-bar i { background: var(--chart-warning); }
+.d-act button { height: 20px; padding: 0 6px; font-size: 12px; }
+.ui-error { margin: var(--space-4); padding: var(--space-3); flex-direction: column; align-items: flex-start; gap: var(--space-2); background: var(--status-error-bg); color: var(--status-error-ink); border-radius: var(--radius-md); }
+.empty-state { flex: 1 1 auto; flex-direction: column; justify-content: center; align-items: flex-start; max-width: 560px; margin: 0 auto; padding: var(--space-6); gap: var(--space-3); }
+.empty-state h1 { margin: 0; font-size: 20px; }
+.empty-state p { margin: 0; color: var(--ink); max-width: 60ch; }
+.empty-state .es-hint { color: var(--ink-muted); font-size: 12px; }
+.es-actions { display: flex; gap: var(--space-2); }
+.detail { min-height: 0; overflow: auto; background: var(--surface-panel); border-left: 1px solid var(--line); padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+.detail > * { flex: none; }
+.d-head { display: flex; align-items: center; gap: var(--space-2); font: 600 var(--grid-font) var(--font-mono); }
+.d-meta { font: var(--grid-font) var(--font-mono); }
+.d-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.d-actions button { height: 24px; padding: 0 var(--space-2); font-size: 12px; }
+.d-type { margin: var(--space-1) 0 0; font-size: 13px; font-weight: 600; }
+.d-text { margin: 0; padding: var(--space-2); min-height: 6lh; max-height: 45vh; overflow: auto; background: var(--surface-app); border: 1px solid var(--line); border-radius: var(--radius-md); font: var(--grid-font)/1.5 var(--font-mono); white-space: pre-wrap; }
+.d-sec h4, .d-sec summary { margin: 0 0 var(--space-1); font-size: 12px; font-weight: 600; color: var(--ink-muted); }
+.d-know { margin: 0; line-height: 1.5; max-width: 60ch; }
+.keys { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.keys .chip { font-family: var(--font-mono); padding: 0 var(--space-2); }
+.status { flex: none; display: flex; align-items: center; gap: var(--space-4); height: var(--status-height); padding: 0 var(--space-3); background: var(--surface-raised); border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.status > span:first-child { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+:root {
+  color-scheme: light;
+  --surface-app: #d5d8dc; --surface-panel: #e6e8eb; --surface-raised: #dcdfe3; --surface-overlay: #f2f3f5; --surface-field: #f4f5f7;
+  --ink: #111417; --ink-muted: #4a525c; --line: #c2c7cd; --line-strong: #6f7782;
+  --accent: #0f4fa8; --accent-ink: #ffffff; --row-hover: #dde1e6; --row-selected: #c9d6ea;
+  --sev-critical: #8f0018; --sev-error: #9e1c13; --sev-warning: #111417; --sev-noise: var(--ink-muted);
+  --alarm-crit-bg: #b00020; --alarm-crit-ink: #ffffff; --alarm-err-bg: #c62d1f; --alarm-err-ink: #ffffff;
+  --alarm-warn-bg: #f2c200; --alarm-warn-ink: #111417; --abn-row: #edd9d6;
+  --chart-critical: #b00020; --chart-error: #c62d1f; --chart-warning: #8f6a00; --chart-normal: #69717c; --chart-noise: #b9bec5;
+  --status-error-bg: #f4dcd9; --status-error-ink: #7d1611;
+  --cat-1: #0f4fa8; --cat-2: #8a4a00; --cat-3: #7a5d00; --hl-bg: #ece2b8; --hl-bar: #7a5d00;
+  --filtered-bg: #d3def0; --filtered-ink: #0b3a7c;
+  --shadow-overlay: 0 4px 16px rgb(0 0 0 / .2);
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace;
+  --text-xs: 11px/16px; --text-md: 13px/20px; --grid-font: 12.5px;
+  --space-1: 2px; --space-2: 4px; --space-3: 8px; --space-4: 12px; --space-5: 16px; --space-6: 24px;
+  --radius-sm: 2px; --radius-md: 3px; --radius-lg: 4px;
+  --row-height: 24px; --grid-head: 26px; --control-height: 28px; --bar-height: 40px; --strip-height: 34px; --status-height: 24px;
+  --timeline-h: 48px; --dock-h: 40%; --dock-row: 24px; --source-row: 26px; --cell-pad: 6px;
+  --side-w: 260px; --detail-w: 400px;
+  --w-time: 104px; --w-pid: 50px; --w-lvl: 84px; --w-src: 176px; --w-coll: 40px;
+}
+@media (prefers-color-scheme: dark) { :root {
+  color-scheme: dark;
+  --surface-app: #191c20; --surface-panel: #22262b; --surface-raised: #2b3036; --surface-overlay: #30353c; --surface-field: #191c20;
+  --ink: #e4e7ea; --ink-muted: #a4acb6; --line: #383e45; --line-strong: #7c8590;
+  --accent: #82adff; --accent-ink: #111417; --row-hover: #292e34; --row-selected: #2a3a55;
+  --sev-critical: #ff8095; --sev-error: #ff9a85; --sev-warning: #e4e7ea;
+  --alarm-crit-bg: #e0233f; --alarm-crit-ink: #ffffff; --alarm-err-bg: #b8321f; --alarm-err-ink: #ffffff;
+  --alarm-warn-bg: #e8b900; --alarm-warn-ink: #111417; --abn-row: #3a2624;
+  --chart-critical: #ff4d6a; --chart-error: #e55a45; --chart-warning: #e8b900; --chart-normal: #7d8794; --chart-noise: #4a5058;
+  --status-error-bg: #4a2220; --status-error-ink: #ffbdb4;
+  --cat-1: #82adff; --cat-2: #f0a35e; --cat-3: #e8c24a; --hl-bg: #3b3518; --hl-bar: #e8b900;
+  --filtered-bg: #22334f; --filtered-ink: #c4d8ff;
+} }
+.brand { font-size: 15px; letter-spacing: .01em; }
+.c-lvl b { display: inline-block; min-width: 64px; padding: 0 6px; height: 18px; line-height: 18px; border-radius: var(--radius-sm); font: 600 11px/18px var(--font-ui); text-align: center; }
+.row[data-sev="4"] .c-lvl b, .row[data-sev="5"] .c-lvl b { font-weight: 400; text-align: left; padding-left: 0; }
+.row[data-sev="1"] .c-lvl b { background: var(--alarm-crit-bg); color: var(--alarm-crit-ink); }
+.row[data-sev="2"] .c-lvl b { background: var(--alarm-err-bg); color: var(--alarm-err-ink); }
+.row[data-sev="3"] .c-lvl b { background: var(--alarm-warn-bg); color: var(--alarm-warn-ink); clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+.row[data-sev="1"], .row[data-sev="2"] { background: var(--abn-row); }
+.row[data-sev="1"] .c-msg, .row[data-sev="2"] .c-msg { color: var(--sev-error); font-weight: 600; }
+.row.sel { background: var(--row-selected); box-shadow: inset 4px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
+.row.sel.hl { box-shadow: inset 4px 0 0 var(--accent), inset 8px 0 0 var(--hl-bar), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
+.fstrip { background: var(--filtered-bg); border-bottom: 1px solid var(--accent); }
+.fbadge { font-weight: 700; color: var(--filtered-ink); padding: 0 var(--space-2) 0 0; border-right: 1px solid var(--accent); }
+.fstrip .crumbs button { color: var(--filtered-ink); }
+.fstrip .chip { background: var(--surface-field); border-color: var(--accent); }
+.fcount { color: var(--filtered-ink); }
+.fcount strong { color: var(--filtered-ink); font-size: 13px; }
+.timeline { background: var(--surface-panel); }
+.tl-legend { gap: 0; font-size: 10px; line-height: 14px; }
+.tl-legend .lg-normal::before { height: 2px; vertical-align: 3px; }
+.d-lvl b { display: inline-block; padding: 0 8px; border-radius: var(--radius-sm); background: var(--alarm-err-bg); color: var(--alarm-err-ink); font: 600 11px/18px var(--font-ui); }
+.d-sec:nth-of-type(1) { padding: var(--space-3); background: var(--surface-raised); border-left: 3px solid var(--accent); border-radius: var(--radius-md); }
+.dtable tr[data-sev="1"] td:first-child, .dtable tr[data-sev="2"] td:first-child { box-shadow: inset 3px 0 0 var(--chart-error); }
+.dtable tr[data-sev="3"] td:first-child { box-shadow: inset 3px 0 0 var(--chart-warning); }
+
+/* State switches (no JS): #closed hides the dock, #empty shows no case, #error shows failures. */
+.err-only, .empty-only { display: none !important; }
+body:has(#closed:target) .dock { display: none !important; }
+body:has(#empty:target) .case-only { display: none !important; }
+body:has(#empty:target) .empty-only { display: flex !important; }
+body:has(#error:target) .err-only { display: flex !important; }
+body:has(#error:target) .ok-only { display: none !important; }
+</style>
+</head>
+<body class="v-c">
+<a id="closed" class="anchor"></a><a id="empty" class="anchor"></a><a id="error" class="anchor"></a>
+<script type="application/json" id="token-pairs">[["--line-strong", "--surface-panel", "Control border on panel (1.4.11)", 3], ["--accent", "--row-selected", "Selection bar on selected row", 3], ["--accent", "--surface-panel", "Focus ring and selection bar on panel", 3], ["--chart-error", "--surface-panel", "Timeline error bars", 3], ["--chart-warning", "--surface-panel", "Timeline warning bars", 3], ["--chart-normal", "--surface-panel", "Timeline normal series", 3], ["--row-selected", "--surface-panel", "Selected row fill alone (informative)", 0], ["--accent-ink", "--accent", "Text on primary button", 4.5], ["--ink-muted", "--row-selected", "Muted text on selected row", 4.5], ["--sev-warning", "--row-selected", "Warning text on selected row", 4.5], ["--sev-critical", "--row-selected", "Critical text on selected row", 4.5], ["--ink", "--hl-bg", "Text on user highlight", 4.5], ["--alarm-err-ink", "--alarm-err-bg", "Error alarm badge text", 4.5], ["--alarm-crit-ink", "--alarm-crit-bg", "Critical alarm badge text", 4.5], ["--alarm-warn-ink", "--alarm-warn-bg", "Warning alarm badge text", 4.5], ["--sev-error", "--abn-row", "Error message on abnormal row tint", 4.5], ["--filtered-ink", "--filtered-bg", "Filtered band text", 4.5], ["--accent", "--filtered-bg", "Filtered band border", 3]]</script>
+<div id="app">
+<header class="bar">
+  <span class="brand">dmslog</span>
+  <button class="case-switch case-only">incident-demo</button>
+  <span class="case-switch empty-only muted">No case open</span>
+  <label class="search"><span class="vh">Search records</span><input placeholder="Search records" data-pair="Field text"><kbd>/</kbd></label>
+  <button class="case-only">Go to time</button>
+  <span class="spacer"></span>
+  <button class="tog case-only" aria-pressed="false">Filter tree</button>
+  <button class="tog case-only" aria-pressed="true">Highlights</button>
+  <button class="tog case-only" aria-pressed="false">Bookmarks</button>
+  <button class="menu case-only" aria-expanded="false" aria-haspopup="menu">Analyze</button>
+  <button class="menu case-only" aria-haspopup="menu">Export</button>
+  <button class="menu" aria-haspopup="menu" data-pair="Button text">View</button>
+</header>
+<div class="banner err-only" role="alert"><span data-pair="Error banner text">Lost connection to the local server. Records on screen stay available; actions resume when it is back.</span><button>Retry now</button></div>
+<main class="cols">
+
+<aside class="side" aria-label="Case and sources">
+  <button class="rail case-only" aria-expanded="false" aria-label="Show sources (3 of 14 selected)"><span>Sources</span><b>3/14</b></button>
+  <div class="case-only side-inner">
+    <div class="case-head"><strong>incident-demo</strong><button class="primary small">Add files…</button></div>
+    <details class="colls" open><summary>Collections <span class="muted">2</span></summary>
+      <label class="coll-row"><input type="checkbox" checked><span class="coll"><i></i>C1</span> zone-north <span class="s-count">142,118</span></label>
+      <label class="coll-row"><input type="checkbox"><span class="coll c2"><i></i>C2</span> zone-north <span class="s-count">93,112</span></label>
+    </details>
+    <div class="s-filter"><input aria-label="Filter sources" placeholder="Filter sources"></div>
+    <ul class="s-list"><li><label><input type="checkbox" checked><span class="s-name">AVLAdapter_1022.log</span><span class="s-count">31,794</span></label></li><li><label><input type="checkbox" checked><span class="s-name"><span class="s-tag">S</span>AVLAdapter_1022.log</span><span class="s-count">1,947</span></label></li><li><label><input type="checkbox" checked><span class="s-name">WFMAdapter.log</span><span class="s-count">19,778</span></label></li><li><label><input type="checkbox"><span class="s-name"><span class="s-tag">S</span>WFMAdapter.log</span><span class="s-count">30,879</span></label></li><li><label><input type="checkbox"><span class="s-name">GISAdapter.log.0</span><span class="s-count">5,811</span></label></li><li><label><input type="checkbox"><span class="s-name">CISAdapter.log</span><span class="s-count">34,001</span></label></li><li><label><input type="checkbox"><span class="s-name">BLTHost.log</span><span class="s-count">30,255</span></label></li><li><label><input type="checkbox"><span class="s-name"><span class="s-tag">S</span>BLTHost.log.1</span><span class="s-count">18,406</span></label></li><li><label><input type="checkbox"><span class="s-name">SCADAGateway.log</span><span class="s-count">26,152</span></label></li><li><label><input type="checkbox"><span class="s-name">OMSBridge.log</span><span class="s-count">14,551</span></label></li><li><label><input type="checkbox"><span class="s-name">MeterAdapter.log</span><span class="s-count">14,609</span></label></li><li><label><input type="checkbox"><span class="s-name"><span class="s-tag">S</span>MeterAdapter.log</span><span class="s-count">5,689</span></label></li><li><label><input type="checkbox"><span class="s-name">CrewSync.log.2</span><span class="s-count">38,907</span></label></li><li><label><input type="checkbox"><span class="s-name">NotifyAdapter.log</span><span class="s-count">6,718</span></label></li></ul>
+    <p class="s-error err-only" role="alert">CrewSync.log.2 could not be read: the ZIP entry is truncated. Other files are indexed.</p>
+  </div>
+  <div class="empty-only side-inner">
+    <h2 class="side-h">Recent cases</h2>
+    <ul class="recent">
+      <li><button><strong>incident-demo</strong><span>2 collections, opened 2030-01-15</span></button></li>
+      <li><button><strong>crew-sync-timeouts</strong><span>1 collection, opened 2030-01-12</span></button></li>
+      <li><button><strong>avl-gap-night</strong><span>1 collection, opened 2030-01-09</span></button></li>
+    </ul>
+  </div>
+</aside>
+<section class="center" aria-label="Log records">
+  <div class="timeline case-only"><svg class="tl-svg" viewBox="0 0 600 100" preserveAspectRatio="none" aria-hidden="true"><rect class="tl-warn" x="0.5" y="96.3" width="9.0" height="3.7"/><rect class="tl-warn" x="10.5" y="96.8" width="9.0" height="3.2"/><rect class="tl-warn" x="20.5" y="96.3" width="9.0" height="3.7"/><rect class="tl-warn" x="30.5" y="94.6" width="9.0" height="5.4"/><rect class="tl-warn" x="40.5" y="97.6" width="9.0" height="2.4"/><rect class="tl-warn" x="50.5" y="94.7" width="9.0" height="5.3"/><rect class="tl-warn" x="60.5" y="96.7" width="9.0" height="3.3"/><rect class="tl-warn" x="70.5" y="95.9" width="9.0" height="4.1"/><rect class="tl-warn" x="80.5" y="96.0" width="9.0" height="4.0"/><rect class="tl-warn" x="90.5" y="98.9" width="9.0" height="1.1"/><rect class="tl-warn" x="100.5" y="97.1" width="9.0" height="2.9"/><rect class="tl-warn" x="110.5" y="97.5" width="9.0" height="2.5"/><rect class="tl-warn" x="120.5" y="95.9" width="9.0" height="4.1"/><rect class="tl-warn" x="130.5" y="98.4" width="9.0" height="1.6"/><rect class="tl-warn" x="140.5" y="96.5" width="9.0" height="3.5"/><rect class="tl-warn" x="150.5" y="97.3" width="9.0" height="2.7"/><rect class="tl-warn" x="160.5" y="94.1" width="9.0" height="5.9"/><rect class="tl-warn" x="170.5" y="99.2" width="9.0" height="0.8"/><rect class="tl-err" x="180.5" y="93.6" width="9.0" height="6.4"/><rect class="tl-warn" x="180.5" y="88.2" width="9.0" height="5.4"/><rect class="tl-err" x="190.5" y="74.5" width="9.0" height="25.5"/><rect class="tl-warn" x="190.5" y="64.5" width="9.0" height="10.0"/><rect class="tl-err" x="200.5" y="33.1" width="9.0" height="66.9"/><rect class="tl-warn" x="200.5" y="6.0" width="9.0" height="27.1"/><rect class="tl-crit" x="210.5" y="96.0" width="9.0" height="4.0"/><rect class="tl-err" x="210.5" y="35.5" width="9.0" height="60.5"/><rect class="tl-warn" x="210.5" y="14.3" width="9.0" height="21.2"/><rect class="tl-err" x="220.5" y="80.9" width="9.0" height="19.1"/><rect class="tl-warn" x="220.5" y="73.6" width="9.0" height="7.3"/><rect class="tl-err" x="230.5" y="95.2" width="9.0" height="4.8"/><rect class="tl-warn" x="230.5" y="89.8" width="9.0" height="5.4"/><rect class="tl-warn" x="240.5" y="97.0" width="9.0" height="3.0"/><rect class="tl-warn" x="250.5" y="93.9" width="9.0" height="6.1"/><rect class="tl-warn" x="260.5" y="97.8" width="9.0" height="2.2"/><rect class="tl-warn" x="270.5" y="95.4" width="9.0" height="4.6"/><rect class="tl-warn" x="280.5" y="96.0" width="9.0" height="4.0"/><rect class="tl-warn" x="290.5" y="94.3" width="9.0" height="5.7"/><rect class="tl-warn" x="300.5" y="96.3" width="9.0" height="3.7"/><rect class="tl-warn" x="310.5" y="97.8" width="9.0" height="2.2"/><rect class="tl-warn" x="320.5" y="94.1" width="9.0" height="5.9"/><rect class="tl-warn" x="330.5" y="94.9" width="9.0" height="5.1"/><rect class="tl-warn" x="340.5" y="94.1" width="9.0" height="5.9"/><rect class="tl-warn" x="350.5" y="93.9" width="9.0" height="6.1"/><rect class="tl-warn" x="360.5" y="94.1" width="9.0" height="5.9"/><rect class="tl-warn" x="370.5" y="99.0" width="9.0" height="1.0"/><rect class="tl-warn" x="380.5" y="97.0" width="9.0" height="3.0"/><rect class="tl-warn" x="390.5" y="99.0" width="9.0" height="1.0"/><rect class="tl-warn" x="400.5" y="97.9" width="9.0" height="2.1"/><rect class="tl-err" x="410.5" y="90.4" width="9.0" height="9.6"/><rect class="tl-warn" x="410.5" y="82.8" width="9.0" height="7.6"/><rect class="tl-err" x="420.5" y="90.4" width="9.0" height="9.6"/><rect class="tl-warn" x="420.5" y="82.6" width="9.0" height="7.8"/><rect class="tl-warn" x="430.5" y="94.7" width="9.0" height="5.3"/><rect class="tl-warn" x="440.5" y="98.7" width="9.0" height="1.3"/><rect class="tl-warn" x="450.5" y="99.0" width="9.0" height="1.0"/><rect class="tl-warn" x="460.5" y="93.8" width="9.0" height="6.2"/><rect class="tl-warn" x="470.5" y="96.8" width="9.0" height="3.2"/><rect class="tl-warn" x="480.5" y="96.7" width="9.0" height="3.3"/><rect class="tl-warn" x="490.5" y="94.6" width="9.0" height="5.4"/><rect class="tl-warn" x="500.5" y="98.6" width="9.0" height="1.4"/><rect class="tl-warn" x="510.5" y="94.1" width="9.0" height="5.9"/><rect class="tl-warn" x="520.5" y="98.4" width="9.0" height="1.6"/><rect class="tl-warn" x="530.5" y="93.9" width="9.0" height="6.1"/><rect class="tl-warn" x="540.5" y="94.4" width="9.0" height="5.6"/><rect class="tl-warn" x="550.5" y="98.6" width="9.0" height="1.4"/><rect class="tl-warn" x="560.5" y="96.7" width="9.0" height="3.3"/><rect class="tl-warn" x="570.5" y="97.1" width="9.0" height="2.9"/><rect class="tl-warn" x="580.5" y="94.6" width="9.0" height="5.4"/><rect class="tl-warn" x="590.5" y="95.4" width="9.0" height="4.6"/><polyline class="tl-line" points="5.0,58.0 15.0,59.0 25.0,60.0 35.0,61.0 45.0,62.0 55.0,63.0 65.0,64.0 75.0,65.0 85.0,66.0 95.0,67.0 105.0,68.0 115.0,67.0 125.0,66.0 135.0,65.0 145.0,64.0 155.0,63.0 165.0,62.0 175.0,61.0 185.0,60.0 195.0,59.0 205.0,58.0 215.0,59.0 225.0,60.0 235.0,61.0 245.0,62.0 255.0,63.0 265.0,64.0 275.0,65.0 285.0,66.0 295.0,67.0 305.0,68.0 315.0,67.0 325.0,66.0 335.0,65.0 345.0,64.0 355.0,63.0 365.0,62.0 375.0,61.0 385.0,60.0 395.0,59.0 405.0,58.0 415.0,59.0 425.0,60.0 435.0,61.0 445.0,62.0 455.0,63.0 465.0,64.0 475.0,65.0 485.0,66.0 495.0,67.0 505.0,68.0 515.0,67.0 525.0,66.0 535.0,65.0 545.0,64.0 555.0,63.0 565.0,62.0 575.0,61.0 585.0,60.0 595.0,59.0"/><rect class="tl-range" x="216" y="0" width="64" height="100"/></svg>
+    <div class="tl-legend"><span class="lg lg-err">Error 1,204</span><span class="lg lg-warn">Warning 310</span><span class="lg lg-normal">Info and verbose</span></div></div>
+  
+<div class="fstrip case-only" aria-label="Active filter">
+  <span class="fbadge" data-pair="Filter band label">Filtered</span>
+  <nav class="crumbs" aria-label="Views"><ol><li><button>All records</button></li><li><button aria-current="page">View 2</button></li></ol></nav>
+  <div class="chips" role="list">
+    <span role="listitem" class="chip">Sources: 3 of 14<button aria-label="Remove sources filter">&#215;</button></span>
+    <span role="listitem" class="chip">Collection C1<button aria-label="Remove collection filter">&#215;</button></span>
+    <span role="listitem" class="chip" data-pair="Filter chip text">10:00 to 10:15<button aria-label="Remove time filter">&#215;</button></span>
+  </div>
+  <span class="spacer"></span>
+  <span class="fcount"><strong>1,204</strong> of 235,230 records</span>
+  <button class="fbtn">Filters</button><button class="fbtn">Narrow</button>
+</div>
+  <div class="grid case-only" role="grid" aria-rowcount="1204">
+    <div class="grid-head" role="row"><span class="c-mark"></span><span class="c-time">Time</span><span class="c-pid">PID</span><span class="c-tid">TID</span><span class="c-lvl">Level</span><span class="c-src">Source</span><span class="c-coll">Coll</span><span class="c-msg">Message</span></div>
+    <div class="grid-vp" tabindex="0">
+<div class="row" data-sev="4" role="row" aria-rowindex="1215"><span class="c-mark"></span><span class="c-time">10:03:13.834</span><span class="c-pid">4127</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg" data-pair="Info text on panel">Polling AVL feed: 5087 positions, 0 rejected</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1216"><span class="c-mark"></span><span class="c-time">10:03:14.016</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Heartbeat sent to OMSBridge, seq=38005</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1217"><span class="c-mark"></span><span class="c-time">10:03:14.261</span><span class="c-pid">4127</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Received message 7f3a10a4 from queue WFM.IN (312 bytes)</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1218"><span class="c-mark"></span><span class="c-time">10:03:14.492</span><span class="c-pid">4120</span><span class="c-tid">22</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg" data-pair="Verbose text on panel">Serializer: 14 fields mapped</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1219"><span class="c-mark"></span><span class="c-time">10:03:14.676</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Cache lookup hit: crew CR-07674</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1220"><span class="c-mark"></span><span class="c-time">10:03:14.745</span><span class="c-pid">4120</span><span class="c-tid">11</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Heartbeat sent to OMSBridge, seq=26077</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1221"><span class="c-mark"></span><span class="c-time">10:03:14.833</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus finished in 144 ms</span></div>
+<div class="row" data-sev="3" role="row" aria-rowindex="1222"><span class="c-mark"></span><span class="c-time">10:03:14.978</span><span class="c-pid">4120</span><span class="c-tid">11</span><span class="c-lvl" data-pair="Warning level on panel"><b>WARNING</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Position for vehicle V-23513 older than 120 s, ignored</span></div>
+<div class="row hl" data-sev="5" role="row" aria-rowindex="1223"><span class="c-mark"></span><span class="c-time">10:03:15.071</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg" data-pair="Text on user highlight">Dispatching handler ProcessInbound for 7f3aa895</span></div>
+<div class="row sel" data-sev="2" role="row" aria-rowindex="1224"><span class="c-mark"></span><span class="c-time">10:03:15.167</span><span class="c-pid">4127</span><span class="c-tid">14</span><span class="c-lvl" data-pair="Error level on selected row"><b>ERROR</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg" data-pair="Error text on selected row">Validation failed for message 7f3a91c2: field CrewId is missing<span class="more">+14 lines</span></span></div>
+<div class="row" data-sev="1" role="row" aria-rowindex="1225"><span class="c-mark"></span><span class="c-time">10:03:15.333</span><span class="c-pid">4127</span><span class="c-tid">37</span><span class="c-lvl" data-pair="Critical level on panel"><b>CRITICAL</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg" data-pair="Critical message on panel">Connection to queue manager QM01 lost; adapter stopped consuming</span></div>
+<div class="row hl" data-sev="4" role="row" aria-rowindex="1226"><span class="c-mark"></span><span class="c-time">10:03:15.536</span><span class="c-pid">4127</span><span class="c-tid">22</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Received message 7f3a64e6 from queue WFM.IN (312 bytes)</span></div>
+<div class="row" data-sev="2" role="row" aria-rowindex="1227"><span class="c-mark"></span><span class="c-time">10:03:15.570</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl" data-pair="Error level on panel"><b>ERROR</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg" data-pair="Error message on panel">Could not deliver UpdateCrewStatus to WFM: HTTP 500 Internal Server Error</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1228"><span class="c-mark"></span><span class="c-time">10:03:15.599</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Dispatching handler ProcessInbound for 7f3a9119</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1229"><span class="c-mark"></span><span class="c-time">10:03:15.615</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Serializer: 14 fields mapped</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1230"><span class="c-mark"></span><span class="c-time">10:03:15.795</span><span class="c-pid">4120</span><span class="c-tid">22</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Received message 7f3a7962 from queue WFM.IN (312 bytes)</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1231"><span class="c-mark"></span><span class="c-time">10:03:16.043</span><span class="c-pid">4127</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus started, key=CR-05629</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1232"><span class="c-mark"></span><span class="c-time">10:03:16.181</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus started, key=CR-45355</span></div>
+<div class="row" data-sev="3" role="row" aria-rowindex="1233"><span class="c-mark"><span class="bm" title="Bookmarked">&#9733;</span><span class="vh">bookmarked</span></span><span class="c-time">10:03:16.369</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>WARNING</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Retrying send to WFM.OUT (attempt 2 of 3): timeout after 5000 ms</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1234"><span class="c-mark"></span><span class="c-time">10:03:16.418</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Polling AVL feed: 17113 positions, 0 rejected</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1235"><span class="c-mark"></span><span class="c-time">10:03:16.535</span><span class="c-pid">4127</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Polling AVL feed: 51057 positions, 0 rejected</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1236"><span class="c-mark"></span><span class="c-time">10:03:16.637</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Heartbeat sent to OMSBridge, seq=53631</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1237"><span class="c-mark"></span><span class="c-time">10:03:16.892</span><span class="c-pid">4127</span><span class="c-tid">22</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Received message 7f3a076c from queue WFM.IN (312 bytes)</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1238"><span class="c-mark"></span><span class="c-time">10:03:17.027</span><span class="c-pid">4127</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Cache lookup hit: crew CR-39659</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1239"><span class="c-mark"></span><span class="c-time">10:03:17.216</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Dispatching handler ProcessInbound for 7f3a1a27</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1240"><span class="c-mark"></span><span class="c-time">10:03:17.323</span><span class="c-pid">4120</span><span class="c-tid">22</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Polling AVL feed: 59003 positions, 0 rejected</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1241"><span class="c-mark"></span><span class="c-time">10:03:17.502</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Published event VehiclePosition to topic avl.positions</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1242"><span class="c-mark"></span><span class="c-time">10:03:17.749</span><span class="c-pid">4120</span><span class="c-tid">22</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Published event VehiclePosition to topic avl.positions</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1243"><span class="c-mark"></span><span class="c-time">10:03:17.989</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Published event VehiclePosition to topic avl.positions</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1244"><span class="c-mark"></span><span class="c-time">10:03:18.006</span><span class="c-pid">4127</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Cache lookup hit: crew CR-59301</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1245"><span class="c-mark"></span><span class="c-time">10:03:18.251</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus started, key=CR-22965</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1246"><span class="c-mark"></span><span class="c-time">10:03:18.264</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Serializer: 14 fields mapped</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1247"><span class="c-mark"></span><span class="c-time">10:03:18.489</span><span class="c-pid">4127</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus started, key=CR-12767</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1248"><span class="c-mark"></span><span class="c-time">10:03:18.641</span><span class="c-pid">4127</span><span class="c-tid">37</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Polling AVL feed: 50049 positions, 0 rejected</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1249"><span class="c-mark"></span><span class="c-time">10:03:18.858</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Published event VehiclePosition to topic avl.positions</span></div>
+<div class="row" data-sev="3" role="row" aria-rowindex="1250"><span class="c-mark"></span><span class="c-time">10:03:19.076</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>WARNING</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Retrying send to WFM.OUT (attempt 2 of 3): timeout after 5000 ms</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1251"><span class="c-mark"></span><span class="c-time">10:03:19.088</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus started, key=CR-50890</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1252"><span class="c-mark"></span><span class="c-time">10:03:19.179</span><span class="c-pid">4120</span><span class="c-tid">11</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Serializer: 14 fields mapped</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1253"><span class="c-mark"></span><span class="c-time">10:03:19.348</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Polling AVL feed: 34782 positions, 0 rejected</span></div>
+<div class="row" data-sev="2" role="row" aria-rowindex="1254"><span class="c-mark"></span><span class="c-time">10:03:19.380</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>ERROR</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Validation failed for message 7f3a46e5: field CrewId is missing</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1255"><span class="c-mark"></span><span class="c-time">10:03:19.614</span><span class="c-pid">4127</span><span class="c-tid">37</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Received message 7f3ac28f from queue WFM.IN (312 bytes)</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1256"><span class="c-mark"></span><span class="c-time">10:03:19.719</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Polling AVL feed: 29645 positions, 0 rejected</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1257"><span class="c-mark"></span><span class="c-time">10:03:19.848</span><span class="c-pid">4120</span><span class="c-tid">22</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus finished in 576 ms</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1258"><span class="c-mark"></span><span class="c-time">10:03:19.921</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Heartbeat sent to OMSBridge, seq=25714</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1259"><span class="c-mark"></span><span class="c-time">10:03:20.143</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Cache lookup hit: crew CR-43875</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1260"><span class="c-mark"></span><span class="c-time">10:03:20.333</span><span class="c-pid">4120</span><span class="c-tid">11</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Dispatching handler ProcessInbound for 7f3ae202</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1261"><span class="c-mark"></span><span class="c-time">10:03:20.539</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Published event VehiclePosition to topic avl.positions</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1262"><span class="c-mark"></span><span class="c-time">10:03:20.762</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus finished in 435 ms</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1263"><span class="c-mark"></span><span class="c-time">10:03:20.928</span><span class="c-pid">4120</span><span class="c-tid">22</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Dispatching handler ProcessInbound for 7f3a5db0</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1264"><span class="c-mark"></span><span class="c-time">10:03:21.156</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus finished in 533 ms</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1265"><span class="c-mark"></span><span class="c-time">10:03:21.191</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Dispatching handler ProcessInbound for 7f3ac9d3</span></div>
+<div class="row" data-sev="2" role="row" aria-rowindex="1266"><span class="c-mark"></span><span class="c-time">10:03:21.333</span><span class="c-pid">4120</span><span class="c-tid">22</span><span class="c-lvl"><b>ERROR</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Validation failed for message 7f3ac76d: field CrewId is missing</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1267"><span class="c-mark"></span><span class="c-time">10:03:21.468</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Polling AVL feed: 35167 positions, 0 rejected</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1268"><span class="c-mark"></span><span class="c-time">10:03:21.516</span><span class="c-pid">4120</span><span class="c-tid">11</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Serializer: 14 fields mapped</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1269"><span class="c-mark"></span><span class="c-time">10:03:21.656</span><span class="c-pid">4127</span><span class="c-tid">11</span><span class="c-lvl"><b>INFO</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Received message 7f3aa26b from queue WFM.IN (312 bytes)</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1270"><span class="c-mark"></span><span class="c-time">10:03:21.772</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Dispatching handler ProcessInbound for 7f3adcdf</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1271"><span class="c-mark"></span><span class="c-time">10:03:21.988</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Polling AVL feed: 17555 positions, 0 rejected</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1272"><span class="c-mark"></span><span class="c-time">10:03:22.113</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus finished in 55 ms</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1273"><span class="c-mark"></span><span class="c-time">10:03:22.275</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus started, key=CR-34806</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1274"><span class="c-mark"></span><span class="c-time">10:03:22.369</span><span class="c-pid">4120</span><span class="c-tid">11</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Dispatching handler ProcessInbound for 7f3acdbe</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1275"><span class="c-mark"></span><span class="c-time">10:03:22.381</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus started, key=CR-36114</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1276"><span class="c-mark"></span><span class="c-time">10:03:22.612</span><span class="c-pid">4127</span><span class="c-tid">22</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src"><span class="s-tag" title="Sensitive log">S</span>AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Serializer: 14 fields mapped</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1277"><span class="c-mark"></span><span class="c-time">10:03:22.816</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Published event VehiclePosition to topic avl.positions</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1278"><span class="c-mark"></span><span class="c-time">10:03:22.920</span><span class="c-pid">4120</span><span class="c-tid">22</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Published event VehiclePosition to topic avl.positions</span></div>
+<div class="row" data-sev="4" role="row" aria-rowindex="1279"><span class="c-mark"></span><span class="c-time">10:03:23.100</span><span class="c-pid">4120</span><span class="c-tid">14</span><span class="c-lvl"><b>INFO</b></span><span class="c-src">AVLAdapter_1022.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Operation UpdateCrewStatus started, key=CR-54853</span></div>
+<div class="row" data-sev="5" role="row" aria-rowindex="1280"><span class="c-mark"></span><span class="c-time">10:03:23.323</span><span class="c-pid">4120</span><span class="c-tid">37</span><span class="c-lvl"><b>VERBOSE</b></span><span class="c-src">WFMAdapter.log</span><span class="c-coll"><span class="coll"><i></i>C1</span></span><span class="c-msg">Serializer: 14 fields mapped</span></div>
+    </div>
+  </div>
+  
+<section class="dock case-only" aria-label="Analysis panels">
+  <div class="dock-split" role="separator" aria-orientation="horizontal" aria-valuenow="40" tabindex="0" aria-label="Resize panels"></div>
+  <div class="dock-tabs" role="tablist">
+    <button role="tab" aria-selected="true" class="tab">Distinct values<span class="x" aria-label="Close Distinct values">&#215;</span></button>
+    <button role="tab" aria-selected="false" class="tab">Aggregate<span class="x" aria-label="Close Aggregate">&#215;</span></button>
+    <span class="spacer"></span>
+    <button class="ghost">Maximize</button><button class="ghost">Close all</button>
+  </div>
+  <div class="dock-body ok-only">
+    <div class="dock-tools"><label>Column <select><option>Message type</option></select></label>
+      <span class="dock-sum" data-pair="Muted text on panel">12 values in 1,204 matching records (filter applied)</span></div>
+    <table class="dtable"><thead><tr><th>Message type</th><th class="num">Records</th><th class="num">Share</th><th></th><th></th></tr></thead>
+    <tbody><tr><td class="d-val" data-pair="Dock table text">Operation {name} started, key={key}</td><td class="num">48,210</td><td class="num">25.5%</td><td class="d-bar"><i style="width:76.5%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr><td class="d-val">Operation {name} finished in {ms} ms</td><td class="num">48,190</td><td class="num">25.5%</td><td class="d-bar"><i style="width:76.5%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr><td class="d-val">Received message {id} from queue {queue} ({bytes} bytes)</td><td class="num">31,877</td><td class="num">16.9%</td><td class="d-bar"><i style="width:50.6%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr><td class="d-val">Heartbeat sent to {target}, seq={seq}</td><td class="num">21,004</td><td class="num">11.1%</td><td class="d-bar"><i style="width:33.4%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr><td class="d-val">Dispatching handler {handler} for {id}</td><td class="num">18,762</td><td class="num">9.9%</td><td class="d-bar"><i style="width:29.8%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr><td class="d-val">Polling AVL feed: {n} positions, {r} rejected</td><td class="num">9,120</td><td class="num">4.8%</td><td class="d-bar"><i style="width:14.5%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr><td class="d-val">Published event {event} to topic {topic}</td><td class="num">8,840</td><td class="num">4.7%</td><td class="d-bar"><i style="width:14.0%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr data-sev="3"><td class="d-val">Retrying send to {queue} (attempt {a} of {b}): timeout after {ms} ms</td><td class="num">1,312</td><td class="num">0.7%</td><td class="d-bar"><i style="width:2.1%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr data-sev="2"><td class="d-val">Validation failed for message {id}: field {field} is missing</td><td class="num">1,204</td><td class="num">0.6%</td><td class="d-bar"><i style="width:1.9%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr data-sev="2"><td class="d-val">Could not deliver {op} to {target}: HTTP {status} {reason}</td><td class="num">377</td><td class="num">0.2%</td><td class="d-bar"><i style="width:1.2%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr data-sev="1"><td class="d-val">Connection to queue manager {qm} lost; adapter stopped consuming</td><td class="num">25</td><td class="num">0.0%</td><td class="d-bar"><i style="width:1.2%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr><tr data-sev="3"><td class="d-val">Position for vehicle {v} older than {s} s, ignored</td><td class="num">18</td><td class="num">0.0%</td><td class="d-bar"><i style="width:1.2%"></i></td><td class="d-act"><button class="ghost">Only</button><button class="ghost">Hide</button></td></tr></tbody></table>
+  </div>
+  <div class="dock-body err-only">
+    <div class="ui-error" role="alert"><strong data-pair="Error block text">Could not load distinct values.</strong>
+      <span>The local server stopped responding. Records already on screen stay available.</span>
+      <button>Try again</button></div>
+  </div>
+</section>
+  
+<div class="empty-state empty-only">
+  <h1>Open an ERS to start</h1>
+  <p>Create a case from one or more ERS ZIP files. Indexing runs on this computer and nothing leaves it.</p>
+  <div class="es-actions"><button class="primary">New case…</button><button>Open a folder…</button></div>
+  <p class="es-hint" data-pair="Empty state hint">Tip: paste a path to an ERS ZIP or to a Log folder in the New case dialog.</p>
+  <h2 class="side-h">Recent cases</h2>
+  <ul class="recent">
+    <li><button><strong>incident-demo</strong><span>2 collections, opened 2030-01-15</span></button></li>
+    <li><button><strong>crew-sync-timeouts</strong><span>1 collection, opened 2030-01-12</span></button></li>
+  </ul>
+</div>
+</section>
+
+<aside class="detail case-only" aria-label="Record detail">
+  <div class="d-head">
+    <span class="d-time">2030-01-15 10:03:16.902</span>
+    <span class="d-lvl" data-sev="2"><b>ERROR</b></span>
+  </div>
+  <div class="d-meta"><span class="s-tag">S</span>AVLAdapter_1022.log <span class="muted">PID 4127 TID 14 C1</span></div>
+  <div class="d-actions"><button>Context</button><button>Copy</button><button>Compare</button><button>Bookmark</button><button>Highlight</button></div>
+  <h3 class="d-type">Validation failed for message {id}: field {field} is missing</h3>
+  <pre class="d-text" data-pair="Record text in detail">Validation failed for message 7f3a91c2: field CrewId is missing
+  at Adapter.Inbound.Validate(Message msg)
+  at Adapter.Inbound.Process(Envelope env)
+  rejected payload kept in sensitive log</pre>
+  <section class="d-sec"><h4>What it means</h4>
+    <p class="d-know">The adapter rejected an inbound crew update because a mandatory field was empty. The upstream system sent the message; this adapter did not change it. Check the sender mapping for CrewId.</p></section>
+  <section class="d-sec"><h4>Keys</h4>
+    <div class="keys"><button class="chip">msgid 7f3a91c2</button><button class="chip">crew CR-00412</button><button class="chip">op UpdateCrewStatus</button></div></section>
+  <section class="d-sec"><h4>Linked record</h4><p class="muted">Normal log, 10:03:16.899, same message id</p></section>
+  <details class="d-sec"><summary>Payload (XML, 1.2 KB)</summary></details>
+</aside>
+</main>
+<footer class="status" role="status"><span class="case-only" data-pair="Status text">Record 10 of 1,204 matching</span><span class="case-only">235,230 records in case</span><span class="st-msg case-only">Indexed 235,230 records.</span><span class="empty-only">No case open.</span><span class="spacer"></span><span>? Shortcuts</span></footer>
+</div>
+</body>
+</html>
