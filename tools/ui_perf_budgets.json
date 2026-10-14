@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "reference": {
+    "records": 3500000,
+    "viewport": "1600x900",
+    "cpu_throttle": 4,
+    "source": "docs/analises-ui/ANALISE-VERCEL.md, section 5 (baseline = values measured in section 3)"
+  },
+  "budgets": {
+    "first_row_cold_ms": {"label": "First grid row, cold open", "unit": "ms", "max": 600, "warn": 400, "baseline": 1291},
+    "first_row_reload_ms": {"label": "First grid row, reload", "unit": "ms", "max": 300, "baseline": 1200},
+    "requests_open": {"label": "Static requests on open", "unit": "count", "max": 45, "baseline": 92},
+    "requests_reload_non_304": {"label": "Static requests on reload that are not 304", "unit": "count", "max": 0, "baseline": 92},
+    "js_kb_open": {"label": "JavaScript on open", "unit": "KB", "max": 450, "baseline": 912},
+    "js_modules_open": {"label": "JavaScript modules on open", "unit": "count", "max": 40, "baseline": 72},
+    "css_files_open": {"label": "CSS files on open", "unit": "count", "max": 12, "baseline": 19},
+    "css_late_injections": {"label": "Stylesheets injected after first paint", "unit": "count", "max": 0, "baseline": 23},
+    "api_call_max_ms": {"label": "Slowest API call on open", "unit": "ms", "max": 50, "baseline": 650},
+    "cls_open": {"label": "CLS of the opening", "unit": "score", "max": 0.05, "baseline": 1.58},
+    "inp_click_ms": {"label": "INP, row click", "unit": "ms", "max": 100, "warn": 50, "baseline": 24},
+    "inp_keys_ms": {"label": "INP, arrow keys", "unit": "ms", "max": 100, "warn": 50, "baseline": 24},
+    "inp_filter_ms": {"label": "INP, filter", "unit": "ms", "max": 100, "warn": 50, "baseline": 24},
+    "inp_search_ms": {"label": "INP, search", "unit": "ms", "max": 100, "warn": 50, "baseline": 24},
+    "filter_to_rows_ms": {"label": "Filter to new rows", "unit": "ms", "max": 200, "baseline": 24},
+    "search_to_rows_ms": {"label": "Search to new rows", "unit": "ms", "max": 200, "baseline": 40},
+    "scroll_forced_layouts": {"label": "Forced layouts in 120 wheel events", "unit": "count", "max": 0, "baseline": 120},
+    "scroll_work_per_frame_ms": {"label": "Main-thread work per frame while scrolling", "unit": "ms", "max": 4},
+    "scroll_long_tasks": {"label": "Tasks over 50 ms while scrolling", "unit": "count", "max": 0, "baseline": 0}
+  }
+}

@@ -9,6 +9,10 @@ Vale para a 0.1.0 e para as seguintes. A release é feita pelo workflow `.github
 - `CHANGELOG.md` tem a seção `## [X.Y.Z]` da versão. O texto dela vira as notas da release.
 - Nenhum pack de conhecimento no repositório (a guarda `packaging/check_no_pack.py` roda no workflow).
 
+## Guarda de desempenho da interface (passo manual)
+
+Antes de cada release, na máquina de desenvolvimento (Node >= 22 e Chrome ou Edge instalado), rodar `node tools/ui_perf.mjs --cpu 4` na raiz do repositório. A ferramenta gera um caso sintético com `tools/bench.py --quick` (nunca usa `local-samples/`), sobe `dmslog serve`, mede abertura, recarga, CLS, rolagem e INP, imprime a tabela e o JSON e compara com os orçamentos de `tools/ui_perf_budgets.json` (análise 3, seção 5). Sai com código diferente de zero se algum orçamento for excedido; `--large` usa o caso de 500 MB (cerca de 3,5 milhões de registros, ~1,5 GB de disco temporário) e `--report-only` só relata. Registrar o resultado no PR ou nas notas da release. Servidor, navegador e pastas temporárias são encerrados e removidos ao final. Um job de CI só em Linux, sem bloquear o merge, fica para depois.
+
 ## Ensaio (sem publicar)
 
 Em Actions, rodar o workflow `release` manualmente (`workflow_dispatch`) na `main`. Ele constrói e verifica tudo e gera o artefato `release-bundle` do run, mas **nunca** cria release. Baixar o artefato e conferir como abaixo.
