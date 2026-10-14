@@ -1,0 +1,130 @@
+<!doctype html>
+<!-- Synthetic demo of the UI-10 components, for tests and captures only (the app does not serve it).
+     Serve the repository root and open /tests/web/fixtures/ui-components-demo.html?theme=dark
+     Texts are placeholders; there is no real data here. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ui-components demo</title>
+<link rel="stylesheet" href="/src/dmslog/web/css/tokens.css">
+<link rel="stylesheet" href="/src/dmslog/web/css/components.css">
+<link rel="stylesheet" href="/src/dmslog/web/css/app.css">
+<style>
+  html, body { overflow: auto; height: auto; }
+  body { padding: 16px; font-family: var(--font-ui); }
+  h2 { font-size: var(--text-lg); margin: 16px 0 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .cap { font-size: var(--text-xs); color: var(--ink-muted); width: 90px; }
+  .ui-panel { width: 520px; height: 190px; border: 1px solid var(--line-strong); }
+</style>
+</head>
+<body>
+<h2>Buttons</h2>
+<div class="row"><span class="cap">default</span>
+  <button class="ui-button" id="b-default">Default</button>
+  <button class="ui-button" id="b-hover">Hover</button>
+  <button class="ui-button" id="b-focus">Focus</button>
+  <button class="ui-button" id="b-pressed" aria-pressed="true">Pressed</button>
+  <button class="ui-button" id="b-expanded" aria-expanded="true" aria-haspopup="menu">Expanded</button>
+  <button class="ui-button" id="b-disabled" disabled>Disabled</button>
+  <button class="ui-button" id="b-busy" aria-busy="true" disabled>Exporting...</button>
+</div>
+<div class="row"><span class="cap">primary</span>
+  <button class="ui-button is-primary">Primary</button>
+  <button class="ui-button is-primary" id="p-hover">Hover</button>
+  <button class="ui-button is-primary" id="p-focus">Focus</button>
+  <button class="ui-button is-primary" disabled>Disabled</button>
+  <button class="ui-button is-primary" aria-pressed="true">Pressed</button>
+  <button class="ui-button is-danger" aria-expanded="true" aria-haspopup="menu">Expanded</button>
+</div>
+<div class="row"><span class="cap">ghost / danger</span>
+  <button class="ui-button is-ghost">Ghost</button>
+  <button class="ui-button is-ghost" id="g-hover">Hover</button>
+  <button class="ui-button is-ghost" aria-pressed="true">Pressed</button>
+  <button class="ui-button is-ghost" disabled>Disabled</button>
+  <button class="ui-button is-danger">Danger</button>
+  <button class="ui-button is-danger" id="d-hover">Hover</button>
+  <button class="ui-button is-danger" disabled>Disabled</button>
+</div>
+
+<h2>Fields</h2>
+<div class="row">
+  <div class="ui-field"><label class="ui-field-label" for="f1">Name</label><input class="ui-input" id="f1" value="sample"></div>
+  <div class="ui-field"><label class="ui-field-label" for="f2">Invalid</label>
+    <input class="ui-input" id="f2" value="x" aria-invalid="true" aria-describedby="f2e">
+    <p class="ui-field-error" id="f2e">Enter at least 3 characters.</p></div>
+  <div class="ui-field"><label class="ui-field-label" for="f3">Select</label>
+    <select class="ui-select" id="f3"><option>One</option><option>Two</option></select></div>
+  <div class="ui-field"><label class="ui-field-label" for="f4">Disabled</label><input class="ui-input" id="f4" value="locked" disabled></div>
+  <div class="ui-field"><label class="ui-field-label" for="f5">Focus</label><input class="ui-input" id="f5" value="focused"></div>
+</div>
+
+<h2>Badges and chips</h2>
+<div class="row">
+  <span class="ui-badge">Plain</span>
+  <span class="ui-badge is-sensitive">S</span>
+  <span class="ui-badge is-curated">Curated</span>
+  <span class="ui-badge is-estimate">Estimate</span>
+  <span id="chips" class="row" style="margin:0"></span>
+</div>
+
+<h2>Panel, table, states</h2>
+<div class="row" style="align-items:flex-start">
+  <section class="ui-panel" aria-labelledby="pt">
+    <div class="ui-panel-head"><h3 class="ui-panel-title" id="pt">Operations</h3><span class="ui-panel-summary">3 rows</span>
+      <span class="ui-panel-actions"><button class="ui-button is-ghost">Refresh</button><button class="ui-button is-ghost">Close</button></span></div>
+    <div class="ui-panel-body">
+      <table class="ui-table"><thead><tr><th class="is-text">Operation</th><th class="is-num">Count</th><th class="is-num">Errors</th></tr></thead>
+        <tbody>
+          <tr><td class="is-text" title="OpAlpha">OpAlpha</td><td class="is-num">1,204</td><td class="is-num">3</td></tr>
+          <tr><td class="is-text" title="OpBeta">OpBeta</td><td class="is-num">87</td><td class="is-num">0</td></tr>
+          <tr><td class="is-text" title="OpGamma with a deliberately long name that is cut">OpGamma with a deliberately long name that is cut</td><td class="is-num">12</td><td class="is-num">12</td></tr>
+        </tbody></table>
+    </div>
+    <div class="ui-panel-foot"><button class="ui-button">Cancel</button><button class="ui-button is-primary">Export</button></div>
+  </section>
+  <div>
+    <p class="ui-status" role="status">Loading operations...</p>
+    <div class="ui-empty"><span>No operations in this filter. Clear filters to see all.</span><button class="ui-button">Clear filters</button></div>
+    <div class="ui-error" role="alert"><span class="ui-error-message">Could not load operations. Timeout.</span><button class="ui-button">Try again</button></div>
+    <p><span class="ui-estimate"><span class="ui-badge is-estimate">Estimate</span> Rare values may be missing.</span></p>
+    <div class="ui-loading" style="height:30px"><p class="ui-status">Slow work</p></div>
+  </div>
+</div>
+
+<h2>Menu and dialog</h2>
+<div class="row">
+  <button class="ui-button" id="menu-trigger">Analyze</button>
+  <button class="ui-button" id="dialog-trigger">Open dialog</button>
+</div>
+<dialog class="ui-dialog" id="dlg" aria-labelledby="dlg-title">
+  <div class="ui-dialog-head"><span id="dlg-title">Export report</span></div>
+  <div class="ui-dialog-body"><p>Sample dialog body.</p><input class="ui-input" aria-label="File name" value="report"></div>
+  <div class="ui-dialog-foot"><button class="ui-button" id="dlg-cancel">Cancel</button><button class="ui-button is-primary">Export</button></div>
+</dialog>
+
+<script type="module">
+  import { createMenu, createChip } from "/src/dmslog/web/js/ui-menu.js";
+  const q = new URLSearchParams(location.search);
+  if (q.get("theme")) document.documentElement.dataset.theme = q.get("theme");
+  const chips = document.getElementById("chips");
+  chips.appendChild(createChip({ doc: document, label: "Severity: Error", removeLabel: "Remove Severity: Error", onRemove() {} }));
+  chips.appendChild(createChip({ doc: document, label: "Source: sample.log", removeLabel: "Remove Source: sample.log", onRemove() {} }));
+  const items = [
+    { id: "distinct", label: "Distinct values", shortcut: "D", run() {} },
+    { id: "aggregate", label: "Aggregate", run() {} },
+    { id: "ops", label: "Operations", disabled: true, title: "Open a case first" },
+    { separator: true },
+    { id: "follow", label: "Follow tail", pressed: true, run() {} },
+    { id: "theme", label: "Theme", children: [
+      { id: "sys", label: "System", role: "menuitemradio", checked: true, run() {} },
+      { id: "light", label: "Light", role: "menuitemradio", checked: false, run() {} },
+      { id: "dark", label: "Dark", role: "menuitemradio", checked: false, run() {} } ] },
+  ];
+  window.demoMenu = createMenu({ trigger: document.getElementById("menu-trigger"), getItems: () => items });
+  const dlg = document.getElementById("dlg");
+  document.getElementById("dialog-trigger").addEventListener("click", () => dlg.showModal());
+  document.getElementById("dlg-cancel").addEventListener("click", () => dlg.close());
+</script>
+</body>
+</html>

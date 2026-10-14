@@ -45,6 +45,7 @@ EXPECTED_MODULES = {
     "time.js",
     "timeline-model.js",
     "timeline.js",
+    "ui-menu.js",
     "unknown-panel-model.js",
     "unknown-panel.js",
     "key-panel-model.js",
