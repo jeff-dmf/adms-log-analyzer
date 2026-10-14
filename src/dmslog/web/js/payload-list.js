@@ -7,17 +7,6 @@ import {
 } from "./payload-list-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/payload-list.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -37,7 +26,6 @@ let uid = 0;
 //   onOpen({id, ts})  select the record that holds the payload (its detail shows the Payload section)
 // Returns { refresh(), close() }.
 export function initPayloadList(host, { api, getCase, onOpen }) {
-  ensureStylesheet();
   uid += 1;
   const prefix = "pg" + uid + "-";
   host.textContent = "";

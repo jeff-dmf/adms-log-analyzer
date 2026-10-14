@@ -7,17 +7,6 @@ import {
 import { S, format } from "./strings.js";
 import { formatTs } from "./time.js";
 
-const STYLESHEET = "/css/distinct.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -363,7 +352,6 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
 //   onReveal({id, ts})       select a record in the grid
 // Returns { viewChanged() } to call whenever the case or the filter changed.
 export function mountDistinct(options) {
-  ensureStylesheet();
   const { toolbar, beforeButton, panelParent, beforePanel } = options;
   const make = (id, label) => {
     const toggle = button("", label);

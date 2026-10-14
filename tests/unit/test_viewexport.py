@@ -291,11 +291,13 @@ def test_unique_keeps_memory_flat_with_many_distinct_values():
     assert ve.format_list(["a", "b", "a", "b", "c"], unique=True) == "a\nb\nc"
 
 
-def test_unique_removes_its_temporary_folder():
+def test_unique_removes_its_temporary_folder(tmp_path, monkeypatch):
     import glob
     import tempfile
 
-    pattern = tempfile.gettempdir() + "/dmslog-unique-*"
+    # A private temp dir: other pytest-xdist workers export concurrently and would change a global glob.
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    pattern = str(tmp_path / "dmslog-unique-*")
     before = set(glob.glob(pattern))
     assert "".join(ve._list_chunks(iter(["a", "b"] * 5), "newline", "none", True)) == "a\nb"
     assert set(glob.glob(pattern)) == before

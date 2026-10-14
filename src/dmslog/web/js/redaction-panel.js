@@ -6,17 +6,6 @@ import { api } from "./api.js";
 import { createRedactionFlow, formToProfile, profileToForm } from "./export-model.js";
 import { S } from "./strings.js";
 
-const STYLESHEET = "/css/export.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -40,7 +29,6 @@ function textArea(labelText, rows) {
 
 // host: empty element to fill (hidden until opened). Returns { refresh() }.
 export function initRedactionPanel(host) {
-  ensureStylesheet();
   host.textContent = "";
   const head = element("div", "export-head");
   head.appendChild(element("h3", "export-title", S.redactTitle));

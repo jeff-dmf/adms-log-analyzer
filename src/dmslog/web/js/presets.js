@@ -10,17 +10,6 @@ import {
 import { createViewsGuard } from "./saved-views-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/presets.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -54,7 +43,6 @@ function saveFile(name, text, type) {
 // getFilter() -> the current valid filter JSON of the tree, or null. onApply(filter) fills the tree.
 // Returns {setCase(id), refresh(), destroy()}.
 export function initPresets(container, { api, caseId, getFilter, onApply, onError }) {
-  ensureStylesheet();
   let currentCase = caseId;
   let presets = [];
   let families = [];

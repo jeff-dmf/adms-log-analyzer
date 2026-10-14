@@ -8,17 +8,6 @@ import {
 import { createPayloadNoticeFlow } from "./payload-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/events.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -55,7 +44,6 @@ let uid = 0;
 //   onShowInGrid(t)   t = { from, to, entryId }: set the grid time filter and select the entry
 // Returns { refresh(), open(id) }; call refresh() when the case changed or indexing finished.
 export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
-  ensureStylesheet();
   uid += 1;
   const prefix = "ev" + uid + "-";
 

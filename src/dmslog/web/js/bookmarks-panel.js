@@ -7,17 +7,6 @@ import {
 } from "./bookmarks-model.js";
 import { S, format } from "./strings.js";
 
-const STYLESHEET = "/css/bookmarks.css";
-
-function ensureStylesheet() {
-  if (!document.querySelector('link[rel="stylesheet"][href="' + STYLESHEET + '"]')) {
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = STYLESHEET;
-    document.head.appendChild(link);
-  }
-}
-
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) {
@@ -71,7 +60,6 @@ function labelled(text, control) {
 // container: the (initially hidden) element under the detail text. Options: store (the shared
 // marker store), onError(err). Returns { show(entry), refresh() }.
 export function initDetailBookmark(container, { store, onError }) {
-  ensureStylesheet();
   container.textContent = "";
   const toggle = element("button", "bm-toggle");
   toggle.type = "button";
@@ -172,7 +160,6 @@ export function initDetailBookmark(container, { store, onError }) {
 // host: empty element (hidden until opened). Options: getCase(), store, onReveal({id, ts}),
 // onError(err). Returns { open(), close(), refresh(), reset(), isOpen() }.
 export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) {
-  ensureStylesheet();
   host.textContent = "";
   const head = element("div", "bm-head");
   head.appendChild(element("h3", "bm-title", S.bmTitle));
