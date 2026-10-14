@@ -139,6 +139,8 @@ for (const theme of Object.keys(THEMES)) {
     check(theme, "--line-strong", "--surface-panel", 3);
     check(theme, "--line-strong", "--surface-field", 3);
     check(theme, "--accent", "--row-selected", 3);
+    check(theme, "--hl-bar", "--row-selected", 3); // the highlight band beside the selection bar
+    check(theme, "--hl-bar", "--surface-panel", 3);
     check(theme, "--focus-ring", "--surface-panel", 3);
     for (const chart of ["critical", "error", "warning", "normal", "noise"]) check(theme, `--chart-${chart}`, "--surface-panel", 3);
   });
