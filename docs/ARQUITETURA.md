@@ -232,6 +232,7 @@ CREATE TABLE source(                                           -- arquivo físic
   first_ts INTEGER, last_ts INTEGER, n_entries INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',                      -- pending|indexing|ready|error|skipped
   error TEXT,
+  last_line INTEGER,                                           -- esquema 7: line_no + nlines - 1 do registro de maior id; NULL = fonte vazia ou ainda não gravado
   UNIQUE(collection_id, member));
 
 -- Registros ------------------------------------------------------------------
@@ -407,6 +408,9 @@ CREATE TRIGGER bookmark_source_gone AFTER DELETE ON source BEGIN  -- source desc
 END;
 CREATE TABLE saved_view(id INTEGER PRIMARY KEY, name TEXT NOT NULL, filter TEXT NOT NULL, columns TEXT, created_at TEXT NOT NULL);
 ```
+
+**`source.last_line` (esquema 7, #142/UI-02).** `INTEGER`, a última linha física da fonte: `line_no + nlines - 1` do registro de maior `id` (os ids seguem a ordem do arquivo); NULL quando a fonte não tem registros ou o valor ainda não foi gravado. É gravada no fim de cada lote de indexação (`commit()` do pipeline, na mesma transação de `n_entries`, `first_ts` e `last_ts`), o que cobre a ingestão inicial, o incremental (append, resume e reindex), a rotação e o `--watch`. O `max(id)` sai da mesma varredura coberta de `ix_entry_src_ts` que já calcula os totais. `/api/sources` lê a coluna (`coalesce(s.last_line, <consulta por max(id)>)`) em vez de procurar o último registro a cada pedido: 516 ms → 1,5 ms com 3,47 milhões de registros. **Migração 6→7:** transacional (`BEGIN IMMEDIATE`) e idempotente; adiciona a coluna se faltar e preenche só as linhas NULL com `db.LAST_LINE_SQL` (`SELECT e.line_no + e.nlines - 1 FROM entry e WHERE e.id = (SELECT max(x.id) FROM entry x WHERE x.source_id = source.id)`, sem B-tree temporária). Não reindexa (94 ms no caso de 3,47 milhões). Um caso v6 aberto só para leitura pelo servidor, antes de qualquer escrita, usa essa consulta como fallback (cerca de 100 ms nesse caso) até a primeira escrita (ingestão, watch, marcador ou regra de destaque) migrá-lo. A próxima migração livre é a 8.
+
 
 Como cada requisito fica representado:
 - **Linha física × registro × continuação**: `entry` é o registro; `msg` é a linha do cabeçalho; `entry_body.cont` guarda as continuações (só existe se houver); `line_no`/`nlines`/`byte_off` localizam as linhas físicas. Registro incompleto no fim do arquivo (ERS copia o arquivo em uso) recebe `flags & 1`.
@@ -1380,3 +1384,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-13 | ROADMAP 9.5 (issue #102): visões encadeadas, só front-end (`views-stack-model.js`, `views-stack.js`, `views-stack.css`); composição AND na raiz do filtro existente, sem rota nem esquema novos (seção 10.6) | Sonnet |
 | 2026-10-13 | Tarefa 9.13 (issue #110): alertas locais no `watch`: regras em `<pasta de dados>/alerts.toml` (`store/alerts.py`, sem migração de esquema; tipos `match`, `threshold`, `open_operation`), avaliação por ciclo sobre `entry.id > baseline`, evento SSE `alert`, rotas `/api/alerts/rules` e `/api/alerts/history`, painel e banner com notificação opcional do navegador (seção 10.7) | Sonnet |
 | 2026-10-13 | 9.6 (#103, agregação declarativa): `store/aggregate.py` (pedido JSON com dimensões, medidas e consultas ao pack por lista de permissão, SQL parametrizado, percentis exatos por posto em SQL padrão, política de tempo do `distinct` com amostra direta também para eventos, `408 aggregate_timeout` com `estimated_rows`), rota `POST /api/entries/aggregate` (JSON ou CSV, `report/aggexport.py`), folhas `event_name` e `event_kind` do filtro, painel "Aggregate" (seção 10.8) | Opus |
+| 2026-10-14 | UI-02 (#142): `source.last_line` (esquema 7, migração 6→7 sem reindexar) gravada ao fim de cada lote de indexação; `/api/sources` deixa de varrer `entry` (516 ms → 1,5 ms com 3,47 milhões de registros); fallback por `max(id)` em casos v6 abertos só para leitura | Opus |
