@@ -35,6 +35,15 @@ def test_web_assets_never_assign_inner_html_or_use_cdn():
         assert not re.search(r"https?://", text), path
 
 
+def test_web_modules_never_create_stylesheet_links():
+    # Every stylesheet is listed in index.html (no late injection, no style recalculation after first paint).
+    pattern = re.compile(
+        r"createElement\(\s*[\"']link[\"']\s*\)|rel\s*=\s*[\"']stylesheet[\"']|\blink\[rel|ensureStylesheet"
+    )
+    for path in sorted((ROOT / "src/dmslog/web/js").glob("*.js")):
+        assert not pattern.search(path.read_text(encoding="utf-8")), path
+
+
 def test_package_never_binds_outside_loopback(monkeypatch):
     from dmslog.server.app import DmslogServer
 
