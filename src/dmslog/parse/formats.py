@@ -169,7 +169,7 @@ def _to_id(raw: bytes | None, base: int) -> int | None:
         value = int(raw, base)
     except ValueError:
         return None
-    return value if value <= MAX_ID else None
+    return value if 0 <= value <= MAX_ID else None  # ids are never negative; SQLite integers are 64-bit
 
 
 # --------------------------------------------------------------------------- loading
@@ -208,13 +208,13 @@ def _compile_one(table: Mapping[str, Any], where: str) -> GenericEnvelope:
     where = f"envelope {name!r}"
     pattern = _compile_header(table.get("header"), where)
     tid_base = table.get("tid_base", 10)
-    if tid_base not in (10, 16) or isinstance(tid_base, bool):
+    if type(tid_base) is not int or tid_base not in (10, 16):
         raise EnvelopeConfigError(f"{where}: 'tid_base' must be 10 or 16")
     min_lines = table.get("min_lines", DEFAULT_MIN_LINES)
-    if not isinstance(min_lines, int) or isinstance(min_lines, bool) or not 1 <= min_lines <= 50:
+    if type(min_lines) is not int or not 1 <= min_lines <= 50:
         raise EnvelopeConfigError(f"{where}: 'min_lines' must be an integer from 1 to 50")
     min_ratio = table.get("min_ratio", DEFAULT_MIN_RATIO)
-    if not isinstance(min_ratio, (int, float)) or isinstance(min_ratio, bool) or not 0 <= min_ratio <= 1:
+    if type(min_ratio) not in (int, float) or not 0 <= min_ratio <= 1:
         raise EnvelopeConfigError(f"{where}: 'min_ratio' must be a number from 0 to 1")
     description = table.get("description", "")
     if not isinstance(description, str):
@@ -247,6 +247,7 @@ def _compile_header(source: Any, where: str) -> re.Pattern[bytes]:
     except TemplateError as exc:
         raise EnvelopeConfigError(f"{where}: {exc.detail}") from None
     _check_prefix_only(source, where)
+    _check_deterministic(source, where)
     groups = set(rx.groupindex)
     missing = [g for g in _TS_GROUPS if g not in groups]
     if missing:
@@ -256,7 +257,10 @@ def _compile_header(source: Any, where: str) -> re.Pattern[bytes]:
         raise EnvelopeConfigError(f"{where}: unknown named groups {sorted(extra)}")
     # ``match(buf, pos, endpos)`` is already anchored at ``pos``; a literal ``^`` would only match at
     # the real start of ``buf`` (never after a BOM or in the middle of a chunk), so it is dropped.
-    return re.compile(source[1:].encode("ascii"))
+    try:  # a few escapes (\\u, \\U, \\N{...}) exist only in str patterns
+        return re.compile(source[1:].encode("ascii"))
+    except re.error as exc:
+        raise EnvelopeConfigError(f"{where}: 'header' does not compile as a bytes regex: {exc}") from None
 
 
 def _check_prefix_only(source: str, where: str) -> None:
@@ -284,14 +288,78 @@ def _check_prefix_only(source: str, where: str) -> None:
     walk(sre_parser.parse(source, 0).data, True)
 
 
+def _check_deterministic(source: str, where: str) -> None:
+    """Prefix contract by structure: every choice of the header regex is decided by the next character.
+
+    A variable repeat (``x{m,n}`` with m < n, ``x?``, ``x*``) must not be able to start what follows it,
+    and the alternatives of a ``|`` must start with different characters. What follows the end of the
+    header is any text, so a variable repeat may not end the header. Then the regex never needs a
+    character after its match to decide where the match ends: appending text to a line can neither
+    move the end of the header nor change a group (``(?P<process>[A-Z: ]{1,40}): `` is rejected:
+    ``SVC: Z: `` would extend it). Sets come from the str parse, a superset of the bytes semantics.
+    """
+    from re import _constants as sre  # type: ignore[attr-defined]
+    from re import _parser as sre_parser  # type: ignore[attr-defined]
+
+    from .templates import _ALL, _EMPTY, _atom_set, _cs, _cs_overlap, _Unsafe
+
+    def union(a: Any, b: Any) -> Any:
+        return _cs((*a, *b))
+
+    def seq(items: Any, follow: Any) -> Any:
+        """First characters of ``items`` followed by ``follow`` (checking every choice inside)."""
+        first = follow
+        for op, av in reversed(items):
+            first = node(op, av, first)
+        return first
+
+    def node(op: Any, av: Any, follow: Any) -> Any:
+        try:
+            atom = _atom_set(op, av)
+        except _Unsafe as exc:
+            raise EnvelopeConfigError(f"{where}: {exc}") from None
+        if atom is not None:
+            return atom
+        if op is sre.AT:
+            return follow  # the leading '^' (others are rejected by _check_prefix_only)
+        if op is sre.SUBPATTERN:
+            return seq(av[-1], follow)
+        if op in (sre.MAX_REPEAT, sre.MIN_REPEAT):
+            lo, hi, body = av
+            body_first = seq(body, _EMPTY)
+            if lo != hi:
+                if _cs_overlap(body_first, follow):
+                    raise EnvelopeConfigError(
+                        f"{where}: a variable repeat in 'header' may also match what follows it (or ends"
+                        " the header); appended text could then change the header"
+                    )
+                seq(body, union(body_first, follow))
+            return union(body_first, follow) if lo == 0 else body_first
+        if op is sre.BRANCH:
+            firsts = [seq(alt, follow) for alt in av[1]]
+            for i, a in enumerate(firsts):
+                for b in firsts[i + 1 :]:
+                    if _cs_overlap(a, b):
+                        raise EnvelopeConfigError(
+                            f"{where}: alternatives in 'header' must start with different characters"
+                        )
+            out = _EMPTY
+            for f in firsts:
+                out = union(out, f)
+            return out
+        raise EnvelopeConfigError(f"{where}: unsupported construct {op} in 'header'")
+
+    seq(sre_parser.parse(source, 0).data, _ALL)
+
+
 def _compile_levels(raw: Any, where: str) -> dict[bytes, int]:
     if not isinstance(raw, dict):
         raise EnvelopeConfigError(f"{where}: 'levels' must be a table")
     merged = dict(DEFAULT_LEVELS)
     for token, target in raw.items():
-        if not _LEVEL_TOKEN_RE.fullmatch(token):
+        if not isinstance(token, str) or not _LEVEL_TOKEN_RE.fullmatch(token):
             raise EnvelopeConfigError(f"{where}: invalid level token {token!r}")
-        if target not in _LEVEL_NAMES:
+        if not isinstance(target, str) or target not in _LEVEL_NAMES:
             raise EnvelopeConfigError(f"{where}: level {token!r} must map to one of {sorted(_LEVEL_NAMES)}")
         merged[token.upper()] = target
     return {token.encode("ascii"): _LEVEL_NAMES[target] for token, target in merged.items()}

@@ -297,6 +297,10 @@ scope = "optional"
 #                groups: year (4 digits), month, day, hour, minute, second; optional:
 #                ms (fraction, first 3 digits used), pid, tid, level, process.
 #                Not allowed: '.', '$', look-arounds, unnamed groups, nested repeats.
+#                Every choice must be decided by the next character: a variable repeat
+#                (x{m,n} with m<n, x?, an optional group) may not start like what follows
+#                it nor end the header; alternatives start with different characters.
+#                Put a separator at the END of an optional group: '(?:\[TID=n\] )?LEVEL'.
 #                The time is the local log time, as for the built-in envelopes.
 #   tid_base     10 (default) or 16
 #   levels       table {TOKEN = "ADMS level"} added to the defaults (DEBUG = DEBUGLOG,

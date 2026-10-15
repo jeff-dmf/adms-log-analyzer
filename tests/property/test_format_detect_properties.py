@@ -12,8 +12,15 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import HealthCheck, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
-from dmslog.parse.envelope import FALLBACK_ENVELOPES, PLAIN, detect_envelope, get_envelope  # noqa: E402
-from dmslog.parse.formats import ensure_registered, packaged_envelopes  # noqa: E402
+from dmslog.parse.envelope import (  # noqa: E402
+    ADMS,
+    FALLBACK_ENVELOPES,
+    OASERR,
+    PLAIN,
+    detect_envelope,
+    get_envelope,
+)
+from dmslog.parse.formats import compile_envelopes, ensure_registered, packaged_envelopes  # noqa: E402
 from dmslog.parse.records import RecordGrouper, parse_bytes  # noqa: E402
 
 MAIN = settings(
@@ -72,15 +79,58 @@ eol = st.sampled_from([b"\n", b"\r\n"])
 head = st.lists(st.tuples(any_line, eol), max_size=70).map(lambda ls: b"".join(a + b for a, b in ls))
 
 
+def detect_before_9_14(head: bytes, *, max_lines: int = 50):
+    """Frozen copy of ``detect_envelope`` as it was before 9.14 (main at b9ddd67): an oracle that does not
+    share code with the implementation under test. Registry order then: adms, oaserr (plain excluded)."""
+    lines = head.split(b"\n", max_lines)[:max_lines]
+    best = PLAIN
+    best_count = 0
+    for envelope in (ADMS, OASERR):
+        count = sum(1 for line in lines if envelope.match(line) is not None)
+        if count > best_count:
+            best, best_count = envelope, count
+    return best
+
+
 @MAIN
 @given(head)
 def test_builtin_detection_never_changes(data):
-    before = detect_envelope(data, fallbacks=False)
+    before = detect_before_9_14(data)
     after = detect_envelope(data)
+    assert detect_envelope(data, fallbacks=False) is before
     if before is not PLAIN:
         assert after is before
     else:
         assert after is PLAIN or after.name in FALLBACK_ENVELOPES
+
+
+@MAIN
+@given(st.integers(1, 20), st.lists(st.tuples(generic_line, eol), max_size=30), st.randoms())
+def test_ties_between_builtins_go_to_adms_as_before(n, extra, rnd):
+    """Equal counts of adms and oaserr headers (plus any generic lines): adms, registered first, wins."""
+    lines = [_adms((2026, 1, 2, 3, 4), b"", b"a")] * n + [_oaserr((2026, 1, 2, 3, 4), b"", b"b")] * n
+    lines += [a for a, _ in extra]
+    rnd.shuffle(lines)
+    data = b"\n".join(lines[:50]) + b"\n"
+    expected = detect_before_9_14(data)
+    assert detect_envelope(data) is expected
+    if len(lines) <= 50:
+        assert expected is ADMS
+
+
+@pytest.mark.parametrize(
+    ("adms", "oaserr", "expected"),
+    [(1, 1, "adms"), (2, 2, "adms"), (1, 2, "oaserr"), (3, 2, "adms"), (0, 1, "oaserr"), (0, 0, "plain")],
+)
+def test_explicit_builtin_ties_and_majorities(adms, oaserr, expected):
+    data = b"".join(
+        [_adms((2026, 1, 2, 3, 4), b"", b"a") + b"\n"] * adms
+        + [_oaserr((2026, 1, 2, 3, 4), b"", b"b") + b"\n"] * oaserr
+        + [_dmy((2026, 1, 2, 3, 4), b"INFO ", b"g") + b"\n"] * 3
+    )
+    assert detect_before_9_14(data).name == detect_envelope(data, fallbacks=False).name
+    got = detect_envelope(data).name
+    assert got == (expected if expected != "plain" else "dmy_tid_level")
 
 
 @MAIN
@@ -112,3 +162,38 @@ def test_generic_chunked_parse_equals_whole_parse_and_reconstructs(lines, data):
 def test_generic_header_decision_depends_only_on_prefix(line, suffix):
     for env in GENERIC:
         assert env.match(line + suffix) == env.match(line)
+
+
+_TS = r"^(?P<year>\d{4})-(?P<month>\d\d)-(?P<day>\d\d) (?P<hour>\d\d):(?P<minute>\d\d):(?P<second>\d\d)"
+# Accepted headers with optional groups (each would be rejected if it were prefix-unstable).
+ACCEPTED = compile_envelopes(
+    {
+        "envelope": [
+            {
+                "name": "o1",
+                "header": _TS + r"(?:\.(?P<ms>\d{1,6}))? (?:\[(?P<tid>\d{1,8})\] )?(?P<level>[A-Z]{1,8}) \| ",
+                "examples": ["2026-10-15 01:02:03 INFO | x"],
+            },
+            {
+                "name": "o2",
+                "header": _TS + r" (?:(?P<process>[A-Za-z]{1,20})_(?P<pid>\d{1,8}) )?- ",
+                "examples": ["2026-10-15 01:02:03 - x", "2026-10-15 01:02:03 Svc_12 - x"],
+            },
+            {
+                "name": "o3",
+                "header": _TS + r" (?P<level>INFO|WARN|ERROR) ?: ",
+                "examples": ["2026-10-15 01:02:03 INFO: x", "2026-10-15 01:02:03 WARN : x"],
+            },
+        ]
+    }
+)
+header_alphabet = st.sampled_from(list(b"0123456789 .:_-|[]AINFORMTWSvcx\t")).map(lambda c: bytes([c]))
+header_text = st.lists(header_alphabet, max_size=25).map(b"".join)
+
+
+@MAIN
+@given(st.integers(0, 2), header_text, header_text)
+def test_accepted_headers_with_optional_groups_are_prefix_stable(which, body, suffix):
+    env = ACCEPTED[which]
+    line = b"2026-10-15 01:02:03" + body
+    assert env.match(line + suffix) == env.match(line) or env.match(line) is None

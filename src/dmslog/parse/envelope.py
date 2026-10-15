@@ -247,6 +247,14 @@ def is_known_envelope(name: str) -> bool:
     return True
 
 
+def envelope_or_plain(name: str) -> Envelope:
+    """``get_envelope(name)``, or ``plain`` when no envelope has that name (rule hint of an empty file)."""
+    try:
+        return get_envelope(name)
+    except KeyError:
+        return PLAIN
+
+
 def detect_envelope(head: bytes, *, max_lines: int = 50, fallbacks: bool = True) -> Envelope:
     """Pick the envelope of a file from its first bytes.
 

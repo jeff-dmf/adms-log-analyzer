@@ -203,6 +203,12 @@ def _compile_rule(
     family = raw.get("family")
     if not isinstance(family, str) or not family:
         raise FamiliesConfigError(f"{where}: 'family' is required")
+    for key in ("envelope", "scope", "layout", "process", "pattern"):
+        if key in raw and not isinstance(raw[key], str):
+            raise FamiliesConfigError(f"{where}: {key!r} must be a string")
+    for key in ("anchor", "indexable"):
+        if key in raw and not isinstance(raw[key], bool):
+            raise FamiliesConfigError(f"{where}: {key!r} must be true or false")
     envelope = raw.get("envelope", "plain")
     if envelope not in envelopes:
         raise FamiliesConfigError(f"{where}: envelope must be one of {envelopes}, got {envelope!r}")
@@ -214,6 +220,8 @@ def _compile_rule(
         if name not in layouts:
             raise FamiliesConfigError(f"{where}: unknown layout {name!r}")
         template = layouts[name]
+        if not isinstance(template, str):
+            raise FamiliesConfigError(f"{where}: layout {name!r} must be a string")
         if "{process}" in template:
             if "process" not in raw:
                 raise FamiliesConfigError(f"{where}: layout {name!r} needs 'process'")

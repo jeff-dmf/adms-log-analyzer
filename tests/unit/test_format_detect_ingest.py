@@ -120,3 +120,35 @@ def test_removed_generic_envelope_reindexes_instead_of_failing(tmp_path, db, mon
     monkeypatch.setattr(pipeline, "is_known_envelope", lambda name: name != "dmy_tid_level")
     result = run_ingest(db, root, IngestOptions(scope="all"))
     assert [d.action for d in result.details] == ["reindex"]
+
+
+def timed_dmy_log(n: int) -> bytes:
+    lines = [f"15.10.2026 13:{i // 60:02d}:{i % 60:02d}.000 [TID=1] [INFO] - item {i}" for i in range(n)]
+    return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+
+
+def test_partial_state_with_a_removed_envelope_is_abandoned_and_indexed_again(tmp_path, db, monkeypatch):
+    """Review of PR #196: the completion of a partial open resolved ``state.envelope`` blindly."""
+    from dmslog.ingest.partial import FirstPass, load_state, pending_work
+    from dmslog.ingest.pipeline import resume_pending
+    from dmslog.parse.envelope import FALLBACK_ENVELOPES, parse_ts
+    from dmslog.parse.formats import ensure_registered
+
+    member = "dnaApp_zone1/SVC/WfmAdapter_1111.log"  # default scope
+    root = write_folder(tmp_path / "Log", {member: timed_dmy_log(240)})
+    first = FirstPass(
+        ts_from=parse_ts(b"2026-10-15 13:02:00", b"000"),
+        ts_to=parse_ts(b"2026-10-15 13:03:00", b"000"),
+        defer_rest=True,
+    )
+    run_ingest(db, root, IngestOptions(first=first, chunk_size=700, batch_bytes=2000))
+    [(sid, envelope)] = db.execute("SELECT id, envelope FROM source").fetchall()
+    assert envelope == "dmy_tid_level"
+    assert load_state(db, sid).envelope == "dmy_tid_level"
+    ensure_registered()
+    monkeypatch.delitem(FALLBACK_ENVELOPES, "dmy_tid_level")  # gone from families.toml
+    resume_pending(db, IngestOptions(chunk_size=700, batch_bytes=2000))
+    assert load_state(db, sid) is None
+    assert pending_work(db) == []
+    assert db.execute("SELECT status, envelope FROM source").fetchone() == ("ready", "plain")
+    assert db.execute("SELECT count(*) FROM entry").fetchone()[0] == 240

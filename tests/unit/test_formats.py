@@ -16,6 +16,7 @@ from dmslog.parse.envelope import (
     LEVELS,
     PLAIN,
     detect_envelope,
+    envelope_or_plain,
     get_envelope,
     is_known_envelope,
     register_fallback_envelope,
@@ -247,13 +248,98 @@ def test_fixture_logs_keep_their_detection():
                 "header": TS_GROUPS + r" (?P<process>[A-Za-z: ]{1,40}): ",
                 "examples": ["2026-10-15 01:02:03 Svc: x"],
             },
-            "changes when text is appended",
+            "may also match what follows",
         ),
+        # review of PR #196: the probes accepted this one; appending "Z: " moved the end of the header
+        (
+            {
+                "header": TS_GROUPS + r" (?P<process>[A-Z: ]{1,40}): ",
+                "examples": ["2026-10-15 01:02:03 SVC: "],
+            },
+            "may also match what follows",
+        ),
+        # a variable repeat at the end of the header can always grow with appended text
+        ({"header": TS_GROUPS + r" (?P<level>[A-Z]{1,8})"}, "may also match what follows"),
+        ({"header": TS_GROUPS + r" \[(?P<pid>\d{1,9})\]\d{0,3}"}, "may also match what follows"),
+        # optional group followed by something it can start with
+        ({"header": TS_GROUPS + r"(?:\.(?P<ms>\d{1,6}))? ?(?P<level>[A-Z]{1,8}) \| "}, None),
+        # the separator goes at the end of an optional group, not at its start (both start with " ")
+        ({"header": TS_GROUPS + r" (?:(?P<pid>\d{1,6}) )?(?P<level>[A-Z]{1,8}) \| "}, None),
+        (
+            {"header": TS_GROUPS + r"(?: (?P<pid>\d{1,6}))? (?P<level>[A-Z]{1,8}) \| "},
+            "may also match what follows",
+        ),
+        (
+            {"header": TS_GROUPS + r" (?P<pid>\d{1,6})? ?(?P<tid>\d{1,6}) (?P<level>[A-Z]{1,8}) \| "},
+            "may also match what follows",
+        ),
+        # alternatives that start alike: the choice depends on what comes later
+        (
+            {
+                "header": TS_GROUPS + r" (?P<level>INFO|INFORMATION) \| ",
+                "examples": ["2026-10-15 01:02:03 INFO | x"],
+            },
+            None,
+        ),  # common prefix factored out by the parser: decided by the next character
+        ({"header": TS_GROUPS + r" (?:I|[HI]X)(?P<level>[A-Z]{1,8}) \| "}, "alternatives"),
+        # wrongly typed values must be configuration errors, never TypeError later (review of PR #196)
+        ({"tid_base": 10.0}, "tid_base"),
+        ({"tid_base": "16"}, "tid_base"),
+        ({"min_lines": 2.0}, "min_lines"),
+        ({"min_ratio": "0.5"}, "min_ratio"),
+        ({"levels": {"NOTE": ["INFO"]}}, "must map"),
+        ({"levels": {"NOTE": 7}}, "must map"),
+        ({"name": 3}, "snake_case"),
+        ({"header": ["^x"]}, "non-empty string"),
+        ({"examples": "2026-10-15 01:02:03 INFO | x"}, "non-empty list"),
+        ({"examples": [3]}, "non-empty list"),
+        # valid as a str regex, invalid as a bytes regex
+        ({"header": TS_GROUPS + r" \u0041(?P<level>[A-Z]{1,8}) \| "}, "does not compile"),
+        ({"header": TS_GROUPS + r" \N{LATIN CAPITAL LETTER A}(?P<level>[A-Z]{1,8}) \| "}, "does not compile"),
     ],
 )
 def test_invalid_envelope_tables_are_rejected(over, message):
+    if message is None:  # control: an unambiguous header with optional groups is accepted
+        compile_envelopes({"envelope": [_table(**over)]})
+        return
     with pytest.raises(EnvelopeConfigError, match=message):
         compile_envelopes({"envelope": [_table(**over)]})
+
+
+def test_tid_absent_from_the_examples_still_parses_later_headers():
+    """Review of PR #196: with a float ``tid_base`` the examples (no TID) passed and a later TID raised."""
+    env = _one(
+        header=TS_GROUPS + r" (?:\[(?P<tid>[0-9a-f]{1,8})\] )?(?P<level>[A-Z]{1,8}) \| ",
+        tid_base=16,
+    )
+    assert env.match(b"2026-10-15 01:02:03 [1f] INFO | x").tid == 31
+    assert env.match(b"2026-10-15 01:02:03 INFO | x").tid is None
+
+
+def test_negative_or_huge_ids_are_dropped():
+    """Review of PR #196: a signed group gave ids SQLite cannot bind (OverflowError)."""
+    env = _one(
+        header=TS_GROUPS + r" (?P<pid>-?\d{1,30}) (?P<level>[A-Z]{1,8}) \| ",
+        examples=["2026-10-15 01:02:03 12 INFO | x"],
+    )
+    assert env.match(b"2026-10-15 01:02:03 12 INFO | x").pid == 12
+    assert env.match(b"2026-10-15 01:02:03 -5 INFO | x").pid is None
+    assert env.match(b"2026-10-15 01:02:03 -" + b"9" * 30 + b" INFO | x").pid is None
+    assert env.match(b"2026-10-15 01:02:03 " + b"9" * 30 + b" INFO | x").pid is None
+
+
+def test_rule_values_with_wrong_types_are_configuration_errors():
+    for bad in ({"anchor": "yes"}, {"indexable": 1}, {"pattern": ["x"]}, {"layout": ["single"]},
+                {"process": 3, "layout": "single"}, {"family": 3}):  # fmt: skip
+        data = _packaged_data()
+        rule = {"family": "TOOL", "pattern": r"tool\.log$", **bad}
+        data["rule"] = [rule, *data["rule"]]
+        with pytest.raises(FamiliesConfigError):
+            RuleSet.from_dict(data)
+    data = _packaged_data()
+    data["layouts"] = {**data["layouts"], "single": 3}
+    with pytest.raises(FamiliesConfigError):
+        RuleSet.from_dict(data)
 
 
 def test_duplicate_and_malformed_envelope_lists():
@@ -314,3 +400,9 @@ def test_envelope_tables_do_not_change_path_classification():
     ]
     for path in paths:
         assert with_envelopes.classify(path) == without.classify(path), path
+
+
+def test_envelope_or_plain_never_raises():
+    assert envelope_or_plain("adms") is ADMS
+    assert envelope_or_plain("ymd_colon").name == "ymd_colon"
+    assert envelope_or_plain("removed_generic") is PLAIN

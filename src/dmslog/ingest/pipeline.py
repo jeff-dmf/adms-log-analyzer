@@ -79,7 +79,7 @@ from dmslog.ingest.reader import (
 )
 from dmslog.knowledge.installation import InstallationConfig, read_installation
 from dmslog.knowledge.registry import RegistryError
-from dmslog.parse.envelope import detect_envelope, get_envelope, is_known_envelope
+from dmslog.parse.envelope import detect_envelope, envelope_or_plain, get_envelope, is_known_envelope
 from dmslog.parse.records import DEFAULT_MAX_RECORD_BYTES, RecordGrouper, RecordTooLargeError
 from dmslog.parse.severity import generic_severity, infer_severity
 from dmslog.parse.templates import Catalog, load_catalog
@@ -921,7 +921,7 @@ class _Run:
         if grouper is None:  # source shorter than the detection size (possibly empty)
             data = b"".join(pending)
             grouper = RecordGrouper(
-                detect_envelope(data) if data else get_envelope(info.envelope), max_record_bytes=max_rec
+                detect_envelope(data) if data else envelope_or_plain(info.envelope), max_record_bytes=max_rec
             )
             head.update(data)
             tail.update(data)
@@ -1075,7 +1075,10 @@ class _Run:
         return _DONE
 
     def _partial_valid(self, info: SourceInfo, state: PartialState, reader: SourceReader) -> bool:
-        """The source still has the content its window came from (same member, or a file that only grew)."""
+        """The source still has the content its window came from (same member, or a file that only grew)
+        and the envelope it was parsed with still exists (an [[envelope]] removed from families.toml)."""
+        if not is_known_envelope(state.envelope):
+            return False
         if info.container_kind == "zip":
             return info.zip_crc == state.zip_crc and info.size == state.raw_size
         size = self._file_path(info).stat().st_size
@@ -1686,7 +1689,7 @@ def preview_sources(
             if info.indexable and not info.limit_violation:
                 try:
                     head = reader.read_head(info, PREVIEW_PROBE_BYTES)
-                    envelope = detect_envelope(head) if head else get_envelope(info.envelope)
+                    envelope = detect_envelope(head) if head else envelope_or_plain(info.envelope)
                     if head and head.rfind(b"\n") > 0:
                         head = head[: head.rfind(b"\n") + 1]
                     times = _timed_headers(head, envelope)
