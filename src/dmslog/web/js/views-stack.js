@@ -1,8 +1,10 @@
-// Chained views UI (ROADMAP 9.5): breadcrumbs above the grid, back/forward, "Narrow this view",
-// rename, and "Show in parent" / "Show in root" for the selected record. The model is
-// views-stack-model.js; everything written to the page is text (names may contain user text).
+// Chained views UI (ROADMAP 9.5, reshaped by UI-18): the left and right ends of the filter strip. Left: Back/Forward
+// icon buttons and the trail (nav > ol, the active view with aria-current="page"). Right: "Narrow this view" and the
+// "..." menu (Rename, Show in parent, Show in root). The chips and the "Filters" popover are filter-chips.js. The
+// model is views-stack-model.js; everything written to the page is text (names may contain user text).
 import { ignoresShortcut } from "./filters.js";
 import { S, format, pluralKey } from "./strings.js";
+import { createMenu } from "./ui-menu.js";
 import { MAX_NAME, loadStack, saveStack, viewsKey } from "./views-stack-model.js";
 
 function element(tag, className, text) {
@@ -25,25 +27,23 @@ function button(className, text, title) {
   return node;
 }
 
-// options: parent, beforePanel (node the bar goes before),
+// options: trailHost (left end of the strip), actionsHost (right end),
 //   stack (createViewsStack), getCase, restoreState(state), applyView() -> Promise, getSelectedRow(),
-//   reveal(row) -> Promise, showMessage(text, isError), storage (sessionStorage or null).
+//   reveal(row) -> Promise, showMessage(text, isError), storage (sessionStorage or null),
+//   createMenu (tests only: a stand-in for ui-menu.js createMenu),
+//   group (optional, popover-group.js: one popover open at a time with the strip's popovers).
 export function mountViewsStack(options) {
   const { stack, getCase, restoreState, applyView, getSelectedRow, reveal, showMessage } = options;
   const storage = options.storage || null;
 
-  const bar = element("div", "vs-bar");
-  bar.id = "views-stack-bar";
-  bar.setAttribute("role", "group");
-  bar.setAttribute("aria-label", S.vsBarLabel);
-  const backButton = button("vs-back", S.vsBack, S.vsBackTitle);
-  const forwardButton = button("vs-forward", S.vsForward, S.vsForwardTitle);
+  const backButton = button("vs-back ui-button is-ghost", "\u2190", S.vsBackTitle);
+  backButton.setAttribute("aria-label", S.vsBack);
+  const forwardButton = button("vs-forward ui-button is-ghost", "\u2192", S.vsForwardTitle);
+  forwardButton.setAttribute("aria-label", S.vsForward);
   const crumbs = element("nav", "vs-crumbs");
   crumbs.setAttribute("aria-label", S.vsCrumbsLabel);
-  const narrowButton = button("vs-narrow", S.vsNarrow, S.vsNarrowTitle);
-  const renameButton = button("vs-rename", S.vsRename);
-  const parentButton = button("vs-show-parent", S.vsShowParent);
-  const rootButton = button("vs-show-root", S.vsShowRoot);
+  const trail = element("ol", "vs-trail");
+  crumbs.appendChild(trail);
   const renameForm = element("form", "vs-rename-form");
   renameForm.hidden = true;
   const renameInput = element("input", "vs-rename-input");
@@ -57,31 +57,28 @@ export function mountViewsStack(options) {
   renameOk.type = "submit";
   const renameCancel = button("vs-rename-cancel", S.vsRenameCancel);
   renameForm.append(renameLabel, renameInput, renameOk, renameCancel);
-  bar.append(backButton, forwardButton, crumbs, narrowButton, renameButton, parentButton, rootButton, renameForm);
-  options.parent.insertBefore(bar, options.beforePanel || null);
+  const narrowButton = button("vs-narrow ui-button is-ghost", S.vsNarrow, S.vsNarrowTitle);
+  const moreButton = button("vs-more ui-button is-ghost", "\u22ef", S.vsMoreTitle);
+  moreButton.setAttribute("aria-label", S.vsMoreLabel);
+  options.trailHost.append(backButton, forwardButton, crumbs, renameForm);
+  options.actionsHost.append(narrowButton, moreButton);
 
   let seq = 0; // a newer view change makes a pending "show record" obsolete
 
   function paint() {
-    crumbs.textContent = "";
-    const list = stack.crumbs();
-    list.forEach((crumb, i) => {
-      if (i > 0) {
-        const sep = element("span", "vs-sep", "›");
-        sep.setAttribute("aria-hidden", "true");
-        crumbs.appendChild(sep);
-      }
+    trail.textContent = "";
+    for (const crumb of stack.crumbs()) {
+      const entry = element("li", "vs-item");
       const item = button("vs-crumb" + (crumb.active ? " is-active" : "") + (crumb.future ? " is-future" : ""), crumb.name);
       if (crumb.active) {
-        item.setAttribute("aria-current", "true");
+        item.setAttribute("aria-current", "page");
       }
       item.addEventListener("click", () => goTo(crumb.index));
-      crumbs.appendChild(item);
-    });
+      entry.appendChild(item);
+      trail.appendChild(entry);
+    }
     backButton.disabled = !stack.canBack();
     forwardButton.disabled = !stack.canForward();
-    parentButton.disabled = stack.isRoot;
-    rootButton.disabled = stack.isRoot;
   }
 
   function persist() {
@@ -167,17 +164,34 @@ export function mountViewsStack(options) {
     }
   }
 
+  const rename = () => {
+    renameForm.hidden = false;
+    renameInput.value = stack.name(stack.index);
+    renameInput.focus();
+  };
   backButton.addEventListener("click", back);
   forwardButton.addEventListener("click", forward);
   narrowButton.addEventListener("click", narrow);
-  parentButton.addEventListener("click", () => showSelected(stack.index - 1));
-  rootButton.addEventListener("click", () => showSelected(0));
-  renameButton.addEventListener("click", () => {
-    renameForm.hidden = !renameForm.hidden;
-    if (!renameForm.hidden) {
-      renameInput.value = stack.name(stack.index);
-      renameInput.focus();
-    }
+  let menu = null;
+  const member = options.group ? options.group.join("views-menu", () => menu && menu.close(false)) : null;
+  menu = (options.createMenu || createMenu)({
+    trigger: moreButton,
+    doc: document,
+    label: S.vsMoreLabel,
+    onOpenChange: (isOpen) => {
+      if (member) {
+        if (isOpen) {
+          member.opened(); // closes the Filters or "+N more" popover if one is open
+        } else {
+          member.closed();
+        }
+      }
+    },
+    getItems: () => [
+      { id: "rename", label: S.vsRename, run: rename },
+      { id: "show-parent", label: S.vsShowParent, disabled: stack.isRoot, title: stack.isRoot ? S.vsAtRoot : null, run: () => showSelected(stack.index - 1) },
+      { id: "show-root", label: S.vsShowRoot, disabled: stack.isRoot, title: stack.isRoot ? S.vsAtRoot : null, run: () => showSelected(0) },
+    ],
   });
   renameForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -215,6 +229,7 @@ export function mountViewsStack(options) {
     back,
     forward,
     goTo,
+    rename,
     showInParent: () => showSelected(stack.index - 1),
     showInRoot: () => showSelected(0),
     // New case: the stack starts from the one saved for it in this tab, if any. Returns the live

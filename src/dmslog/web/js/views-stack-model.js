@@ -3,13 +3,13 @@
 // filter bar, toggles and the filter tree); the effective filter sent to the server is the AND of
 // the own filter of every view from the root down to the active one. Nothing here reaches the
 // server: the composition is an ordinary {"and": [...]} filter.
-import { andFilters } from "./filters.js";
+import { andFilters, topNodes } from "./filters.js";
+import { chipLabel } from "./filter-chips-model.js";
 import { MAX_DEPTH as MAX_TREE_DEPTH, MAX_LIST, MAX_NODES, MAX_TEXT } from "./filter-tree-model.js";
 import { S, format } from "./strings.js";
 
 export const MAX_DEPTH = 10; // views in the stack, root included
 export const MAX_NAME = 40;
-const MAX_VALUE_CHARS = 24;
 const STORAGE_PREFIX = "dmslog.viewsStack.";
 
 export function emptyState() {
@@ -22,88 +22,31 @@ export function emptyState() {
   };
 }
 
-function clip(value, max = MAX_VALUE_CHARS) {
-  const text = String(value);
-  return text.length > max ? text.slice(0, max - 1) + "…" : text;
-}
-
-function list(arg) {
-  return (Array.isArray(arg) ? arg : [arg]).map((v) => clip(v)).join(", ");
-}
-
 function isObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
-// Short automatic name of one filter node ("tid = 12", "key gid = ..."). Only values the user chose
-// (or the filter holds) appear; null when the node has no short form.
-export function describeNode(node) {
-  if (!isObject(node)) {
-    return null;
-  }
-  const keys = Object.keys(node);
-  if (keys.length !== 1) {
-    return null;
-  }
-  const kind = keys[0];
-  const arg = node[kind];
-  switch (kind) {
-    case "tid":
-    case "pid":
-    case "event":
-    case "source":
-    case "collection":
-      return kind + (Array.isArray(arg) && arg.length > 1 ? " in " : " = ") + list(arg);
-    case "tpl":
-      return "template " + (Array.isArray(arg) && arg.length > 1 ? "in " : "= ") + list(arg);
-    case "sev":
-    case "level": {
-      if (isObject(arg) && Object.keys(arg).length === 1) {
-        const [op] = Object.keys(arg);
-        const sign = { le: "<=", ge: ">=", eq: "=", ne: "!=", lt: "<", gt: ">" }[op];
-        return sign ? kind + " " + sign + " " + clip(arg[op]) : kind;
-      }
-      return kind + " " + (isObject(arg) ? "range" : "= " + list(arg));
-    }
-    case "ts":
-      return S.vsNameTimeRange;
-    case "text":
-      return isObject(arg) && typeof arg.fts === "string" ? S.vsNameText + " " + JSON.stringify(clip(arg.fts)) : S.vsNameText;
-    case "key":
-      if (isObject(arg) && typeof arg.type === "string") {
-        if ("eq" in arg) {
-          return "key " + clip(arg.type) + " = " + clip(arg.eq);
-        }
-        return "key " + clip(arg.type) + (Array.isArray(arg.in) ? " in " + list(arg.in) : "");
-      }
-      return "key";
-    case "field":
-      return isObject(arg) && typeof arg.name === "string"
-        ? clip(arg.name) + " = " + (arg.eq === null || arg.eq === undefined ? "null" : clip(arg.eq))
-        : "field";
-    case "not": {
-      const inner = describeNode(arg);
-      return inner ? "not " + inner : "not …";
-    }
-    default:
-      return kind;
-  }
-}
+// Lookups for the names of the views when the caller has none (tests): ids and times as plain text.
+const PLAIN_LOOKUPS = {
+  sourceName: (id) => String(id),
+  collectionTag: (group) => String(group),
+  typeLabel: (id) => String(id),
+  formatTs: (ms) => String(ms),
+};
 
-// Name from the LAST top-level node of a filter, or null when the filter is empty.
-export function describeFilter(filter) {
+// Name from the LAST top-level node of a filter, or null when the filter is empty. The words are the chips' (the
+// shared labels of filter-chips-model.js, with the lookups of ui-contratos.md 4.1); a node the chips cannot name
+// is "filter".
+export function describeFilter(filter, lookups = PLAIN_LOOKUPS) {
   if (!isObject(filter)) {
     return null;
   }
-  const keys = Object.keys(filter);
-  let nodes = [filter];
-  if (keys.length === 1 && keys[0] === "and" && Array.isArray(filter.and)) {
-    nodes = filter.and;
-  }
+  const nodes = topNodes(filter).filter((n) => !(isObject(n) && Object.keys(n).length === 0));
   if (nodes.length === 0) {
     return null;
   }
-  return describeNode(nodes[nodes.length - 1]) || S.vsNameFilter;
+  const label = chipLabel(nodes[nodes.length - 1], lookups, S);
+  return label === null ? S.vsNameFilter : label.length > MAX_NAME ? label.slice(0, MAX_NAME - 1) + "…" : label;
 }
 
 export function sanitizeName(raw) {
@@ -182,7 +125,8 @@ function sanitizeState(raw) {
 
 // options: ownFilter(state) -> filter|null (the view's own conditions, without the sources),
 //          getLive() -> the live state of the active view, maxDepth.
-export function createViewsStack({ ownFilter, getLive, maxDepth = MAX_DEPTH }) {
+// lookups: {sourceName, collectionTag, typeLabel, formatTs} (getters are fine: read at each name).
+export function createViewsStack({ ownFilter, getLive, maxDepth = MAX_DEPTH, lookups = PLAIN_LOOKUPS }) {
   let nodes = [{ state: emptyState(), customName: "" }];
   let index = 0;
 
@@ -213,7 +157,7 @@ export function createViewsStack({ ownFilter, getLive, maxDepth = MAX_DEPTH }) {
       if (node.customName) {
         return node.customName;
       }
-      return describeFilter(filterOf(i)) || (i === 0 ? S.vsRootName : format(S.vsViewName, { n: i + 1 }));
+      return describeFilter(filterOf(i), lookups) || (i === 0 ? S.vsRootName : format(S.vsViewName, { n: i + 1 }));
     },
     // The ancestors' filter: what every request of the active view is ANDed with.
     parentsFilter() {

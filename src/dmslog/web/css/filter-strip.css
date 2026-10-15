@@ -1,0 +1,131 @@
+/* Filter strip (UI-18): one 30 px line above the grid. Left: back/forward and the trail of views. Then the state
+   ("Filtered" / "No filters"), the chips of the active view's filter and, on the right, Filters, Narrow and "...".
+   The record count is in the status bar (UI-13), not here. Colours come from tokens.css. */
+.filter-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  box-sizing: border-box;
+  height: var(--strip-height);
+  min-height: var(--strip-height);
+  margin: 2px 0 var(--space-2);
+  padding: 0 var(--space-3);
+  background: var(--surface-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.filter-strip [hidden] {
+  display: none !important; /* the chip and popover rules below set `display`, which would override [hidden] */
+}
+
+.filter-strip.is-filtered {
+  background: var(--filtered-bg);
+  color: var(--filtered-ink);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.fs-trail {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 45%;
+}
+
+.fs-state {
+  flex: none;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  white-space: nowrap;
+}
+
+.fs-state.is-none {
+  font-weight: normal;
+  color: var(--ink-muted);
+}
+
+/* The chips share the space between the state and the buttons; what does not fit hides behind "+N more". */
+.fs-chips {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 4px; /* GAP in filter-chips.js */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.fs-chips > * {
+  flex: none;
+}
+
+.fs-chips .ui-chip-label {
+  max-width: 24em;
+}
+
+.fs-more,
+.fs-tree {
+  padding: 0 var(--space-3);
+}
+
+.fs-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.fs-filters::after {
+  content: " \25be";
+}
+
+.fs-filters[aria-expanded="true"] {
+  background: var(--row-selected);
+}
+
+/* The filter form as a popover under the strip. */
+.filter-strip > #filter-form {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  min-height: 0;
+  width: max-content;
+  max-width: min(560px, 100%);
+  margin: 2px 0 0;
+  padding: var(--space-3);
+  background: var(--surface-overlay);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-overlay);
+}
+
+.fs-advanced {
+  flex: 1 0 100%;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.fs-advanced > summary {
+  cursor: pointer;
+}
+
+.fs-overflow {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: min(420px, 100%);
+  margin: 2px 0 0;
+  padding: var(--space-3);
+  background: var(--surface-overlay);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-overlay);
+}
