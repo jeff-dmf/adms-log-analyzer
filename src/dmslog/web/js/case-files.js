@@ -6,7 +6,6 @@ import {
   STATUS_WORKING, formatSize,
 } from "./case-files-model.js";
 import { setFieldError } from "./field-error.js";
-import { openFolderBrowser } from "./folder-browser.js";
 import { S, format, pluralKey } from "./strings.js";
 
 function el(tag, className, text) {
@@ -191,7 +190,14 @@ export class CaseFiles {
         }
         this.waiting = false;
         this.render();
-        const picked = await openFolderBrowser({ fs: this.fs, storage: this.storage });
+        // The folder browser is the rare fallback of the file picker: loaded when it is needed (UI-14).
+        let picked = null;
+        try {
+          const { openFolderBrowser } = await import("./folder-browser.js");
+          picked = await openFolderBrowser({ fs: this.fs, storage: this.storage });
+        } catch (err) {
+          state.addNotice("error", S.cfBrowserUnavailable);
+        }
         if (picked && picked.length > 0) {
           state.add(picked);
         }
