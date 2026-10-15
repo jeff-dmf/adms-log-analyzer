@@ -43,7 +43,7 @@ const loadFilterTree = () => Promise.all([import("./filter-tree.js"), import("./
 export function registerAppPanels(dock, deps) {
   const { api, derivedApi } = deps;
 
-  // The order of registration is the visual order of the hosts above the grid.
+  // The tabs of the dock appear in the order the panels are opened, not in the order they are registered here.
   dock.register({
     id: "filterTree",
     titleKey: "actFilterTree",

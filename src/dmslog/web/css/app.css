@@ -283,6 +283,7 @@ progress {
   min-height: calc(var(--row-height) * 8 + 20px); /* 8 rows + border + horizontal scrollbar */
   overflow-y: scroll;
   overflow-x: hidden;
+  overflow-anchor: none; /* the grid positions its own rows; anchoring would reset scrollTop when a dock resizes it */
   border: 1px solid var(--line);
   background: var(--surface-panel);
 }

@@ -15,7 +15,7 @@ import {
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { initTimeline } from "./timeline.js";
-import { createDock } from "./dock-legacy.js";
+import { createDock } from "./dock.js";
 import { COLUMNS, Grid } from "./grid.js";
 import { CollectionsPanel } from "./collections-panel.js";
 import {
@@ -146,8 +146,7 @@ function start() {
   const actions = createActionRegistry({ onError: (err) => showError(err), singleKeysOn: () => true });
   // Step 1 of the dock: it exists before the context that holds it; bind(ctx) is step 2.
   const dock = createDock({
-    root: byId("grid-panel"),
-    before: byId("filter-form"),
+    root: byId("dock"),
     storage: safeLocalStorage(),
     onFocusOut: () => byId("grid-viewport").focus(),
   });

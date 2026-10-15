@@ -18,13 +18,14 @@ import uuid
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
 from .. import __version__, aliases, messages
 from ..diagnostics import component, describe_error
+from ..ingest import partial as partial_open
 from ..ingest import pipeline
 from ..ingest.discover import SourceNotFoundError, UnsafeArchiveError
 from ..ingest.ers import (
@@ -79,6 +80,48 @@ DEFAULT_PAGE_LIMIT = 200
 MAX_PATH_CHARS = 4096
 CASE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 SCOPES = (pipeline.SCOPE_DEFAULT, pipeline.SCOPE_ALL)
+FIRST_KEYS = frozenset({"from", "to", "sources"})  # partial open (ROADMAP 9.9, ARQUITETURA 9.3b)
+MAX_FIRST_SOURCES = 500
+INT64 = (-(2**63), 2**63 - 1)
+
+
+def first_pass_from(raw: Any) -> pipeline.FirstPass | None:
+    """``first`` of ``POST /api/cases/{case}/collections``: ``{from, to, sources}`` (each optional, at least
+    one given); ``from``/``to`` in ms of the log time (U6), ``from < to``; ``sources`` = 1 to 500 member names
+    as ``/collections/plan`` lists them. None when absent; ``400 bad_first`` otherwise."""
+    if raw is None:
+        return None
+    bad = ApiError(400, "bad_first", messages.API_BAD_FIRST)
+    if not isinstance(raw, dict) or not raw or set(raw) - FIRST_KEYS:
+        raise bad
+    times: list[int | None] = []
+    for name in ("from", "to"):
+        value = raw.get(name)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or not INT64[0] <= value <= INT64[1]
+        ):
+            raise bad
+        times.append(value)
+    members = raw.get("sources")
+    if members is not None:
+        if (
+            not isinstance(members, list)
+            or not 1 <= len(members) <= MAX_FIRST_SOURCES
+            or not all(
+                isinstance(m, str) and 0 < len(m) <= MAX_PATH_CHARS and "\x00" not in m for m in members
+            )
+        ):
+            raise bad
+        members = frozenset(members)
+    try:
+        first = pipeline.FirstPass(members=members, ts_from=times[0], ts_to=times[1])
+    except ValueError:
+        raise bad from None
+    if first.members is None and not first.windowed:
+        raise bad
+    return first
+
+
 SCOPE_LEAVES = frozenset({"source", "stream", "family", "ts"})
 _ENTRY_ID = re.compile(r"\d{1,18}\Z")
 _SMALL_INT = re.compile(r"\d{1,6}\Z")
@@ -319,14 +362,20 @@ class IngestJobs:
             hub = self._hubs.get(case_id)
         return hub is not None and hub.running
 
-    def start(self, case_id: str, path: Path, scope: str) -> str:
+    def start(
+        self, case_id: str, path: Path | None, scope: str, first: pipeline.FirstPass | None = None
+    ) -> str:
+        """Start an ingestion of ``path``; ``path=None`` completes what partial opens left (``resume``)."""
         case_id = self._store.canonical_case_id(case_id)
         hub = self.hub(case_id)
         job_id = uuid.uuid4().hex[:12]
         if self.stopping.is_set() or not hub.try_begin(job_id):
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=case_id))
         thread = threading.Thread(
-            target=self._run, args=(case_id, job_id, path, scope, hub), name=f"ingest-{case_id}", daemon=True
+            target=self._run,
+            args=(case_id, job_id, path, scope, hub, first),
+            name=f"ingest-{case_id}",
+            daemon=True,
         )
         with self._lock:
             self._threads.add(thread)
@@ -344,7 +393,15 @@ class IngestJobs:
         for thread in threads:
             thread.join(timeout)
 
-    def _run(self, case_id: str, job_id: str, path: Path, scope: str, hub: ProgressHub) -> None:
+    def _run(
+        self,
+        case_id: str,
+        job_id: str,
+        path: Path | None,
+        scope: str,
+        hub: ProgressHub,
+        first: pipeline.FirstPass | None = None,
+    ) -> None:
         conn: sqlite3.Connection | None = None
         done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
 
@@ -360,6 +417,7 @@ class IngestJobs:
                     "bytes_total": event.bytes_total,
                     "records": event.records,
                     "status": event.phase,
+                    "stage": event.stage,
                 },
                 coalesce=event.phase == "progress",
             )
@@ -367,9 +425,20 @@ class IngestJobs:
         try:
             conn = db.create_case_db(self._store.db_path(case_id))
             options = pipeline.IngestOptions(
-                scope=scope, case_name=case_id, aliases=aliases.get(self._store.data_dir)
+                scope=scope, case_name=case_id, aliases=aliases.get(self._store.data_dir), first=first
             )
-            result = pipeline.run_ingest(conn, path, options, progress)
+            if path is None:  # resume: one run per collection a partial open left incomplete
+                results = pipeline.resume_pending(conn, options, progress) or [pipeline.IngestResult()]
+                result = pipeline.IngestResult(
+                    records=sum(r.records for r in results),
+                    sources_failed=sum(r.sources_failed for r in results),
+                    sources_selected=sum(r.sources_selected for r in results),
+                    partial_left=sum(r.partial_left for r in results),
+                )
+            else:
+                result = pipeline.run_ingest(conn, path, options, progress)
+            done["partial_left"] = result.partial_left
+            done["first_unmatched"] = result.first_unmatched
             done["records"] = result.records
             done["failed"] = result.sources_failed
             if result.sources_failed:
@@ -864,6 +933,9 @@ class Api:
             ("POST", re.compile(r"/api/cases\Z"), self.create_case),
             ("DELETE", re.compile(r"/api/cases/(?P<case>[^/]+)\Z"), self.delete_case),
             ("POST", re.compile(r"/api/cases/(?P<case>[^/]+)/collections\Z"), self.add_collection),
+            ("POST", re.compile(r"/api/cases/(?P<case>[^/]+)/collections/plan\Z"), self.plan_collection),
+            ("GET", re.compile(r"/api/cases/(?P<case>[^/]+)/pending\Z"), self.pending),
+            ("POST", re.compile(r"/api/cases/(?P<case>[^/]+)/resume\Z"), self.resume),
             ("GET", re.compile(r"/api/cases/(?P<case>[^/]+)/progress\Z"), self.progress),
             ("GET", re.compile(r"/api/sources\Z"), self.list_sources),
             ("GET", re.compile(r"/api/templates\Z"), self.list_templates),
@@ -1015,6 +1087,7 @@ class Api:
         scope = body.get("scope", pipeline.SCOPE_DEFAULT)
         if scope not in SCOPES:
             raise ApiError(400, "bad_scope", messages.API_BAD_SCOPE)
+        first = first_pass_from(body.get("first"))
         path = Path(raw_path.strip()).expanduser()
         if not path.is_absolute():
             raise ApiError(400, "path_not_absolute", messages.API_PATH_NOT_ABSOLUTE)
@@ -1033,8 +1106,75 @@ class Api:
             raise ApiError(
                 400, "path_unreadable", messages.JOB_FAILED.format(error=self._shown(exc))
             ) from exc
-        job_id = self.jobs.start(cid, path, scope)
+        job_id = self.jobs.start(cid, path, scope, first)
         return Response(202, {"job_id": job_id})
+
+    def plan_collection(self, request: Request) -> Response:
+        """``POST /api/cases/{case}/collections/plan`` ``{path, scope}``: the sources of a ZIP, folder or file
+        before anything is indexed (partial open chooser, ARQUITETURA 9.3b). Reads at most 64 KiB at the start
+        (and at the end of a plain file) of each source; writes nothing."""
+        self.store.require(request.match["case"])
+        body = request.read_body()
+        raw_path = body.get("path")
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path.strip()
+            or len(raw_path) > MAX_PATH_CHARS
+            or "\x00" in raw_path
+        ):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="path"))
+        scope = body.get("scope", pipeline.SCOPE_DEFAULT)
+        if scope not in SCOPES:
+            raise ApiError(400, "bad_scope", messages.API_BAD_SCOPE)
+        path = Path(raw_path.strip()).expanduser()
+        if not path.is_absolute():
+            raise ApiError(400, "path_not_absolute", messages.API_PATH_NOT_ABSOLUTE)
+        if not path.exists():
+            raise ApiError(
+                400, "path_not_found", messages.API_PATH_NOT_FOUND.format(path=self._component(str(path)))
+            )
+        try:
+            previews = pipeline.preview_sources(path, scope, aliases=aliases.get(self.data_dir))
+        except (OSError, UnsafeArchiveError, SourceNotFoundError, ReadLimitError) as exc:
+            raise ApiError(
+                400, "path_unreadable", messages.JOB_FAILED.format(error=self._shown(exc))
+            ) from exc
+        return Response(200, {"sources": [asdict(p) for p in previews]})
+
+    def pending(self, request: Request) -> Response:
+        """``GET /api/cases/{case}/pending``: collections a partial open left incomplete."""
+        cid = self.store.require(request.match["case"])
+        with self.store.reader(cid) as conn:
+            work = partial_open.pending_work(conn)
+        return Response(
+            200,
+            {
+                "case": cid,
+                "running": self.jobs.is_running(cid),
+                "pending": [
+                    {
+                        "collection": w.collection_id,
+                        "group": w.group,
+                        "scope": w.scope,
+                        "partial": w.partial,
+                        "pending": w.pending,
+                        "indexing": w.indexing,
+                    }
+                    for w in work
+                ],  # fmt: skip
+            },
+        )
+
+    def resume(self, request: Request) -> Response:
+        """``POST /api/cases/{case}/resume``: complete what partial opens left (202 with the job, 200 with
+        ``job_id: null`` when nothing is pending, 409 ``job_running``)."""
+        cid = self.store.require(request.match["case"])
+        if self.jobs.is_running(cid):
+            raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
+        with self.store.reader(cid) as conn:
+            if not partial_open.pending_work(conn):
+                return Response(200, {"job_id": None})
+        return Response(202, {"job_id": self.jobs.start(cid, None, pipeline.SCOPE_DEFAULT)})
 
     def progress(self, request: Request) -> Stream:
         cid = self.store.require(request.match["case"])
