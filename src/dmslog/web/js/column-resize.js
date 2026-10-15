@@ -5,7 +5,9 @@ import { S, format } from "./strings.js";
 
 export class ColumnResizer {
   // `getCells(key)`: the rendered body cells of a column; `getKeys()`: the visible column keys in order.
-  constructor({ viewport, rowsLayer, header, getCells, getVisibleCells, getKeys, storage }) {
+  constructor({
+    viewport, rowsLayer, header, getCells, getVisibleCells, getKeys, storage, onLayout, prepareFit, measureChar,
+  }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
     this.header = header;
@@ -13,10 +15,34 @@ export class ColumnResizer {
     this.getVisibleCells = getVisibleCells || getCells;
     this.getKeys = getKeys;
     this.model = new ColumnWidths(storage);
+    this.onLayout = onLayout || (() => {});       // () after the widths were applied (the grid recomputes its cut names)
+    this.prepareFit = prepareFit || (() => null);  // (key) -> restore function | null: shows untruncated text while fitting
+    this.measureProbe = measureChar || (() => probeCharWidth(rowsLayer));
     this.headerCells = new Map();
     if (typeof viewport.addEventListener === "function") {
       viewport.addEventListener("scroll", () => this.syncScroll());
     }
+  }
+
+  // Measures the width of one character of the grid font and applies it to the default widths. Called once at the start
+  // and when the columns or the font change, never per row and never on scroll. A failed measurement (0, NaN, null: the
+  // grid is hidden or not laid out yet) keeps the previous value. Returns true when the value changed.
+  measure() {
+    const before = this.model.charPx;
+    let value = null;
+    try {
+      value = this.measureProbe();
+    } catch (err) {
+      value = null;
+    }
+    this.model.setCharPx(value);
+    return this.model.charPx !== before;
+  }
+
+  // Default width in ch of one column (the time column of a multi-day case); re-applies the widths.
+  setDefaultCh(key, ch) {
+    this.model.setDefaultCh(key, ch);
+    this.apply();
   }
 
   // Called when the header is rebuilt.
@@ -98,12 +124,19 @@ export class ColumnResizer {
   // Fits the column to the widest of its header and the rendered cells, measured without the applied
   // width and without flex-grow (see intrinsicWidths).
   fit(key) {
-    const cells = [...this.getVisibleCells(key)];
-    const head = this.headerCells.get(key);
-    if (head) {
-      cells.push(head);
+    const restore = this.prepareFit(key);
+    try {
+      const cells = [...this.getVisibleCells(key)];
+      const head = this.headerCells.get(key);
+      if (head) {
+        cells.push(head);
+      }
+      this.setWidth(key, fitWidth(intrinsicWidths(cells)), true);
+    } finally {
+      if (typeof restore === "function") {
+        restore();
+      }
     }
-    this.setWidth(key, fitWidth(intrinsicWidths(cells)), true);
   }
 
   reset() {
@@ -131,6 +164,7 @@ export class ColumnResizer {
     this.rowsLayer.style.minWidth = this.model.total(keys) + "px";
     this.header.style.minWidth = "";
     this.syncScroll();
+    this.onLayout();
   }
 
   // Width of one column for a freshly created body cell.
@@ -168,3 +202,29 @@ export function intrinsicWidths(cells) {
     });
   }
 }
+
+// Width of one character of the grid font, measured on a hidden row (so the grid's own font rules apply). null when the
+// grid is not laid out (zero width) or the DOM is not available.
+export function probeCharWidth(rowsLayer) {
+  if (typeof document === "undefined" || !rowsLayer || typeof rowsLayer.appendChild !== "function") {
+    return null;
+  }
+  const probe = document.createElement("div");
+  probe.className = "grid-row grid-probe";
+  probe.setAttribute("aria-hidden", "true");
+  const text = "0".repeat(PROBE_CHARS);
+  const span = document.createElement("span");
+  if (typeof span.getBoundingClientRect !== "function" || typeof probe.remove !== "function") {
+    return null; // not a real layout engine
+  }
+  span.textContent = text;
+  probe.appendChild(span);
+  rowsLayer.appendChild(probe);
+  try {
+    const width = span.getBoundingClientRect().width;
+    return Number.isFinite(width) && width > 0 ? width / PROBE_CHARS : null;
+  } finally {
+    probe.remove();
+  }
+}
+const PROBE_CHARS = 40;

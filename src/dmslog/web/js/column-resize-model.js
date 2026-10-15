@@ -10,12 +10,25 @@ export const BIG_STEP = 50;       // px with Shift
 export const STORAGE_KEY = "dmslog.columnWidths";
 const MAX_STORED = 200;           // entries kept in storage (dynamic field columns come and go)
 
-const DEFAULT_WIDTHS = { ts: 190, pid: 72, tid: 72, level: 84, source: 160, collection: 90, msg: 300 };
+// Default widths in characters (`ch`) of the grid's monospace font (UI-16): the width of a character changes between
+// Windows and Linux, the text of the column does not. Widths the user dragged are stored in px and win over these.
+export const DEFAULT_CH = { ts: 12, pid: 6, tid: 6, level: 9, source: 20, collection: 5 };
+export const TS_CH_MULTIDAY = 18;  // "MM-DD HH:MM:SS.mmm", used when the case covers more than one day
+export const NOMINAL_CHAR_PX = 7.2; // 12px mono; the real value is measured by the DOM layer
+export const CELL_PAD_PX = 8;       // 2 x --cell-pad
+const DEFAULT_PX = { msg: 300 };
 const FIELD_DEFAULT = 140;
 
 // Width of a column when the user never resized it; `key` is the column key ("fields.<name>" for parsed fields).
-export function defaultWidth(key) {
-  return Object.prototype.hasOwnProperty.call(DEFAULT_WIDTHS, key) ? DEFAULT_WIDTHS[key] : FIELD_DEFAULT;
+// `charPx`: width of one character (measured once per font or column change); not a positive number = nominal.
+// `chOverride`: Map of key -> ch that replaces the table (the time column of a multi-day case).
+export function defaultWidth(key, charPx = NOMINAL_CHAR_PX, chOverride = null) {
+  const px = Number.isFinite(charPx) && charPx > 0 ? charPx : NOMINAL_CHAR_PX;
+  const ch = chOverride && chOverride.has(key) ? chOverride.get(key) : DEFAULT_CH[key];
+  if (typeof ch === "number" && Number.isFinite(ch)) {
+    return Math.ceil(ch * px) + CELL_PAD_PX + 1; // ceil + 1px: the text of `ch` characters must never be cut
+  }
+  return Object.prototype.hasOwnProperty.call(DEFAULT_PX, key) ? DEFAULT_PX[key] : FIELD_DEFAULT;
 }
 
 export function clampWidth(value, min = MIN_WIDTH, max = MAX_WIDTH) {
@@ -70,7 +83,31 @@ export class ColumnWidths {
   constructor(storage) {
     this.storage = storage === undefined ? defaultStorage() : storage;
     this.widths = new Map();
+    this.charPx = NOMINAL_CHAR_PX;
+    this.chOverride = new Map();
     this.load();
+  }
+
+  // Width of one character of the grid font; a failed measurement (0, NaN, null) keeps the previous value.
+  setCharPx(value) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      this.charPx = value;
+      return true;
+    }
+    return false;
+  }
+
+  // Default width in ch for one column (null removes the override).
+  setDefaultCh(key, ch) {
+    if (ch === null || ch === undefined) {
+      this.chOverride.delete(key);
+    } else {
+      this.chOverride.set(key, ch);
+    }
+  }
+
+  isCustom(key) {
+    return this.widths.has(key);
   }
 
   load() {
@@ -99,7 +136,7 @@ export class ColumnWidths {
   }
 
   get(key) {
-    return this.widths.has(key) ? this.widths.get(key) : defaultWidth(key);
+    return this.widths.has(key) ? this.widths.get(key) : defaultWidth(key, this.charPx, this.chOverride);
   }
 
   // Sets (clamped) and returns the width; `persist` false while dragging.
