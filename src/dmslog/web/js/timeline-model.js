@@ -120,6 +120,10 @@ export const ABNORMAL_KEYS = [1, 2, 3];
 export const NORMAL_KEYS = [4, 5];
 export const NORMAL_SERIES_KEY = "normal"; // toggle id of the combined Info + Noise line
 export const NORMAL_LINE_FRACTION = 0.4;
+// Options of the uPlot stepped path of the Info + Noise line: `extend` draws the last bucket to the
+// right edge of the plot (otherwise the path ends where the last bucket starts and a single bucket
+// leaves no line at all).
+export const NORMAL_LINE_PATH = { align: 1, extend: true };
 export const ERRORS_ONLY_HIDDEN = [3, NORMAL_SERIES_KEY];
 
 // hiddenKeys holds severity keys (1..3) and NORMAL_SERIES_KEY. Returns
@@ -213,9 +217,13 @@ export function isoDate(sec) {
   return formatTs(sec * 1000).slice(0, 10);
 }
 
-// Axis label of a tick: the ISO date for a span of two days or more, otherwise date and minutes.
+// Axis label of a tick (UTC): the ISO date for a span of two days or more, date and minutes for two
+// hours or more, otherwise date and seconds so ticks inside one minute stay distinct.
 export function axisLabel(sec, spanSec) {
-  return spanSec >= 2 * 86400 ? isoDate(sec) : formatTs(sec * 1000).slice(0, 16);
+  if (spanSec >= 2 * 86400) {
+    return isoDate(sec);
+  }
+  return formatTs(sec * 1000).slice(0, spanSec >= 7200 ? 16 : 19);
 }
 
 // Per-bucket readout for the bucket at `idx`: [{ key, label, count }] without hidden/zero series.

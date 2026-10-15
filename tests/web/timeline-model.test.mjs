@@ -304,5 +304,8 @@ test("strip height, token parsing and ISO axis labels", () => {
   assert.equal(parsePx("auto", 120), 120);
   const jan15 = Date.UTC(2030, 0, 15, 7, 8) / 1000;
   assert.equal(axisLabel(jan15, 5 * 86400), "2030-01-15");
-  assert.equal(axisLabel(jan15, 3600), "2030-01-15 07:08");
+  assert.equal(axisLabel(jan15, 3 * 3600), "2030-01-15 07:08");
+  // Short spans keep the seconds: ticks inside one minute stay distinct.
+  assert.equal(axisLabel(jan15 + 5, 60), "2030-01-15 07:08:05");
+  assert.notEqual(axisLabel(jan15 + 5, 60), axisLabel(jan15 + 10, 60));
 });

@@ -24,6 +24,8 @@ test("the strip height comes from the tokens: 40 px, expandable to 120 px", () =
   const css = read("css/timeline.css");
   assert.match(css, /\.timeline-host \{\s*min-height: calc\(var\(--timeline-h\) \+ 30px\);/);
   assert.doesNotMatch(css, /min-height: 120px/);
+  // The expanded strip reserves its taller height from the first paint too.
+  assert.match(css, /\.timeline-host:has\(\.tl-expanded\) \{\s*min-height: calc\(var\(--timeline-h-expanded\) \+ 30px\);\s*\}/);
 });
 
 test("timeline.js writes text only and keeps its labels in strings.js", () => {
@@ -35,4 +37,8 @@ test("timeline.js writes text only and keeps its labels in strings.js", () => {
   }
   assert.match(source, /aria-pressed/);
   assert.match(source, /aria-expanded/);
+});
+
+test("the ? help carries the timeline hint", () => {
+  assert.match(read("js/main.js"), /helpText: \(\) => \[[^\]]*S\.timelineHint[^\]]*\]\.join/);
 });

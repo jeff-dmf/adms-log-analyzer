@@ -151,7 +151,7 @@ function start() {
   // The status bar (UI-13). showMessage stays as the adapter the modules already call.
   const status = createStatusBar(byId("status-bar"), {
     S,
-    helpText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp].join(" "),
+    helpText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp, S.timelineHint].join(" "),
   });
   const showMessage = (text, isError) => status.message(text, { kind: isError ? "error" : "info" });
   // Connection errors already own the bar: do not repeat them as a message.

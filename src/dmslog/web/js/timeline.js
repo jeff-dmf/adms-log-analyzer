@@ -6,6 +6,7 @@
 import uPlot from "../vendor/uplot/uPlot.esm.js";
 import { S, format, pluralKey } from "./strings.js";
 import {
+  NORMAL_LINE_PATH,
   NORMAL_SERIES_KEY,
   TimelineLoader,
   alarmDrawOrder,
@@ -74,7 +75,7 @@ function element(tag, className, text) {
 //   onRangeSelected   ({ from, to }) after a drag (epoch ms of log time, inclusive), or null on clear
 //   getSourceName(id) optional name for the "source" split
 // Returns { refresh(), destroy() }; call refresh() whenever the case or the filter changed.
-export function initTimeline(container, { api, getFilter, onRangeSelected, getSourceName }) {
+export function initTimeline(container, { api, getFilter, onRangeSelected, getSourceName, uplot = uPlot }) {
   const root = element("div", "tl");
   const head = element("div", "tl-head");
   const splitLabel = element("label", "visually-hidden", S.timelineSplitLabel);
@@ -263,7 +264,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
           stroke: color,
           width: 0,
           points: { show: false },
-          paths: uPlot.paths.bars({ size: [1, Infinity, 1], align: 1, gap: 0 }),
+          paths: uplot.paths.bars({ size: [1, Infinity, 1], align: 1, gap: 0 }),
         });
         columns.push(layer.tops);
       }
@@ -273,7 +274,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
           stroke: cssColor("--tl-c3", "#6f7a8c"),
           width: LINE_WIDTH,
           points: { show: false },
-          paths: uPlot.paths.stepped({ align: 1 }),
+          paths: uplot.paths.stepped(NORMAL_LINE_PATH),
         });
         columns.push(layers.line);
       }
@@ -289,7 +290,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
           stroke: color,
           width: 0,
           points: { show: false },
-          paths: uPlot.paths.bars({ size: [1, Infinity, 1], align: 1, gap: 0 }),
+          paths: uplot.paths.bars({ size: [1, Infinity, 1], align: 1, gap: 0 }),
         });
         columns.push(entry.tops);
       }
@@ -302,7 +303,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       height: plotHeight(),
       padding: [2, 0, 0, 0],
       // The log clock is stored as UTC: draw the axis with UTC getters, never the browser zone.
-      tzDate: (ts) => uPlot.tzDate(new Date(ts * 1000), "Etc/UTC"),
+      tzDate: (ts) => uplot.tzDate(new Date(ts * 1000), "Etc/UTC"),
       legend: { show: false },
       cursor: { drag: { x: true, y: false, setScale: false }, points: { show: false } },
       select: { show: true, left: 0, top: 0, width: 0, height: 0 },
@@ -333,7 +334,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
         ],
       },
     };
-    chart = new uPlot(options, columns, plot);
+    chart = new uplot(options, columns, plot);
     applyRange();
   }
 
@@ -397,6 +398,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       renderChart();
       renderLegend();
       renderUndated();
+      renderErrorsOnly();
       setStatus("", false);
       return;
     }
