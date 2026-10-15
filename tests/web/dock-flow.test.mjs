@@ -692,12 +692,38 @@ test("maximize at a roomy size, shrink the window, restore: the dock does not pu
   page.sizes.dock = 160;
   await dock.open("a");
   dock.maximize(true);
-  page.sizes.container = 480; // 480 - 300 others = 180 shared: no room for 8 rows plus 160 px
-  dock.maximize(false);
-  assert.ok(page.root.className.split(" ").includes("is-maximized"), "cannot restore without room");
+  page.sizes.maximized = true; // the grid is really hidden now: only the container is measured
+  const maximized = () => page.root.className.split(" ").includes("is-maximized");
+  for (const container of [300, 250, 480]) { // 0, below 0 and 180 shared (the first from a roomy measure): no room for 8 rows plus 160 px
+    page.sizes.container = container;
+    dock.maximize(false);
+    assert.ok(maximized(), "cannot restore without room at " + container);
+  }
   page.sizes.container = 900; // room again: 600 shared
   dock.maximize(false);
-  assert.ok(!page.root.className.split(" ").includes("is-maximized"));
+  page.sizes.maximized = false;
+  assert.ok(!maximized());
+});
+
+test("an unusable measure (NaN, null, a missing container) never becomes a height", async () => {
+  for (const bad of [Number.NaN, null, undefined]) {
+    const s = setup({ available: 700 });
+    s.panel("a");
+    s.dock.bind(s.ctx);
+    s.space.available = 700;
+    await s.dock.open("a");
+    const before = s.root.style.height;
+    s.space.available = bad;
+    s.dock.maximize(true);
+    s.dock.maximize(false); // falls back to the last real measure
+    assert.equal(s.root.style.height, before);
+  }
+  const t = setup({ available: Number.NaN });
+  t.panel("a");
+  t.dock.bind(t.ctx);
+  await t.dock.open("a"); // nothing measured yet: the dock takes the whole space instead of a NaN height
+  assert.ok(t.root.className.split(" ").includes("is-maximized"));
+  assert.ok(!t.root.style.height.includes("NaN"));
 });
 
 test("the divider keeps min <= now <= max in every state, maximized included", async () => {

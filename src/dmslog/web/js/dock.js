@@ -56,7 +56,7 @@ export function domMeasure(root, doc) {
         return shared;
       }
       // The grid is hidden (dock maximized): the space is whatever the container has now, minus the same others.
-      return others !== null && container() > 0 ? Math.max(0, container() - others) : null;
+      return others !== null ? Math.max(0, container() - others) : null;
     },
     gridHead() {
       const header = byId("grid-header");
@@ -169,10 +169,12 @@ export function createDock({
   // ---- layout -------------------------------------------------------------------------------------------
   function bounds() {
     const measured = view.available();
-    if (measured !== null && measured > 0) {
+    // 0 is a real measure (no room at all); only null, undefined and NaN mean "could not measure".
+    if (typeof measured === "number" && Number.isFinite(measured) && measured >= 0) {
       lastAvailable = measured;
     }
-    const available = lastAvailable !== null ? lastAvailable : view.container();
+    const fallback = Number(view.container());
+    const available = lastAvailable !== null ? lastAvailable : (Number.isFinite(fallback) && fallback > 0 ? fallback : 0);
     return { available, limits: model.limits({ available, rowHeight, gridHead: view.gridHead() }) };
   }
 
