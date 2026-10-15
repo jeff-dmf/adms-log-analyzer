@@ -78,6 +78,11 @@ export function mountMenubar({ actions, ctx, refs, getCaseLabel = () => "", stri
   }
 
   for (const control of refs.toggles || []) {
+    // The module behind a toggle loads when the pointer reaches the button or it takes focus (UI-14), so that the
+    // click finds it ready; actions.invoke awaits load() anyway when nothing warmed it up.
+    const warm = () => actions.preload(control.dataset.action);
+    control.addEventListener("pointerenter", warm);
+    control.addEventListener("focus", warm);
     control.addEventListener("click", () => {
       actions.invoke(control.dataset.action, ctx).then(() => refresh());
     });

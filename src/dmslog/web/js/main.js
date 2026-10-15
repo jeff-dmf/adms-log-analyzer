@@ -3,17 +3,17 @@
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
 import { api, onForbidden, onNetworkError } from "./api.js";
+import { loadSections, mountLate, retryable } from "./late-init.js";
+import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
 import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
 import { Detail } from "./detail.js";
 import {
-  NAV_ERROR_FILTER, TPL_LEAF, andFilters, bookmarkKey, composeFilter, createLatestRequest, ignoresShortcut, navKey, navRequest, parseTplList, stateFromForm,
+  NAV_ERROR_FILTER, andFilters, bookmarkKey, composeFilter, createLatestRequest, ignoresShortcut, navKey, navRequest, stateFromForm,
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
-import { registerLeafType } from "./filter-tree-model.js";
-import { registerLeafEditor } from "./filter-tree.js";
 import { initTimeline } from "./timeline.js";
 import { createDock } from "./dock-legacy.js";
 import { COLUMNS, Grid } from "./grid.js";
@@ -37,37 +37,7 @@ const COLUMNS_KEY = "dmslog.columns";
 const FIELD_COLUMNS_KEY = "dmslog.fieldColumns";
 const FIELD_NAMES_KEY = "dmslog.fieldNames";
 const MAX_FIELD_NAMES = 200;
-
-// Template leaf of the filter tree: {tpl: [id | code, ...]}.
-try {
-  registerLeafType("tpl", TPL_LEAF);
-} catch (err) {
-  // Already registered (module evaluated twice): keep the existing definition.
-}
-let tplEditorUid = 0;
-registerLeafEditor("tpl", {
-  label: () => S.ftTypeTpl,
-  render(leaf, ctx) {
-    tplEditorUid += 1;
-    const wrap = document.createElement("span");
-    wrap.className = "ft-fields ft-grow";
-    const label = document.createElement("label");
-    const input = document.createElement("input");
-    input.id = "ft-tpl-" + tplEditorUid;
-    label.htmlFor = input.id;
-    label.textContent = S.ftTplLabel;
-    input.type = "text";
-    input.autocomplete = "off";
-    input.placeholder = S.ftTplPlaceholder;
-    input.value = leaf.data.ids.join(", ");
-    input.addEventListener("input", () => {
-      const ids = parseTplList(input.value);
-      ctx.update({ ids: ids.includes(-1) ? [-1] : ids }, "ids"); // [-1] fails validation
-    });
-    wrap.append(label, input);
-    return wrap;
-  },
-});
+const FIRST_VIEW_GRACE_MS = 4000; // the modules of the opening that wait for the first view do not wait longer
 
 function readList(key) {
   try {
@@ -186,7 +156,7 @@ function start() {
     promise.catch(() => {}); // the registry reports the failure; this only avoids an unhandled rejection
     return promise;
   };
-  const ready = { alerts: null, followTail: null, copyExport: null };
+  const ready = { alerts: null, followTail: null };
 
   fillSelect(byId("scope-select"), [["default", S.scopeDefault], ["all", S.scopeAll]]);
   fillSelect(byId("sev-select"), [["", S.filterAny]].concat(
@@ -337,6 +307,9 @@ function start() {
     fields: byId("detail-fields"),
   }, {
     onEntry: (entry) => {
+      if (entry) {
+        loadDetailModules();
+      }
       if (knowledge) {
         knowledge.show(entry);
       }
@@ -410,6 +383,14 @@ function start() {
   const ownFilterOf = (state) =>
     composeFilter({ sourceIds: [], text: state.searchText, ...state.formState }, state.userFilter, state.toggles);
 
+  // The modules that are not needed to paint the first rows (Follow tail, alerts, clock banner) load once the first
+  // view has answered (or after a safety delay): the grid is never waiting for code it does not use.
+  let firstViewDone = () => {};
+  const afterFirstView = new Promise((resolve) => {
+    firstViewDone = resolve;
+    setTimeout(resolve, FIRST_VIEW_GRACE_MS);
+  });
+
   const applyView = () => {
     const ids = panel.selectedIds();
     const groups = collectionsPanel ? collectionsPanel.selectedGroups() : [];
@@ -424,6 +405,7 @@ function start() {
     detail.setTerms(terms);
     detail.clear();
     const loaded = grid.setView({ caseId, filter, range });
+    loaded.then(firstViewDone, firstViewDone);
     if (timeline) {
       timeline.refresh();
     }
@@ -518,10 +500,15 @@ function start() {
   new SourceFilter({ host: byId("source-filter-host"), panel });
   const syncCollectionColumn = () =>
     grid.setCollectionColumn(columnShown(collections, collectionColumnPref), !applyPending).catch(showError);
+  // The first GET /collections of the opening was started by boot.js together with /sources (prefetch.js).
+  const collectionsApi = {
+    ...api,
+    collections: (forCase, signal) => takeCollections(forCase, () => api.collections(forCase, signal)) || api.collections(forCase, signal),
+  };
   collectionsPanel = new CollectionsPanel({
     host: byId("collections-host"),
     note: byId("collections-note"),
-    api,
+    api: collectionsApi,
     getCase: () => caseId,
     onSelection: (groups) => {
       if (groups.length > 1) {
@@ -761,50 +748,62 @@ function start() {
       detail.show(id);
     }
   };
-  import("./links.js").then((links) => {
-    linksSection = new links.LinksSection(byId("detail-links"), {
-      getCase: () => caseId,
-      onReveal: revealEntry,
-      onSideBySide: (id) => dock.open("sideBySide", { entryId: id }),
-      onSameKey: (type, value) => dock.open("sameKey", { type, value }),
-      onError: showError,
-    });
-    if (detail.entry) {
-      linksSection.show(detail.entry);
+  // The detail pane's optional sections (Links, Payload, Highlights, Bookmark) load when the first record is shown,
+  // not at the opening (UI-14). Each one that loads shows the record that is already on screen.
+  // Each section loads on its own and a failure is forgotten, so the next record tries again (retryable).
+  let detailFailureShown = false;
+  const detailLoaders = [
+    retryable(() => import("./links.js").then((links) => {
+      linksSection = new links.LinksSection(byId("detail-links"), {
+        getCase: () => caseId,
+        onReveal: revealEntry,
+        onSideBySide: (id) => dock.open("sideBySide", { entryId: id }),
+        onSameKey: (type, value) => dock.open("sameKey", { type, value }),
+        onError: showError,
+      });
+      if (detail.entry) {
+        linksSection.show(detail.entry);
+      }
+    })),
+    // Payload section of the entry detail (the payload list is a dock panel).
+    retryable(() => import("./payload.js").then((module) => {
+      payloadSection = new module.PayloadSection(byId("detail-payload"), {
+        getCase: () => caseId,
+        onReveal: revealEntry,
+        onGoOperation: (eventId) => dock.open("operations", { eventId }),
+        onError: showError,
+      });
+      if (detail.entry) {
+        payloadSection.show(detail.entry);
+      }
+    })),
+    // Highlight rules (detail section, ]/[ navigation); the store is above, the panel is a dock panel.
+    retryable(() => import("./highlight-panel.js").then((module) => {
+      highlightUi = module.mountHighlights({
+        detailAnchor: byId("detail-bookmark"),
+        store: highlightStore,
+        getCase: () => caseId,
+        getFilter: () => currentFilter,
+        getSelectedRow: () => grid.selectedRow(),
+        getTemplateCode: (id) => templateLabels.get(id) || "",
+        reveal: (row) => grid.revealRow(row),
+        showMessage,
+      });
+      highlightUi.showEntry(detail.entry);
+    })),
+    // Bookmarks (detail section; the shortcuts use the store and the panel is a dock panel).
+    retryable(() => import("./bookmarks-panel.js").then((module) => {
+      detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
+      if (detail.entry) {
+        detailBookmark.show(detail.entry);
+      }
+    })),
+  ];
+  const loadDetailModules = () => loadSections(detailLoaders, () => {
+    if (!detailFailureShown) {
+      detailFailureShown = true; // said once; the sections keep retrying silently
+      showMessage(S.detailSectionsUnavailable, true);
     }
-  }).catch(() => {
-    // Module missing or failing: the detail pane simply has no Links section.
-  });
-
-  // Payload section of the entry detail and the payload list panel: optional modules.
-  import("./payload.js").then((module) => {
-    payloadSection = new module.PayloadSection(byId("detail-payload"), {
-      getCase: () => caseId,
-      onReveal: revealEntry,
-      onGoOperation: (eventId) => dock.open("operations", { eventId }),
-      onError: showError,
-    });
-    if (detail.entry) {
-      payloadSection.show(detail.entry);
-    }
-  }).catch(() => {
-    // Module missing or failing: the detail pane simply has no Payload section.
-  });
-  // Highlight rules (detail section, ]/[ navigation): optional module; the store is above. The panel is a dock panel.
-  import("./highlight-panel.js").then((module) => {
-    highlightUi = module.mountHighlights({
-      detailAnchor: byId("detail-bookmark"),
-      store: highlightStore,
-      getCase: () => caseId,
-      getFilter: () => currentFilter,
-      getSelectedRow: () => grid.selectedRow(),
-      getTemplateCode: (id) => templateLabels.get(id) || "",
-      reveal: (row) => grid.revealRow(row),
-      showMessage,
-    });
-    highlightUi.showEntry(detail.entry);
-  }).catch(() => {
-    // Module missing or failing: rules still color the grid, without the detail section.
   });
   // Chained views (breadcrumbs, Narrow this view, Show in parent/root): optional modules.
   Promise.all([import("./views-stack.js"), import("./views-stack-model.js")]).then(([uiModule, model]) => {
@@ -837,16 +836,6 @@ function start() {
   }).catch(() => {
     // Module missing or failing: no chained views.
   });
-  // Bookmarks (detail section, shortcuts) and "Compare with...": optional modules. The panel is a dock panel.
-  import("./bookmarks-panel.js").then((module) => {
-    detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
-    if (detail.entry) {
-      detailBookmark.show(detail.entry);
-    }
-  }).catch(() => {
-    // Module missing or failing: no bookmark section in the detail pane.
-  });
-
   const compareCurrent = () => {
     const current = detail.entry;
     if (!current || caseId === null) {
@@ -896,23 +885,30 @@ function start() {
     }
   });
 
-  ready.followTail = settled(import("./follow-tail.js").then((module) => {
-    followTail = module.initFollowTail({
-      toggle: byId("follow-tail"),
-      newButton: byId("follow-new"),
-      grid,
-      getCase: () => caseId,
-      getFilter: () => currentFilter,
-      onChanged: () => {
-        refreshDerived();
-        panel.refreshSources(true).catch(showError);
-      },
-      onError: showError,
-    });
+  ready.followTail = settled(mountLate({
+    wait: afterFirstView,
+    load: () => import("./follow-tail.js"),
+    mount: (module) => {
+      followTail = module.initFollowTail({
+        toggle: byId("follow-tail"),
+        newButton: byId("follow-new"),
+        grid,
+        getCase: () => caseId,
+        getFilter: () => currentFilter,
+        onChanged: () => {
+          refreshDerived();
+          panel.refreshSources(true).catch(showError);
+        },
+        onError: showError,
+      });
+      return followTail;
+    },
+    getCase: () => caseId,
+    onCaseOpen: (instance) => instance.onCase(), // a case was already open when the module arrived
   }));
 
   // Local alerts (9.13): banner, stream and counter run from the opening; the panel is a dock panel.
-  ready.alerts = settled(import("./alerts-panel.js").then((module) => {
+  ready.alerts = settled(afterFirstView.then(() => import("./alerts-panel.js")).then((module) => {
     alertsUi = module.startAlerts({
       slot: status.slot("alerts"),
       onAnnounce: (text) => status.message(text, { kind: "warning" }),
@@ -939,20 +935,29 @@ function start() {
       eventId: sameEntry && entry.event ? entry.event.id : null,
     };
   };
-  ready.copyExport = settled(import("./copy-export.js").then((module) => {
-    copyExport = module.initCopyExport(byId("export-button"), {
-      getContext: () => ({
-        caseId,
-        filter: currentFilter,
-        columns: grid.visibleColumns,
-        fieldColumns: grid.fieldColumns,
-        recordId: detail.entry ? detail.entry.id : null,
-        entry: detail.entry,
-      }),
-    });
-  }));
+  // "Copy as" loads the first time the Export menu is hovered or the action is used (actions.preload / load()).
+  let copyExportLoading = null;
+  const loadCopyExport = () => {
+    if (copyExportLoading === null) {
+      copyExportLoading = import("./copy-export.js").then((module) => {
+        copyExport = module.initCopyExport(byId("export-button"), {
+          getContext: () => ({
+            caseId,
+            filter: currentFilter,
+            columns: grid.visibleColumns,
+            fieldColumns: grid.fieldColumns,
+            recordId: detail.entry ? detail.entry.id : null,
+            entry: detail.entry,
+          }),
+        });
+        return copyExport;
+      });
+      copyExportLoading.catch(() => { copyExportLoading = null; });
+    }
+    return copyExportLoading;
+  };
 
-  import("./clock-banner.js").then((module) => {
+  afterFirstView.then(() => import("./clock-banner.js")).then((module) => {
     if (typeof module.initClockBanner !== "function") {
       return;
     }
@@ -1028,6 +1033,7 @@ function start() {
     highlightStore,
     bookmarkStore,
     ready,
+    loadCopyExport,
     onError: showError,
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
@@ -1109,10 +1115,6 @@ function start() {
   byId("toolbar").classList.add("is-ready"); // texts and states are in place: show the bar (css/topbar.css)
   dock.on("open", menubar.refresh);
   dock.on("close", menubar.refresh);
-  for (const control of toggleButtons) {
-    actions.preload(control.dataset.action); // the modules behind the toggles are loaded at the opening anyway
-  }
-
   panel.loadCases(null).then(() => { casesLoaded = true; }).catch(showError);
 }
 
