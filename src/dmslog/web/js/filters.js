@@ -237,6 +237,22 @@ export function isTypingTarget(target) {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(target.isContentEditable);
 }
 
+// True when the target sits inside an open menu (role="menu", see ui-menu.js): the keys there belong to the menu.
+export function isInMenu(target) {
+  for (let node = target; node; node = node.parentElement || node.parentNode || node.parent) {
+    if (typeof node.getAttribute === "function" && node.getAttribute("role") === "menu") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// True when a global one-key shortcut must stay quiet: typing in a field, keys of an open menu, or an event
+// somebody already handled.
+export function ignoresShortcut(event) {
+  return Boolean(event.defaultPrevented) || isTypingTarget(event.target) || isInMenu(event.target);
+}
+
 // ---- template leaf for the filter tree ({tpl: [id | code, ...]}) -----------------------------
 
 export const TPL_LEAF = {

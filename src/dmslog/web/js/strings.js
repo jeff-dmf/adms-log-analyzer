@@ -1444,6 +1444,7 @@ export const S = {
   actSideBySide: "Normal and sensitive side by side",
   actSameKey: "Same key",
   actCompare: "Compare…",
+  errorStartup: "The viewer could not start. Reload the page; if it happens again, restart dmslog.",
   actionUnavailable: "This feature could not be loaded.",
   keyNames: {
     ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down", Escape: "Esc",

@@ -6,7 +6,7 @@ import {
   MAX_RULES, PALETTE, QUICK_KINDS, buildCondition, colorLabel, defaultName, describeCondition, highlightNavKey,
   nextColor,
 } from "./highlight-model.js";
-import { isTypingTarget } from "./filters.js";
+import { ignoresShortcut } from "./filters.js";
 import { S, format, pluralKey } from "./strings.js";
 
 const MAX_KEY_CHIPS = 8;
@@ -329,7 +329,7 @@ export function mountHighlights(options) {
   let navSeq = 0;
   document.addEventListener("keydown", async (event) => {
     const dir = highlightNavKey(event);
-    if (!dir || isTypingTarget(event.target) || !getCase()) {
+    if (!dir || ignoresShortcut(event) || !getCase()) {
       return;
     }
     event.preventDefault();

@@ -9,7 +9,7 @@ import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
 import { Detail } from "./detail.js";
 import {
-  NAV_ERROR_FILTER, TPL_LEAF, andFilters, bookmarkKey, composeFilter, createLatestRequest, isTypingTarget, navKey, navRequest, parseTplList, stateFromForm,
+  NAV_ERROR_FILTER, TPL_LEAF, andFilters, bookmarkKey, composeFilter, createLatestRequest, ignoresShortcut, navKey, navRequest, parseTplList, stateFromForm,
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { registerLeafType } from "./filter-tree-model.js";
@@ -847,7 +847,7 @@ function start() {
   // Shortcuts: b toggles the bookmark of the selected record, B opens the panel, c compares.
   document.addEventListener("keydown", async (event) => {
     const action = bookmarkKey(event);
-    if (!action || isTypingTarget(event.target) || caseId === null) {
+    if (!action || ignoresShortcut(event) || caseId === null) {
       return;
     }
     if (action === "panel") {
@@ -946,7 +946,7 @@ function start() {
   // Shortcuts: n/N next/previous error, t/T next/previous entry of the selected row's template.
   document.addEventListener("keydown", async (event) => {
     const nav = navKey(event);
-    if (!nav || isTypingTarget(event.target) || caseId === null) {
+    if (!nav || ignoresShortcut(event) || caseId === null) {
       return;
     }
     const row = grid.selectedRow();
@@ -1092,4 +1092,19 @@ function start() {
   panel.loadCases(null).catch(showError);
 }
 
-start();
+// If the opening fails the bar is not left invisible: it is shown, with an alert that says what happened
+// (css/topbar.css also reveals it by itself after a few seconds if this script never ran).
+try {
+  start();
+} catch (err) {
+  const bar = byId("toolbar");
+  if (bar) {
+    bar.classList.add("is-ready", "is-failed");
+    const alert = document.createElement("span");
+    alert.className = "topbar-failed";
+    alert.setAttribute("role", "alert");
+    alert.textContent = S.errorStartup;
+    bar.appendChild(alert);
+  }
+  throw err;
+}

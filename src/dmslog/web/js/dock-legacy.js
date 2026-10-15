@@ -17,6 +17,7 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
   let ctx = null;
   let order = 0;
   let current = null; // id of the panel opened last that is still open
+  let generation = 0; // grows with every case change: an open() that started before it must not finish after it
 
   function emit(event, payload) {
     for (const fn of Array.from(listeners[event])) {
@@ -27,6 +28,15 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
       }
     }
   }
+
+  // Focus that moves outside a panel means it no longer has the focus to give back when it closes.
+  doc.addEventListener("focusin", (event) => {
+    for (const entry of panels.values()) {
+      if (entry.host && entry.focusWithin && !(typeof entry.host.contains === "function" && entry.host.contains(event.target))) {
+        entry.focusWithin = false;
+      }
+    }
+  });
 
   function requireBound(name) {
     if (ctx === null) {
@@ -67,7 +77,29 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
           }
         }
       }
+      restoreFocus(entry);
       emit("close", { id: entry.def.id });
+    }
+  }
+
+  // Whatever closes a panel (menu, its own Close button, Escape, a case change) gives the focus back to the
+  // element that opened it, or to the grid when that is gone. Only when the focus was inside the panel.
+  function restoreFocus(entry) {
+    const host = entry.host;
+    const active = doc.activeElement;
+    const lost = !active || active === doc.body || (typeof host.contains === "function" && host.contains(active));
+    const had = entry.focusWithin && lost;
+    entry.focusWithin = false;
+    const opener = entry.opener;
+    entry.opener = null;
+    if (!had) {
+      return;
+    }
+    const connected = opener && (typeof opener.isConnected === "boolean" ? opener.isConnected : true);
+    if (opener && connected && typeof opener.focus === "function") {
+      opener.focus();
+    } else {
+      onFocusOut();
     }
   }
 
@@ -90,6 +122,9 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
     }
     root.insertBefore(host, ref);
     entry.host = host;
+    host.addEventListener("focusin", () => {
+      entry.focusWithin = true;
+    });
     const View = doc.defaultView && doc.defaultView.MutationObserver;
     if (typeof View === "function") {
       new View(() => sync(entry)).observe(host, { attributes: true, attributeFilter: ["hidden"] });
@@ -136,17 +171,23 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
     return entry.mounting;
   }
 
+  // Where the focus goes when a panel opens: the panel's own focusTarget (PanelDef.focusTarget(host, instance), or
+  // instance.focusTarget), else its title, else the first control, else the host itself.
   function focusPanel(entry) {
     const instance = entry.instance || {};
-    let target = instance.focusTarget || null;
-    if (!target && typeof entry.host.querySelector === "function") {
-      target = entry.host.querySelector("h2, h3");
+    const host = entry.host;
+    let target = typeof entry.def.focusTarget === "function" ? entry.def.focusTarget(host, instance) : null;
+    target = target || instance.focusTarget || null;
+    if (!target && typeof host.querySelector === "function") {
+      target = host.querySelector("h2, h3") || host.querySelector("input, select, textarea, button, a");
     }
-    if (target && typeof target.focus === "function") {
-      if (typeof target.setAttribute === "function" && !target.getAttribute("tabindex")) {
-        target.setAttribute("tabindex", "-1");
-      }
+    target = target || host;
+    if (typeof target.setAttribute === "function" && !target.getAttribute("tabindex") && !/^(INPUT|SELECT|TEXTAREA|BUTTON|A)$/.test(String(target.tagName || "").toUpperCase())) {
+      target.setAttribute("tabindex", "-1");
+    }
+    if (typeof target.focus === "function") {
       target.focus();
+      entry.focusWithin = true;
     }
   }
 
@@ -174,7 +215,9 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
         }
       }
       order += 1;
-      panels.set(def.id, { def, order, host: null, instance: null, mounting: null, announced: false, opener: null });
+      panels.set(def.id, {
+        def, order, host: null, instance: null, mounting: null, announced: false, opener: null, focusWithin: false,
+      });
     },
 
     async open(id, args, { focus = true } = {}) {
@@ -188,7 +231,11 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
       if (!wasOpen) {
         entry.opener = doc.activeElement || null;
       }
+      const started = generation;
       const instance = await mountOnce(entry);
+      if (started !== generation) {
+        return false; // the case changed while the panel was mounting: this opening belonged to the old case
+      }
       entry.host.hidden = false;
       sync(entry);
       if (instance === null) {
@@ -215,8 +262,6 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
       if (!isOpen(id)) {
         return;
       }
-      const host = entry.host;
-      const focusInside = Boolean(doc.activeElement && typeof host.contains === "function" && host.contains(doc.activeElement));
       try {
         if (entry.instance && typeof entry.instance.closed === "function") {
           entry.instance.closed();
@@ -224,18 +269,8 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
       } catch (err) {
         showError(err, entry);
       }
-      host.hidden = true;
-      sync(entry);
-      if (focusInside) {
-        const opener = entry.opener;
-        const connected = opener && (typeof opener.isConnected === "boolean" ? opener.isConnected : true);
-        if (opener && connected && typeof opener.focus === "function") {
-          opener.focus();
-        } else {
-          onFocusOut();
-        }
-      }
-      entry.opener = null;
+      entry.host.hidden = true;
+      sync(entry); // restores the focus
     },
 
     closeAll() {
@@ -252,6 +287,7 @@ export function createDock({ root, before = null, storage = null, onFocusOut = (
     // First phase of a case switch: every mounted panel forgets the old case, open, closed or idle.
     caseChanged() {
       requireBound("caseChanged");
+      generation += 1;
       for (const [id, entry] of panels) {
         if (!entry.instance) {
           continue;

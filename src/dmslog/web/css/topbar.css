@@ -22,6 +22,20 @@
    size and nothing visible moves when the labels arrive, so the bar causes no layout shift on opening. */
 .topbar:not(.is-ready) > * {
   visibility: hidden;
+  animation: topbar-reveal 0s 3s forwards; /* safety net: if the script never runs the bar shows after 3 s */
+}
+
+@keyframes topbar-reveal {
+  to {
+    visibility: visible;
+  }
+}
+
+.topbar-failed {
+  padding: 0 var(--space-3);
+  color: var(--status-error-ink);
+  background: var(--status-error-bg);
+  border-radius: var(--radius-md);
 }
 
 .app-name {
@@ -31,10 +45,10 @@
 
 /* Case selector: the open case, ellipsized when long, with the drop-down mark. */
 .topbar > .topbar-case {
-  flex: 0 1 180px;
+  flex: 0 1 var(--topbar-case-w);
   justify-content: space-between;
-  width: 180px;
-  min-width: 96px;
+  width: var(--topbar-case-w);
+  min-width: var(--topbar-case-min);
 }
 
 .topbar-case-label {
@@ -65,14 +79,14 @@
   flex: 100 1 auto;
   gap: var(--space-2);
   min-width: 0;
-  max-width: 660px;
+  max-width: var(--topbar-search-box-max);
 }
 
 .topbar-search #search-input {
   flex: 1 1 auto;
   width: 100%;
-  min-width: 96px;
-  max-width: 560px;
+  min-width: var(--topbar-search-min);
+  max-width: var(--topbar-search-max);
 }
 
 .topbar-search .ui-button {
@@ -90,7 +104,7 @@
 }
 
 .topbar-goto #goto-input {
-  width: 150px;
+  width: var(--topbar-goto-w);
 }
 
 .topbar > .topbar-spacer {
@@ -126,6 +140,6 @@
   }
 
   .topbar-goto #goto-input {
-    width: 120px;
+    width: var(--topbar-goto-w-narrow);
   }
 }

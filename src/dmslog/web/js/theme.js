@@ -17,7 +17,18 @@ export function resolveTheme(stored, prefersDark) {
   return prefersDark ? "dark" : "light";
 }
 
+// The choice of this session when the storage refused the write: it still applies until the page closes.
+let sessionChoice = null;
+
+/** Forgets the in-memory fallback (tests). */
+export function forgetSessionChoice() {
+  sessionChoice = null;
+}
+
 function readStored() {
+  if (sessionChoice !== null) {
+    return sessionChoice.value;
+  }
   try {
     return window.localStorage.getItem(KEY);
   } catch (err) {
@@ -32,8 +43,9 @@ function writeStored(value) {
     } else {
       window.localStorage.setItem(KEY, value);
     }
+    sessionChoice = null;
   } catch (err) {
-    // Storage unavailable: the choice just does not persist.
+    sessionChoice = { value }; // not persisted, but the choice holds for this session
   }
 }
 

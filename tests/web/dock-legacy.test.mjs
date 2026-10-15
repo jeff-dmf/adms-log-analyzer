@@ -203,3 +203,75 @@ test("a module that hides its own host is noticed through isOpen", async () => {
   assert.equal(dock.isOpen("self"), true);
   void tick;
 });
+
+test("an opening that was waiting for the mount does not finish after a case change (no arguments of the old case)", async () => {
+  const { dock, ctx, doc, log } = setup();
+  let release;
+  dock.register({
+    id: "slow",
+    titleKey: "actCompare",
+    mount: () => new Promise((resolve) => {
+      release = () => resolve({ show: (args) => log.push(["show", args]), refresh: () => log.push(["refresh"]), reset: () => log.push(["reset"]) });
+    }),
+  });
+  dock.bind(ctx);
+  const pending = dock.open("slow", { a: 1, b: 2 }); // ids of case A
+  await tick();
+  dock.caseChanged(); // switch to B while the panel is still mounting
+  release();
+  assert.equal(await pending, false);
+  assert.equal(dock.isOpen("slow"), false);
+  assert.deepEqual(log, []); // neither show(args of A) nor refresh
+  assert.equal(await dock.open("slow", { a: 7, b: 8 }), true); // opening again in B works
+  assert.deepEqual(log, [["show", { a: 7, b: 8 }]]);
+});
+
+test("focus goes to the panel's focusTarget, else its title, else its first control, else the host", async () => {
+  const { dock, ctx, doc } = setup();
+  const make = (id, build, extra = {}) => dock.register({
+    id, titleKey: "actDistinct", mount: async (host) => { build(host); return {}; }, ...extra,
+  });
+  make("custom", (host) => { host.appendChild(doc.createElement("h3")); host.appendChild(doc.createElement("input")); },
+    { focusTarget: (host) => host.children[1] });
+  make("title", (host) => { host.appendChild(doc.createElement("button")); host.appendChild(doc.createElement("h3")); });
+  make("control", (host) => { host.appendChild(doc.createElement("p")); host.appendChild(doc.createElement("select")); });
+  make("bare", (host) => { host.appendChild(doc.createElement("p")); });
+  dock.bind(ctx);
+  await dock.open("custom");
+  assert.equal(doc.activeElement.tagName, "INPUT");
+  await dock.open("title");
+  assert.equal(doc.activeElement.tagName, "H3");
+  await dock.open("control");
+  assert.equal(doc.activeElement.tagName, "SELECT");
+  await dock.open("bare");
+  assert.equal(doc.activeElement.id, "bare-host");
+  assert.equal(doc.activeElement.getAttribute("tabindex"), "-1");
+});
+
+test("every way of closing gives the focus back: the dock, the panel's own Close button, Escape", async () => {
+  const { dock, ctx, panel, doc, root, focusedOut } = setup();
+  panel("a");
+  dock.bind(ctx);
+  const opener = doc.createElement("button");
+  doc.body.appendChild(opener);
+  opener.focus();
+  await dock.open("a");
+  const host = root.children[0];
+  assert.notEqual(doc.activeElement, opener);
+  host.hidden = true; // the module closed itself (its Close button or Escape inside it)
+  assert.equal(doc.activeElement, opener);
+  // the focus was elsewhere when it closed: nothing is taken over
+  opener.focus();
+  await dock.open("a", undefined, { focus: false });
+  const other = doc.createElement("button");
+  doc.body.appendChild(other);
+  other.focus();
+  host.hidden = true;
+  assert.equal(doc.activeElement, other);
+  // opener gone: the grid gets it
+  other.focus();
+  await dock.open("a");
+  other.remove();
+  host.hidden = true;
+  assert.deepEqual(focusedOut, [true]);
+});

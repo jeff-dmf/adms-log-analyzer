@@ -236,6 +236,13 @@
   --grid-head: 22px;
   --control-height: 26px; /* buttons and fields; chips and row buttons use 24px */
   --bar-height: 36px;
+  --topbar-case-w: 180px; /* case selector: fixed, so a longer case name never moves the search field */
+  --topbar-case-min: 96px;
+  --topbar-search-min: 96px;
+  --topbar-search-max: 560px; /* the search field */
+  --topbar-search-box-max: 660px; /* the field plus its two buttons */
+  --topbar-goto-w: 150px;
+  --topbar-goto-w-narrow: 120px;
   --strip-height: 30px;
   --status-height: 22px;
   --timeline-h: 40px; /* expanded: 120px */

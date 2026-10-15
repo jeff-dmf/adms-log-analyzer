@@ -2,11 +2,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+const theme = await import("../../src/dmslog/web/js/theme.js");
+
 // theme.js subscribes to the OS setting once per page, so the tests share one media query object.
 const listeners = [];
 const query = { matches: false, addEventListener: (type, fn) => listeners.push(fn) };
 
 function install({ stored = null, dark = false, throwing = false } = {}) {
+  theme.forgetSessionChoice();
   const store = new Map(stored === null ? [] : [["dmslog.theme", stored]]);
   query.matches = dark;
   globalThis.window = {
@@ -21,7 +24,6 @@ function install({ stored = null, dark = false, throwing = false } = {}) {
   return { store, query, listeners };
 }
 
-const theme = await import("../../src/dmslog/web/js/theme.js");
 
 test("resolvePreference: only light and dark are explicit choices", () => {
   assert.equal(theme.resolvePreference("light"), "light");
@@ -56,8 +58,11 @@ test("a stored choice is applied again on the next opening", () => {
 test("blocked storage never throws: the theme still changes for the session", () => {
   install({ throwing: true, dark: false });
   assert.equal(theme.themePreference(), "system");
-  assert.equal(theme.setThemePreference("dark"), "light"); // not persisted: applied from storage and the OS
-  assert.equal(theme.currentTheme(), "light");
+  assert.equal(theme.setThemePreference("dark"), "dark"); // not persisted, but it holds for the session
+  assert.equal(theme.themePreference(), "dark");
+  assert.equal(theme.currentTheme(), "dark");
+  assert.equal(theme.setThemePreference("system"), "light"); // and System comes back to the OS setting
+  assert.equal(theme.themePreference(), "system");
 });
 
 test("while System is chosen, a change of the OS setting repaints the page", () => {

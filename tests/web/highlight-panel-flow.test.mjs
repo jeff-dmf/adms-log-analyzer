@@ -234,6 +234,10 @@ test("footer documents ] and [, and the keys walk the highlighted records", asyn
   const typing = new FakeElement("input");
   assert.equal(await keydown("]", typing), false); // typing in a field is not a shortcut
   assert.equal(calls.next.length, 2);
+  const menuItem = new FakeElement("div");
+  menuItem.parent = Object.assign(new FakeElement("div"), { attrs: { role: "menu" } });
+  assert.equal(await keydown("]", menuItem), false); // inside an open menu the keys belong to the menu
+  assert.equal(calls.next.length, 2);
   assert.equal(await keydown("n"), false); // n/N stay the error navigation
   setSelected(null);
   await keydown("]");
