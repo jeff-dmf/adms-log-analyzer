@@ -31,12 +31,13 @@ function setup() {
     return d.promise;
   };
   api.page = async () => ({ rows: [], prev: null, next: null });
-  const statuses = [];
+  const counts2 = [];
+  const positions = [];
   const grid = new Grid({
     viewport: fakeElement(), rowsLayer: fakeElement(), spacer: fakeElement(), header: fakeElement(),
-    onSelect() {}, onStatus: (t) => statuses.push(t), onError(err) { throw err; },
+    onSelect() {}, onCount: (v, o) => counts2.push([v, o]), onPosition: (ts) => positions.push(ts), onError(err) { throw err; },
   });
-  return { grid, counts, statuses };
+  return { grid, counts, emitted: counts2, positions };
 }
 
 test("the count answer survives the navigation that follows a reload", async () => {
@@ -75,4 +76,25 @@ test("a late answer of the previous filter is dropped", async () => {
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(grid.total, 5);
+});
+
+test("the grid reports the count and the position through onCount and onPosition", async () => {
+  const { grid, counts, emitted, positions } = setup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  assert.deepEqual(emitted[0], ["loading", undefined]); // the reload dims the old number
+  counts[0].d.resolve({ count: 321, exact: true });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(emitted.at(-1), [{ n: 321, exact: true }, { announce: true }]); // came from a reload: announced
+  grid.refreshCount(); // a later refresh (follow tail) is silent
+  counts[1].d.resolve({ count: 400, exact: false });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(emitted.at(-1), [{ n: 400, exact: false }, { announce: false }]);
+  grid.window.load([{ id: 1, ts: 5000, sev: 1, nlines: 1 }], null, null, 0);
+  grid.updateStatus();
+  assert.equal(positions.at(-1), 5000);
+  await grid.setView({ caseId: null, filter: null, range: null });
+  assert.equal(emitted.at(-1)[0], null);
+  assert.equal(positions.at(-1), null);
 });

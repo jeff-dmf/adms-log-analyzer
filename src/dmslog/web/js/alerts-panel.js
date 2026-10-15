@@ -89,7 +89,7 @@ function summarize(rule) {
 // options: api, getCase(), onShowRecords(filter), notifier (tests).
 // Returns { flow, notes, showRecords, on(event, fn), unseen(), clearUnseen(), onCase(), refresh() } where the events
 // are "change" (flow state), "case" (the case changed) and "count" (alerts received and not yet looked at).
-export function startAlerts({ slot, api = defaultApi, getCase, onShowRecords, notifier }) {
+export function startAlerts({ slot, onAnnounce, api = defaultApi, getCase, onShowRecords, notifier }) {
   const banner = slot; // the alerts segment of the status bar (status.slot("alerts"))
   const notes = notifier || createNotifier({ storage: safeStorage() });
   let stream = null;
@@ -151,7 +151,11 @@ export function startAlerts({ slot, api = defaultApi, getCase, onShowRecords, no
     stream = connectAlertStream({
       url: defaultApi.progressUrl(caseId),
       onAlert: (data) => {
-        if (flow.receive(data) !== null) {
+        const alert = flow.receive(data);
+        if (alert !== null) {
+          if (onAnnounce) {
+            onAnnounce(describe(alert).title); // the status bar's message region speaks it (the slot is not live)
+          }
           unseen += 1;
           fire("count", unseen);
         }

@@ -225,6 +225,8 @@ export class CaseFiles {
       this.onMessage(format(S[pluralKey("cfPartial", result.total)], { ok: result.ok, total: result.total }), true);
     } else if (result.reason === "busy") {
       this.onMessage(S.cfQueueBusy, true);
+    } else if (result.reason === "select") {
+      this.onMessage(this.state.notices.length > 0 ? this.state.notices[this.state.notices.length - 1].message : "", true);
     } else if (result.reason === "case") {
       const note = this.state.notices.length > 0 ? this.state.notices[this.state.notices.length - 1].message : "";
       if (note === "") {

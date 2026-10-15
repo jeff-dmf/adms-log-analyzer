@@ -3,7 +3,7 @@
 // itself; nothing is ever laid over the filter strip, and showing or hiding a message never moves another element
 // (the bar has a fixed height and the message has its own fixed segment). Contract: docs/notas/ui-contratos.md, 3.
 // Every text is set with textContent; every visible text comes from strings.js.
-import { createMessageState, formatCount, normalizeKind } from "./status-bar-model.js";
+import { createMessageState, formatCount, isConnectionText, normalizeKind } from "./status-bar-model.js";
 import { format } from "./strings.js";
 import { formatTs } from "./time.js";
 
@@ -225,6 +225,10 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     position: paintPosition,
     progress: paintProgress,
     message(text, { kind = "info", timeoutMs } = {}) {
+      if (isConnectionText(text, S)) {
+        // The connection error owns the bar (connection()); a stale copy must not come back after recovery.
+        return { dismiss() {} };
+      }
       const shown = messages.show(text, { kind: normalizeKind(kind), timeoutMs }, now());
       paintMessage();
       const id = shown === null ? null : shown.id;

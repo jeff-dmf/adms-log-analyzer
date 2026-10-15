@@ -21,8 +21,9 @@ import { CollectionsPanel } from "./collections-panel.js";
 import {
   columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi,
 } from "./collections-model.js";
-import { setFieldError } from "./field-error.js";
+import { resetFormWithErrors, setFieldError } from "./field-error.js";
 import { createStatusBar } from "./status-bar.js";
+import { createConnectionRetry } from "./status-bar-model.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { mountMenubar } from "./menubar.js";
 import { searchTerms } from "./search.js";
@@ -160,17 +161,15 @@ function start() {
     }
     showMessage(err && err.message ? err.message : S.errorGeneric, true);
   };
-  const retryConnection = async () => {
-    try {
-      await api.health();
-    } catch (err) {
-      return; // still down: the bar keeps the error
-    }
-    status.connection("online");
-    if (caseId !== null) {
-      applyView().catch(showError);
-    }
-  };
+  let casesLoaded = false; // the opening (GET /api/cases) finished: until then Retry reloads the cases
+  const retryConnection = createConnectionRetry({
+    health: () => api.health(),
+    setOnline: () => status.connection("online"),
+    openingPending: () => !casesLoaded,
+    reloadCases: () => panel.loadCases(null).then(() => { casesLoaded = true; }),
+    refreshView: () => (caseId !== null ? applyView() : Promise.resolve()),
+    onError: (err) => showError(err),
+  });
   onForbidden(() => status.connection("forbidden"));
   onNetworkError(() => status.connection("offline", { onRetry: retryConnection }));
 
@@ -591,7 +590,7 @@ function start() {
     applyView();
   });
   byId("filter-reset").addEventListener("click", () => {
-    byId("filter-form").reset();
+    resetFormWithErrors(byId("filter-form"), [byId("from-input"), byId("to-input")]);
     formState = { sevMax: null, levelMax: null, from: null, to: null };
     toggles = { hideNoise: false, unclassified: false };
     applyView();
@@ -916,6 +915,7 @@ function start() {
   ready.alerts = settled(import("./alerts-panel.js").then((module) => {
     alertsUi = module.startAlerts({
       slot: status.slot("alerts"),
+      onAnnounce: (text) => status.message(text, { kind: "warning" }),
       getCase: () => caseId,
       onShowRecords: (filter) => setUserFilter(filter).catch(showError),
     });
@@ -960,6 +960,7 @@ function start() {
       api: derivedApi,
       getCase: () => caseId,
       onShowInGrid: showEventInGrid,
+      onAnnounce: (text) => status.message(text, { kind: "warning" }),
     });
     clockBanner.refresh();
   }).catch(() => {
@@ -1043,7 +1044,7 @@ function start() {
       // Saved filters can include the toolbar filters; applying one replaces them.
       getExtraFilter: () => composeFilter({ sourceIds: [], text: searchText, ...formState }, null, toggles),
       onSavedApplied: () => {
-        byId("filter-form").reset();
+        resetFormWithErrors(byId("filter-form"), [byId("from-input"), byId("to-input")]);
         byId("search-input").value = "";
         searchText = "";
         formState = { sevMax: null, levelMax: null, from: null, to: null };
@@ -1112,7 +1113,7 @@ function start() {
     actions.preload(control.dataset.action); // the modules behind the toggles are loaded at the opening anyway
   }
 
-  panel.loadCases(null).catch(showError);
+  panel.loadCases(null).then(() => { casesLoaded = true; }).catch(showError);
 }
 
 // If the opening fails the bar is not left invisible: it is shown, with an alert that says what happened

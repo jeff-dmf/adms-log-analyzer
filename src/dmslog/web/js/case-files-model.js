@@ -260,12 +260,20 @@ export class CaseFilesState {
           this.notices.push({ type: "restart", name: "", message: "" });
         }
       }
-      await deps.selectCase(this.createdCaseId);
     } catch (err) {
       this.busy = false;
       this.notices.push({ type: "error", name: "", message: String(err && err.message ? err.message : err) });
       this.changed();
       return { state: "blocked", reason: "case" };
+    }
+    try {
+      await deps.selectCase(this.createdCaseId);
+    } catch (err) {
+      // The case exists (the name was accepted); only opening it failed: not a name error.
+      this.busy = false;
+      this.notices.push({ type: "error", name: "", message: String(err && err.message ? err.message : err) });
+      this.changed();
+      return { state: "blocked", reason: "select" };
     }
     await this.openEach(deps);
     this.busy = false;

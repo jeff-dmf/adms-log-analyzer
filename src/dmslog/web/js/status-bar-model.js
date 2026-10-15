@@ -34,6 +34,29 @@ export function messageTimeout(kind) {
   return kind === "error" ? 0 : DEFAULT_TIMEOUT_MS;
 }
 
+// The texts of the connection errors (network, forbidden): they live in the bar's error mode, never as messages.
+export function isConnectionText(text, S) {
+  return text === S.errorNetwork || text === S.errorForbidden;
+}
+
+// Retry now: when the opening is still pending (the case list never loaded) it reloads the cases, otherwise the view.
+// deps: health(), setOnline(), openingPending(), reloadCases(), refreshView(). Failures keep the bar in error mode.
+export function createConnectionRetry({ health, setOnline, openingPending, reloadCases, refreshView, onError }) {
+  return async function retry() {
+    try {
+      await health();
+    } catch (err) {
+      return;
+    }
+    setOnline();
+    try {
+      await (openingPending() ? reloadCases() : refreshView());
+    } catch (err) {
+      onError(err);
+    }
+  };
+}
+
 export function normalizeKind(kind) {
   return MESSAGE_KINDS.includes(kind) ? kind : "info";
 }

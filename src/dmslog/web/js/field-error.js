@@ -3,6 +3,14 @@
 
 const notes = new WeakMap(); // input -> its error paragraph
 
+// form.reset() plus the removal of every error left on its fields (paragraph, aria-invalid, aria-describedby).
+export function resetFormWithErrors(form, inputs) {
+  form.reset();
+  for (const input of inputs) {
+    setFieldError(input, null);
+  }
+}
+
 export function setFieldError(input, text) {
   const doc = input.ownerDocument;
   const errorId = (input.id || "field") + "-error";

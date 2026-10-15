@@ -30,7 +30,7 @@ export class El {
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   appendChild(c) { c.remove(); c.parent = this; this.children.push(c); return c; }
-  append(...cs) { for (const c of cs) this.appendChild(c); }
+  append(...cs) { for (const c of cs) this.appendChild(typeof c === "string" ? Object.assign(new El(this.doc, "#text"), { _text: c }) : c); }
   insertBefore(c, ref) {
     c.remove();
     c.parent = this;
