@@ -343,53 +343,17 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
 
 // -- mounting -----------------------------------------------------------------------------------
 
-// Adds the two toolbar buttons and their host panels. Options:
-//   toolbar, beforeButton    where the buttons go; panelParent, beforePanel  where the panels go
+// The dock gives each view its host (UI-12): these only render into it. Options:
 //   api, getCase(), getFilter()   the current case and the ONE composed filter of the grid
 //   getFieldNames()          parsed-field names seen so far; getSourceName(id)
 //   hasCollections()         the case has more than one collection (offers the "Collection" field)
 //   onDrill(leaf, exclude)   add the leaf (or its negation) to the user filter
 //   onReveal({id, ts})       select a record in the grid
-// Returns { viewChanged() } to call whenever the case or the filter changed.
-export function mountDistinct(options) {
-  const { toolbar, beforeButton, panelParent, beforePanel } = options;
-  const make = (id, label) => {
-    const toggle = button("", label);
-    toggle.id = id + "-button";
-    toggle.setAttribute("aria-expanded", "false");
-    const host = element("section", "panel host-panel dst-host");
-    host.id = id + "-host";
-    host.hidden = true;
-    toggle.setAttribute("aria-controls", host.id);
-    toolbar.insertBefore(toggle, beforeButton || null);
-    panelParent.insertBefore(host, beforePanel || null);
-    return { toggle, host };
-  };
-  const distinctUi = make("distinct", S.dstButton);
-  const groupUi = make("group-template", S.grpButton);
-  const distinct = initDistinct(distinctUi.host, options);
-  const group = initGroup(groupUi.host, options);
-  const wire = ({ toggle, host }, panel) => {
-    toggle.addEventListener("click", () => {
-      host.hidden = !host.hidden;
-      toggle.setAttribute("aria-expanded", host.hidden ? "false" : "true");
-      if (host.hidden) {
-        panel.reset();
-      } else {
-        panel.refresh();
-      }
-    });
-  };
-  wire(distinctUi, distinct);
-  wire(groupUi, group);
-  return {
-    viewChanged() {
-      if (!distinctUi.host.hidden) {
-        distinct.refresh();
-      }
-      if (!groupUi.host.hidden) {
-        group.refresh();
-      }
-    },
-  };
+// Both return { refresh(), reset() }: refresh loads the view, reset cancels and clears it (case change, close).
+export function mountDistinctPanel(host, options) {
+  return initDistinct(host, options);
+}
+
+export function mountGroupPanel(host, options) {
+  return initGroup(host, options);
 }

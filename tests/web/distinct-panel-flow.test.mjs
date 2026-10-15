@@ -1,4 +1,4 @@
-// "Distinct values" panel and "Group by message type" view mounted on a small fake DOM: buttons,
+// "Distinct values" panel and "Group by message type" view mounted in a host (the dock gives it, UI-12) on a small fake DOM:
 // drill-down, expansion by keyset, and log text written only as text (never as markup).
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -60,35 +60,36 @@ globalThis.document = {
   querySelector: () => null,
 };
 
-const { mountDistinct } = await import("../../src/dmslog/web/js/distinct-panel.js");
+const { mountDistinctPanel, mountGroupPanel } = await import("../../src/dmslog/web/js/distinct-panel.js");
 const { S } = await import("../../src/dmslog/web/js/strings.js");
 
 const tick = async () => { for (let i = 0; i < 6; i += 1) { await Promise.resolve(); } };
 
 function setup({ distinctAnswer, pageAnswer }) {
-  const toolbar = new FakeElement("div");
-  const theme = toolbar.appendChild(new FakeElement("button"));
-  const panelParent = new FakeElement("div");
   const calls = { distinct: [], page: [], drill: [], reveal: [] };
   const api = {
     distinct: async (...args) => { calls.distinct.push(args); return distinctAnswer(args); },
     page: async (...args) => { calls.page.push(args); return pageAnswer(args); },
     keyTypes: async () => ({ types: [{ type: "msgid" }] }),
   };
-  const ui = mountDistinct({
-    toolbar, beforeButton: theme, panelParent, beforePanel: null, api,
+  const options = {
+    api,
     getCase: () => "C1", getFilter: () => ({ sev: { le: 3 } }), getFieldNames: () => ["op"],
     getSourceName: (id) => "file-" + id + ".log",
     onDrill: (leaf, exclude) => calls.drill.push([leaf, exclude]),
     onReveal: (row) => calls.reveal.push(row),
-  });
-  return { toolbar, panelParent, calls, ui };
+  };
+  const distinctHost = new FakeElement("section");
+  const groupHost = new FakeElement("section");
+  const distinct = mountDistinctPanel(distinctHost, options);
+  const group = mountGroupPanel(groupHost, options);
+  return { distinctHost, groupHost, calls, distinct, group };
 }
 
 const HOSTILE = "<img src=x onerror=alert(1)>";
 
 test("distinct panel: opens, lists values as text and drills down", async () => {
-  const { toolbar, panelParent, calls, ui } = setup({
+  const { distinctHost: host, calls, distinct } = setup({
     distinctAnswer: ([, , field]) => ({
       field, total: 10, groups: 3, exact: true, method: "exact", others: { count: 1, groups: 1 },
       values: [
@@ -98,15 +99,8 @@ test("distinct panel: opens, lists values as text and drills down", async () => 
     }),
     pageAnswer: () => ({ rows: [], next: null }),
   });
-  const [button] = toolbar.find((n) => n.id === "distinct-button");
-  assert.equal(button.textContent, S.dstButton);
-  assert.equal(button.getAttribute("aria-expanded"), "false");
-  const [host] = panelParent.find((n) => n.id === "distinct-host");
-  assert.equal(host.hidden, true);
-  button.click();
+  distinct.refresh(); // the dock opened the panel
   await tick();
-  assert.equal(host.hidden, false);
-  assert.equal(button.getAttribute("aria-expanded"), "true");
   assert.deepEqual(calls.distinct[0].slice(0, 5), ["C1", { sev: { le: 3 } }, "tpl", 20, false]);
   const [select] = host.find((n) => n.id === "dst-field");
   select.value = "fields.op";
@@ -123,17 +117,17 @@ test("distinct panel: opens, lists values as text and drills down", async () => 
   ]);
   assert.equal(host.byClass("dst-include")[1].disabled, true); // no leaf: nothing to drill
   const before = calls.distinct.length;
-  ui.viewChanged(); // the filter changed: an open panel reloads
+  distinct.refresh(); // the filter changed: dock.notify("view") refreshes an open panel
   await tick();
   assert.equal(calls.distinct.length, before + 1);
-  button.click(); // closing cancels and does not reload on later changes
-  ui.viewChanged();
+  distinct.reset(); // closing or a case change cancels and clears the table
   await tick();
   assert.equal(calls.distinct.length, before + 1);
+  assert.equal(host.byClass("dst-value").length, 0);
 });
 
 test("group view: message types with span, expand to rows by keyset, reveal a row", async () => {
-  const { toolbar, panelParent, calls } = setup({
+  const { groupHost: host, calls, group } = setup({
     distinctAnswer: ([, , field]) => ({
       field, total: 5, groups: 1, exact: true, method: "bucket", others: { count: 0, groups: 0 },
       values: [{
@@ -145,12 +139,9 @@ test("group view: message types with span, expand to rows by keyset, reveal a ro
       ? { rows: [{ id: 11, ts: 1, source_id: 2, msg: HOSTILE }], next: "1:11" }
       : { rows: [{ id: 12, ts: 2, source_id: 2, msg: "second" }], next: null }),
   });
-  const [button] = toolbar.find((n) => n.id === "group-template-button");
-  assert.equal(button.textContent, S.grpButton);
-  button.click();
+  group.refresh();
   await tick();
   assert.deepEqual(calls.distinct[0].slice(0, 5), ["C1", { sev: { le: 3 } }, "tpl", 200, true]);
-  const [host] = panelParent.find((n) => n.id === "group-template-host");
   const [toggle] = host.byClass("grp-toggle");
   assert.equal(host.byClass("grp-name")[0].textContent, "Request sent");
   assert.equal(host.byClass("grp-name")[0].title, "Request sent (WFM-010)");
@@ -180,16 +171,15 @@ test("an estimate warns and 'Count exactly' repeats the request with exact: true
     { exact: false, method: "sample" }, // "Count exactly" did not fit its time either
     { exact: true, method: "exact" }, // after a filter change and a second try
   ];
-  const { toolbar, panelParent, calls, ui } = setup({
+  const { distinctHost: host, calls, distinct } = setup({
     distinctAnswer: ([, , field]) => ({
       field, total: 4, groups: 1, others: { count: 0, groups: 0 },
       values: [{ value: 2, count: 4, pct: 100, leaf: { level: 2 } }], ...answers[calls.distinct.length - 1],
     }),
     pageAnswer: () => ({ rows: [], next: null }),
   });
-  toolbar.find((n) => n.id === "distinct-button")[0].click();
+  distinct.refresh();
   await tick();
-  const [host] = panelParent.find((n) => n.id === "distinct-host");
   assert.equal(calls.distinct[0][6], false);
   assert.match(host.byClass("dst-warning")[0].textContent, /^Estimate: rare values may be missing\. Count exactly$/);
   host.byClass("dst-exact")[0].click();
@@ -197,7 +187,7 @@ test("an estimate warns and 'Count exactly' repeats the request with exact: true
   assert.equal(calls.distinct[1][6], true);
   assert.equal(host.byClass("dst-warning")[0].textContent, S.dstExactTooSlow);
   assert.equal(host.byClass("dst-exact").length, 0);
-  ui.viewChanged(); // a new filter: back to the default request
+  distinct.refresh(); // a new filter: back to the default request
   await tick();
   assert.equal(calls.distinct[2][6], false);
   assert.equal(host.byClass("dst-warning").length, 0); // exact answer: no warning
@@ -205,7 +195,7 @@ test("an estimate warns and 'Count exactly' repeats the request with exact: true
 
 test("group view: an estimate warns and 'Count exactly' repeats the request with exact: true", async () => {
   const answers = [{ exact: false, method: "bucket_estimate" }, { exact: true, method: "bucket" }];
-  const { toolbar, panelParent, calls } = setup({
+  const { groupHost: host, calls, group } = setup({
     distinctAnswer: ([, , field]) => ({
       field, total: 5, groups: 1, others: { count: 0, groups: 0 },
       values: [{ value: 7, count: 5, pct: 100, leaf: { tpl: 7 }, label: "Request sent", code: "WFM-010" }],
@@ -213,9 +203,8 @@ test("group view: an estimate warns and 'Count exactly' repeats the request with
     }),
     pageAnswer: () => ({ rows: [], next: null }),
   });
-  toolbar.find((n) => n.id === "group-template-button")[0].click();
+  group.refresh();
   await tick();
-  const [host] = panelParent.find((n) => n.id === "group-template-host");
   assert.equal(calls.distinct[0][6], false);
   assert.equal(host.byClass("dst-warning")[0].textContent, S.dstEstimateWarning + " " + S.dstCountExactly);
   host.byClass("dst-exact")[0].click();

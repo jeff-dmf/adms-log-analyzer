@@ -87,23 +87,16 @@ function isWindows() {
   return /win/i.test(text);
 }
 
-// anchor: element after which the button is inserted (inside the toolbar).
+// anchor: the Export menu trigger of the top bar (UI-12): the popover opens under it and focus returns to it. This
+// module adds no button of its own; the "Copy as…" action of the Export menu calls open().
 // getContext(): { caseId, filter, columns, fieldColumns, entry, recordId } of the viewer right now.
-// Returns { reset() }.
+// Returns { open(), close(), isOpen(), reset() }.
 export function initCopyExport(anchor, { getContext }) {
-  const wrap = element("div", "menu-wrap");
-  const button = element("button", "", S.cxButton);
-  button.type = "button";
-  button.id = "copy-export-button";
-  button.setAttribute("aria-haspopup", "true");
-  button.setAttribute("aria-expanded", "false");
-  button.title = S.cxTitle;
   const panel = element("form", "menu cx-panel");
   panel.setAttribute("role", "group");
   panel.setAttribute("aria-label", S.cxTitle);
   panel.hidden = true;
-  wrap.append(button, panel);
-  anchor.insertAdjacentElement("afterend", wrap);
+  anchor.insertAdjacentElement("afterend", panel);
 
   const kindSelect = select(CX_KINDS.map((kind) => [kind, S[KIND_LABELS[kind]]]));
   const sourceSelect = select([]);
@@ -248,9 +241,19 @@ export function initCopyExport(anchor, { getContext }) {
     paintSources();
   }
 
+  function place() {
+    if (typeof anchor.getBoundingClientRect !== "function") {
+      return;
+    }
+    const box = anchor.getBoundingClientRect();
+    panel.style.top = Math.round(box.bottom) + "px";
+    const room = (window.innerWidth || 0) - panel.offsetWidth - 8;
+    panel.style.left = Math.max(0, Math.min(Math.round(box.left), room)) + "px";
+  }
+
   function open() {
     panel.hidden = false;
-    button.setAttribute("aria-expanded", "true");
+    place();
     paintSources();
     paint();
     loadKeyTypes();
@@ -259,13 +262,11 @@ export function initCopyExport(anchor, { getContext }) {
 
   function close(focus) {
     panel.hidden = true;
-    button.setAttribute("aria-expanded", "false");
     if (focus) {
-      button.focus();
+      anchor.focus();
     }
   }
 
-  button.addEventListener("click", () => (panel.hidden ? open() : close(false)));
   closeButton.addEventListener("click", () => close(true));
   kindSelect.addEventListener("change", paint);
   copyButton.addEventListener("click", () => flow.run(form(), "copy"));
@@ -278,6 +279,9 @@ export function initCopyExport(anchor, { getContext }) {
   });
 
   return {
+    open,
+    close: () => close(false),
+    isOpen: () => !panel.hidden,
     reset() {
       flow.reset();
       keyCase = null;

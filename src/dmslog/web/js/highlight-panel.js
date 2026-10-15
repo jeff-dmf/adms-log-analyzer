@@ -56,25 +56,23 @@ function labeled(text, control) {
   return label;
 }
 
-// options: toolbar, beforeButton, panelParent, beforePanel, footer (element after which the help line
-// goes), detailAnchor (element after which the detail section goes), store (createHighlightStore),
-// getCase, getFilter (the view filter), getSelectedRow, reveal(row), showMessage(text, isError).
-export function mountHighlights(options) {
-  const { store, getCase, getFilter, getSelectedRow, reveal, showMessage } = options;
+function errorText(error) {
+  return format(S.hlError, { error: error && error.message ? error.message : S.errorGeneric });
+}
 
-  // -- toolbar button and panel
-  const toggle = button("hl-button", S.hlButton);
-  toggle.setAttribute("aria-expanded", "false");
-  toggle.setAttribute("aria-controls", "hl-panel");
-  options.toolbar.insertBefore(toggle, options.beforeButton || null);
+// Renders the "Highlights" panel into the host the dock gives it (UI-12). options: store (createHighlightStore),
+// getCase, getFilter (the view filter). Returns { refresh, reset, storeChanged }: refresh = the panel was opened,
+// reset = forget the old case's rules and status, storeChanged = the store changed (repaint the list).
+export function mountHighlightPanel(host, options) {
+  const { store, getCase, getFilter } = options;
 
-  const panel = element("section", "hl-panel");
-  panel.id = "hl-panel";
-  panel.hidden = true;
+  const panel = element("div", "hl-panel");
+  host.textContent = "";
+  host.appendChild(panel);
   const head = element("div", "hl-head");
   const title = element("h3", "hl-title", S.hlTitle);
   title.id = "hl-title";
-  panel.setAttribute("aria-labelledby", title.id);
+  host.setAttribute("aria-labelledby", title.id);
   const count = element("span", "hl-empty");
   head.append(title, count);
   const list = element("ul", "hl-list");
@@ -124,15 +122,10 @@ export function mountHighlights(options) {
   const addFilterButton = button("hl-add-filter", S.hlAddFilter);
   form.append(kindLabel, extraLabel, valueLabel, sevLabel, nameLabel, colorLabelEl, addButton, addFilterButton);
   panel.append(head, list, form, status);
-  options.panelParent.insertBefore(panel, options.beforePanel || null);
 
   function setStatus(text, isError) {
     status.textContent = text;
     status.classList.toggle("is-error", Boolean(isError));
-  }
-
-  function errorText(error) {
-    return format(S.hlError, { error: error && error.message ? error.message : S.errorGeneric });
   }
 
   function syncForm() {
@@ -240,18 +233,34 @@ export function mountHighlights(options) {
     });
   }
 
-  toggle.addEventListener("click", () => {
-    panel.hidden = !panel.hidden;
-    toggle.setAttribute("aria-expanded", panel.hidden ? "false" : "true");
-    if (!panel.hidden) {
+  return {
+    refresh() {
       setStatus("", false);
       newColor.value = nextColor(store.rules());
       renderList();
       if (getCase()) {
-        store.load().catch((error) => setStatus(errorText(error), true));
+        return store.load().catch((error) => setStatus(errorText(error), true));
       }
-    }
-  });
+      return undefined;
+    },
+    reset() {
+      list.textContent = "";
+      count.textContent = "";
+      setStatus("", false);
+    },
+    storeChanged() {
+      if (!host.hidden) {
+        renderList();
+      }
+    },
+  };
+}
+
+// options: footer (element after which the help line goes), detailAnchor (element after which the detail section
+// goes), store (createHighlightStore), getCase, getFilter (the view filter), getSelectedRow, reveal(row),
+// getTemplateCode, showMessage(text, isError). The "Highlights" panel itself is mountHighlightPanel (dock).
+export function mountHighlights(options) {
+  const { store, getCase, getFilter, getSelectedRow, reveal, showMessage } = options;
 
   // -- footer help: the shortcuts of this module (n/N, t/T, b/B, c are taken; see highlightNavKey)
   const help = element("div", "shortcuts-help", S.hlShortcutsHelp);
@@ -357,9 +366,6 @@ export function mountHighlights(options) {
   return {
     // The store changed ("rules" or "marks"): repaint what depends on it.
     storeChanged() {
-      if (!panel.hidden) {
-        renderList();
-      }
       renderDetail();
     },
     showEntry(next) {

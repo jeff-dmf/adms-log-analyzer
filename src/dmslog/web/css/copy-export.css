@@ -1,9 +1,11 @@
-/* "Copy as" menu: a popover under the toolbar button (shares .menu-wrap and .menu with the columns menu). */
+/* "Copy as" popover: opened by the Export menu, placed under its trigger by copy-export.js (fixed, so it
+   never takes room in the top bar). Shares .menu with the columns popover. */
 .cx-panel {
+  position: fixed;
   min-width: 280px;
   max-width: 360px;
   gap: 6px;
-  z-index: 20;
+  z-index: var(--z-menu);
 }
 
 .cx-field {

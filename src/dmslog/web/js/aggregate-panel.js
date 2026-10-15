@@ -550,39 +550,20 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
   };
 }
 
-// Adds the toolbar button and the host panel. Options:
-//   toolbar, beforeButton    where the button goes; panelParent, beforePanel  where the panel goes
+// Renders the panel into the host the dock gives it (UI-12). Options:
 //   api, getCase(), getFilter()   the current case and the ONE composed filter of the grid
 //   getFieldNames()          parsed-field names seen so far
 //   onDrill(filter)          AND a row's filter into the user filter
-// Returns { viewChanged() } to call whenever the case or the filter changed.
-export function mountAggregate(options) {
-  const { toolbar, beforeButton, panelParent, beforePanel } = options;
-  const toggle = button("", S.aggButton);
-  toggle.id = "aggregate-button";
-  toggle.setAttribute("aria-expanded", "false");
-  const host = element("section", "panel host-panel agg-host");
-  host.id = "aggregate-host";
-  host.hidden = true;
-  toggle.setAttribute("aria-controls", host.id);
-  toolbar.insertBefore(toggle, beforeButton || null);
-  panelParent.insertBefore(host, beforePanel || null);
+// Returns { refresh(), update(), reset(), run, flow }: refresh = the panel was opened, update = the view changed
+// (a result already shown becomes stale), reset = cancel and clear (case change, close).
+export function mountAggregatePanel(host, options) {
   const panel = initPanel(host, options);
-  toggle.addEventListener("click", () => {
-    host.hidden = !host.hidden;
-    toggle.setAttribute("aria-expanded", host.hidden ? "false" : "true");
-    if (host.hidden) {
-      panel.close();
-    } else {
-      panel.open();
-    }
-  });
   return {
-    viewChanged() {
-      if (!host.hidden) {
-        panel.viewChanged();
-      }
-    },
-    panel,
+    refresh: () => panel.open(),
+    update: () => panel.viewChanged(),
+    reset: () => panel.close(),
+    closed: () => panel.close(),
+    run: panel.run,
+    flow: panel.flow,
   };
 }

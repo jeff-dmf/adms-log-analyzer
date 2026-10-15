@@ -84,16 +84,21 @@ function summarize(rule) {
   return base + (rule.operation ? format(S.alSummaryOperation, { operation: rule.operation }) : "");
 }
 
-// banner: the live element (role="status"). options: api, getCase(), getFilter() (current filter or null),
-// onShowRecords(filter), onError(err), onClose() (after Escape), notifier (tests). Returns {open, close, isOpen, onCase, refresh}.
-export function initAlerts(host, { banner, api = defaultApi, getCase, getFilter, onShowRecords, onError, onClose, notifier }) {
+// The live part of the alerts, running from the opening whether the panel is open or not (UI-12): the banner, the
+// case's `alert` stream, the history and the browser notifications. banner: the live element (role="status").
+// options: api, getCase(), onShowRecords(filter), notifier (tests).
+// Returns { flow, notes, showRecords, on(event, fn), unseen(), clearUnseen(), onCase(), refresh() } where the events
+// are "change" (flow state), "case" (the case changed) and "count" (alerts received and not yet looked at).
+export function startAlerts({ banner, api = defaultApi, getCase, onShowRecords, notifier }) {
   const notes = notifier || createNotifier({ storage: safeStorage() });
   let stream = null;
-  let opened = false;
-  let confirming = null;
-  let confirmTimer = null;
-  let presets = [];
-  let formMessage = "";
+  let unseen = 0;
+  const listeners = { change: new Set(), case: new Set(), count: new Set() };
+  const fire = (event, value) => {
+    for (const fn of Array.from(listeners[event])) {
+      fn(value);
+    }
+  };
 
   const describe = (alert) => ({
     title: format(S.alBanner, { severity: SEVERITY_LABEL[alert.severity], rule: alert.rule, count: alert.count, what: whatFor(alert) }),
@@ -103,9 +108,7 @@ export function initAlerts(host, { banner, api = defaultApi, getCase, getFilter,
     api: api.alerts, getCase, notifier: notes, describe,
     onChange: () => {
       paintBanner();
-      if (opened) {
-        paint();
-      }
+      fire("change", flow.state);
     },
   });
 
@@ -134,6 +137,63 @@ export function initAlerts(host, { banner, api = defaultApi, getCase, getFilter,
       button(S.alDismiss, "al-banner-dismiss", () => flow.dismiss()),
     );
   }
+
+  function connect() {
+    if (stream) {
+      stream.close();
+      stream = null;
+    }
+    const caseId = getCase();
+    if (caseId === null) {
+      return;
+    }
+    stream = connectAlertStream({
+      url: defaultApi.progressUrl(caseId),
+      onAlert: (data) => {
+        if (flow.receive(data) !== null) {
+          unseen += 1;
+          fire("count", unseen);
+        }
+      },
+    });
+  }
+
+  banner.hidden = true;
+
+  return {
+    flow,
+    notes,
+    showRecords,
+    on(event, fn) {
+      listeners[event].add(fn);
+      return () => listeners[event].delete(fn);
+    },
+    unseen: () => unseen,
+    clearUnseen() {
+      unseen = 0;
+      fire("count", unseen);
+    },
+    onCase() {
+      flow.reset();
+      unseen = 0;
+      fire("count", unseen);
+      connect();
+      fire("case");
+    },
+    refresh: () => flow.refresh(),
+  };
+}
+
+// The "Alerts" panel (rules, history, notification switch) rendered into the host the dock gives it.
+// alerts: what startAlerts returned. options: api, getCase(), getFilter() (current filter or null), onError(err),
+// onClose() (after Escape). Returns { open, close, isOpen, refresh, closed }.
+export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getFilter, onError, onClose }) {
+  const { flow, notes, showRecords } = alerts;
+  let opened = false;
+  let confirming = null;
+  let confirmTimer = null;
+  let presets = [];
+  let formMessage = "";
 
   // ---- panel
   host.classList.add("al-panel");
@@ -366,21 +426,10 @@ export function initAlerts(host, { banner, api = defaultApi, getCase, getFilter,
     sourceField.value = [...sourceField.options].some((o) => o.value === keep) ? keep : "current";
   }
 
-  function connect() {
-    if (stream) {
-      stream.close();
-      stream = null;
-    }
-    const caseId = getCase();
-    if (caseId === null) {
-      return;
-    }
-    stream = connectAlertStream({ url: defaultApi.progressUrl(caseId), onAlert: (data) => flow.receive(data) });
-  }
-
   function open() {
     opened = true;
     host.hidden = false;
+    alerts.clearUnseen();
     message.textContent = "";
     paint();
     loadPresets();
@@ -399,21 +448,30 @@ export function initAlerts(host, { banner, api = defaultApi, getCase, getFilter,
     }
   });
   host.hidden = true;
-  banner.hidden = true;
+
+  alerts.on("change", () => {
+    if (opened) {
+      paint();
+    }
+  });
+  alerts.on("count", (n) => {
+    if (opened && n > 0) {
+      alerts.clearUnseen(); // looking at the panel: nothing is "new"
+    }
+  });
+  alerts.on("case", () => {
+    if (opened) {
+      loadPresets();
+      flow.refresh().catch((err) => onError(err));
+    }
+  });
 
   return {
     open,
     close,
     isOpen: () => opened,
-    onCase() {
-      flow.reset();
-      connect();
-      if (opened) {
-        loadPresets();
-        flow.refresh().catch((err) => onError(err));
-      }
-    },
-    refresh: () => flow.refresh(),
+    refresh: open,
+    closed: close,
   };
 }
 

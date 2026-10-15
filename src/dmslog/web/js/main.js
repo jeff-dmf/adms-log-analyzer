@@ -1,5 +1,7 @@
 // Orchestration: wires the panels together. Everything shown comes from strings.js or the API
 // and reaches the page through textContent / DOM nodes only.
+import { createActionRegistry } from "./actions.js";
+import { registerAppActions, registerAppPanels } from "./app-actions.js";
 import { api, onForbidden } from "./api.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
@@ -11,19 +13,21 @@ import {
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { registerLeafType } from "./filter-tree-model.js";
-import { initFilterTree, registerLeafEditor } from "./filter-tree.js";
+import { registerLeafEditor } from "./filter-tree.js";
 import { initTimeline } from "./timeline.js";
+import { createDock } from "./dock-legacy.js";
 import { COLUMNS, Grid } from "./grid.js";
 import { CollectionsPanel } from "./collections-panel.js";
 import {
   columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi,
 } from "./collections-model.js";
 import { KnowledgeSection } from "./knowledge.js";
+import { mountMenubar } from "./menubar.js";
 import { searchTerms } from "./search.js";
 import { SourceFilter } from "./source-filter.js";
 import { SourcesPanel } from "./sources.js";
 import { S, format } from "./strings.js";
-import { applyTheme, currentTheme, toggleTheme } from "./theme.js";
+import { applyTheme, setThemePreference, themePreference } from "./theme.js";
 import { parseTs } from "./time.js";
 
 const COLUMNS_KEY = "dmslog.columns";
@@ -150,15 +154,28 @@ function start() {
   const showError = (err) => showMessage(err && err.message ? err.message : S.errorGeneric, true);
   onForbidden(() => showMessage(S.errorForbidden, true));
 
-  const themeButton = byId("theme-button");
-  const paintTheme = () => {
-    themeButton.textContent = format(S.themeCurrent, { theme: currentTheme() === "dark" ? S.themeDark : S.themeLight });
+  // Until the status bar of UI-13 exists, ctx.status is a small adapter over #message with the final API.
+  const status = {
+    message: (text, { kind = "info" } = {}) => {
+      showMessage(text, kind === "error");
+      return { dismiss: () => showMessage("", false) };
+    },
+    count() {}, position() {}, progress() {}, connection() {}, slot: () => null,
   };
-  paintTheme();
-  themeButton.addEventListener("click", () => {
-    toggleTheme();
-    paintTheme();
+  const actions = createActionRegistry({ onError: (err) => showError(err), singleKeysOn: () => true });
+  // Step 1 of the dock: it exists before the context that holds it; bind(ctx) is step 2.
+  const dock = createDock({
+    root: byId("grid-panel"),
+    before: byId("filter-form"),
+    storage: safeLocalStorage(),
+    onFocusOut: () => byId("grid-viewport").focus(),
   });
+  // The optional modules loaded at the opening: their actions depend on these promises (a failure disables the item).
+  const settled = (promise) => {
+    promise.catch(() => {}); // the registry reports the failure; this only avoids an unhandled rejection
+    return promise;
+  };
+  const ready = { alerts: null, followTail: null, copyExport: null };
 
   fillSelect(byId("scope-select"), [["default", S.scopeDefault], ["all", S.scopeAll]]);
   fillSelect(byId("sev-select"), [["", S.filterAny]].concat(
@@ -180,21 +197,13 @@ function start() {
   let templateLabels = new Map(); // template id -> readable title (code when the catalogue has none)
   let filterTree = null;
   let timeline = null;
-  let unknownPanel = null;
-  let configPanel = null;
-  let eventsPanel = null;
-  let dashboard = null;
   let followTail = null;
   let clockBanner = null;
   let knowledge = null;
   let linksSection = null;
-  let sideBySide = null;
-  let keyPanel = null;
   let payloadSection = null;
-  let payloadList = null;
-  let openOperation = () => {};
-  let exportPanel = null;
   let copyExport = null;
+  let menubar = null;
   let sourceFamilies = new Map();
   // API for the panels fed by derived events: their queries carry the chosen collection.
   const derivedApi = scopeApi(api, () => (collectionsPanel ? collectionsPanel.selectedGroups() : []));
@@ -203,10 +212,7 @@ function start() {
   const navRequests = createLatestRequest(); // n/N/t/T lookups; a view change makes them stale
   let bookmarksPanel = null;
   let detailBookmark = null;
-  let compare = null;
-  let alertsUi = null; // local alerts: banner and panel (alerts-panel.js)
-  let distinctUi = null; // "Distinct values" and "Group by template" (distinct-panel.js)
-  let aggregateUi = null; // "Aggregate" panel (aggregate-panel.js)
+  let alertsUi = null; // local alerts: banner, stream and counter (alerts-panel.js startAlerts)
   let collectionsPanel = null; // the Collections panel (collections-panel.js)
   let collections = []; // collections of the open case (GET /collections)
   let collectionColumnPref = loadColumnPref(safeLocalStorage());
@@ -228,14 +234,15 @@ function start() {
       if (detailBookmark) {
         detailBookmark.refresh();
       }
-      if (kind === "edit" && bookmarksPanel && bookmarksPanel.isOpen()) {
+      if (kind === "edit" && bookmarksPanel && dock.isOpen("bookmarks")) {
         bookmarksPanel.refresh();
       }
     },
   });
 
   // Highlight rules of the case: colors of the grid rows (highlight-model.js).
-  let highlightUi = null;
+  let highlightUi = null; // detail section and ]/[ navigation
+  let highlightPanel = null; // the dock panel
   const highlightStore = createHighlightStore({
     api,
     getCase: () => caseId,
@@ -244,20 +251,18 @@ function start() {
       if (highlightUi) {
         highlightUi.storeChanged();
       }
+      if (highlightPanel) {
+        highlightPanel.storeChanged();
+      }
     },
   });
 
-  // Panels fed by the derived events: visible ones reload, hidden ones load when opened.
+  // Panels fed by the derived events: open ones reload, closed ones load when opened (dock.notify).
   const refreshDerived = () => {
     if (clockBanner) {
       clockBanner.refresh();
     }
-    if (eventsPanel && !byId("events-panel-host").hidden) {
-      eventsPanel.refresh();
-    }
-    if (dashboard && !byId("dashboard-host").hidden) {
-      dashboard.refresh();
-    }
+    dock.notify("derived");
   };
 
   const setUserFilter = (filter) => {
@@ -412,12 +417,7 @@ function start() {
     if (timeline) {
       timeline.refresh();
     }
-    if (distinctUi) {
-      distinctUi.viewChanged();
-    }
-    if (aggregateUi) {
-      aggregateUi.viewChanged();
-    }
+    dock.notify("view"); // Distinct values, Group by message type, Aggregate
     if (viewsUi) {
       viewsUi.changed();
     }
@@ -445,12 +445,7 @@ function start() {
       detail.clear(); // drop the old case's entry right away, before /sources answers
       bookmarkStore.reset();
       compareSelection.reset();
-      if (bookmarksPanel) {
-        bookmarksPanel.reset();
-      }
-      if (compare) {
-        compare.reset();
-      }
+      dock.caseChanged(); // every mounted panel forgets the old case; the ones tied to it close
       userFilter = null; // conditions of the old case do not carry over
       if (filterTree) {
         filterTree.setCase(id);
@@ -464,33 +459,19 @@ function start() {
       }
       loadTemplates(id);
       knowledge.reset();
-      if (keyPanel) {
-        keyPanel.reset();
-      }
-      if (exportPanel) {
-        exportPanel.reset();
-      }
       if (copyExport) {
         copyExport.reset();
       }
-      if (sideBySide) {
-        sideBySide.reset();
-      }
-      if (payloadList) {
-        payloadList.close();
-      }
-      if (unknownPanel) {
-        unknownPanel.refresh();
-      }
-      if (configPanel) {
-        configPanel.refresh();
-      }
+      dock.notify("case");
       refreshDerived();
       if (followTail) {
         followTail.onCase();
       }
       if (alertsUi) {
         alertsUi.onCase();
+      }
+      if (menubar) {
+        menubar.refresh();
       }
     },
     onSources: (list, quiet) => {
@@ -512,17 +493,9 @@ function start() {
     onDone: () => {
       bookmarkStore.invalidate(); // the records were (re)indexed: markers are looked up again
       highlightStore.invalidateMarks();
-      if (bookmarksPanel && bookmarksPanel.isOpen()) {
-        bookmarksPanel.refresh();
-      }
       loadTemplates(caseId);
       knowledge.reset(); // the ERS configuration may have been read again
-      if (unknownPanel) {
-        unknownPanel.refresh();
-      }
-      if (configPanel) {
-        configPanel.refresh();
-      }
+      dock.notify("indexed"); // Bookmarks, Unknown message types, Effective configuration
       refreshDerived();
       return applyView();
     },
@@ -625,7 +598,6 @@ function start() {
 
   // Column chooser: the fixed columns, then the parsed-field names seen so far.
   const menu = byId("columns-menu");
-  const columnsButton = byId("columns-button");
   let visibleColumns = loadColumns();
   const checkbox = (labelText, checked, onChange) => {
     const label = document.createElement("label");
@@ -685,15 +657,35 @@ function start() {
     menu.appendChild(reset);
   }
   buildColumnMenu();
-  columnsButton.addEventListener("click", () => {
-    menu.hidden = !menu.hidden;
-    columnsButton.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
-  });
+  // View > Columns… opens this popover under the View button; Escape or a click outside closes it.
+  const viewButton = byId("view-button");
+  const closeColumns = (focusBack) => {
+    if (menu.hidden) {
+      return;
+    }
+    menu.hidden = true;
+    if (focusBack) {
+      viewButton.focus();
+    }
+  };
+  const openColumns = () => {
+    const box = viewButton.getBoundingClientRect();
+    menu.hidden = false;
+    menu.style.top = Math.round(box.bottom) + "px";
+    menu.style.left = Math.max(0, Math.min(Math.round(box.left), window.innerWidth - menu.offsetWidth - 8)) + "px";
+    const first = menu.querySelector("input");
+    if (first) {
+      first.focus();
+    }
+  };
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !menu.hidden) {
-      menu.hidden = true;
-      columnsButton.setAttribute("aria-expanded", "false");
-      columnsButton.focus();
+    if (event.key === "Escape") {
+      closeColumns(true);
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!menu.hidden && !menu.contains(event.target) && !viewButton.contains(event.target)) {
+      closeColumns(false);
     }
   });
   grid.setColumns(visibleColumns);
@@ -707,90 +699,7 @@ function start() {
     onRangeSelected: (range) => setUserFilter(withTsRange(userFilter, range)),
   });
 
-  // Filter tree: created on first use (it needs a case); shares setUserFilter with the other paths.
-  const treeHost = byId("filter-tree-host");
-  const treeButton = byId("filter-tree-button");
-  treeButton.addEventListener("click", () => {
-    if (treeHost.hidden && caseId === null) {
-      showMessage(S.needCase, true);
-      return;
-    }
-    treeHost.hidden = !treeHost.hidden;
-    treeButton.setAttribute("aria-expanded", treeHost.hidden ? "false" : "true");
-    if (!treeHost.hidden && !filterTree) {
-      filterTree = initFilterTree(treeHost, {
-        api,
-        caseId,
-        initial: userFilter,
-        onChange: (filter) => {
-          userFilter = filter;
-          applyView();
-        },
-        // Saved filters can include the toolbar filters; applying one replaces them.
-        getExtraFilter: () => composeFilter({ sourceIds: [], text: searchText, ...formState }, null, toggles),
-        onSavedApplied: () => {
-          byId("filter-form").reset();
-          byId("search-input").value = "";
-          searchText = "";
-          formState = { sevMax: null, levelMax: null, from: null, to: null };
-          toggles = { hideNoise: false, unclassified: false };
-        },
-      });
-    }
-  });
-
-  // Unknown-templates panel: optional module, the app works without it.
-  const unknownHost = byId("unknown-panel-host");
-  const unknownButton = byId("unknown-button");
-  import("./unknown-panel.js").then((module) => {
-    if (typeof module.initUnknownPanel !== "function") {
-      return;
-    }
-    unknownButton.hidden = false;
-    unknownButton.addEventListener("click", () => {
-      unknownHost.hidden = !unknownHost.hidden;
-      unknownButton.setAttribute("aria-expanded", unknownHost.hidden ? "false" : "true");
-      if (!unknownHost.hidden) {
-        if (!unknownPanel) {
-          unknownPanel = module.initUnknownPanel(unknownHost, {
-            api,
-            getCase: () => caseId,
-            getFamily: () => null,
-            onOpenEntry: (entryId) => detail.show(entryId),
-          });
-        }
-        unknownPanel.refresh();
-      }
-    });
-  }).catch(() => {
-    // Module missing or failing: the button stays hidden.
-  });
-
-  // Effective-configuration panel: optional module like the unknown-templates panel.
-  const configHost = byId("config-panel-host");
-  const configButton = byId("config-button");
-  import("./config-panel.js").then((module) => {
-    if (typeof module.initConfigPanel !== "function") {
-      return;
-    }
-    configButton.hidden = false;
-    configButton.addEventListener("click", () => {
-      configHost.hidden = !configHost.hidden;
-      configButton.setAttribute("aria-expanded", configHost.hidden ? "false" : "true");
-      if (!configHost.hidden) {
-        if (!configPanel) {
-          configPanel = module.initConfigPanel(configHost, {
-            api,
-            getCase: () => caseId,
-            onOpenEntry: (entryId) => detail.show(entryId),
-          });
-        }
-        configPanel.refresh();
-      }
-    });
-  }).catch(() => {
-    // Module missing or failing: the button stays hidden.
-  });
+  // The panels (filter tree, Analyze, Export, ...) mount in the dock the first time they open; see app-actions.js.
 
   // "Show in grid" of the derived-event panels: the grid's time filter becomes the event's window
   // and its first entry is selected.
@@ -812,8 +721,7 @@ function start() {
   };
 
   // Correlation: select a linked record in the grid (falls back to the detail pane when the
-  // record is filtered out), then the optional modules of the Links section, the side-by-side
-  // view and the "same key" panel.
+  // record is filtered out), then the Links section (its side-by-side and "same key" panels are dock panels).
   const revealEntry = async ({ id, ts }) => {
     const forCase = caseId;
     try {
@@ -829,14 +737,12 @@ function start() {
       detail.show(id);
     }
   };
-  Promise.all([import("./links.js"), import("./side-by-side.js"), import("./key-panel.js")]).then(([links, side, keys]) => {
-    sideBySide = side.initSideBySide(byId("side-by-side-host"), { getCase: () => caseId });
-    keyPanel = keys.initKeyPanel(byId("key-panel-host"), { getCase: () => caseId, onSelect: revealEntry });
+  import("./links.js").then((links) => {
     linksSection = new links.LinksSection(byId("detail-links"), {
       getCase: () => caseId,
       onReveal: revealEntry,
-      onSideBySide: (id) => sideBySide.open(id),
-      onSameKey: (type, value) => keyPanel.open(type, value),
+      onSideBySide: (id) => dock.open("sideBySide", { entryId: id }),
+      onSameKey: (type, value) => dock.open("sameKey", { type, value }),
       onError: showError,
     });
     if (detail.entry) {
@@ -851,7 +757,7 @@ function start() {
     payloadSection = new module.PayloadSection(byId("detail-payload"), {
       getCase: () => caseId,
       onReveal: revealEntry,
-      onGoOperation: (eventId) => openOperation(eventId),
+      onGoOperation: (eventId) => dock.open("operations", { eventId }),
       onError: showError,
     });
     if (detail.entry) {
@@ -860,31 +766,9 @@ function start() {
   }).catch(() => {
     // Module missing or failing: the detail pane simply has no Payload section.
   });
-  const payloadHost = byId("payload-list-host");
-  const payloadButton = byId("payload-button");
-  import("./payload-list.js").then((module) => {
-    payloadButton.hidden = false;
-    payloadHost.addEventListener("payload-list-closed", () => payloadButton.setAttribute("aria-expanded", "false"));
-    payloadButton.addEventListener("click", () => {
-      payloadHost.hidden = !payloadHost.hidden;
-      payloadButton.setAttribute("aria-expanded", payloadHost.hidden ? "false" : "true");
-      if (!payloadHost.hidden) {
-        if (!payloadList) {
-          payloadList = module.initPayloadList(payloadHost, { api, getCase: () => caseId, onOpen: revealEntry });
-        }
-        payloadList.refresh();
-      }
-    });
-  }).catch(() => {
-    // Module missing or failing: the button stays hidden.
-  });
-  // Highlight rules (panel, detail section, ]/[ navigation): optional module; the store is above.
+  // Highlight rules (detail section, ]/[ navigation): optional module; the store is above. The panel is a dock panel.
   import("./highlight-panel.js").then((module) => {
     highlightUi = module.mountHighlights({
-      toolbar: byId("toolbar"),
-      beforeButton: byId("theme-button"),
-      panelParent: byId("grid-panel"),
-      beforePanel: byId("filter-form"),
       footer: document.querySelector(".shortcuts-help"),
       detailAnchor: byId("detail-bookmark"),
       store: highlightStore,
@@ -897,42 +781,7 @@ function start() {
     });
     highlightUi.showEntry(detail.entry);
   }).catch(() => {
-    // Module missing or failing: rules still color the grid, without the panel.
-  });
-  // Distinct values of a field (drill-down into the filter) and "Group by template": optional module.
-  Promise.all([import("./distinct-panel.js"), import("./distinct-model.js")]).then(([panelModule, model]) => {
-    distinctUi = panelModule.mountDistinct({
-      toolbar: byId("toolbar"),
-      beforeButton: byId("theme-button"),
-      panelParent: byId("grid-panel"),
-      beforePanel: byId("filter-form"),
-      api,
-      getCase: () => caseId,
-      getFilter: () => currentFilter,
-      getFieldNames: () => Array.from(seenFields),
-      hasCollections: () => isMulti(collections),
-      getSourceName: (id) => sourceNames.get(id) || String(id),
-      onDrill: (leaf, exclude) => setUserFilter(model.drillFilter(userFilter, leaf, exclude)),
-      onReveal: revealEntry,
-    });
-  }).catch(() => {
-    // Module missing or failing: no buttons.
-  });
-  // Declarative aggregation over the view (table, chart, CSV, drill-down): optional module.
-  Promise.all([import("./aggregate-panel.js"), import("./aggregate-model.js")]).then(([panelModule, model]) => {
-    aggregateUi = panelModule.mountAggregate({
-      toolbar: byId("toolbar"),
-      beforeButton: byId("theme-button"),
-      panelParent: byId("grid-panel"),
-      beforePanel: byId("filter-form"),
-      api,
-      getCase: () => caseId,
-      getFilter: () => currentFilter,
-      getFieldNames: () => Array.from(seenFields),
-      onDrill: (drill) => setUserFilter(model.drillFilter(userFilter, drill)),
-    });
-  }).catch(() => {
-    // Module missing or failing: no Aggregate button.
+    // Module missing or failing: rules still color the grid, without the detail section.
   });
   // Chained views (breadcrumbs, Narrow this view, Show in parent/root): optional modules.
   Promise.all([import("./views-stack.js"), import("./views-stack-model.js")]).then(([uiModule, model]) => {
@@ -966,38 +815,14 @@ function start() {
   }).catch(() => {
     // Module missing or failing: no chained views.
   });
-  // Bookmarks (detail section, panel, shortcuts) and "Compare with...": optional modules.
-  const bookmarksHost = byId("bookmarks-host");
-  const bookmarksButton = byId("bookmarks-button");
-  const toggleBookmarksPanel = () => {
-    if (!bookmarksPanel) {
-      return;
-    }
-    if (bookmarksPanel.isOpen()) {
-      bookmarksPanel.close();
-    } else if (caseId === null) {
-      showMessage(S.needCase, true);
-      return;
-    } else {
-      bookmarksPanel.open();
-    }
-    bookmarksButton.setAttribute("aria-expanded", bookmarksPanel.isOpen() ? "true" : "false");
-  };
+  // Bookmarks (detail section, shortcuts) and "Compare with...": optional modules. The panel is a dock panel.
   import("./bookmarks-panel.js").then((module) => {
     detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
-    bookmarksPanel = module.initBookmarksPanel(bookmarksHost, {
-      getCase: () => caseId,
-      store: bookmarkStore,
-      onReveal: revealEntry,
-      onError: showError,
-    });
-    bookmarksButton.hidden = false;
-    bookmarksButton.addEventListener("click", toggleBookmarksPanel);
     if (detail.entry) {
       detailBookmark.show(detail.entry);
     }
   }).catch(() => {
-    // Module missing or failing: no bookmarks UI.
+    // Module missing or failing: no bookmark section in the detail pane.
   });
 
   const compareCurrent = () => {
@@ -1011,18 +836,13 @@ function start() {
       showMessage(format(S.cmpPicked, { id: step.a }), false);
     } else if (step.action === "cancel") {
       showMessage(S.cmpCancelled, false);
-    } else if (step.action === "compare" && compare) {
+    } else if (step.action === "compare") {
       showMessage("", false);
-      compare.open(step.a, step.b);
+      dock.open("compare", { a: step.a, b: step.b });
     }
     paintCompareButton(detail.entry);
   };
   compareButton.addEventListener("click", compareCurrent);
-  import("./compare.js").then((module) => {
-    compare = module.initCompare(byId("compare-host"), { getCase: () => caseId });
-  }).catch(() => {
-    compareButton.hidden = true; // module missing or failing: no compare
-  });
 
   // Shortcuts: b toggles the bookmark of the selected record, B opens the panel, c compares.
   document.addEventListener("keydown", async (event) => {
@@ -1032,7 +852,7 @@ function start() {
     }
     if (action === "panel") {
       event.preventDefault();
-      toggleBookmarksPanel();
+      actions.invoke("toggle.bookmarks", ctx);
       return;
     }
     const row = grid.selectedRow();
@@ -1054,7 +874,7 @@ function start() {
     }
   });
 
-  import("./follow-tail.js").then((module) => {
+  ready.followTail = settled(import("./follow-tail.js").then((module) => {
     followTail = module.initFollowTail({
       toggle: byId("follow-tail"),
       newButton: byId("follow-new"),
@@ -1067,84 +887,24 @@ function start() {
       },
       onError: showError,
     });
-  }).catch(() => {
-    // Module missing or failing: the toggle does nothing.
-  });
+  }));
 
-  // Local alerts (9.13): banner, panel and optional browser notifications; optional module.
-  const alertsHost = byId("alerts-host");
-  const alertsButton = byId("alerts-button");
-  import("./alerts-panel.js").then((module) => {
-    alertsUi = module.initAlerts(alertsHost, {
+  // Local alerts (9.13): banner, stream and counter run from the opening; the panel is a dock panel.
+  ready.alerts = settled(import("./alerts-panel.js").then((module) => {
+    alertsUi = module.startAlerts({
       banner: byId("alert-banner"),
       getCase: () => caseId,
-      getFilter: () => userFilter,
       onShowRecords: (filter) => setUserFilter(filter).catch(showError),
-      onError: showError,
-      onClose: () => alertsButton.setAttribute("aria-expanded", "false"),
     });
-    alertsButton.hidden = false;
-    alertsButton.addEventListener("click", () => {
-      if (alertsUi.isOpen()) {
-        alertsUi.close();
-      } else if (caseId === null) {
-        showMessage(S.needCase, true);
-        return;
-      } else {
-        alertsUi.open();
+    alertsUi.on("count", (n) => {
+      if (menubar) {
+        menubar.setAlertsCount(n);
       }
-      alertsButton.setAttribute("aria-expanded", alertsUi.isOpen() ? "true" : "false");
     });
     alertsUi.onCase();
-  }).catch(() => {
-    // Module missing or failing: no alerts UI.
-  });
+  }));
 
-  // Operations panel, adapter dashboard and clock-jump banner: optional modules like the panels above.
-  const eventsHost = byId("events-panel-host");
-  const eventsButton = byId("events-button");
-  import("./events-panel.js").then((module) => {
-    if (typeof module.initEventsPanel !== "function") {
-      return;
-    }
-    eventsButton.hidden = false;
-    const ensureEventsPanel = () => {
-      if (!eventsPanel) {
-        eventsPanel = module.initEventsPanel(eventsHost, {
-          api: derivedApi,
-          getCase: () => caseId,
-          onShowInGrid: showEventInGrid,
-        });
-      }
-    };
-    eventsButton.addEventListener("click", () => {
-      eventsHost.hidden = !eventsHost.hidden;
-      eventsButton.setAttribute("aria-expanded", eventsHost.hidden ? "false" : "true");
-      if (!eventsHost.hidden) {
-        ensureEventsPanel();
-        eventsPanel.refresh();
-      }
-    });
-    // "Go to operation" of the Payload section: shows the panel (loading its list when it was
-    // hidden) and opens the event in its detail pane.
-    openOperation = (eventId) => {
-      const wasHidden = eventsHost.hidden;
-      eventsHost.hidden = false;
-      eventsButton.setAttribute("aria-expanded", "true");
-      ensureEventsPanel();
-      if (wasHidden) {
-        eventsPanel.refresh();
-      }
-      eventsPanel.open(eventId);
-    };
-  }).catch(() => {
-    // Module missing or failing: the button stays hidden.
-  });
-
-  // Export report and redaction settings: optional modules, the app works without them.
-  const exportHost = byId("export-panel-host");
-  const redactionHost = byId("redaction-panel-host");
-  const exportButton = byId("export-button");
+  // Export report and "Copy as": the report is a dock panel; the "Copy as" popover hangs under the Export menu.
   const exportContext = () => {
     const selected = grid.selectedRow();
     const entry = detail.entry;
@@ -1156,38 +916,8 @@ function start() {
       eventId: sameEntry && entry.event ? entry.event.id : null,
     };
   };
-  Promise.all([import("./export-panel.js"), import("./redaction-panel.js")]).then(([exporting, redacting]) => {
-    let redactionPanel = null;
-    const openRedaction = () => {
-      redactionHost.hidden = false;
-      if (!redactionPanel) {
-        redactionPanel = redacting.initRedactionPanel(redactionHost);
-      }
-      redactionPanel.refresh();
-    };
-    exportButton.hidden = false;
-    exportButton.addEventListener("click", () => {
-      exportHost.hidden = !exportHost.hidden;
-      exportButton.setAttribute("aria-expanded", exportHost.hidden ? "false" : "true");
-      if (exportHost.hidden) {
-        redactionHost.hidden = true;
-        return;
-      }
-      if (!exportPanel) {
-        exportPanel = exporting.initExportPanel(exportHost, {
-          getContext: exportContext,
-          onOpenRedaction: openRedaction,
-        });
-      }
-      exportPanel.refresh();
-    });
-  }).catch(() => {
-    // Module missing or failing: the button stays hidden.
-  });
-
-  // "Copy as" menu (lists, original lines, CSV): optional module, the app works without it.
-  import("./copy-export.js").then((module) => {
-    copyExport = module.initCopyExport(exportButton, {
+  ready.copyExport = settled(import("./copy-export.js").then((module) => {
+    copyExport = module.initCopyExport(byId("export-button"), {
       getContext: () => ({
         caseId,
         filter: currentFilter,
@@ -1197,34 +927,7 @@ function start() {
         entry: detail.entry,
       }),
     });
-  }).catch(() => {
-    // Module missing or failing: no menu.
-  });
-
-  const dashboardHost = byId("dashboard-host");
-  const dashboardButton = byId("dashboard-button");
-  import("./dashboard.js").then((module) => {
-    if (typeof module.initDashboard !== "function") {
-      return;
-    }
-    dashboardButton.hidden = false;
-    dashboardButton.addEventListener("click", () => {
-      dashboardHost.hidden = !dashboardHost.hidden;
-      dashboardButton.setAttribute("aria-expanded", dashboardHost.hidden ? "false" : "true");
-      if (!dashboardHost.hidden) {
-        if (!dashboard) {
-          dashboard = module.initDashboard(dashboardHost, {
-            api: derivedApi,
-            getCase: () => caseId,
-            onShowInGrid: showEventInGrid,
-          });
-        }
-        dashboard.refresh();
-      }
-    });
-  }).catch(() => {
-    // Module missing or failing: the button stays hidden.
-  });
+  }));
 
   import("./clock-banner.js").then((module) => {
     if (typeof module.initClockBanner !== "function") {
@@ -1278,6 +981,113 @@ function start() {
       }
     }
   });
+
+  // ---- The action registry, the dock and the top bar. Everything is registered here, synchronously, so every
+  // item of every menu exists from the first paint (see app-actions.js).
+  const ctx = Object.freeze({
+    caseId: () => caseId,
+    filter: () => currentFilter,
+    userFilter: () => userFilter,
+    selectedRow: () => grid.selectedRow(),
+    entry: () => detail.entry,
+    setUserFilter: (filter) => setUserFilter(filter),
+    reveal: (row) => revealEntry(row),
+    actions,
+    dock,
+    status,
+  });
+  dock.bind(ctx); // step 2 of the dock
+  const caseSelect = byId("case-select");
+  const deps = {
+    api,
+    derivedApi,
+    highlightStore,
+    bookmarkStore,
+    ready,
+    onError: showError,
+    fieldNames: () => Array.from(seenFields),
+    hasCollections: () => isMulti(collections),
+    sourceName: (id) => sourceNames.get(id) || String(id),
+    showEntry: (id) => detail.show(id),
+    reveal: (row) => revealEntry(row),
+    showEventInGrid,
+    exportContext,
+    filterTreeOptions: () => ({
+      onChange: (filter) => {
+        userFilter = filter;
+        applyView();
+      },
+      // Saved filters can include the toolbar filters; applying one replaces them.
+      getExtraFilter: () => composeFilter({ sourceIds: [], text: searchText, ...formState }, null, toggles),
+      onSavedApplied: () => {
+        byId("filter-form").reset();
+        byId("search-input").value = "";
+        searchText = "";
+        formState = { sevMax: null, levelMax: null, from: null, to: null };
+        toggles = { hideNoise: false, unclassified: false };
+      },
+    }),
+    onFilterTree: (tree) => {
+      filterTree = tree;
+    },
+    onHighlightPanel: (highlights) => {
+      highlightPanel = highlights;
+    },
+    onBookmarksPanel: (bookmarks) => {
+      bookmarksPanel = bookmarks;
+    },
+    alerts: () => alertsUi,
+    cases: () => Array.from(caseSelect.options).filter((o) => o.value !== "").map((o) => ({ id: o.value, name: o.textContent })),
+    selectCase: (id) => {
+      if (panel.queueBusy) {
+        showMessage(S.cfQueueBusy, true);
+        return undefined;
+      }
+      return panel.selectCase(id);
+    },
+    closeCase: () => deps.selectCase(null),
+    focusNewCase: () => byId("new-case-name").focus(),
+    focusAddFiles: () => {
+      const target = byId("add-files-host").querySelector("button, input");
+      (target || byId("path-input")).focus();
+    },
+    openColumns,
+    copyExportOpen: () => copyExport && copyExport.open(),
+    followTailOn: () => byId("follow-tail").checked,
+    toggleFollowTail: () => {
+      const box = byId("follow-tail");
+      box.checked = !box.checked;
+      box.dispatchEvent(new Event("change"));
+    },
+    theme: themePreference,
+    setTheme: (choice) => setThemePreference(choice),
+    shortcutsText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp].join(" "),
+  };
+  registerAppPanels(dock, deps);
+  registerAppActions(actions, deps);
+  const toggleButtons = Array.from(document.querySelectorAll("#toolbar [data-action]"));
+  menubar = mountMenubar({
+    actions,
+    ctx,
+    getCaseLabel: () => {
+      const option = caseSelect.selectedOptions && caseSelect.selectedOptions[0];
+      return caseId !== null && option ? option.textContent : "";
+    },
+    refs: {
+      caseButton: byId("case-button"),
+      caseLabel: byId("case-button-label"),
+      toggles: toggleButtons,
+      menus: { analyze: byId("analyze-button"), export: byId("export-button"), view: byId("view-button") },
+      caseControls: [...byId("search-form").querySelectorAll("input, button"), ...byId("goto-form").querySelectorAll("input, button")],
+      alertsBadge: byId("alerts-count"),
+    },
+  });
+  byId("toolbar").classList.add("is-ready"); // texts and states are in place: show the bar (css/topbar.css)
+  dock.on("open", menubar.refresh);
+  dock.on("close", menubar.refresh);
+  for (const control of toggleButtons) {
+    actions.preload(control.dataset.action); // the modules behind the toggles are loaded at the opening anyway
+  }
 
   panel.loadCases(null).catch(showError);
 }
