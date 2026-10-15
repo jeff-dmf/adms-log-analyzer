@@ -4,6 +4,10 @@
 when nothing changed, appends only the tail of files that grew, follows rotations
 (``X.log`` -> ``X.log.0``) and reindexes files that were rewritten or truncated.
 
+Partial open (ROADMAP 9.9, ``IngestOptions.first``): a first pass indexes a time window and/or some sources,
+derives and correlates what it has and reports ``first_ready``; the second pass completes every source
+(``ingest/partial.py``). Any later run of the same path completes what an interrupted run left.
+
 Commit points: one transaction per batch of about ``batch_bytes`` fed bytes (16 MiB by
 default) or ``MAX_BATCH_RECORDS`` records. At every commit the source row holds a consistent
 state (``indexed_bytes``, ``tail_hash``, counts, ``status='indexing'``). Resuming (after an
@@ -13,6 +17,8 @@ again from its ``byte_off``/``line_no``, because that record may have gained lin
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import time
 import zipfile
@@ -47,6 +53,23 @@ from dmslog.ingest.fingerprint import (
     sha1_hex,
     span_for,
 )
+from dmslog.ingest.partial import (
+    DETECT_BYTES,
+    DETECT_LINES,
+    SCOPE_KEY_PREFIX,
+    SEG_PREFIX,
+    SEG_SUFFIX,
+    SEG_WINDOW,
+    FirstPass,
+    PartialState,
+    drop_state,
+    hash_stream,
+    head_hash_of,
+    load_state,
+    locate_window,
+    pending_work,
+    save_state,
+)
 from dmslog.ingest.reader import (
     ReadLimitError,
     ReadLimits,
@@ -61,12 +84,20 @@ from dmslog.parse.records import DEFAULT_MAX_RECORD_BYTES, RecordGrouper, Record
 from dmslog.parse.severity import generic_severity, infer_severity
 from dmslog.parse.templates import Catalog, load_catalog
 from dmslog.store.config import config_param_rows, product_for_process
-from dmslog.store.writer import MAX_BATCH_RECORDS, BatchStats, CollectionRow, IndexWriter, SourceRow
+from dmslog.store.writer import (
+    FLAG_TS_OUT_OF_ORDER,
+    MAX_BATCH_RECORDS,
+    PARTIAL_ORDER_PREFIX,
+    BatchStats,
+    CollectionRow,
+    IndexWriter,
+    SourceRow,
+    cached_signature,
+    next_row_id,
+)
 
 CASE_DB_FILENAME = "case.sqlite"
 DEFAULT_BATCH_BYTES = 16 * 1024 * 1024
-DETECT_BYTES = 64 * 1024  # bytes examined to pick the envelope of a new source ...
-DETECT_LINES = 50  # ... or this many lines, whichever comes first (what detect_envelope looks at)
 
 PLAIN_ENVELOPE = "plain"  # Envelope.name of the fallback envelope
 
@@ -77,6 +108,13 @@ SCOPE_ALL = "all"
 SKIP_OUT_OF_SCOPE = "out_of_scope"
 SKIP_NOT_INDEXABLE = "not_indexable"
 FAIL_RECORD_TOO_LARGE = "record_too_large"
+
+# SourceResult.action / ProgressEvent.action of a partial open (besides the Action values)
+ACTION_WINDOW = "window"  # first pass: only the window of the source was indexed
+ACTION_PARTIAL = "partial"  # first pass: the source already holds a window from an earlier partial open
+ACTION_COMPLETE = "complete"  # second pass: the rest of a source indexed out of order
+STAGE_FIRST = "first"
+STAGE_REST = "rest"
 
 
 @dataclass(frozen=True)
@@ -89,11 +127,16 @@ class IngestOptions:
     max_record_bytes: int = DEFAULT_MAX_RECORD_BYTES
     catalog: Catalog | None = None  # template catalog; None = the packaged adapters/*.toml
     aliases: Aliases | None = None  # local aliases (real -> public names); None = no aliases
+    first: FirstPass | None = (
+        None  # partial open (ROADMAP 9.9): what to index first; None = everything at once
+    )
 
 
 @dataclass(frozen=True)
 class ProgressEvent:
-    """Reported to the progress callback. ``phase``: source_start, progress, source_done, done."""
+    """Reported to the progress callback. ``phase``: source_start, progress, source_done, done, and with a
+    partial open ``first_ready`` (the first pass is indexed, derived and correlated: the UI can query it).
+    ``stage``: None without a partial open, else ``first`` or ``rest``; the totals then count the stage."""
 
     phase: str
     member: str | None
@@ -106,6 +149,7 @@ class ProgressEvent:
     records: int  # records written in the run
     sources_done: int
     sources_total: int
+    stage: str | None = None
 
 
 ProgressFn = Callable[[ProgressEvent], None]
@@ -143,6 +187,13 @@ class IngestResult:
     payloads: int = 0  # payload rows extracted in this run (parse/payload.py)
     payloads_linked: int = 0  # payloads linked to an operation by the linking step of this run
     payload_seconds: float = 0.0  # time of the payload linking step (included in ``seconds``)
+    # partial open (``IngestOptions.first``)
+    first_seconds: float = 0.0  # time until ``first_ready`` (first pass, its derivation and correlation)
+    first_sources: int = 0  # sources of the first pass (chains included)
+    first_records: int = 0  # records written by the first pass
+    first_unmatched: list[str] = field(default_factory=list)  # requested members that are not selected
+    deferred: bool = False  # ``defer_rest``: the second pass did not run
+    partial_left: int = 0  # sources of the collection still incomplete at the end (partial or pending)
 
     @property
     def mb_per_s(self) -> float:
@@ -361,6 +412,9 @@ class _Run:
         self.current_action: str | None = None
         self.catalog: Catalog = options.catalog if options.catalog is not None else default_catalog()
         self.severity = SeverityHook()
+        self.stage: str | None = None
+        self.pending: dict[str, int | None] = {}  # pending_bytes per member (None: unchanged)
+        self.reset_members: set[str] = set()  # sources reset during the run (their rows must be read again)
 
     def _shown(self, text: str | None) -> str | None:
         """A name as presented or stored (progress, results): public spelling, control characters escaped."""
@@ -391,7 +445,7 @@ class _Run:
                 phase, self._shown(self.current_member), self.current_action,
                 source_bytes, source_total, source_records,
                 self.bytes_done,
-                self.bytes_total, self.result.records, self.sources_done, self.sources_total,
+                self.bytes_total, self.result.records, self.sources_done, self.sources_total, self.stage,
             )
         )  # fmt: skip
 
@@ -408,11 +462,11 @@ class _Run:
         try:
             summary = derive_pending(self.w.conn, self.catalog)
         except Exception as exc:  # e.g. a locked database
-            self.result.derive_seconds = time.perf_counter() - started
+            self.result.derive_seconds += time.perf_counter() - started
             self._warn(f"derivation failed: {self._exc_text(exc)}")
             return
-        self.result.derive_seconds = time.perf_counter() - started
-        self.result.events_derived = summary.events
+        self.result.derive_seconds += time.perf_counter() - started
+        self.result.events_derived += summary.events
         for stream_id, message in summary.errors:
             self._warn(f"derivation failed for stream {stream_id}: {self._detail(message)}")
 
@@ -446,7 +500,7 @@ class _Run:
             self.result.links_created += summary.links
             for group, message in summary.errors:
                 self._warn(f"{name} failed for group {group}: {self._detail(message)}")
-        self.result.correlate_seconds = time.perf_counter() - started
+        self.result.correlate_seconds += time.perf_counter() - started
 
     def link_payloads(self) -> None:
         """Link the payloads of the groups that changed (after derivation and correlation): announcement,
@@ -461,11 +515,11 @@ class _Run:
         try:
             summary = link_payloads(self.w.conn, self.catalog)
         except Exception as exc:  # e.g. a locked database
-            self.result.payload_seconds = time.perf_counter() - started
+            self.result.payload_seconds += time.perf_counter() - started
             self._warn(f"payload linking failed: {self._exc_text(exc)}")
             return
-        self.result.payload_seconds = time.perf_counter() - started
-        self.result.payloads_linked = summary.linked
+        self.result.payload_seconds += time.perf_counter() - started
+        self.result.payloads_linked += summary.linked
         for group, message in summary.errors:
             self._warn(f"payload linking failed for group {group}: {self._detail(message)}")
 
@@ -569,6 +623,7 @@ class _Run:
             holder = known.get(member)
             if holder is not None and holder.id not in renames:
                 self.w.delete_source_entries(holder.id)
+                drop_state(self.w.conn, holder.id)
                 self.w.conn.execute("DELETE FROM source WHERE id=?", (holder.id,))
         self.w.rename_sources(renames)
         self.w.commit()
@@ -619,6 +674,18 @@ class _Run:
     def process(self, row: SourceRow, info: SourceInfo, reader: SourceReader) -> None:
         self.current_member = info.member
         self.current_action = None
+        state = load_state(self.w.conn, row.id)
+        if state is not None:
+            if row.status == "indexing":
+                outcome = self._complete_partial(row, info, reader, state)
+                if outcome == _DONE:
+                    return
+                # _ABANDONED: indexed again from scratch below; _GROWN: completed, its growth appended below
+            else:  # failed since (status error): the regular decision reindexes it
+                drop_state(self.w.conn, row.id)
+                self.w.commit()
+            row = self.w.sources(row.collection_id)[row.member]
+            self.current_action = None
         try:
             action, key_only = self.plan_action(row, info, reader)
         except (OSError, zipfile.BadZipFile, ReadLimitError) as exc:
@@ -693,25 +760,37 @@ class _Run:
         self, selected: list[SourceInfo], rows: dict[str, SourceRow], reader: SourceReader
     ) -> int:
         """Bytes the run will add to the index, from ``plan_action`` of every source (nothing is written).
+        The per-member detail stays in ``self.pending`` (None = unchanged), which the partial open uses."""
+        self.pending = self.pending_by_member(selected, rows, reader)
+        return sum(n for n in self.pending.values() if n)
+
+    def pending_by_member(
+        self, selected: list[SourceInfo], rows: dict[str, SourceRow], reader: SourceReader
+    ) -> dict[str, int | None]:
+        """Per member, the bytes the run will add to the index (None: unchanged, nothing to write).
 
         Nothing for an unchanged source, only the new tail for an append or a resume, the whole source for
-        a new one or a re-index. A source that cannot be read here counts as zero (``process`` reports it).
+        a new one, a re-index or a partial one. A source that cannot be read here counts as zero bytes of
+        work (``process`` reports it).
         """
-        total = 0
+        out: dict[str, int | None] = {}
         for info in selected:
             row = rows.get(info.member)
-            if row is None:
-                total += info.size
+            if row is None or load_state(self.w.conn, row.id) is not None:
+                out[info.member] = info.size
                 continue
             try:
                 action, _key_only = self.plan_action(row, info, reader)
             except (OSError, zipfile.BadZipFile, ReadLimitError):
+                out[info.member] = 0
                 continue
             if action in (Action.APPEND, Action.RESUME):
-                total += max(info.size - row.indexed_bytes, 0)
+                out[info.member] = max(info.size - row.indexed_bytes, 0)
             elif action is not Action.UNCHANGED:
-                total += info.size
-        return total
+                out[info.member] = info.size
+            else:
+                out[info.member] = None
+        return out
 
     def _finish_source(self, info: SourceInfo, fed: int, records: int = 0) -> None:
         self.bytes_done += info.size
@@ -722,6 +801,7 @@ class _Run:
         detail = describe_error(exc, self.opt.aliases)
         text = f"{reason}: {detail}" if reason else f"{type(exc).__name__}: {detail}"
         self.w.update_source(row.id, status="error", error=text[:500])
+        drop_state(self.w.conn, row.id)  # an error is reindexed whole by the next run
         self.w.commit()
         self.result.sources_failed += 1
         self.result.details.append(SourceResult(self._shown(info.member), "error", error=text))
@@ -851,6 +931,415 @@ class _Run:
         commit("ready")
         return fed - start_off
 
+    # ---- partial open (ROADMAP 9.9, ingest/partial.py)
+
+    def process_first(self, row: SourceRow, info: SourceInfo, reader: SourceReader, first: FirstPass) -> bool:
+        """First pass of a partial open for one source; True when the source is left incomplete (window only).
+
+        Only a source never indexed is opened partially; any other one (already indexed, grown, failed) goes
+        through the regular ``process``, as does a source whose window is the whole stream.
+        """
+        self.current_member = info.member
+        self.current_action = None
+        w = self.w
+        if load_state(w.conn, row.id) is not None and row.status == "indexing":
+            # an earlier partial open already holds its window; the second pass completes it
+            self.current_action = ACTION_PARTIAL
+            self.result.details.append(SourceResult(self._shown(info.member), ACTION_PARTIAL))
+            self._finish_source(info, 0)
+            return True
+        if not first.windowed or row.status not in ("pending", "skipped"):
+            self.process(row, info, reader)
+            return False
+        try:
+            span = locate_window(reader, info, first.ts_from, first.ts_to, self.opt.chunk_size)
+        except (OSError, zipfile.BadZipFile, ReadLimitError) as exc:
+            self._fail(row, info, exc)
+            return False
+        if span.whole:
+            self.process(row, info, reader)
+            return False
+        fixed_size = info.container_kind == "zip" or reader.is_utf16(info)
+        w.set_next_id(next_row_id(w.conn, "entry"), on_top=True)
+        base = w.next_id
+        # the reservation (``end`` exclusive, and every id below it) must fit SQLite ids: else index it whole,
+        # before anything of it is written
+        if base + span.lines + 1 > INT64_MAX:
+            self.process(row, info, reader)
+            return False
+        state = PartialState(
+            segment=SEG_WINDOW, base=base, win=base + span.lo_line - 1, end=base + span.lines + 1,
+            lo=span.lo, lo_line=span.lo_line, hi=span.hi, hi_line=span.hi_line, size=span.size,
+            raw_size=info.size, zip_crc=info.zip_crc, head_hash=span.head_hash, envelope=span.envelope,
+        )  # fmt: skip
+        w.begin()
+        w.reserve_entry_ids(state.end)
+        save_state(w.conn, row.id, state)
+        w.update_source(
+            row.id, status="indexing", error=None, envelope=span.envelope, head_hash=None, tail_hash=None,
+            indexed_bytes=0, size=info.size if fixed_size else span.size, mtime=info.mtime,
+            zip_crc=info.zip_crc,
+        )  # fmt: skip
+        _mark_source(w.conn, row.id)  # every record of it is extracted by this code
+        w.commit()
+        self.current_action = ACTION_WINDOW
+        self.emit("source_start", 0, info.size)
+        stats = BatchStats()
+        try:
+            fed = self._run_segments(row, info, reader, state, stats, stop_after=SEG_WINDOW)
+        except _RangeOverflow:
+            self._abandon_partial(row, info)
+            self.process(w.sources(row.collection_id)[row.member], info, reader)
+            return False
+        except (OSError, zipfile.BadZipFile, ReadLimitError, RecordTooLargeError) as exc:
+            w.rollback()
+            reason = FAIL_RECORD_TOO_LARGE if isinstance(exc, RecordTooLargeError) else None
+            self._fail(row, info, exc, reason=reason)
+            return False
+        except BaseException:
+            w.rollback()
+            raise
+        finally:
+            w.set_next_id(next_row_id(w.conn, "entry"), on_top=True)
+        self.result.records += stats.records
+        self.result.lines += stats.lines
+        self.result.bytes += fed
+        self.result.details.append(
+            SourceResult(self._shown(info.member), ACTION_WINDOW, stats.records, stats.lines, fed)
+        )
+        self._finish_source(info, fed, stats.records)
+        return True
+
+    def _complete_partial(
+        self, row: SourceRow, info: SourceInfo, reader: SourceReader, state: PartialState
+    ) -> str:
+        """Second pass for a source indexed out of order: the rest of its segments, then a normal source.
+
+        ``_DONE``; ``_GROWN`` when a live file grew after its window was located (completed up to that size,
+        the caller appends the rest the regular way); ``_ABANDONED`` when the source changed: its records and
+        state are dropped and the caller indexes it the regular way.
+        """
+        w = self.w
+        try:
+            valid = self._partial_valid(info, state, reader)
+        except (OSError, zipfile.BadZipFile, ReadLimitError):
+            valid = False
+        if not valid:
+            self._abandon_partial(row, info)
+            return _ABANDONED
+        self.current_action = ACTION_COMPLETE
+        self.emit("source_start", 0, info.size)
+        stats = BatchStats()
+        # the prefix (and the suffix of an older file of the chain) get ids below records the derivation has
+        # seen: the chain is derived again from its start (engine.derive_stream: no record = from scratch)
+        w.begin()
+        if row.stream_id is not None:
+            from dmslog.derive.engine import META_PREFIX, chain_of
+
+            w.conn.execute(
+                "DELETE FROM meta WHERE key = ?",
+                (f"{META_PREFIX}{row.stream_id}.{chain_of(info.file_name)}",),
+            )
+        try:
+            fed = self._run_segments(row, info, reader, state, stats, stop_after=None)
+        except _RangeOverflow:
+            self._abandon_partial(row, info)
+            return _ABANDONED
+        except (OSError, zipfile.BadZipFile, ReadLimitError, RecordTooLargeError) as exc:
+            w.rollback()
+            reason = FAIL_RECORD_TOO_LARGE if isinstance(exc, RecordTooLargeError) else None
+            self._fail(row, info, exc, reason=reason)
+            return _DONE
+        except BaseException:
+            w.rollback()
+            raise
+        finally:
+            w.set_next_id(next_row_id(w.conn, "entry"), on_top=True)
+        self.result.records += stats.records
+        self.result.lines += stats.lines
+        self.result.bytes += fed
+        self.result.details.append(
+            SourceResult(self._shown(info.member), ACTION_COMPLETE, stats.records, stats.lines, fed)
+        )
+        if info.container_kind != "zip" and self._file_path(info).stat().st_size > state.raw_size:
+            # the regular append takes the rest (and reports the source as done); its records get ids above
+            # sources indexed before and collections added meanwhile: the family's unknown_sig examples are
+            # set again at the end
+            _remember_reorder(w, row.collection_id, {info.family})
+            w.commit()
+            return _GROWN
+        self.result.sources_indexed += 1
+        self._finish_source(info, fed, stats.records)
+        return _DONE
+
+    def _partial_valid(self, info: SourceInfo, state: PartialState, reader: SourceReader) -> bool:
+        """The source still has the content its window came from (same member, or a file that only grew)."""
+        if info.container_kind == "zip":
+            return info.zip_crc == state.zip_crc and info.size == state.raw_size
+        size = self._file_path(info).stat().st_size
+        if reader.is_utf16(info):
+            if size != state.raw_size:
+                return False
+        elif size < state.size:
+            return False
+        if head_hash_of(reader, info, state.size) != state.head_hash:
+            return False
+        # every byte range whose records are kept must still hold the same bytes (not only the head)
+        return all(
+            hash_stream(reader, info, start, end, self.opt.chunk_size) == digest
+            for start, end, digest in state.hashes.values()
+            if end > start
+        )
+
+    def _abandon_partial(self, row: SourceRow, info: SourceInfo) -> None:
+        """Drop the records and the state of a partial source; it becomes a source never indexed.
+
+        It is indexed again with new (higher) ids, so the newer files of its rotation chain that already hold
+        records are reset too and indexed after it (ids must grow along the chain); the run picks them up
+        (``reset_members``). Its family is remembered for the ``unknown_sig`` example repair (``both``).
+        """
+        from dmslog.derive.engine import chain_of
+
+        w = self.w
+        w.rollback()
+        victims = [row.id]
+        if row.stream_id is not None:
+            chain = chain_of(info.file_name)
+            newer = (
+                (lambda r: r is None) if row.rotation is None else (lambda r: r is None or r < row.rotation)
+            )
+            for sid, member, file_name, rotation, n in w.conn.execute(
+                "SELECT id, member, file_name, rotation, n_entries FROM source"
+                " WHERE stream_id = ? AND id <> ?",
+                (row.stream_id, row.id),
+            ).fetchall():
+                if chain_of(file_name) == chain and newer(rotation) and (n or load_state(w.conn, sid)):
+                    victims.append(sid)
+                    self.reset_members.add(member)
+        for sid in victims:
+            w.delete_source_entries(sid)
+            drop_state(w.conn, sid)
+            w.update_source(
+                sid, status="pending", error=None, indexed_bytes=0, head_hash=None, tail_hash=None,
+                n_entries=0, first_ts=None, last_ts=None,
+            )  # fmt: skip
+        _remember_reorder(w, row.collection_id, {info.family})
+        w.commit()
+        w.set_next_id(next_row_id(w.conn, "entry"), on_top=True)
+
+    def _run_segments(
+        self,
+        row: SourceRow,
+        info: SourceInfo,
+        reader: SourceReader,
+        state: PartialState,
+        stats: BatchStats,
+        stop_after: str | None,
+    ) -> int:
+        """Index the segments of a partial source from ``state.segment`` on (until ``stop_after``, included);
+        returns the stream bytes fed. Every segment end is committed with the next state."""
+        fed_total = 0
+        order = (SEG_WINDOW, SEG_PREFIX, SEG_SUFFIX)
+        while True:
+            seg = state.segment
+            fed, tail = self._fill(row, info, reader, state, seg, stats)
+            fed_total += fed
+            w = self.w
+            conn = w.conn
+            if seg == SEG_WINDOW:
+                state.segment = SEG_PREFIX
+            elif seg == SEG_PREFIX:
+                self._fix_order_flag(row.id, state.win)
+                top = conn.execute("SELECT max(id) FROM entry WHERE source_id = ?", (row.id,)).fetchone()[0]
+                state.sfx = max(state.win, (top or 0) + 1)
+                state.segment = SEG_SUFFIX
+            else:
+                self._finish_partial(row, info, reader, state, tail)
+                w.commit()
+                return fed_total
+            save_state(conn, row.id, state)
+            w.commit()
+            if stop_after is not None and order.index(seg) >= order.index(stop_after):
+                return fed_total
+
+    def _fill(
+        self,
+        row: SourceRow,
+        info: SourceInfo,
+        reader: SourceReader,
+        state: PartialState,
+        seg: str,
+        stats: BatchStats,
+    ) -> tuple[int, TailWindow]:
+        """Parse one segment of a partial source into its id range; resumes after its last stored record.
+
+        Leaves the last batch uncommitted (the caller commits it with the next state). Raises
+        ``_RangeOverflow`` when the records do not fit the reserved range (the file changed under us).
+        """
+        w = self.w
+        conn = w.conn
+        if seg == SEG_WINDOW:
+            start, line, stop, lo_id, hi_id = state.lo, state.lo_line, state.hi, state.win, state.end
+        elif seg == SEG_PREFIX:
+            start, line, stop, lo_id, hi_id = 0, 1, state.lo, state.base, state.win
+        else:
+            assert state.sfx is not None
+            start, line, stop, lo_id, hi_id = state.hi, state.hi_line, state.size, state.sfx, state.end
+        w.begin()
+        last = conn.execute(
+            "SELECT id, byte_off, line_no FROM entry WHERE source_id = ? AND id >= ? AND id < ?"
+            " ORDER BY id DESC LIMIT 1",
+            (row.id, lo_id, hi_id),
+        ).fetchone()
+        next_id = lo_id
+        if last is not None:  # resume: its last record may be incomplete, parse it again
+            w.delete_id_range(row.id, last[0], hi_id, last[1], max(stop, last[1] + 1))
+            start, line, next_id = last[1], last[2], last[0]
+        w.set_next_id(next_id, on_top=False)
+        prev = conn.execute(
+            "SELECT ts FROM entry WHERE source_id = ? AND id < ? AND ts IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (row.id, next_id),
+        ).fetchone()
+        self.severity.family = info.family
+        w.start_source(
+            row.id, prev[0] if prev else None, self.catalog.for_family(info.family, sensitive=info.sensitive),
+            info.family,
+        )  # fmt: skip
+        fixed_size = info.container_kind == "zip" or reader.is_utf16(info)
+        grouper = RecordGrouper(
+            get_envelope(state.envelope),
+            start_off=start,
+            start_line=line,
+            max_record_bytes=self.opt.max_record_bytes,
+        )
+        tail = TailWindow()
+        seg_start = {SEG_WINDOW: state.lo, SEG_PREFIX: 0, SEG_SUFFIX: state.hi}[seg]
+        # files: the bytes of the segment are hashed from its start (a resume reads its stored part again) so
+        # that the next run can check them before it reuses the records; zip members have their CRC
+        hashing = info.container_kind != "zip"
+        digest = hashlib.sha1()
+        base_from = seg_start if hashing else start
+        read_from = base_from - min(base_from, HASH_SPAN) if seg == SEG_SUFFIX else base_from
+        fed = batch_start = start
+
+        def covered() -> int:
+            if seg == SEG_WINDOW:
+                return fed - state.lo
+            if seg == SEG_PREFIX:
+                return state.hi - state.lo + fed
+            return fed
+
+        def commit() -> None:
+            w.flush()
+            if hashing:
+                state.hashes[seg] = [seg_start, fed, digest.copy().hexdigest()]
+                save_state(conn, row.id, state)
+            n, first_ts, last_ts = w.source_totals(row.id)
+            w.update_source(
+                row.id, indexed_bytes=covered(), n_entries=n, first_ts=first_ts, last_ts=last_ts,
+                status="indexing", error=None, envelope=state.envelope, mtime=info.mtime,
+                zip_crc=info.zip_crc, size=info.size if fixed_size else state.size,
+            )  # fmt: skip
+
+        if start < stop:
+            chunks = reader.iter_chunks(info, read_from, self.opt.chunk_size)
+            pos = read_from
+            try:
+                for chunk in chunks:
+                    if pos + len(chunk) > stop:
+                        chunk = chunk[: stop - pos]
+                    end = pos + len(chunk)
+                    tail.update(chunk)  # bytes before the segment only feed the tail hash
+                    if hashing and end > seg_start:
+                        digest.update(chunk[max(seg_start - pos, 0) :])
+                    if end <= start:  # the part of a resumed segment that is already stored
+                        pos = end
+                        if pos >= stop:
+                            break
+                        continue
+                    part = chunk[max(start - pos, 0) :]
+                    pos = fed = end
+                    w.append(row.id, grouper.feed(part), stats)
+                    if w.next_id > hi_id:
+                        raise _RangeOverflow
+                    if fed >= stop:
+                        break
+                    if fed - batch_start >= self.opt.batch_bytes or w.buffered >= MAX_BATCH_RECORDS:
+                        commit()
+                        w.commit()
+                        w.begin()
+                        batch_start = fed
+                        self.emit("progress", covered(), info.size, stats.records)
+            finally:
+                chunks.close()
+        elif seg == SEG_SUFFIX and start > read_from:  # empty suffix: the tail hash needs the bytes before it
+            tail.update(_stream_range(reader, info, read_from, start - read_from, self.opt.chunk_size))
+        if fed < stop:
+            raise _RangeOverflow  # the stream ended before the segment: the source changed
+        w.append(row.id, grouper.finish(final=True), stats)
+        if w.next_id > hi_id:
+            raise _RangeOverflow
+        commit()
+        return fed - start, tail
+
+    def _fix_order_flag(self, source_id: int, follower_from: int) -> None:
+        """Flag 32 (time goes back) of the first timed record at or after id ``follower_from``: it was written
+        without the record before it (the prefix came later)."""
+        conn = self.w.conn
+        first = conn.execute(
+            "SELECT id, ts FROM entry WHERE source_id = ? AND id >= ? AND ts IS NOT NULL ORDER BY id LIMIT 1",
+            (source_id, follower_from),
+        ).fetchone()
+        if first is None:
+            return
+        prev = conn.execute(
+            "SELECT ts FROM entry WHERE source_id = ? AND id < ? AND ts IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (source_id, first[0]),
+        ).fetchone()
+        back = prev is not None and first[1] < prev[0]
+        conn.execute(
+            f"UPDATE entry SET flags = CASE WHEN ? THEN flags | {FLAG_TS_OUT_OF_ORDER}"
+            f" ELSE flags & ~{FLAG_TS_OUT_OF_ORDER} END WHERE id = ?",
+            (int(back), first[0]),
+        )
+
+    def _finish_partial(
+        self, row: SourceRow, info: SourceInfo, reader: SourceReader, state: PartialState, tail: TailWindow
+    ) -> None:
+        """Every segment is in: the source becomes a regular one (as if indexed in one go up to ``size``)."""
+        w = self.w
+        fixed_size = info.container_kind == "zip" or reader.is_utf16(info)
+        n, first_ts, last_ts = w.source_totals(row.id)
+        w.update_source(
+            row.id, indexed_bytes=state.size, tail_hash=tail.hexdigest(), head_hash=state.head_hash,
+            n_entries=n, first_ts=first_ts, last_ts=last_ts, status="ready", error=None,
+            envelope=state.envelope, mtime=info.mtime, zip_crc=info.zip_crc,
+            size=info.size if fixed_size else state.size,
+        )  # fmt: skip
+        drop_state(w.conn, row.id)
+
+
+INT64_MAX = 2**63 - 1  # largest SQLite rowid
+_DONE, _GROWN, _ABANDONED = "done", "grown", "abandoned"  # outcomes of _Run._complete_partial
+
+
+class _RangeOverflow(Exception):
+    """The records of a partial source do not fit its reserved ids (its content changed): start it over."""
+
+
+def _stream_range(reader: SourceReader, info: SourceInfo, start: int, length: int, chunk_size: int) -> bytes:
+    """``length`` bytes of the UTF-8 stream of ``info`` from ``start`` (zip members, transcoded files)."""
+    out = bytearray()
+    chunks = reader.iter_chunks(info, start, chunk_size)
+    try:
+        for chunk in chunks:
+            out += chunk
+            if len(out) >= length:
+                break
+    finally:
+        chunks.close()
+    return bytes(out[:length])
+
 
 def _oldest_first(selected: list[SourceInfo]) -> list[SourceInfo]:
     """Order the sources so that the files of one stream come oldest first (``.log.N`` ... ``.log``).
@@ -889,6 +1378,117 @@ def _check_free_space(conn, bytes_to_index: int) -> None:
     check_free_space(Path(row[2]).parent, bytes_to_index)
 
 
+def _first_members(order: list[SourceInfo], first: FirstPass, shown) -> tuple[list[SourceInfo], list[str]]:
+    """The sources of the first pass, in processing order: the requested ones and their rotation chains
+    (ids must grow along a chain); plus the requested names that match no selected source."""
+    if first.members is None:
+        return list(order), []
+    from dmslog.derive.engine import chain_of
+
+    wanted = set(first.members)
+    hit: set[str] = set()
+    chains: set[tuple] = set()
+    for info in order:
+        names = {info.member, shown(info.member)}
+        if names & wanted:
+            hit |= names & wanted
+            chains.add((info.stream_key, chain_of(info.file_name)))
+    picked = [info for info in order if (info.stream_key, chain_of(info.file_name)) in chains]
+    return picked, sorted(wanted - hit)
+
+
+def _reorder_families(order: list[SourceInfo], picked: list[SourceInfo], work: set[str]) -> set[str]:
+    """Families whose ``unknown_sig`` examples a sources-first open may misplace inside the collection (only
+    sources this run writes count): a picked source comes after a source of the same family that is indexed
+    later, so it gets lower ids. Across collections nothing is needed: the writer keeps the example of the
+    earliest collection whatever the ids (``writer._UNKNOWN_SQL``)."""
+    chosen = {i.member for i in picked}
+    both: set[str] = set()
+    later: set[str] = set()
+    for info in order:
+        if info.member not in work:
+            continue
+        if info.member not in chosen:
+            later.add(info.family)
+        elif info.family in later:
+            both.add(info.family)
+    return both
+
+
+def _remember_reorder(writer: IndexWriter, cid: int, families: set[str]) -> None:
+    """Merge families into ``meta['partial_order.<cid>']`` (in the caller's transaction)."""
+    if not families:
+        return
+    key = f"{PARTIAL_ORDER_PREFIX}{cid}"
+    value = json.dumps(sorted(_load_reorder(writer.conn, cid) | set(families)))
+    writer.begin()
+    writer.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, value))
+
+
+def _load_reorder(conn, cid: int) -> set[str]:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"{PARTIAL_ORDER_PREFIX}{cid}",)).fetchone()
+    try:
+        data = json.loads(row[0]) if row else []
+        if isinstance(data, dict):  # an older draft stored {"both": [...], "rest": [...]}
+            data = data.get("both", [])
+        return {str(f) for f in data}
+    except (TypeError, ValueError, AttributeError):
+        return set()
+
+
+def _repair_unknown_first(writer: IndexWriter, cid: int, order: list[SourceInfo]) -> None:
+    """``unknown_sig.first_entry_id`` as a full indexing sets it inside this collection (the first record of
+    the signature in the regular source order), for the families ``_remember_reorder`` noted; then forget
+    them. An example in an earlier collection stays (collection precedence, as in the writer)."""
+    conn = writer.conn
+    key = f"{PARTIAL_ORDER_PREFIX}{cid}"
+    if conn.execute("SELECT 1 FROM meta WHERE key = ?", (key,)).fetchone() is None:
+        return
+    families = _load_reorder(conn, cid)
+    rows = writer.sources(cid)
+    first: dict[tuple[str, str], int] = {}
+    for info in order:
+        if info.family not in families or info.member not in rows:
+            continue
+        for eid, msg in conn.execute(
+            "SELECT id, msg FROM entry WHERE source_id = ? AND tpl_id = 0 ORDER BY id",
+            (rows[info.member].id,),
+        ):
+            sig = cached_signature(msg)
+            if sig:
+                first.setdefault((info.family, sig), eid)
+    writer.begin()
+    for (family, sig), eid in first.items():
+        conn.execute(
+            "UPDATE unknown_sig SET first_entry_id = ? WHERE family = ? AND signature = ?"
+            " AND (SELECT s.collection_id FROM entry e JOIN source s ON s.id = e.source_id"
+            " WHERE e.id = unknown_sig.first_entry_id) >= ? AND first_entry_id <> ?",
+            (eid, family, sig, cid, eid),
+        )
+    conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+    writer.commit()
+
+
+def _finish_pass(run: _Run, conn, changes_before: int) -> None:
+    _store_global_version(conn)
+    run.derive()
+    run.correlate()
+    run.link_payloads()
+    if conn.total_changes != changes_before:  # a no-op re-ingest keeps the generation (and the caches)
+        _bump_ingest_generation(conn)
+
+
+def _left_incomplete(conn, cid: int) -> int:
+    from dmslog.ingest.partial import partial_source_ids
+
+    partial = partial_source_ids(conn)
+    return sum(
+        1
+        for sid, status in conn.execute("SELECT id, status FROM source WHERE collection_id = ?", (cid,))
+        if sid in partial or status in ("pending", "indexing")
+    )
+
+
 def run_ingest(
     conn,  # sqlite3.Connection of a migrated case database
     path: str | Path,
@@ -901,6 +1501,10 @@ def run_ingest(
     the other half of a held capture joins its group. Raises ``UnsafeArchiveError`` for unsafe zips,
     ``SourceNotFoundError`` for missing paths and
     ``InsufficientDiskSpaceError`` (a ``ReadLimitError``) when the disk is too full to index.
+
+    With ``options.first`` (partial open, ROADMAP 9.9) the run has two passes: the first indexes the chosen
+    window/sources, derives and correlates them and emits ``first_ready``; the second completes everything
+    (skipped with ``defer_rest``). Interrupted anywhere, a later run of the same path continues.
     """
     options = options or IngestOptions()
     if options.scope not in (SCOPE_DEFAULT, SCOPE_ALL):
@@ -916,6 +1520,15 @@ def run_ingest(
     writer.sync_templates(run.catalog)
     writer.commit()
     cid = run.resolve_collection()
+    if (
+        options.first is not None
+        and not conn.execute("SELECT 1 FROM source WHERE collection_id = ? LIMIT 1", (cid,)).fetchone()
+    ):  # a new collection: its partial open is visible to pending_work from its first commit on
+        writer.begin()
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+            (f"{SCOPE_KEY_PREFIX}{cid}", options.scope),
+        )
     writer.commit()
     run.result.collection_id = cid
     selected = select_sources(plan.sources, options.scope)
@@ -925,23 +1538,182 @@ def run_ingest(
     run.result.sources_skipped = len(plan.sources) - len(selected)
     run.bytes_total = sum(s.size for s in selected)
     run.sources_total = len(selected)
+    first = options.first
     with SourceReader(options.limits) as reader:
         by_member = {s.member: s for s in plan.sources}
         # refuse BEFORE writing any source state, so a refusal leaves the case as it was
         _check_free_space(conn, run.pending_bytes(selected, writer.sources(cid), reader))
+        pending = run.pending
+        order = canonical = _oldest_first(selected)
+        done: set[str] = set()
+        if first is not None:
+            picked, run.result.first_unmatched = _first_members(order, first, run._shown)
+            work = {m for m, n in pending.items() if n is not None}
+            if (
+                work
+            ):  # before anything that writes or can be interrupted: pending_work must see the collection
+                writer.begin()
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                    (f"{SCOPE_KEY_PREFIX}{cid}", options.scope),
+                )
+                _remember_reorder(writer, cid, _reorder_families(order, picked, work))
+                writer.commit()
         run.follow_rotations(cid, by_member, reader)
         run.register_sources(cid, list(plan.sources), selected_members)
         run.store_installation(cid, list(selected))
         rows = writer.sources(cid)
-        for info in _oldest_first(selected):
+        if first is not None:
+            run.stage = STAGE_FIRST
+            run.sources_total = run.result.first_sources = len(picked)
+            run.bytes_total = sum(s.size for s in picked)
+            for info in picked:
+                if info.member in run.reset_members:  # reset by an abandoned older file of its chain
+                    rows = writer.sources(cid)
+                    run.reset_members.discard(info.member)
+                    done.discard(info.member)
+                if not run.process_first(rows[info.member], info, reader, first):
+                    done.add(info.member)
+            _finish_pass(run, conn, changes_before)
+            changes_before = conn.total_changes
+            run.result.first_seconds = time.perf_counter() - t0
+            run.result.first_records = run.result.records
+            run.current_member = None
+            run.emit("first_ready")
+            rest = [info for info in order if info.member not in done or info.member in run.reset_members]
+            run.stage = STAGE_REST
+            run.sources_total, run.sources_done = len(rest), 0
+            run.bytes_total, run.bytes_done = sum(s.size for s in rest), 0
+            if first.defer_rest:
+                run.result.deferred = True
+                order = []
+            else:
+                order = rest
+            rows = writer.sources(cid)
+        queued = {info.member for info in order}
+        for info in canonical:
+            # a source reset by an abandoned older file of its chain is indexed again, even if this run had
+            # already finished it (it comes later in the chain order, so the loop has not passed it yet)
+            if info.member in run.reset_members:
+                rows = writer.sources(cid)
+                run.reset_members.discard(info.member)
+            elif info.member not in queued:
+                continue
             run.process(rows[info.member], info, reader)
-    _store_global_version(conn)
-    run.derive()
-    run.correlate()
-    run.link_payloads()
-    if conn.total_changes != changes_before:  # a no-op re-ingest keeps the generation (and the caches)
-        _bump_ingest_generation(conn)
+    if not _left_incomplete(conn, cid):
+        _repair_unknown_first(writer, cid, canonical)
+    if first is None or not first.defer_rest:
+        _finish_pass(run, conn, changes_before)
+    run.result.partial_left = _left_incomplete(conn, cid)
+    if (
+        not run.result.partial_left
+        and conn.execute("SELECT 1 FROM meta WHERE key = ?", (f"{SCOPE_KEY_PREFIX}{cid}",)).fetchone()
+    ):
+        writer.begin()
+        conn.execute("DELETE FROM meta WHERE key = ?", (f"{SCOPE_KEY_PREFIX}{cid}",))
+        writer.commit()
     run.result.seconds = time.perf_counter() - t0
     run.current_member = None
     run.emit("done")
     return run.result
+
+
+def resume_pending(
+    conn, options: IngestOptions | None = None, progress: ProgressFn | None = None
+) -> list[IngestResult]:
+    """Complete what partial opens left incomplete (``partial.pending_work``): one ``run_ingest`` per
+    collection, with the scope it was opened with. Returns the results (empty: nothing pending)."""
+    from dataclasses import replace
+
+    options = options or IngestOptions()
+    out: list[IngestResult] = []
+    for pending in pending_work(conn):
+        run_options = replace(options, scope=pending.scope, first=None)
+        out.append(run_ingest(conn, pending.path, run_options, progress))
+    return out
+
+
+# --------------------------------------------------------------------------- preview (partial open UI)
+
+PREVIEW_PROBE_BYTES = 64 * 1024  # bytes read at the start (and, for files, at the end) of a source
+
+
+@dataclass(frozen=True)
+class SourcePreview:
+    """A source as the partial open chooser lists it before anything is indexed (``preview_sources``)."""
+
+    member: str  # as presented (local aliases applied): what ``FirstPass.members`` accepts
+    name: str  # file name only
+    family: str
+    process: str | None
+    pid: int | None
+    sensitive: bool
+    rotation: int | None
+    size: int
+    selected: bool  # indexed with the requested scope
+    indexable: bool
+    first_ts: int | None  # first timed header in the first 64 KiB (None: none found or unreadable)
+    last_ts: int | None  # last timed header in the last 64 KiB; files only (zip members: None, not read)
+
+
+def _timed_headers(data: bytes, envelope) -> list[int]:
+    scan = getattr(envelope, "scan", None)
+    if scan is None:
+        return []
+    return [h.ts_ms for _off, h in scan(data, 0, len(data)) if h.ts_ms is not None]
+
+
+def preview_sources(
+    path: str | Path,
+    scope: str = SCOPE_DEFAULT,
+    limits: ReadLimits | None = None,
+    aliases: Aliases | None = None,
+) -> list[SourcePreview]:
+    """List the sources of ``path`` with their sizes and time range, reading at most 64 KiB at the start of
+    each one (and 64 KiB at the end of a plain file): what the UI needs to choose a window and the sources
+    to index first. Writes nothing. Raises like ``build_plan`` for missing or unsafe inputs."""
+    if scope not in (SCOPE_DEFAULT, SCOPE_ALL):
+        raise ValueError(f"scope must be 'default' or 'all', got {scope!r}")
+    limits = limits or ReadLimits()
+    plan = build_plan(path, limits, aliases)
+    selected = {s.member for s in select_sources(plan.sources, scope)}
+    out: list[SourcePreview] = []
+    with SourceReader(limits) as reader:
+        for info in plan.sources:
+            first_ts = last_ts = None
+            if info.indexable and not info.limit_violation:
+                try:
+                    head = reader.read_head(info, PREVIEW_PROBE_BYTES)
+                    envelope = detect_envelope(head) if head else get_envelope(info.envelope)
+                    if head and head.rfind(b"\n") > 0:
+                        head = head[: head.rfind(b"\n") + 1]
+                    times = _timed_headers(head, envelope)
+                    first_ts = times[0] if times else None
+                    if info.container_kind != "zip" and not reader.is_utf16(info):
+                        size = _Run._file_path(info).stat().st_size
+                        start = max(size - PREVIEW_PROBE_BYTES, 0)
+                        tail = reader.read_raw_range(info, start, PREVIEW_PROBE_BYTES)
+                        if start:
+                            tail = tail[tail.find(b"\n") + 1 :]
+                        times = _timed_headers(tail, envelope)
+                        last_ts = times[-1] if times else None
+                except (OSError, zipfile.BadZipFile, ReadLimitError):
+                    pass
+            shown = component(aliases, info.member) if aliases else info.member
+            out.append(
+                SourcePreview(
+                    member=shown,
+                    name=component(aliases, info.file_name) if aliases else info.file_name,
+                    family=info.family,
+                    process=component(aliases, info.process) if aliases and info.process else info.process,
+                    pid=info.pid,
+                    sensitive=info.sensitive,
+                    rotation=info.rotation,
+                    size=info.size,
+                    selected=info.member in selected,
+                    indexable=info.indexable and not info.limit_violation,
+                    first_ts=first_ts,
+                    last_ts=last_ts,
+                )  # fmt: skip
+            )
+    return out

@@ -713,8 +713,11 @@ def adopt_lineage(conn: sqlite3.Connection) -> None:
 _NewRow = tuple[int, int, int, int, int | None, str]  # entry_id, source_id, line_no, byte_off, ts, msg
 
 
-def detach_entries(conn: sqlite3.Connection, source_id: int, from_byte_off: int = 0) -> int:
-    """Before the records of a source at or after ``from_byte_off`` are deleted: orphan their bookmarks.
+def detach_entries(
+    conn: sqlite3.Connection, source_id: int, from_byte_off: int = 0, to_byte_off: int | None = None
+) -> int:
+    """Before the records of a source at or after ``from_byte_off`` (and before ``to_byte_off`` when given: a
+    partial open resuming one segment, ARQUITETURA 9.3b) are deleted: orphan their bookmarks.
 
     Each keeps its fingerprint, made stronger (:func:`linked_fp`) from its record before the record
     disappears: complete when a later record exists in the source, open for the last record (a growing
@@ -726,11 +729,15 @@ def detach_entries(conn: sqlite3.Connection, source_id: int, from_byte_off: int 
     """
     if not has_bookmarks(conn):
         return 0
-    rows = conn.execute(
+    sql = (
         "SELECT b.id, b.fp, b.entry_id FROM bookmark b CROSS JOIN entry e ON e.id = b.entry_id"
-        " WHERE b.source_id = ? AND b.entry_id IS NOT NULL AND e.source_id = b.source_id AND e.byte_off >= ?",
-        (source_id, from_byte_off),
-    ).fetchall()
+        " WHERE b.source_id = ? AND b.entry_id IS NOT NULL AND e.source_id = b.source_id AND e.byte_off >= ?"
+    )
+    params: tuple[int, ...] = (source_id, from_byte_off)
+    if to_byte_off is not None:
+        sql += " AND e.byte_off < ?"
+        params += (to_byte_off,)
+    rows = conn.execute(sql, params).fetchall()
     if not rows:
         return 0
     last = _last_id(conn, source_id)
@@ -751,9 +758,11 @@ def attach_entries(conn: sqlite3.Connection, rows: Iterable[_NewRow]) -> int:
     """After records were inserted: link orphans of the same lineage and close open fingerprints.
 
     ``rows`` holds ``(entry_id, source_id, line_no, byte_off, ts, msg)`` of the inserted records (new
-    ids are the highest of their source). Work is driven by two partial indexes: the orphans with a
-    lineage and the linked bookmarks with an open fingerprint, so the cost follows those bookmarks,
-    not the size of the table; ``rows`` is only read (one pass, filtered by source) when one exists.
+    ids are the highest of their source, except in a partial open filling the part before a window, so
+    the last record of the source is read from the table). Work is driven by two partial indexes: the
+    orphans with a lineage and the linked bookmarks with an open fingerprint, so the cost follows those
+    bookmarks, not the size of the table; ``rows`` is only read (one pass, filtered by source) when one
+    exists.
 
     * An orphan links to the inserted record at its line when the fingerprint matches (a bookmark
       without one, from an older case, takes the record if no fingerprint claims it). One bookmark
@@ -787,7 +796,7 @@ def attach_entries(conn: sqlite3.Connection, rows: Iterable[_NewRow]) -> int:
             by_source.setdefault(row[1], []).append(row)
     linked = 0
     for sid, new_rows in by_source.items():
-        newest = new_rows[-1][0]
+        newest = max(new_rows[-1][0], _last_id(conn, sid) or 0)
         if sid in open_sources:
             _close_open(conn, sid, newest)
         if sid in orphan_sources:
