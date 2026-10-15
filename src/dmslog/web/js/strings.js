@@ -1453,6 +1453,14 @@ export const S = {
   actCompare: "Compare…",
   errorStartup: "The viewer could not start. Reload the page; if it happens again, restart dmslog.",
   actionUnavailable: "This feature could not be loaded.",
+  // Bottom dock (UI-15): tabs for the analysis panels.
+  dockLabel: "Analysis panels",
+  dockResize: "Resize the panel area",
+  dockCloseTab: "Close {title}",
+  dockMaximize: "Maximize",
+  dockRestore: "Restore",
+  dockCloseAll: "Close all",
+  panelLoadFailed: "{panel} could not be loaded.",
   // Status bar (UI-13): count, position, message, connection errors and the help button.
   statusLabel: "Status",
   statusRecordsOne: "{count} record",

@@ -1,0 +1,168 @@
+/* Bottom dock (UI-15): tabs for the analysis panels under the grid. Only tokens. The grid keeps >= 8 rows because
+   dock.js clamps the height; here the dock never grows past its box and the grid viewport (flex 1, min-height of
+   8 rows in app.css) takes what is left. Maximized: the dock fills the grid area and the grid is hidden. */
+.ui-dock,
+#grid-panel > .ui-dock { /* #grid-panel > * sets flex: none in app.css */
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 160px; /* DOCK_MIN_PX in js/dock-model.js */
+  overflow: hidden;
+  background: var(--surface-panel);
+  border: 1px solid var(--line);
+}
+
+.ui-dock[hidden],
+#grid-panel > .ui-dock[hidden] {
+  display: none;
+}
+
+.ui-dock.is-maximized,
+#grid-panel > .ui-dock.is-maximized {
+  flex: 1 1 0;
+  height: auto;
+}
+
+/* The grid is hidden while the dock is maximized; the timeline and the filter strip stay. */
+#grid-panel:has(> .ui-dock.is-maximized) > .grid-header,
+#grid-panel:has(> .ui-dock.is-maximized) > .grid-viewport,
+#grid-panel:has(> .ui-dock.is-maximized) > .follow-new {
+  display: none;
+}
+
+.ui-dock.is-dragging {
+  user-select: none;
+}
+
+.dock-divider {
+  flex: none;
+  height: 6px;
+  margin: 0;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line);
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.dock-divider:hover,
+.ui-dock.is-dragging .dock-divider {
+  background: var(--accent);
+}
+
+.dock-divider:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.dock-bar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line);
+}
+
+.dock-tabs {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.dock-tab {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  border-bottom: 2px solid transparent;
+}
+
+.dock-tab.is-active {
+  border-bottom-color: var(--accent);
+  background: var(--surface-panel);
+}
+
+.dock-tab-button {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.dock-tab.is-active .dock-tab-button {
+  font-weight: var(--weight-strong);
+}
+
+.dock-tab-close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin-right: var(--space-2);
+  font: inherit;
+  line-height: 1;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.dock-tab-close::before {
+  content: "\00d7";
+}
+
+.dock-tab-close:hover {
+  color: var(--ink);
+  background: var(--surface-overlay);
+}
+
+.dock-tab-button:focus-visible,
+.dock-tab-close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.dock-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dock-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* The host also carries .panel (its h2 style); the dock draws its own edges. */
+.dock-panel {
+  display: none;
+  flex-direction: column;
+  padding: var(--space-3);
+  border-right: 0;
+}
+
+.dock-panel.is-active {
+  display: flex;
+}
+
+.dock-panel[hidden] {
+  display: none;
+}
+
+@media (forced-colors: active) {
+  .dock-tab.is-active {
+    border-bottom-color: Highlight;
+  }
+
+  .dock-divider {
+    background: ButtonText;
+  }
+}
