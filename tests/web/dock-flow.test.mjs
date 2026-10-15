@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createDock } from "../../src/dmslog/web/js/dock.js";
+import { createDock, domMeasure } from "../../src/dmslog/web/js/dock.js";
 import { S, format } from "../../src/dmslog/web/js/strings.js";
 import { makeDoc, tick } from "./fixtures/fake-dom.mjs";
 
@@ -566,7 +566,7 @@ test("Maximize and Restore: the button label and aria-pressed follow, Close all 
   assert.equal(button.textContent, S.dockRestore);
   assert.equal(button.getAttribute("aria-pressed"), "true");
   assert.ok(s.root.className.split(" ").includes("is-maximized"));
-  assert.equal(s.part("dock-divider").getAttribute("aria-valuenow"), "100");
+  assert.equal(s.part("dock-divider").getAttribute("aria-valuenow"), s.part("dock-divider").getAttribute("aria-valuemax"));
   const sizes = [];
   s.dock.on("resize", (e) => sizes.push(e));
   button.click();
@@ -622,4 +622,133 @@ test("the divider keys leave the maximized state only toward a smaller dock", as
   divider.dispatch("keydown", { key: "ArrowDown" });
   assert.ok(!s.root.className.split(" ").includes("is-maximized"));
   assert.equal(s.root.style.height, String(800 - HEAD - 160 - 40) + "px");
+});
+
+// ---- review fixes (PR #194) -----------------------------------------------------------------------------------
+
+test("with a remembered height, dragging still resizes: the second drag too, and the drop remembers the new one", async () => {
+  const storage = memoryStorage({ "dmslog.dockHeight": "0.3" });
+  const s = setup({ available: 800, content: 250, storage });
+  s.panel("a");
+  s.dock.bind(s.ctx);
+  await s.dock.open("a");
+  assert.equal(s.root.style.height, "240px");
+  const divider = s.part("dock-divider");
+  divider.dispatch("pointerdown", { clientY: 500, button: 0 });
+  s.doc.listeners.pointermove[0]({ clientY: 450 });
+  assert.equal(s.root.style.height, "290px");
+  s.doc.listeners.pointerup[0]({});
+  assert.equal(storage.data["dmslog.dockHeight"], "0.363");
+  divider.dispatch("pointerdown", { clientY: 500, button: 0 }); // second drag
+  s.doc.listeners.pointermove[0]({ clientY: 520 });
+  assert.equal(s.root.style.height, "270px");
+  s.doc.listeners.pointerup[0]({});
+  assert.equal(storage.data["dmslog.dockHeight"], "0.338");
+  s.dock.closeAll();
+  await s.dock.open("a");
+  assert.equal(s.root.style.height, "270px"); // the next opening starts from what was dropped
+});
+
+// A page whose grid area can be resized: header, viewport, dock and one fixed sibling (the timeline).
+function layoutPage({ container, others = 300, head = 22 }) {
+  const doc = makeDoc();
+  const area = doc.createElement("div");
+  const sizes = { container, others, head, dock: 0, maximized: false };
+  const define = (node, props) => Object.entries(props).forEach(([k, get]) => Object.defineProperty(node, k, { get }));
+  define(area, { clientHeight: () => sizes.container });
+  const header = doc.createElement("div");
+  header.id = "grid-header";
+  const viewport = doc.createElement("div");
+  viewport.id = "grid-viewport";
+  const root = doc.createElement("section");
+  define(root, { parentElement: () => area, offsetHeight: () => (root.hidden ? 0 : sizes.dock) });
+  define(header, { offsetHeight: () => (sizes.maximized ? 0 : sizes.head) });
+  define(viewport, { offsetHeight: () => (sizes.maximized ? 0 : sizes.container - sizes.others - sizes.head - sizes.dock) });
+  doc.getElementById = (id) => ({ "grid-header": header, "grid-viewport": viewport })[id] || null;
+  area.append(header, viewport, root);
+  doc.body.appendChild(area);
+  return { doc, root, sizes, measure: domMeasure(root, doc) };
+}
+
+test("the space is measured again while the dock is maximized and the grid is hidden", () => {
+  const page = layoutPage({ container: 700 });
+  assert.equal(page.measure.available(), 400); // 700 - 300 others
+  assert.equal(page.measure.gridHead(), 22 + 20);
+  page.sizes.maximized = true; // the grid is hidden
+  page.sizes.container = 300;
+  assert.equal(page.measure.available(), 0);
+  page.sizes.container = 900;
+  assert.equal(page.measure.available(), 600);
+  assert.equal(page.measure.gridHead(), 22 + 20, "the hidden header keeps its last height");
+});
+
+test("maximize at a roomy size, shrink the window, restore: the dock does not push the grid under its 8 rows", async () => {
+  const page = layoutPage({ container: 700 });
+  const dock = createDock({ root: page.root, doc: page.doc, measure: page.measure, windowHeight: () => 900, storage: null });
+  const doc = page.doc;
+  const status = [];
+  dock.bind({ caseId: () => 1, status: { message: (t) => status.push(t) } });
+  dock.register({ id: "a", titleKey: "actDistinct", mount: async () => ({}) });
+  page.sizes.dock = 160;
+  await dock.open("a");
+  dock.maximize(true);
+  page.sizes.container = 480; // 480 - 300 others = 180 shared: no room for 8 rows plus 160 px
+  dock.maximize(false);
+  assert.ok(page.root.className.split(" ").includes("is-maximized"), "cannot restore without room");
+  page.sizes.container = 900; // room again: 600 shared
+  dock.maximize(false);
+  assert.ok(!page.root.className.split(" ").includes("is-maximized"));
+});
+
+test("the divider keeps min <= now <= max in every state, maximized included", async () => {
+  const s = setup({ available: 700, content: 250 });
+  s.panel("a");
+  s.dock.bind(s.ctx);
+  await s.dock.open("a");
+  const check = () => {
+    const d = s.part("dock-divider");
+    const [min, now, max] = ["aria-valuemin", "aria-valuenow", "aria-valuemax"].map((k) => Number(d.getAttribute(k)));
+    assert.ok(min <= now && now <= max, `${min} <= ${now} <= ${max}`);
+  };
+  check();
+  s.dock.maximize(true);
+  check();
+  s.part("dock-divider").dispatch("keydown", { key: "Home" });
+  check();
+});
+
+test("Close all pressed from its own button gives the focus back to who opened the panel, or to the grid", async () => {
+  const s = setup();
+  s.panel("a");
+  s.panel("b");
+  s.dock.bind(s.ctx);
+  const opener = s.doc.createElement("button");
+  s.doc.body.appendChild(opener);
+  opener.focus();
+  await s.dock.open("a");
+  await s.dock.open("b");
+  const closeAll = s.part("dock-close-all");
+  closeAll.focus(); // keyboard user on the button
+  closeAll.click();
+  assert.equal(s.dock.isOpen("a") || s.dock.isOpen("b"), false);
+  assert.notEqual(s.doc.activeElement, closeAll);
+  assert.ok(s.doc.activeElement === opener || s.focusedOut.length === 1, "focus returned somewhere real");
+  // opener gone: the grid gets it
+  const s2 = setup();
+  s2.panel("a");
+  s2.dock.bind(s2.ctx);
+  await s2.dock.open("a");
+  s2.part("dock-close-all").focus();
+  s2.part("dock-close-all").click();
+  assert.deepEqual(s2.focusedOut, [true]);
+});
+
+test("a closeOnCase panel whose module failed to load still closes when the case changes", async () => {
+  const s = setup();
+  s.dock.register({ id: "bad", titleKey: "actDistinct", closeOnCase: true, mount: async () => { throw new Error("x"); } });
+  s.dock.bind(s.ctx);
+  assert.equal(await s.dock.open("bad"), false);
+  assert.equal(s.dock.isOpen("bad"), true); // the tab shows the error
+  s.dock.caseChanged();
+  assert.equal(s.dock.isOpen("bad"), false);
 });

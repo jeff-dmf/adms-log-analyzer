@@ -36,26 +36,40 @@ const DIVIDER_KEYS = ["ArrowUp", "ArrowDown", "Home", "End"];
 // What the dock needs to know about the page. Replaceable in tests (the fake DOM has no layout).
 //   available(): height shared by the grid (header + rows) and the dock, or null when the grid is hidden
 //   gridHead(): the grid header plus the viewport chrome; content(): the natural height of the dock
-function domMeasure(root, doc) {
+export function domMeasure(root, doc) {
   const byId = (id) => (typeof doc.getElementById === "function" ? doc.getElementById(id) : null);
+  let others = null; // height of everything in the grid area that is neither the grid nor the dock
+  let headHeight = 0; // the grid header, remembered while the maximized dock hides it
+  const container = () => (root.parentElement ? root.parentElement.clientHeight : 0);
   return {
     available() {
       const viewport = byId("grid-viewport");
       const header = byId("grid-header");
-      if (!viewport || !header || viewport.offsetHeight === 0) {
-        return null;
+      if (header && header.offsetHeight > 0) {
+        headHeight = header.offsetHeight;
       }
-      return viewport.offsetHeight + header.offsetHeight + (root.hidden ? 0 : root.offsetHeight);
+      if (viewport && header && viewport.offsetHeight > 0) {
+        const shared = viewport.offsetHeight + header.offsetHeight + (root.hidden ? 0 : root.offsetHeight);
+        if (container() > 0) {
+          others = container() - shared;
+        }
+        return shared;
+      }
+      // The grid is hidden (dock maximized): the space is whatever the container has now, minus the same others.
+      return others !== null && container() > 0 ? Math.max(0, container() - others) : null;
     },
     gridHead() {
       const header = byId("grid-header");
-      return (header ? header.offsetHeight : 0) + model.GRID_CHROME_PX;
+      if (header && header.offsetHeight > 0) {
+        headHeight = header.offsetHeight;
+      }
+      return headHeight + model.GRID_CHROME_PX;
     },
     content() {
       root.style.height = "";
       return root.offsetHeight;
     },
-    container: () => (root.parentElement ? root.parentElement.clientHeight : 0),
+    container,
   };
 }
 
@@ -78,6 +92,7 @@ export function createDock({
   let sessionFraction = null; // the height of this opening of the dock (not remembered when no one resized it)
   let storedFraction = null; // the remembered height: only the divider sets it
   let lastHeight = 0;
+  let dockOpener = null;
 
   let storageRead = false;
   function readStored() {
@@ -162,10 +177,12 @@ export function createDock({
   }
 
   function paintDivider(height, available, bound) {
-    const now = maximized ? 100 : model.valueNow(height, available);
+    const low = model.valueNow(bound.min, available);
+    const high = model.valueNow(bound.max, available);
+    const now = maximized ? high : Math.min(Math.max(model.valueNow(height, available), low), high); // min <= now <= max
     divider.setAttribute("aria-valuenow", String(now));
-    divider.setAttribute("aria-valuemin", String(model.valueNow(bound.min, available)));
-    divider.setAttribute("aria-valuemax", String(model.valueNow(bound.max, available)));
+    divider.setAttribute("aria-valuemin", String(low));
+    divider.setAttribute("aria-valuemax", String(high));
   }
 
   function paintMaximize() {
@@ -194,7 +211,7 @@ export function createDock({
     if (maximized) {
       root.style.height = "";
     } else {
-      let fraction = storedFraction !== null ? storedFraction : sessionFraction;
+      let fraction = sessionFraction !== null ? sessionFraction : storedFraction; // this opening's height first, the remembered one seeds it
       let height;
       if (fraction === null) {
         height = model.initialHeight({ storedFraction: null, contentHeight: view.content(), available, limits });
@@ -330,7 +347,7 @@ export function createDock({
   function restoreFocus(entry, inTab) {
     const host = entry.host;
     const current = doc.activeElement;
-    const lost = !current || current === doc.body || inTab || (typeof host.contains === "function" && host.contains(current));
+    const lost = !current || current === doc.body || inTab || root.contains(current) || (typeof host.contains === "function" && host.contains(current));
     const had = (entry.focusWithin || inTab) && lost;
     entry.focusWithin = false;
     const opener = entry.opener;
@@ -476,7 +493,10 @@ export function createDock({
       const previous = active;
       active = result.active;
       entry.stale = false;
-      const inTab = Boolean(entry.tab && entry.tab.contains(doc.activeElement)); // read before the tab leaves the page
+      // Read before the tab leaves the page. When the last tab goes the whole dock disappears with whatever had the
+      // focus in it (Close all, Maximize), so the focus must be given back too.
+      const inTab = Boolean(entry.tab && entry.tab.contains(doc.activeElement))
+        || (result.tabs.length === 0 && root.contains(doc.activeElement));
       if (entry.tab) {
         entry.tab.remove();
       }
@@ -631,7 +651,15 @@ export function createDock({
       readStored();
       const wasOpen = isOpen(id);
       if (!wasOpen) {
-        entry.opener = doc.activeElement || null;
+        // The element outside the dock that had the focus when the dock opened; a panel opened from inside the
+        // dock (focus in another tab) gives the focus back to that same element.
+        const active = doc.activeElement || null;
+        if (active && active !== doc.body && !root.contains(active)) {
+          dockOpener = active;
+        } else if (tabs.length === 0) {
+          dockOpener = null;
+        }
+        entry.opener = dockOpener;
       }
       const instance = await mountOnce(entry);
       if (started !== generation) {
@@ -706,11 +734,11 @@ export function createDock({
       requireBound("caseChanged");
       generation += 1;
       for (const [id, entry] of panels) {
+        if (entry.def.closeOnCase && isOpen(id)) {
+          dock.close(id); // also a tab that only shows a load error: closeOnCase does not depend on the mount
+        }
         if (!entry.instance) {
           continue;
-        }
-        if (entry.def.closeOnCase && isOpen(id)) {
-          dock.close(id);
         }
         entry.stale = false;
         try {
