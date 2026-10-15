@@ -1,59 +1,38 @@
-/* Timeline panel (uPlot stacked histogram). Colour tokens follow the theme of app.css. */
+/* Timeline alarm strip (uPlot). Series colours come from the tokens of tokens.css (--tl-c0..c13); the
+   strip maps its severities to the chart tokens, which keep at least 3:1 on the panel. */
 :root {
-  --tl-c0: var(--sev-1);
-  --tl-c1: var(--sev-2);
-  --tl-c2: var(--sev-3);
-  --tl-c3: #3b82c4;
-  --tl-c4: #98a2b3;
-  --tl-c5: #0072b2;
-  --tl-c6: #e69f00;
-  --tl-c7: #009e73;
-  --tl-c8: #cc79a7;
-  --tl-c9: #56b4e9;
-  --tl-c10: #d55e00;
-  --tl-c11: #7a6fc9;
-  --tl-c12: #6b8e23;
-  --tl-c13: #7d8798;
+  --tl-c0: var(--chart-critical);
+  --tl-c1: var(--chart-error);
+  --tl-c2: var(--chart-warning);
+  --tl-c3: var(--chart-normal);
+  --tl-c4: var(--chart-noise);
   --tl-selection: rgba(31, 111, 235, 0.22);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --tl-c3: #6aa7e8;
-    --tl-c4: #6b7686;
-    --tl-c5: #4aa3df;
-    --tl-c6: #f2b83d;
-    --tl-c7: #35c29a;
-    --tl-c8: #e29bc3;
-    --tl-c9: #8ccbf2;
-    --tl-c10: #f28a4a;
-    --tl-c11: #a79cf0;
-    --tl-c12: #a3c25a;
-    --tl-c13: #8d97a8;
     --tl-selection: rgba(76, 141, 255, 0.28);
   }
 }
 
 :root[data-theme="dark"] {
-  --tl-c3: #6aa7e8;
-  --tl-c4: #6b7686;
-  --tl-c5: #4aa3df;
-  --tl-c6: #f2b83d;
-  --tl-c7: #35c29a;
-  --tl-c8: #e29bc3;
-  --tl-c9: #8ccbf2;
-  --tl-c10: #f28a4a;
-  --tl-c11: #a79cf0;
-  --tl-c12: #a3c25a;
-  --tl-c13: #8d97a8;
   --tl-selection: rgba(76, 141, 255, 0.28);
+}
+
+/* Reserved from the first paint (replaces the 185px rule of grid-extras.css, loaded earlier). */
+.timeline-host {
+  min-height: calc(var(--timeline-h) + 30px);
+}
+
+.timeline-host:has(.tl-expanded) {
+  min-height: calc(var(--timeline-h-expanded) + 30px);
 }
 
 .tl {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 2px;
+  padding: 2px 8px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   color: var(--text);
@@ -61,14 +40,48 @@
 
 .tl-head {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .tl-status {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tl-undated {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tl-toggle {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tl-toggle[aria-pressed="true"] {
+  border-color: var(--chart-error);
+  background: var(--surface-raised);
+}
+
+.tl-toggle:focus-visible {
+  outline: 2px solid var(--focus);
 }
 
 .tl-status.tl-error {
@@ -77,9 +90,10 @@
 
 .tl-legend {
   display: flex;
-  flex-wrap: wrap;
+  flex: none;
+  flex-wrap: nowrap;
   gap: 4px 10px;
-  margin: 0 0 0 auto;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -128,10 +142,14 @@
 .tl-c12 { background: var(--tl-c12); }
 .tl-c13 { background: var(--tl-c13); }
 
+.tl-swatch-line {
+  height: 2px;
+  border-radius: 1px;
+}
+
 .tl-plot {
   position: relative;
   width: 100%;
-  min-height: 120px;
 }
 
 .tl-plot .u-select {
@@ -141,13 +159,4 @@
 .tl-plot .u-cursor-x,
 .tl-plot .u-cursor-y {
   border-color: var(--muted);
-}
-
-.tl-readout {
-  min-height: 16px;
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
