@@ -1146,6 +1146,8 @@ export const S = {
   cfDialogTimeoutOne: "The file dialog was closed after 1 minute.",
   cfDialogTimeoutOther: "The file dialog was closed after {minutes} minutes.",
   cfNoNative: "No native file dialog here; using the built-in browser.",
+  cfBrowserUnavailable: "The folder browser could not be loaded. Type or paste the path instead, or reload the page.",
+  detailSectionsUnavailable: "Some parts of the record detail could not be loaded. Select the record again to retry.",
   cfDuplicate: "{name}: already in the list.",
   cfLimit: "{name}: the list is limited to {message} files.",
   cfItemError: "{name}: {message}",

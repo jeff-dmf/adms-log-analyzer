@@ -38,7 +38,7 @@ const NOT_AT_OPENING = [
   "config-panel", "key-panel", "payload-list", "side-by-side", "compare", "export-panel", "redaction-panel",
   "alerts-panel", "follow-tail", "clock-banner",
 ];
-const MAX_STATIC_MODULES = 38; // main.js + boot.js, uPlot included; the budget on open is 40 with everything else
+const MAX_STATIC_MODULES = 40; // main.js + boot.js, uPlot included; the budget on open is 40 with everything else
 
 test("the static graph of main.js and boot.js holds no panel, tree, section or deferred module", () => {
   const graph = staticGraph(["/js/main.js", "/js/boot.js"]);
@@ -53,8 +53,9 @@ test("boot.js only starts the opening requests and loads main.js", () => {
   const boot = read("js/boot.js");
   assert.match(boot, /startPrefetch\(\)/);
   assert.match(boot, /import\("\.\/main\.js"\)/);
-  assert.equal([...boot.matchAll(/^import .*$/gm)].length, 1, "a single static import: prefetch.js");
-  assert.ok(boot.length < 1500, "boot.js stays tiny");
+  assert.equal([...boot.matchAll(/^import .*$/gm)].length, 2, "static imports: boot-failure.js and prefetch.js");
+  assert.ok(boot.length < 2000, "boot.js stays tiny");
+  assert.match(boot, /import\("\.\/main\.js"\)\.catch\(/, "a failing main.js is handled, not left unhandled");
 });
 
 test("the panels and sections left out of the opening are all loaded by import() where they are used", () => {
@@ -80,10 +81,9 @@ test("the tpl leaf registers with the filter tree, which main.js no longer impor
 });
 
 const html = read("index.html");
-const usesBoot = /<script type="module" src="\/js\/boot\.js"><\/script>/.test(html);
 
-// Skipped until index.html starts at boot.js (the integration of UI-14); then these are the guard of its contents.
-test("index.html starts at boot.js and preloads the whole static graph, with plain URLs", { skip: !usesBoot }, () => {
+test("index.html starts at boot.js and preloads the whole static graph, with plain URLs", () => {
+  assert.match(html, /<script type="module" src="\/js\/boot\.js"><\/script>/);
   assert.ok(!/src="\/js\/main\.js"/.test(html), "main.js is loaded by boot.js only");
   const preloads = [...html.matchAll(/<link rel="modulepreload" href="([^"]+)">/g)].map((m) => m[1]);
   assert.equal(new Set(preloads).size, preloads.length, "no duplicates");
@@ -94,4 +94,125 @@ test("index.html starts at boot.js and preloads the whole static graph, with pla
   const missing = [...staticGraph(["/js/main.js", "/js/boot.js"])].filter((web) => web !== "/js/boot.js" && !preloads.includes(web));
   assert.deepEqual(missing, []);
   assert.ok(html.indexOf("modulepreload") < html.indexOf("/js/boot.js"), "the hints come before the script");
+});
+
+// ---- late initialisation (late-init.js) --------------------------------------------------------------------
+
+const { mountLate, retryable, loadSections } = await import("../../src/dmslog/web/js/late-init.js");
+
+function lateSetup(initialCase) {
+  const state = { caseId: initialCase, told: [], mounted: 0 };
+  const gate = {};
+  gate.loaded = new Promise((resolve, reject) => { gate.resolve = resolve; gate.reject = reject; });
+  const run = () => mountLate({
+    wait: Promise.resolve(),
+    load: () => gate.loaded,
+    mount: () => { state.mounted += 1; return { onCase: () => state.told.push("onCase") }; },
+    getCase: () => state.caseId,
+    onCaseOpen: (instance) => instance.onCase(),
+  });
+  return { state, gate, run };
+}
+
+test("a module that arrives with a case already open is told about it", async () => {
+  const { state, gate, run } = lateSetup("C1");
+  const done = run();
+  gate.resolve({});
+  await done;
+  assert.deepEqual(state.told, ["onCase"]);
+});
+
+test("a module that arrives with no case is not told; a case opened during the load counts, one closed does not", async () => {
+  const none = lateSetup(null);
+  const first = none.run();
+  none.gate.resolve({});
+  await first;
+  assert.deepEqual(none.state.told, []);
+
+  const opened = lateSetup(null);
+  const second = opened.run();
+  opened.state.caseId = "C2"; // the case opens while the module is loading
+  opened.gate.resolve({});
+  await second;
+  assert.deepEqual(opened.state.told, ["onCase"]);
+
+  const closed = lateSetup("C1");
+  const third = closed.run();
+  closed.state.caseId = null; // the case is closed while the module is loading
+  closed.gate.resolve({});
+  await third;
+  assert.deepEqual(closed.state.told, []);
+});
+
+test("a rejected import() rejects the mount and mounts nothing", async () => {
+  const { state, gate, run } = lateSetup("C1");
+  const done = run();
+  gate.reject(new Error("chunk failed"));
+  await assert.rejects(done, /chunk failed/);
+  assert.equal(state.mounted, 0);
+  assert.deepEqual(state.told, []);
+});
+
+test("main.js mounts Follow tail through mountLate and tells it about an open case", () => {
+  const main = read("js/main.js");
+  assert.match(main, /ready\.followTail = settled\(mountLate\(\{[\s\S]*?import\("\.\/follow-tail\.js"\)[\s\S]*?onCaseOpen: \(instance\) => instance\.onCase\(\)/);
+});
+
+test("a section that failed to load is tried again, one that loaded is not loaded twice", async () => {
+  let calls = 0;
+  const flaky = retryable(async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw new Error("offline");
+    }
+    return "ok";
+  });
+  await assert.rejects(flaky(), /offline/);
+  assert.equal(await flaky(), "ok");
+  assert.equal(await flaky(), "ok");
+  assert.equal(calls, 2);
+});
+
+test("loadSections reports the failures of a call without rejecting and keeps the sections that loaded", async () => {
+  const seen = [];
+  let good = 0;
+  const loaders = [retryable(async () => { good += 1; }), retryable(async () => { throw new Error("x"); })];
+  assert.equal(await loadSections(loaders, (errors) => seen.push(errors.length)), 1);
+  assert.equal(await loadSections(loaders, (errors) => seen.push(errors.length)), 1);
+  assert.deepEqual(seen, [1, 1]);
+  assert.equal(good, 1);
+  assert.equal(await loadSections([], () => seen.push(-1)), 0);
+  assert.deepEqual(seen, [1, 1]);
+});
+
+test("main.js shows the unavailable-sections message once, from the detail loaders", () => {
+  const main = read("js/main.js");
+  assert.match(main, /loadSections\(detailLoaders[\s\S]*?detailFailureShown[\s\S]*?S\.detailSectionsUnavailable/);
+  assert.ok(!/catch\(\(\) => \{\}\); \/\/ a missing or failing module only costs its section/.test(main));
+});
+
+// ---- boot failure ------------------------------------------------------------------------------------------
+
+test("a failure to load main.js shows an alert, reveals the bar and leaves no unhandled rejection", async () => {
+  const doc = installGlobalDom();
+  const bar = doc.createElement("header");
+  bar.id = "toolbar";
+  doc.body.appendChild(bar);
+  globalThis.fetch = () => Promise.reject(new Error("offline"));
+  const unhandled = [];
+  process.on("unhandledRejection", (err) => unhandled.push(err));
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    await import("../../src/dmslog/web/js/boot.js"); // main.js cannot start on this empty page and rejects
+    const { until } = await import("./fixtures/fake-dom.mjs");
+    await until(() => bar.all().some((n) => n.attrs && n.attrs.role === "alert" && /could not start/.test(n.textContent)), "boot alert");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    console.error = original;
+  }
+  assert.ok(bar.classList.contains("is-ready") && bar.classList.contains("is-failed"));
+  assert.deepEqual(unhandled, []);
+  assert.ok(errors.length >= 1);
 });

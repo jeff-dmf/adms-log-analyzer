@@ -287,9 +287,10 @@ test("UI-14: the module behind a toggle loads on hover or focus, never at the op
   const [filterTree, highlights] = toggles;
   filterTree.dispatch("pointerenter");
   highlights.dispatch("focus");
-  await tick();
-  assert.equal(actions.state(filterTree.dataset.action, { caseId: () => 1 }).loaded, true);
-  assert.equal(actions.state(highlights.dataset.action, { caseId: () => 1 }).loaded, true);
+  const loaded = (toggle) => actions.state(toggle.dataset.action, { caseId: () => 1 }).loaded;
+  await until(() => loaded(filterTree) && loaded(highlights), "toggle modules loaded"); // real import(): no fixed delay
+  assert.equal(loaded(filterTree), true);
+  assert.equal(loaded(highlights), true);
   assert.equal(actions.state(toggles[2].dataset.action, { caseId: () => 1 }).loaded, false, "the others stay unloaded");
 });
 
@@ -298,8 +299,7 @@ test("UI-14: Copy as loads its module on the first use of the item (hover or cli
   const menu = open(doc, refs.menus.export);
   assert.equal(calls.copyLoaded || 0, 0);
   itemByLabel(menu, S.actCopyAs).dispatch("pointerenter");
-  await tick();
-  assert.equal(calls.copyLoaded, 1);
+  await until(() => calls.copyLoaded === 1, "copy loaded");
   itemByLabel(menu, S.actCopyAs).dispatch("click");
   await until(() => calls.copy === 1, "copy");
   assert.equal(calls.copyLoaded, 1);

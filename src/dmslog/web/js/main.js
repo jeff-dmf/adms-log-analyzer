@@ -3,6 +3,7 @@
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
 import { api, onForbidden, onNetworkError } from "./api.js";
+import { loadSections, mountLate, retryable } from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
@@ -749,61 +750,61 @@ function start() {
   };
   // The detail pane's optional sections (Links, Payload, Highlights, Bookmark) load when the first record is shown,
   // not at the opening (UI-14). Each one that loads shows the record that is already on screen.
-  let detailModules = null;
-  const loadDetailModules = () => {
-    if (detailModules !== null) {
-      return detailModules;
+  // Each section loads on its own and a failure is forgotten, so the next record tries again (retryable).
+  let detailFailureShown = false;
+  const detailLoaders = [
+    retryable(() => import("./links.js").then((links) => {
+      linksSection = new links.LinksSection(byId("detail-links"), {
+        getCase: () => caseId,
+        onReveal: revealEntry,
+        onSideBySide: (id) => dock.open("sideBySide", { entryId: id }),
+        onSameKey: (type, value) => dock.open("sameKey", { type, value }),
+        onError: showError,
+      });
+      if (detail.entry) {
+        linksSection.show(detail.entry);
+      }
+    })),
+    // Payload section of the entry detail (the payload list is a dock panel).
+    retryable(() => import("./payload.js").then((module) => {
+      payloadSection = new module.PayloadSection(byId("detail-payload"), {
+        getCase: () => caseId,
+        onReveal: revealEntry,
+        onGoOperation: (eventId) => dock.open("operations", { eventId }),
+        onError: showError,
+      });
+      if (detail.entry) {
+        payloadSection.show(detail.entry);
+      }
+    })),
+    // Highlight rules (detail section, ]/[ navigation); the store is above, the panel is a dock panel.
+    retryable(() => import("./highlight-panel.js").then((module) => {
+      highlightUi = module.mountHighlights({
+        detailAnchor: byId("detail-bookmark"),
+        store: highlightStore,
+        getCase: () => caseId,
+        getFilter: () => currentFilter,
+        getSelectedRow: () => grid.selectedRow(),
+        getTemplateCode: (id) => templateLabels.get(id) || "",
+        reveal: (row) => grid.revealRow(row),
+        showMessage,
+      });
+      highlightUi.showEntry(detail.entry);
+    })),
+    // Bookmarks (detail section; the shortcuts use the store and the panel is a dock panel).
+    retryable(() => import("./bookmarks-panel.js").then((module) => {
+      detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
+      if (detail.entry) {
+        detailBookmark.show(detail.entry);
+      }
+    })),
+  ];
+  const loadDetailModules = () => loadSections(detailLoaders, () => {
+    if (!detailFailureShown) {
+      detailFailureShown = true; // said once; the sections keep retrying silently
+      showMessage(S.detailSectionsUnavailable, true);
     }
-    const optional = (promise) => promise.catch(() => {}); // a missing or failing module only costs its section
-    detailModules = Promise.all([
-      optional(import("./links.js").then((links) => {
-        linksSection = new links.LinksSection(byId("detail-links"), {
-          getCase: () => caseId,
-          onReveal: revealEntry,
-          onSideBySide: (id) => dock.open("sideBySide", { entryId: id }),
-          onSameKey: (type, value) => dock.open("sameKey", { type, value }),
-          onError: showError,
-        });
-        if (detail.entry) {
-          linksSection.show(detail.entry);
-        }
-      })),
-      // Payload section of the entry detail (the payload list is a dock panel).
-      optional(import("./payload.js").then((module) => {
-        payloadSection = new module.PayloadSection(byId("detail-payload"), {
-          getCase: () => caseId,
-          onReveal: revealEntry,
-          onGoOperation: (eventId) => dock.open("operations", { eventId }),
-          onError: showError,
-        });
-        if (detail.entry) {
-          payloadSection.show(detail.entry);
-        }
-      })),
-      // Highlight rules (detail section, ]/[ navigation); the store is above, the panel is a dock panel.
-      optional(import("./highlight-panel.js").then((module) => {
-        highlightUi = module.mountHighlights({
-          detailAnchor: byId("detail-bookmark"),
-          store: highlightStore,
-          getCase: () => caseId,
-          getFilter: () => currentFilter,
-          getSelectedRow: () => grid.selectedRow(),
-          getTemplateCode: (id) => templateLabels.get(id) || "",
-          reveal: (row) => grid.revealRow(row),
-          showMessage,
-        });
-        highlightUi.showEntry(detail.entry);
-      })),
-      // Bookmarks (detail section; the shortcuts use the store and the panel is a dock panel).
-      optional(import("./bookmarks-panel.js").then((module) => {
-        detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
-        if (detail.entry) {
-          detailBookmark.show(detail.entry);
-        }
-      })),
-    ]);
-    return detailModules;
-  };
+  });
   // Chained views (breadcrumbs, Narrow this view, Show in parent/root): optional modules.
   Promise.all([import("./views-stack.js"), import("./views-stack-model.js")]).then(([uiModule, model]) => {
     viewsStack = model.createViewsStack({ ownFilter: ownFilterOf, getLive: captureLive });
@@ -884,22 +885,26 @@ function start() {
     }
   });
 
-  ready.followTail = settled(afterFirstView.then(() => import("./follow-tail.js")).then((module) => {
-    followTail = module.initFollowTail({
-      toggle: byId("follow-tail"),
-      newButton: byId("follow-new"),
-      grid,
-      getCase: () => caseId,
-      getFilter: () => currentFilter,
-      onChanged: () => {
-        refreshDerived();
-        panel.refreshSources(true).catch(showError);
-      },
-      onError: showError,
-    });
-    if (caseId !== null) {
-      followTail.onCase(); // a case was already open when the module arrived
-    }
+  ready.followTail = settled(mountLate({
+    wait: afterFirstView,
+    load: () => import("./follow-tail.js"),
+    mount: (module) => {
+      followTail = module.initFollowTail({
+        toggle: byId("follow-tail"),
+        newButton: byId("follow-new"),
+        grid,
+        getCase: () => caseId,
+        getFilter: () => currentFilter,
+        onChanged: () => {
+          refreshDerived();
+          panel.refreshSources(true).catch(showError);
+        },
+        onError: showError,
+      });
+      return followTail;
+    },
+    getCase: () => caseId,
+    onCaseOpen: (instance) => instance.onCase(), // a case was already open when the module arrived
   }));
 
   // Local alerts (9.13): banner, stream and counter run from the opening; the panel is a dock panel.

@@ -191,8 +191,13 @@ export class CaseFiles {
         this.waiting = false;
         this.render();
         // The folder browser is the rare fallback of the file picker: loaded when it is needed (UI-14).
-        const { openFolderBrowser } = await import("./folder-browser.js");
-        const picked = await openFolderBrowser({ fs: this.fs, storage: this.storage });
+        let picked = null;
+        try {
+          const { openFolderBrowser } = await import("./folder-browser.js");
+          picked = await openFolderBrowser({ fs: this.fs, storage: this.storage });
+        } catch (err) {
+          state.addNotice("error", S.cfBrowserUnavailable);
+        }
         if (picked && picked.length > 0) {
           state.add(picked);
         }
