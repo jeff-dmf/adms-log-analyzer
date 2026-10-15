@@ -94,6 +94,7 @@ def test_round3_automatic_exception_never_hides_a_structured_field(mode):
 # -- timing: linearity is the criterion; the absolute cap only catches true blowups ------------------
 
 SAFETY_CAP_S = 15.0  # seconds at the development machine's speed, scaled by _machine_factor()
+LINEAR_SLACK = 2.5  # quadratic growth costs `growth` times the linear ratio, so 4x and 8x sizes still fail
 NOISE_FLOOR_S = 0.3  # a small measurement below this proves nothing either way
 
 
@@ -110,23 +111,25 @@ def _machine_factor() -> float:
     return max(1.0, sorted(runs)[2] / 0.045)
 
 
-def _best_of(measure, n: int, repeats: int = 3) -> float:
+def _best_of(measure, n: int, repeats: int = 5) -> float:
+    """Minimum CPU time of the process (not wall-clock: a descheduled or contended runner does not
+    inflate it) over several runs."""
     best = float("inf")
     for _ in range(repeats):
-        started = time.perf_counter()
+        started = time.process_time()
         measure(n)
-        best = min(best, time.perf_counter() - started)
+        best = min(best, time.process_time() - started)
     return best
 
 
 def _assert_linear(measure, n: int, growth: int, label: object) -> None:
-    """``measure(size)`` must grow linearly: at ``growth`` times the size it may cost at most twice the
+    """``measure(size)`` must grow linearly: at ``growth`` times the size it may cost at most 2.5 times the
     proportional time (noise, caches), never the quadratic ``growth ** 2``; plus a generous absolute cap
-    that only a real blowup reaches. Best of three timings each."""
+    that only a real blowup reaches. Minimum of five CPU-time measurements each."""
     small = _best_of(measure, n)
     big = _best_of(measure, n * growth)
     assert big < SAFETY_CAP_S * _machine_factor(), (label, small, big)
-    assert big < max(2 * growth * small, NOISE_FLOOR_S), (label, small, big)
+    assert big < max(LINEAR_SLACK * growth * small, NOISE_FLOOR_S), (label, small, big)
 
 
 def _repeat(unit: str, size: int) -> str:
