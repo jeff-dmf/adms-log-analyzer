@@ -575,9 +575,14 @@ function start() {
       setFieldError(byId(id), errors.includes(key) ? S.filterBadTime : null); // under the field that is wrong
     }
     if (errors.length > 0) {
+      // The popover stays open on the field that is wrong; the previous filter stays applied.
+      byId(errors.includes("from") ? "from-input" : "to-input").focus();
       return;
     }
     formState = { sevMax: state.sevMax, levelMax: state.levelMax, from: state.from, to: state.to };
+    if (filterChips) {
+      filterChips.closePopovers(true); // only a valid Apply closes the form
+    }
     applyView();
   });
   byId("filter-reset").addEventListener("click", () => {
@@ -814,41 +819,41 @@ function start() {
     sourceIds: panel.selectedIds(),
     collectionIds: collectionsPanel ? collectionsPanel.selectedGroups() : [],
   });
-  Promise.all([import("./filter-chips.js"), import("./filter-chips-model.js")]).then(([chipsUi, chipsModel]) => {
+  // The words of the chips and of the trail of views: the same lookups (ui-contratos.md 4.1).
+  const chipLookups = {
+    sourceName: (id) => sourceNames.get(id) || String(id),
+    collectionTag: (group) => tagMap(collections).get(group) || String(group),
+    typeLabel: (id) => templateLabels.get(id) || String(id),
+    formatTs,
+  };
+  // One popover open at a time: the Filters form, "+N more" and the "..." menu join the same group.
+  const popoverGroup = import("./popover-group.js").then((m) => m.createPopoverGroup()).catch(() => null);
+  Promise.all([import("./filter-chips.js"), import("./filter-chips-model.js"), popoverGroup]).then(([chipsUi, chipsModel, group]) => {
+    const removal = chipsModel.createChipRemoval({
+      getLive: captureLive,
+      getSelection: chipSelection,
+      restoreLive,
+      clearSources: () => panel.clearSelection(),
+      clearCollections: () => (collectionsPanel ? collectionsPanel.clearSelection() : undefined),
+      setBusy: (busy) => {
+        removingChip = busy;
+      },
+      applyView: () => applyView(),
+    });
     filterChips = chipsUi.mountFilterChips({
       strip: byId("filter-strip"),
       chipsHost: byId("strip-chips"),
       stateLabel: byId("strip-state"),
       filtersButton: byId("strip-filters"),
       popover: byId("filter-form"),
+      group,
       getState: () => ({
         live: captureLive(),
         selection: chipSelection(),
         parentsFilter: viewsStack ? viewsStack.parentsFilter() : null,
       }),
-      lookups: {
-        sourceName: (id) => sourceNames.get(id) || String(id),
-        collectionTag: (group) => tagMap(collections).get(group) || String(group),
-        typeLabel: (id) => templateLabels.get(id) || String(id),
-        formatTs,
-      },
-      onRemove: (chipId) => {
-        const before = chipSelection();
-        const result = chipsModel.removeChip(captureLive(), before, chipId);
-        removingChip = true;
-        try {
-          restoreLive(result.live);
-          if (before.sourceIds.length > 0 && result.selection.sourceIds.length === 0) {
-            panel.clearSelection();
-          }
-          if (before.collectionIds.length > 0 && result.selection.collectionIds.length === 0 && collectionsPanel) {
-            collectionsPanel.clearSelection();
-          }
-        } finally {
-          removingChip = false;
-        }
-        applyView();
-      },
+      lookups: chipLookups,
+      onRemove: (chipId) => removal.remove(chipId),
       onOpenTree: () => byId("filter-tree-button").click(),
     });
     filterChips.refresh();
@@ -856,11 +861,12 @@ function start() {
     byId("filter-form").hidden = false; // no chips module: the filter form stays where the user can reach it
   });
   // Chained views (breadcrumbs, Narrow this view, Show in parent/root): optional modules.
-  Promise.all([import("./views-stack.js"), import("./views-stack-model.js")]).then(([uiModule, model]) => {
-    viewsStack = model.createViewsStack({ ownFilter: ownFilterOf, getLive: captureLive });
+  Promise.all([import("./views-stack.js"), import("./views-stack-model.js"), popoverGroup]).then(([uiModule, model, group]) => {
+    viewsStack = model.createViewsStack({ ownFilter: ownFilterOf, getLive: captureLive, lookups: chipLookups });
     viewsUi = uiModule.mountViewsStack({
       trailHost: byId("strip-trail"),
       actionsHost: byId("strip-actions"),
+      group,
       stack: viewsStack,
       storage: (() => {
         try {

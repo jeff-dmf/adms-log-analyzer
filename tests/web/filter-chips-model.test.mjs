@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-import { chipLabel, chipsFromState, fitChips, isFiltered, removeChip } from "../../src/dmslog/web/js/filter-chips-model.js";
+import { chipLabel, chipsFromState, createChipRemoval, fitChips, isFiltered, removeChip } from "../../src/dmslog/web/js/filter-chips-model.js";
 import { emptyState } from "../../src/dmslog/web/js/views-stack-model.js";
 import { composeFilter } from "../../src/dmslog/web/js/filters.js";
 import { S as REAL } from "../../src/dmslog/web/js/strings.js";
@@ -256,4 +256,77 @@ test("fitChips never hides what it could not measure (0, null, NaN)", () => {
 test("filter-chips-model.js has no DOM", () => {
   const source = fs.readFileSync(new URL("../../src/dmslog/web/js/filter-chips-model.js", import.meta.url), "utf8");
   assert.ok(!/document|window|innerHTML/.test(source));
+});
+
+test("fitChips: a mixed list with one unmeasurable width (0, null, NaN) shows everything", () => {
+  assert.equal(fitChips([100, NaN, 100], 100, 60), 3);
+  assert.equal(fitChips([100, 0, 100], 100, 60), 3);
+  assert.equal(fitChips([100, null, 100], 100, 60), 3);
+  assert.equal(fitChips([100, undefined, 100], 100, 60), 3);
+  assert.equal(fitChips([100, -5, 100], 100, 60), 3);
+  assert.equal(fitChips([100, 100, 100], 100, 60), 0); // all measured: the rule applies
+});
+
+// The same wiring as main.js: the side panels' own callbacks apply the view unless a removal is under way.
+function removalHarness({ sources = [1, 2], groups = [3] } = {}) {
+  const calls = { apply: 0, restore: 0 };
+  let live = live_({ searchText: "a" });
+  let sourceIds = sources.slice();
+  let groupIds = groups.slice();
+  let busy = false;
+  const guarded = () => { if (!busy) { calls.apply += 1; } };
+  const removal = createChipRemoval({
+    getLive: () => live,
+    getSelection: () => ({ sourceIds: sourceIds.slice(), collectionIds: groupIds.slice() }),
+    restoreLive: (next) => { live = next; calls.restore += 1; },
+    clearSources: () => { sourceIds = []; guarded(); }, // SourcesPanel.clearSelection -> onSelection -> applyView
+    clearCollections: () => { groupIds = []; guarded(); },
+    setBusy: (value) => { busy = value; },
+    applyView: () => { calls.apply += 1; return Promise.resolve(); },
+  });
+  return { removal, calls, state: () => ({ live, sourceIds, groupIds }) };
+}
+function live_(patch) { return { ...emptyState(), ...patch }; }
+
+test("removing the sources chip restores the state, clears the selection and applies the view ONCE", async () => {
+  const h = removalHarness();
+  await h.removal.remove("sources");
+  assert.equal(h.calls.apply, 1);
+  assert.equal(h.calls.restore, 1);
+  assert.deepEqual(h.state().sourceIds, []);
+  assert.deepEqual(h.state().groupIds, [3]); // the other selection is left alone
+});
+
+test("removing the collections chip applies the view once too", async () => {
+  const h = removalHarness();
+  await h.removal.remove("collections");
+  assert.equal(h.calls.apply, 1);
+  assert.deepEqual(h.state().groupIds, []);
+  assert.deepEqual(h.state().sourceIds, [1, 2]);
+});
+
+test("a chip that touches no selection applies once and clears no panel; the busy flag is released", async () => {
+  const h = removalHarness();
+  await h.removal.remove("text");
+  assert.equal(h.calls.apply, 1);
+  assert.equal(h.state().live.searchText, "");
+  assert.deepEqual(h.state().sourceIds, [1, 2]);
+  assert.equal(h.removal.isBusy(), false);
+  await h.removal.remove("sources");
+  assert.equal(h.removal.isBusy(), false);
+});
+
+test("an error while restoring still releases the busy flag", async () => {
+  let busy = false;
+  const removal = createChipRemoval({
+    getLive: () => live_({ searchText: "a" }),
+    getSelection: () => ({ sourceIds: [], collectionIds: [] }),
+    restoreLive: () => { throw new Error("boom"); },
+    clearSources() {}, clearCollections() {},
+    setBusy: (v) => { busy = v; },
+    applyView: () => Promise.resolve(),
+  });
+  assert.throws(() => removal.remove("text"), /boom/);
+  assert.equal(busy, false);
+  assert.equal(removal.isBusy(), false);
 });

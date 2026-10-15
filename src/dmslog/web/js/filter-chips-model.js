@@ -265,8 +265,9 @@ export function removeChip(live, selection, chipId) {
 // available: width of the chip area; moreWidth: width of the "+N more" button. A width that cannot be
 // measured (0, NaN, no layout) never hides anything: everything shows.
 export function fitChips(widths, available, moreWidth) {
-  const list = Array.isArray(widths) ? widths.map((w) => (isNum(w) && w > 0 ? w : 0)) : [];
-  if (!isNum(available) || available <= 0 || list.every((w) => w === 0)) {
+  const list = Array.isArray(widths) ? widths : [];
+  // Any chip that could not be measured (0, null, NaN) makes the whole measure unreliable: show everything.
+  if (!isNum(available) || available <= 0 || list.some((w) => !isNum(w) || w <= 0)) {
     return list.length;
   }
   const total = list.reduce((a, b) => a + b, 0);
@@ -284,6 +285,34 @@ export function fitChips(widths, available, moreWidth) {
     count += 1;
   }
   return count;
+}
+
+// The removal of a chip as ONE view change. Removing the sources/collections chip clears a side panel whose own
+// callback would apply the view; `setBusy(true)` lets the owner mute those callbacks, so applyView() runs once.
+export function createChipRemoval({ getLive, getSelection, restoreLive, clearSources, clearCollections, setBusy, applyView }) {
+  let busy = false;
+  return {
+    isBusy: () => busy,
+    remove(chipId) {
+      const before = getSelection();
+      const result = removeChip(getLive(), before, chipId);
+      busy = true;
+      setBusy(true);
+      try {
+        restoreLive(result.live);
+        if (before.sourceIds.length > 0 && result.selection.sourceIds.length === 0) {
+          clearSources();
+        }
+        if (before.collectionIds.length > 0 && result.selection.collectionIds.length === 0) {
+          clearCollections();
+        }
+      } finally {
+        busy = false;
+        setBusy(false);
+      }
+      return applyView();
+    },
+  };
 }
 
 const hasConditions = (filter) => topNodes(filter || null).some(isCondition);

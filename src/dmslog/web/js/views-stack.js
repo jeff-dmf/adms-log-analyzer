@@ -29,7 +29,9 @@ function button(className, text, title) {
 
 // options: trailHost (left end of the strip), actionsHost (right end),
 //   stack (createViewsStack), getCase, restoreState(state), applyView() -> Promise, getSelectedRow(),
-//   reveal(row) -> Promise, showMessage(text, isError), storage (sessionStorage or null).
+//   reveal(row) -> Promise, showMessage(text, isError), storage (sessionStorage or null),
+//   createMenu (tests only: a stand-in for ui-menu.js createMenu),
+//   group (optional, popover-group.js: one popover open at a time with the strip's popovers).
 export function mountViewsStack(options) {
   const { stack, getCase, restoreState, applyView, getSelectedRow, reveal, showMessage } = options;
   const storage = options.storage || null;
@@ -170,10 +172,21 @@ export function mountViewsStack(options) {
   backButton.addEventListener("click", back);
   forwardButton.addEventListener("click", forward);
   narrowButton.addEventListener("click", narrow);
-  createMenu({
+  let menu = null;
+  const member = options.group ? options.group.join("views-menu", () => menu && menu.close(false)) : null;
+  menu = (options.createMenu || createMenu)({
     trigger: moreButton,
     doc: document,
     label: S.vsMoreLabel,
+    onOpenChange: (isOpen) => {
+      if (member) {
+        if (isOpen) {
+          member.opened(); // closes the Filters or "+N more" popover if one is open
+        } else {
+          member.closed();
+        }
+      }
+    },
     getItems: () => [
       { id: "rename", label: S.vsRename, run: rename },
       { id: "show-parent", label: S.vsShowParent, disabled: stack.isRoot, title: stack.isRoot ? S.vsAtRoot : null, run: () => showSelected(stack.index - 1) },

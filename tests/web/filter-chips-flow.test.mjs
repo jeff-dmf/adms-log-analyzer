@@ -51,7 +51,7 @@ const { S } = await import("../../src/dmslog/web/js/strings.js");
 const lookups = { sourceName: (i) => "s" + i, collectionTag: (g) => "C" + g, typeLabel: (i) => "T" + i, formatTs: (m) => "t" + m };
 const HOSTILE = "<img src=x onerror=alert(1)>";
 
-function setup({ width = 1000 } = {}) {
+function setup({ width = 1000, group = null } = {}) {
   const strip = new FakeElement("div");
   const chipsHost = new FakeElement("div");
   chipsHost.clientWidth = width;
@@ -63,7 +63,7 @@ function setup({ width = 1000 } = {}) {
   const removed = [];
   let treeOpened = 0;
   const ui = mountFilterChips({
-    doc, strip, chipsHost, stateLabel, filtersButton, popover, lookups,
+    doc, group, strip, chipsHost, stateLabel, filtersButton, popover, lookups,
     getState: () => state,
     onRemove: (id) => removed.push(id),
     onOpenTree: () => { treeOpened += 1; },
@@ -177,7 +177,7 @@ test("removing chips until none is left clears the state", () => {
   assert.equal(t.stateLabel.textContent, S.stripNoFilters);
 });
 
-test("Filters button opens the form popover; Escape closes and returns focus; outside click closes; Apply closes", () => {
+test("Filters button opens the form popover; Escape closes and returns focus; outside click closes; only a valid apply closes", () => {
   const t = setup();
   assert.equal(t.popover.hidden, true);
   t.filtersButton.click();
@@ -195,8 +195,11 @@ test("Filters button opens the form popover; Escape closes and returns focus; ou
   t.filtersButton.click();
   for (const fn of [...docListeners.pointerdown]) { fn({ target: t.popover }); } // inside: stays open
   assert.equal(t.popover.hidden, false);
-  t.popover.fire("submit");
+  t.popover.fire("submit"); // a submit alone never closes it: main.js closes it only after a VALID apply
+  assert.equal(t.popover.hidden, false);
+  t.ui.closePopovers(true); // what main.js calls after a valid apply: closes and returns the focus
   assert.equal(t.popover.hidden, true);
+  assert.equal(globalThis.focusedNode, t.filtersButton);
   t.filtersButton.click();
   t.filtersButton.click(); // second click toggles it closed
   assert.equal(t.popover.hidden, true);
@@ -211,5 +214,76 @@ test("only one popover is open at a time", () => {
   assert.equal(t.overflow().hidden, false);
   t.filtersButton.click();
   assert.equal(t.overflow().hidden, true);
+  assert.equal(t.popover.hidden, false);
+});
+
+test("Escape on the focused '+N more' button closes the list and keeps the focus on it", () => {
+  const t = setup({ width: 150 });
+  withText(t, "a", { toggles: { hideNoise: true, unclassified: true } });
+  t.more().click();
+  assert.equal(t.overflow().hidden, false);
+  let stopped = 0;
+  t.more().fire("keydown", { key: "Escape", stopPropagation() { stopped += 1; } });
+  assert.equal(t.overflow().hidden, true);
+  assert.equal(t.more().attrs["aria-expanded"], "false");
+  assert.equal(globalThis.focusedNode, t.more());
+  assert.equal(stopped, 1);
+  t.more().fire("keydown", { key: "Escape", stopPropagation() {} }); // closed already: nothing happens
+  assert.equal(t.overflow().hidden, true);
+});
+
+test("the triggers are disclosures: no aria-haspopup=true (it announces a menu), aria-controls instead", () => {
+  const t = setup();
+  t.ui.refresh();
+  assert.equal(t.filtersButton.attrs["aria-haspopup"], undefined);
+  assert.equal(t.more().attrs["aria-haspopup"], undefined);
+  assert.equal(t.more().attrs["aria-controls"], t.overflow().id);
+});
+
+test("a long label that keeps its truncated prefix still refreshes its title and the name of its x", () => {
+  const t = setup();
+  const prefix = "p".repeat(40);
+  withText(t, prefix + "-first");
+  const before = t.chipNodes()[0];
+  assert.match(before.byClass("ui-chip-label")[0].attrs.title, /first"$/);
+  withText(t, prefix + "-second");
+  const after = t.chipNodes()[0];
+  assert.equal(after.byClass("ui-chip-label")[0].textContent, before.byClass("ui-chip-label")[0].textContent); // same cut label
+  assert.match(after.byClass("ui-chip-label")[0].attrs.title, /second"$/);
+  assert.match(after.byClass("ui-chip-remove")[0].attrs["aria-label"], /second"$/);
+});
+
+test("a chip that reports no width (0) makes the strip show everything instead of hiding chips", () => {
+  const t = setup({ width: 150 });
+  const original = Object.getOwnPropertyDescriptor(FakeElement.prototype, "offsetWidth");
+  Object.defineProperty(FakeElement.prototype, "offsetWidth", { get() { return this.className.includes("fs-more") ? 60 : this.textContent.startsWith("Hide") ? 0 : 100; }, configurable: true });
+  try {
+    withText(t, "a", { toggles: { hideNoise: true, unclassified: true } });
+    assert.equal(t.chipNodes().every((n) => !n.hidden), true);
+    assert.equal(t.more().hidden, true);
+  } finally {
+    Object.defineProperty(FakeElement.prototype, "offsetWidth", original);
+  }
+});
+
+test("one popover at a time across the strip and the '...' menu (keyboard opens: no pointerdown)", async () => {
+  const { createPopoverGroup } = await import("../../src/dmslog/web/js/popover-group.js");
+  const group = createPopoverGroup();
+  const t = setup({ group, width: 150 });
+  withText(t, "a", { toggles: { hideNoise: true, unclassified: true } });
+  let menuOpen = false;
+  const menu = group.join("views-menu", () => { menuOpen = false; });
+  t.filtersButton.click();
+  assert.equal(t.popover.hidden, false);
+  menuOpen = true; menu.opened(); // the "..." menu opens by keyboard while Filters is open
+  assert.equal(t.popover.hidden, true, "opening the menu closes the Filters form");
+  assert.equal(t.filtersButton.attrs["aria-expanded"], "false");
+  t.more().click(); // opening the list closes the menu
+  assert.equal(menuOpen, false);
+  assert.equal(t.overflow().hidden, false);
+  menuOpen = true; menu.opened();
+  assert.equal(t.overflow().hidden, true);
+  t.filtersButton.click();
+  assert.equal(menuOpen, false);
   assert.equal(t.popover.hidden, false);
 });

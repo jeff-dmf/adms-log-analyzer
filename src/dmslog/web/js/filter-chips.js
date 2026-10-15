@@ -17,28 +17,30 @@ function within(root, node) {
 }
 
 // options: strip (the whole strip), chipsHost, stateLabel, filtersButton, popover (the filter form),
+//   group (optional, popover-group.js: one popover open at a time with the "..." menu),
 //   getState() -> {live, selection, parentsFilter}, lookups (sourceName, collectionTag, typeLabel, formatTs),
 //   onRemove(chipId), onOpenTree(), doc (default: document).
 // Returns {refresh(), relayout(), closePopovers()}.
 export function mountFilterChips(options) {
   const { strip, chipsHost, stateLabel, filtersButton, popover, getState, lookups, onRemove, onOpenTree } = options;
   const doc = options.doc || document;
+  const member = options.group ? options.group.join("strip", () => closePopovers(false)) : null;
 
   const moreButton = doc.createElement("button");
   moreButton.type = "button";
   moreButton.className = "ui-chip fs-more";
-  moreButton.setAttribute("aria-haspopup", "true");
+  moreButton.setAttribute("aria-controls", "strip-overflow");
   moreButton.setAttribute("aria-expanded", "false");
   moreButton.hidden = true;
   const overflow = doc.createElement("div");
   overflow.className = "fs-overflow";
+  overflow.id = "strip-overflow";
   overflow.setAttribute("role", "group");
   overflow.setAttribute("aria-label", S.stripOverflowLabel);
   overflow.hidden = true;
   strip.appendChild(overflow);
 
   filtersButton.textContent = S.stripFilters;
-  filtersButton.setAttribute("aria-haspopup", "true");
   filtersButton.setAttribute("aria-expanded", "false");
   filtersButton.title = S.stripFiltersTitle;
   popover.hidden = true;
@@ -66,6 +68,9 @@ export function mountFilterChips(options) {
     el.hidden = true;
     button.setAttribute("aria-expanded", "false");
     doc.removeEventListener("pointerdown", onPointerDown);
+    if (member) {
+      member.closed();
+    }
     if (returnFocus) {
       button.focus();
     }
@@ -76,6 +81,9 @@ export function mountFilterChips(options) {
     button.setAttribute("aria-expanded", "true");
     open = { el, button };
     doc.addEventListener("pointerdown", onPointerDown);
+    if (member) {
+      member.opened(); // closes the "..." menu if it is open
+    }
   }
   function togglePopover(el, button) {
     if (open && open.el === el) {
@@ -93,12 +101,15 @@ export function mountFilterChips(options) {
       }
     });
   }
-  filtersButton.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && open) {
-      closePopovers(true);
-    }
-  });
-  popover.addEventListener("submit", () => closePopovers(false)); // Apply: main.js applies the form
+  // Escape on either trigger closes its popover too (the popover itself handles it when the focus is inside).
+  for (const button of [filtersButton, moreButton]) {
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && open && open.button === button) {
+        event.stopPropagation();
+        closePopovers(true);
+      }
+    });
+  }
 
   function makeChip(chip) {
     const label = format(S.removeChip, { label: chip.title });
@@ -149,12 +160,12 @@ export function mountFilterChips(options) {
   function measure() {
     widths = nodes.map((node) => {
       const w = node.offsetWidth;
-      return typeof w === "number" && Number.isFinite(w) ? w + GAP : 0;
+      return typeof w === "number" && Number.isFinite(w) && w > 0 ? w + GAP : 0; // 0 = not measurable
     });
     moreButton.textContent = format(S.chipMore, { n: chips.length });
     moreButton.hidden = false;
     const w = moreButton.offsetWidth;
-    moreWidth = typeof w === "number" && Number.isFinite(w) ? w + GAP : 0;
+    moreWidth = typeof w === "number" && Number.isFinite(w) && w > 0 ? w + GAP : 0;
   }
 
   function refresh() {
@@ -164,7 +175,7 @@ export function mountFilterChips(options) {
     stateLabel.textContent = filtered ? S.stripFiltered : S.stripNoFilters;
     stateLabel.classList.toggle("is-none", !filtered);
     chips = chipsFromState(live, selection, lookups, S);
-    const next = chips.map((c) => c.id + "|" + c.label).join("\n");
+    const next = chips.map((c) => [c.id, c.label, c.title, c.removable].join("|")).join("\n");
     if (next === signature) {
       return; // same chips: nothing to redraw or to measure
     }
@@ -194,5 +205,5 @@ export function mountFilterChips(options) {
     }
   }
 
-  return { refresh, relayout, closePopovers: () => closePopovers(false) };
+  return { refresh, relayout, closePopovers: (returnFocus) => closePopovers(Boolean(returnFocus)) };
 }

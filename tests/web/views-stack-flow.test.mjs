@@ -71,7 +71,8 @@ const tick = async () => { for (let i = 0; i < 6; i += 1) { await Promise.resolv
 const ownFilter = (s) => composeFilter({ sourceIds: [], text: s.searchText, ...s.formState }, s.userFilter, s.toggles);
 const HOSTILE = "<img src=x onerror=alert(1)>";
 
-function setup({ caseId = "C1", selected = null } = {}) {
+function setup({ caseId = "C1", selected = null, group = null } = {}) {
+  const menus = [];
   docListeners.keydown = []; // only this setup's handler is live
   let live = emptyState();
   const stack = createViewsStack({ ownFilter, getLive: () => live });
@@ -83,7 +84,8 @@ function setup({ caseId = "C1", selected = null } = {}) {
   const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
   const ctx = { caseId, selected };
   const ui = mountViewsStack({
-    trailHost, actionsHost, stack, storage,
+    trailHost, actionsHost, stack, storage, group,
+    createMenu: (config) => { const menu = { config, open() { config.onOpenChange(true); }, close() { config.onOpenChange(false); } }; menus.push(menu); return menu; },
     getCase: () => ctx.caseId,
     restoreState: (state) => { live = state; calls.restore.push(state); },
     applyView: async () => {
@@ -102,7 +104,7 @@ function setup({ caseId = "C1", selected = null } = {}) {
     for (const fn of docListeners.keydown || []) { fn(e); }
     return e;
   };
-  return { ui, stack, calls, ctx, btn, crumbs, key, store, setLive: (patch) => { live = { ...live, ...patch }; }, bar };
+  return { menus, ui, stack, calls, ctx, btn, crumbs, key, store, setLive: (patch) => { live = { ...live, ...patch }; }, bar };
 }
 
 test("narrow builds the stack, breadcrumbs show it and the effective filter is the AND", async () => {
@@ -114,13 +116,13 @@ test("narrow builds the stack, breadcrumbs show it and the effective filter is t
   t.setLive({ userFilter: { tid: [12] } });
   t.btn("vs-narrow").click();
   await tick();
-  assert.deepEqual(t.crumbs().map((c) => c.textContent), ["tid = 12", "View 2"]);
+  assert.deepEqual(t.crumbs().map((c) => c.textContent), ["Thread 12", "View 2"]);
   assert.equal(t.crumbs()[1].getAttribute("aria-current"), "page");
   assert.equal(t.crumbs()[0].getAttribute("aria-current"), undefined);
   assert.deepEqual(t.calls.apply.at(-1), { and: [{ tid: [12] }] });
   t.setLive({ userFilter: { key: { type: "gid", eq: HOSTILE } } });
   t.ui.changed();
-  assert.equal(t.crumbs()[1].textContent, "key gid = " + HOSTILE.slice(0, 23) + "…"); // text only
+  assert.equal(t.crumbs()[1].textContent, "gid = " + HOSTILE); // text only
   t.btn("vs-narrow").click();
   assert.deepEqual(t.crumbs().length, 3);
   assert.equal(t.calls.apply.at(-1).and.length, 2);
@@ -233,5 +235,44 @@ test("the trail is nav > ol > li with the active view as aria-current=page; back
   assert.equal(t.btn("vs-back").getAttribute("aria-label"), S.vsBack);
   assert.equal(t.btn("vs-forward").getAttribute("aria-label"), S.vsForward);
   assert.equal(t.btn("vs-more").getAttribute("aria-label"), S.vsMoreLabel);
-  assert.equal(t.btn("vs-more").getAttribute("aria-haspopup"), "menu");
+});
+
+test("the '...' menu: Rename opens the form; Show in parent / root run and are disabled at the root", async () => {
+  const t = setup({ selected: { id: 9, ts: 1 } });
+  const items = () => t.menus[0].config.getItems();
+  assert.deepEqual(items().map((i) => i.id), ["rename", "show-parent", "show-root"]);
+  assert.deepEqual(items().map((i) => i.disabled || false), [false, true, true]);
+  assert.equal(items()[1].title, S.vsAtRoot);
+  items()[0].run();
+  const [form] = t.bar.byClass("vs-rename-form");
+  assert.equal(form.hidden, false);
+  t.setLive({ userFilter: { tid: [1] } });
+  t.btn("vs-narrow").click();
+  t.setLive({ userFilter: { tid: [2] } });
+  t.ui.changed();
+  t.btn("vs-narrow").click();
+  assert.deepEqual(items().map((i) => i.disabled || false), [false, false, false]);
+  items()[1].run();
+  await tick();
+  assert.equal(t.stack.index, 1);
+  assert.deepEqual(t.calls.reveal.at(-1), { id: 9, ts: 1 });
+  items()[2].run();
+  await tick();
+  assert.equal(t.stack.index, 0);
+});
+
+test("opening the '...' menu closes an open Filters popover; opening Filters closes the menu", async () => {
+  const { createPopoverGroup } = await import("../../src/dmslog/web/js/popover-group.js");
+  const group = createPopoverGroup();
+  const t = setup({ group });
+  const other = group.join("strip", () => { other.closed(); closedStrip += 1; });
+  let closedStrip = 0;
+  other.opened(); // the Filters form is open
+  t.menus[0].open(); // the menu opens by keyboard
+  assert.equal(closedStrip, 1);
+  let menuClosed = 0;
+  const realClose = t.menus[0].close;
+  t.menus[0].close = (...a) => { menuClosed += 1; return realClose(...a); };
+  other.opened(); // Filters opens: the menu must be closed through the group
+  assert.equal(menuClosed, 1);
 });
