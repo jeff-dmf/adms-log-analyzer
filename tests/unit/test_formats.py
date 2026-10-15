@@ -232,7 +232,7 @@ def test_fixture_logs_keep_their_detection():
         ({"header": TS_GROUPS + r" .{1,9}\| "}, "'.' is not allowed"),
         ({"header": TS_GROUPS + r" (?P<level>[A-Z]{1,8}) \| $"}, "anchor"),
         ({"header": TS_GROUPS + r" (?=I)(?P<level>[A-Z]{1,8}) \| "}, "look-arounds"),
-        ({"header": TS_GROUPS + r" (?:[A-Z]+)+ \| "}, "nested"),
+        ({"header": TS_GROUPS + r" (?:[A-Z]+)+ \| "}, "repeat bound"),
         ({"tid_base": 8}, "tid_base"),
         ({"tid_base": True}, "tid_base"),
         ({"min_lines": 0}, "min_lines"),
@@ -273,15 +273,42 @@ def test_fixture_logs_keep_their_detection():
             {"header": TS_GROUPS + r" (?P<pid>\d{1,6})? ?(?P<tid>\d{1,6}) (?P<level>[A-Z]{1,8}) \| "},
             "may also match what follows",
         ),
-        # alternatives that start alike: the choice depends on what comes later
+        # no alternation at all in the restricted grammar (a class covers the level tokens)
         (
             {
                 "header": TS_GROUPS + r" (?P<level>INFO|INFORMATION) \| ",
                 "examples": ["2026-10-15 01:02:03 INFO | x"],
             },
-            None,
-        ),  # common prefix factored out by the parser: decided by the next character
-        ({"header": TS_GROUPS + r" (?:I|[HI]X)(?P<level>[A-Z]{1,8}) \| "}, "alternatives"),
+            "alternation",
+        ),
+        # 2nd review of PR #196: a fixed repeat of a group hid a variable repeat from the follow check
+        (
+            {"header": TS_GROUPS + r" (?P<level>[A-Z]{1,8}){1}", "examples": ["2026-10-15 01:02:03 INFO"]},
+            "the only repeat of a group",
+        ),
+        ({"header": TS_GROUPS + r" (?:[A-Z]{1,8}){2}"}, "the only repeat of a group"),
+        # 2nd review: \S is wider in a bytes regex (0xA0 included) than its str set; no \S/\s/\w at all
+        (
+            {
+                "header": TS_GROUPS + r" (?P<process>\S{1,40})\xa0",
+                "examples": ["2026-10-15 01:02:03 Svc\u00a0"],
+            },
+            "only literals, ranges and",
+        ),
+        ({"header": TS_GROUPS + r" (?P<level>[\w]{1,8}) \| "}, "only literals, ranges and"),
+        ({"header": TS_GROUPS + r" (?P<level>[^ ]{1,8}) \| "}, "negated"),
+        ({"header": TS_GROUPS + r" [^|] \| "}, "negated"),
+        # explicit bytes >= 0x80 are allowed when listed, and checked with their bytes semantics
+        ({"header": TS_GROUPS + r" (?P<level>[A-Z\xa0]{1,8})\xa0\| "}, "may also match what follows"),
+        # grammar limits
+        ({"header": TS_GROUPS + r"(?: (?P<pid>[0-9]{1,6})(?: \[(?P<tid>[0-9]{1,6})\])?)? \| "}, "nested"),
+        ({"header": TS_GROUPS + r"(?: ?)? (?P<level>[A-Z]{1,8}) \| "}, "empty string"),
+        ({"header": TS_GROUPS + r" (?P<level>[A-Z]+) \| "}, "repeat bound"),
+        (
+            {"header": TS_GROUPS + r" (?P<level>[A-Z]{1,8}) \|(?:ab)?(?:cd)?(?:ef)?(?:gh)?(?:ij)? "},
+            "more than 4",
+        ),
+        ({"header": TS_GROUPS + r" (?:I|[HI]X)(?P<level>[A-Z]{1,8}) \| "}, "alternation"),
         # wrongly typed values must be configuration errors, never TypeError later (review of PR #196)
         ({"tid_base": 10.0}, "tid_base"),
         ({"tid_base": "16"}, "tid_base"),
@@ -406,3 +433,20 @@ def test_envelope_or_plain_never_raises():
     assert envelope_or_plain("adms") is ADMS
     assert envelope_or_plain("ymd_colon").name == "ymd_colon"
     assert envelope_or_plain("removed_generic") is PLAIN
+
+
+def test_deeply_nested_optional_groups_are_rejected_fast():
+    """2nd review of PR #196: nested optional groups made the old check exponential (depth 22 > 2 s)."""
+    import time
+
+    nested = ""
+    for ch in reversed("abcdefghijklmnopqrstuv"):
+        nested = f"(?:{ch}{nested})?"
+    header = TS_GROUPS + " " + nested + r"\| "
+    started = time.process_time()
+    with pytest.raises(EnvelopeConfigError, match="nested"):
+        compile_envelopes({"envelope": [_table(header=header)]})
+    assert time.process_time() - started < 0.5
+    longest = TS_GROUPS + " " + "x" * 1000
+    with pytest.raises(EnvelopeConfigError, match="longer than"):
+        compile_envelopes({"envelope": [_table(header=longest)]})

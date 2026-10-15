@@ -296,10 +296,14 @@ scope = "optional"
 #                line, BOM and end of line excluded, at most 512 bytes. Required named
 #                groups: year (4 digits), month, day, hour, minute, second; optional:
 #                ms (fraction, first 3 digits used), pid, tid, level, process.
-#                Not allowed: '.', '$', look-arounds, unnamed groups, nested repeats.
-#                Every choice must be decided by the next character: a variable repeat
-#                (x{m,n} with m<n, x?, an optional group) may not start like what follows
-#                it nor end the header; alternatives start with different characters.
+#                Restricted grammar (bytes semantics, at most 1000 characters):
+#                literals; classes of literals, ranges and \d only (no negation, no
+#                \s \w \S \W \D, no '.'); a repeat {m,n}/? (n <= 64) applies to ONE
+#                literal or class; groups (?P<name>...) and (?:...) at most 2 deep, the
+#                only repeat of a group being '?' (at most 4, not nested, never empty);
+#                no alternation, anchors other than the leading ^, look-arounds.
+#                Every choice is decided by the next byte: a variable repeat or an
+#                optional group may not start like what follows it nor end the header.
 #                Put a separator at the END of an optional group: '(?:\[TID=n\] )?LEVEL'.
 #                The time is the local log time, as for the built-in envelopes.
 #   tid_base     10 (default) or 16

@@ -181,19 +181,54 @@ ACCEPTED = compile_envelopes(
             },
             {
                 "name": "o3",
-                "header": _TS + r" (?P<level>INFO|WARN|ERROR) ?: ",
+                "header": _TS + r" (?P<level>[A-Z]{1,11}) ?: ",
                 "examples": ["2026-10-15 01:02:03 INFO: x", "2026-10-15 01:02:03 WARN : x"],
+            },
+            {  # explicit bytes >= 0x80 (a UTF-8 no-break space as separator; examples are UTF-8)
+                "name": "o4",
+                "header": _TS
+                + r" (?P<process>[A-Za-z\x80-\x9f]{1,20})\xc2\xa0(?:#(?P<pid>\d{1,6})\xc2\xa0)?- ",
+                "examples": ["2026-10-15 01:02:03 Svc\u00a0- x"],
             },
         ]
     }
 )
-header_alphabet = st.sampled_from(list(b"0123456789 .:_-|[]AINFORMTWSvcx\t")).map(lambda c: bytes([c]))
+header_alphabet = st.one_of(
+    st.sampled_from(list(b"0123456789 .:_-|[]#AINFORMTWSvcx\t\x80\x9f\xa0\xc2\xff")).map(
+        lambda c: bytes([c])
+    ),
+    st.integers(0x80, 0xFF).map(lambda c: bytes([c])),
+)
 header_text = st.lists(header_alphabet, max_size=25).map(b"".join)
+# what gets appended: header-like bytes, any bytes, and bytes >= 0x80 only (2nd review of PR #196)
+suffix_bytes = st.one_of(
+    header_text,
+    st.binary(max_size=30),
+    st.binary(min_size=1, max_size=30).map(lambda b: bytes(c | 0x80 for c in b)),
+)
 
 
 @MAIN
-@given(st.integers(0, 2), header_text, header_text)
+@given(st.integers(0, len(ACCEPTED) - 1), header_text, suffix_bytes)
 def test_accepted_headers_with_optional_groups_are_prefix_stable(which, body, suffix):
     env = ACCEPTED[which]
     line = b"2026-10-15 01:02:03" + body
     assert env.match(line + suffix) == env.match(line) or env.match(line) is None
+
+
+@MAIN
+@given(generic_line, suffix_bytes)
+def test_packaged_headers_are_prefix_stable_with_any_appended_bytes(line, suffix):
+    suffix = suffix.replace(b"\n", b"").replace(b"\r", b"")  # a line never holds its end of line
+    for env in GENERIC:
+        assert env.match(line + suffix) == env.match(line)
+
+
+@MAIN
+@given(st.sampled_from([b"Svc", b"A\x80b", b"x"]), suffix_bytes)
+def test_high_bytes_after_an_explicit_high_separator_do_not_move_the_header(name, suffix):
+    env = ACCEPTED[3]
+    line = b"2026-10-15 01:02:03 " + name + b"\xc2\xa0- "
+    header = env.match(line)
+    assert header is not None and header.msg_start == len(line)
+    assert env.match(line + suffix) == header

@@ -233,8 +233,8 @@ def _compile_one(table: Mapping[str, Any], where: str) -> GenericEnvelope:
 
 
 def _compile_header(source: Any, where: str) -> re.Pattern[bytes]:
-    # Imported here: templates.py is large and only the loader needs its regex safety checks.
-    from .templates import TemplateError, _compile_regex
+    """Compile a header regex of the restricted grammar (see ``_check_grammar``) as a bytes regex."""
+    from re import _parser as sre_parser  # type: ignore[attr-defined]
 
     if not isinstance(source, str) or not source:
         raise EnvelopeConfigError(f"{where}: 'header' must be a non-empty string")
@@ -242,12 +242,18 @@ def _compile_header(source: Any, where: str) -> re.Pattern[bytes]:
         raise EnvelopeConfigError(f"{where}: 'header' must be ASCII")
     if not source.startswith("^"):
         raise EnvelopeConfigError(f"{where}: 'header' must start with '^'")
-    try:  # same structural and catastrophic-backtracking checks as the adapter templates
-        rx, _info = _compile_regex(source, src="families.toml", where=where, window=HEADER_WINDOW)
-    except TemplateError as exc:
-        raise EnvelopeConfigError(f"{where}: {exc.detail}") from None
-    _check_prefix_only(source, where)
-    _check_deterministic(source, where)
+    if len(source) > MAX_HEADER_CHARS:
+        raise EnvelopeConfigError(f"{where}: 'header' is longer than {MAX_HEADER_CHARS} characters")
+    raw = source.encode("ascii")
+    try:  # bytes semantics from the start (\u, \U and \N{...} exist only in str patterns)
+        rx = re.compile(raw[1:])
+        tree = sre_parser.parse(raw, 0)
+    except (re.error, RecursionError) as exc:
+        raise EnvelopeConfigError(f"{where}: 'header' does not compile as a bytes regex: {exc}") from None
+    if tree.state.flags & ~re.ASCII:
+        raise EnvelopeConfigError(f"{where}: inline flags are not allowed in 'header'")
+    if rx.groups != len(rx.groupindex):
+        raise EnvelopeConfigError(f"{where}: unnamed capture group; use (?:...) and (?P<name>...)")
     groups = set(rx.groupindex)
     missing = [g for g in _TS_GROUPS if g not in groups]
     if missing:
@@ -255,101 +261,128 @@ def _compile_header(source: Any, where: str) -> re.Pattern[bytes]:
     extra = groups - set(_TS_GROUPS) - _OPTIONAL_GROUPS
     if extra:
         raise EnvelopeConfigError(f"{where}: unknown named groups {sorted(extra)}")
+    _check_grammar(tree.data, where)
     # ``match(buf, pos, endpos)`` is already anchored at ``pos``; a literal ``^`` would only match at
     # the real start of ``buf`` (never after a BOM or in the middle of a chunk), so it is dropped.
-    try:  # a few escapes (\\u, \\U, \\N{...}) exist only in str patterns
-        return re.compile(source[1:].encode("ascii"))
-    except re.error as exc:
-        raise EnvelopeConfigError(f"{where}: 'header' does not compile as a bytes regex: {exc}") from None
+    return rx
 
 
-def _check_prefix_only(source: str, where: str) -> None:
-    """Reject constructs that look past the header: ``$``/``\\Z``, look-arounds and ``.``."""
-    from re import _constants as sre  # type: ignore[attr-defined]
-    from re import _parser as sre_parser  # type: ignore[attr-defined]
-
-    def walk(items: Any, top: bool) -> None:
-        for index, (op, av) in enumerate(items):
-            if op is sre.AT:
-                if not (top and index == 0 and av is sre.AT_BEGINNING):
-                    raise EnvelopeConfigError(f"{where}: only a leading '^' anchor is allowed in 'header'")
-            elif op in (sre.ASSERT, sre.ASSERT_NOT):
-                raise EnvelopeConfigError(f"{where}: look-arounds are not allowed in 'header'")
-            elif op is sre.ANY:
-                raise EnvelopeConfigError(f"{where}: '.' is not allowed in 'header'; use a character class")
-            elif op is sre.SUBPATTERN:
-                walk(av[-1], False)
-            elif op in (sre.MAX_REPEAT, sre.MIN_REPEAT):
-                walk(av[2], False)
-            elif op is sre.BRANCH:
-                for alt in av[1]:
-                    walk(alt, False)
-
-    walk(sre_parser.parse(source, 0).data, True)
+# Restricted header grammar (ARQUITETURA 6.1a). Character sets are bitmasks over the 256 byte values,
+# computed with the bytes semantics the matcher uses.
+MAX_HEADER_CHARS = 1000
+MAX_OPTIONAL_GROUPS = 4
+MAX_GROUP_DEPTH = 2
+MAX_REPEAT = 64
+_ALL_BYTES = (1 << 256) - 1
+_DIGITS = sum(1 << b for b in range(0x30, 0x3A))
 
 
-def _check_deterministic(source: str, where: str) -> None:
-    """Prefix contract by structure: every choice of the header regex is decided by the next character.
+def _check_grammar(items: Any, where: str) -> None:
+    r"""Accept only a small grammar whose every choice is decided by the next byte, else raise.
 
-    A variable repeat (``x{m,n}`` with m < n, ``x?``, ``x*``) must not be able to start what follows it,
-    and the alternatives of a ``|`` must start with different characters. What follows the end of the
-    header is any text, so a variable repeat may not end the header. Then the regex never needs a
-    character after its match to decide where the match ends: appending text to a line can neither
-    move the end of the header nor change a group (``(?P<process>[A-Z: ]{1,40}): `` is rejected:
-    ``SVC: Z: `` would extend it). Sets come from the str parse, a superset of the bytes semantics.
+    Allowed: a leading ``^``; literal bytes; character classes made of literals, ranges and ``\d``
+    (exactly 0-9 in a bytes regex), never negated and without ``\s``/``\w``/``\S``/``\W``/``\D``/``.``;
+    a repeat ``{m,n}``/``?`` (n <= 64; no ``*``/``+``) of ONE such atom; groups ``(?P<name>...)`` and
+    ``(?:...)``, at most 2 deep, the only repeat of a group being ``?`` (at most 4 optional groups, not
+    nested, never able to match the empty string). No alternation, anchors, look-arounds or back-refs.
+
+    Determinism (checked right to left, in one pass): a variable repeat must not be able to start what
+    follows it, an optional group must not start like what follows it, and what follows the header is
+    any byte, so neither may end the header. Then the one path the regex can take is fixed by bytes
+    inside the match: appending bytes to a line never moves the end of the header nor changes a group.
     """
     from re import _constants as sre  # type: ignore[attr-defined]
-    from re import _parser as sre_parser  # type: ignore[attr-defined]
 
-    from .templates import _ALL, _EMPTY, _atom_set, _cs, _cs_overlap, _Unsafe
+    optional_groups = 0
 
-    def union(a: Any, b: Any) -> Any:
-        return _cs((*a, *b))
+    def fail(text: str) -> None:
+        raise EnvelopeConfigError(f"{where}: {text} in 'header'")
 
-    def seq(items: Any, follow: Any) -> Any:
-        """First characters of ``items`` followed by ``follow`` (checking every choice inside)."""
+    def atom_set(op: Any, av: Any) -> int | None:
+        if op is sre.LITERAL:
+            return 1 << av
+        if op is sre.ANY:
+            fail("'.' is not allowed; use a character class")
+        if op is sre.NOT_LITERAL:
+            fail("negated characters are not allowed; list the allowed ones")
+        if op is not sre.IN:
+            return None
+        mask = 0
+        for iop, iav in av:
+            if iop is sre.LITERAL:
+                mask |= 1 << iav
+            elif iop is sre.RANGE:
+                lo, hi = iav
+                mask |= ((1 << (hi + 1)) - 1) ^ ((1 << lo) - 1)
+            elif iop is sre.CATEGORY and iav is sre.CATEGORY_DIGIT:
+                mask |= _DIGITS
+            else:
+                fail("only literals, ranges and \\d are allowed in a character class (no negation, \\s, \\w)")
+        return mask
+
+    def seq(seq_items: Any, follow: int, depth: int, in_optional: bool) -> int:
+        """First bytes of ``seq_items`` followed by ``follow``; checks every choice on the way."""
         first = follow
-        for op, av in reversed(items):
-            first = node(op, av, first)
+        for index in range(len(seq_items) - 1, -1, -1):
+            first = node(*seq_items[index], first, depth, in_optional, index)
         return first
 
-    def node(op: Any, av: Any, follow: Any) -> Any:
-        try:
-            atom = _atom_set(op, av)
-        except _Unsafe as exc:
-            raise EnvelopeConfigError(f"{where}: {exc}") from None
-        if atom is not None:
-            return atom
+    def node(op: Any, av: Any, follow: int, depth: int, in_optional: bool, index: int) -> int:
+        nonlocal optional_groups
         if op is sre.AT:
-            return follow  # the leading '^' (others are rejected by _check_prefix_only)
+            if not (depth == 0 and index == 0 and av is sre.AT_BEGINNING):
+                fail("only a leading '^' anchor is allowed")
+            return follow
+        mask = atom_set(op, av)
+        if mask is not None:
+            return mask
         if op is sre.SUBPATTERN:
-            return seq(av[-1], follow)
+            if depth >= MAX_GROUP_DEPTH:
+                fail(f"groups nested deeper than {MAX_GROUP_DEPTH} are not allowed")
+            if av[1] or av[2]:
+                fail("inline flags are not allowed")
+            return seq(av[-1], follow, depth + 1, in_optional)
         if op in (sre.MAX_REPEAT, sre.MIN_REPEAT):
             lo, hi, body = av
-            body_first = seq(body, _EMPTY)
-            if lo != hi:
-                if _cs_overlap(body_first, follow):
-                    raise EnvelopeConfigError(
-                        f"{where}: a variable repeat in 'header' may also match what follows it (or ends"
-                        " the header); appended text could then change the header"
-                    )
-                seq(body, union(body_first, follow))
-            return union(body_first, follow) if lo == 0 else body_first
-        if op is sre.BRANCH:
-            firsts = [seq(alt, follow) for alt in av[1]]
-            for i, a in enumerate(firsts):
-                for b in firsts[i + 1 :]:
-                    if _cs_overlap(a, b):
-                        raise EnvelopeConfigError(
-                            f"{where}: alternatives in 'header' must start with different characters"
-                        )
-            out = _EMPTY
-            for f in firsts:
-                out = union(out, f)
-            return out
-        raise EnvelopeConfigError(f"{where}: unsupported construct {op} in 'header'")
+            if hi is sre.MAXREPEAT:
+                hi = MAX_REPEAT + 1
+            if hi > MAX_REPEAT or hi < 1:
+                fail(f"a repeat bound must be from 1 to {MAX_REPEAT}")
+            if len(body) == 1 and (body_mask := atom_set(*body[0])) is not None:
+                if lo < hi and body_mask & follow:
+                    fail("a variable repeat may also match what follows it (or ends the header)")
+                return body_mask | follow if lo == 0 else body_mask
+            # the parser inlines (?:...), so the body of an optional group is a sequence of items
+            if (lo, hi) != (0, 1):
+                fail("a repeat applies to one character or class; the only repeat of a group is '?'")
+            if in_optional:
+                fail("optional groups may not be nested")
+            optional_groups += 1
+            if optional_groups > MAX_OPTIONAL_GROUPS:
+                fail(f"more than {MAX_OPTIONAL_GROUPS} optional groups")
+            if seq_nullable(body):
+                fail("an optional group must not be able to match the empty string")
+            inner = seq(body, 0, depth, True)  # its own first bytes (not nullable: follow 0 adds none)
+            if inner & follow:
+                fail("an optional group may also match what follows it (or ends the header)")
+            seq(body, follow, depth, True)  # the choices inside, with the real follow
+            return inner | follow
+        fail(f"{op} is not allowed (alternation, look-arounds and back-references are not)")
+        return 0  # unreachable
 
-    seq(sre_parser.parse(source, 0).data, _ALL)
+    def seq_nullable(seq_items: Any) -> bool:
+        for op, av in seq_items:
+            if op is sre.SUBPATTERN:
+                if not seq_nullable(av[-1]):
+                    return False
+            elif op in (sre.MAX_REPEAT, sre.MIN_REPEAT):
+                if av[0] > 0 and not seq_nullable(av[2]):
+                    return False
+            elif op is not sre.AT:
+                return False
+        return True
+
+    seq(items, _ALL_BYTES, 0, False)
 
 
 def _compile_levels(raw: Any, where: str) -> dict[bytes, int]:
