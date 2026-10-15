@@ -105,6 +105,14 @@ _SOURCE_FIELDS = frozenset(
 # highest id ever removed and every insert of these tables starts above it.
 ID_FLOOR_PREFIX = "id_floor."
 ID_FLOOR_TABLES = ("collection", "stream", "source", "entry", "event")
+# Partial open (ROADMAP 9.9): ``meta['partial.<source_id>']`` holds the state of a source indexed out of file
+# order (``ingest/partial.py``); it goes with the source.
+PARTIAL_PREFIX = "partial."
+# meta['partial_scope.<collection_id>']: scope of an unfinished partial open;
+# meta['partial_order.<collection_id>']: families whose unknown_sig examples a source-first open must repair
+# once the collection is complete
+PARTIAL_SCOPE_PREFIX = "partial_scope."
+PARTIAL_ORDER_PREFIX = "partial_order."
 # Per-group counter bumped when entries of the group are deleted (ARQUITETURA 5, "Chaves de meta"); the global
 # ``entries_epoch`` of older cases stays as it was and both go into the correlation signatures.
 EPOCH_KEY = "entries_epoch"
@@ -249,6 +257,9 @@ class IndexWriter:
         self._family: str | None = None
         self._batch_first_id = self._next_id
         self.prev_ts: int | None = None  # ts of the last record appended (for flag 32)
+        # False while filling an id range reserved below records that already exist (partial open): the last
+        # buffered row of a source is then not its highest id, so ``source.last_line`` is recomputed.
+        self._ids_on_top = True
 
     # ------------------------------------------------------------------ transactions
 
@@ -282,6 +293,36 @@ class IndexWriter:
             self._in_tx = False
         self._next_id = next_row_id(self.conn, "entry")
         self._batch_first_id = self._next_id
+        self._ids_on_top = True
+
+    # ------------------------------------------------------------------ entry ids (partial open, 9.9)
+
+    @property
+    def next_id(self) -> int:
+        """The id the next appended record gets."""
+        return self._next_id
+
+    def set_next_id(self, next_id: int, *, on_top: bool) -> None:
+        """Make the next appended record get ``next_id`` (flushes the open batch first).
+
+        ``on_top`` = no record of the case has a higher id (the normal case); False when filling an id range
+        reserved below existing records (``reserve_entry_ids``), which only the partial open does.
+        """
+        self.flush()
+        self._next_id = self._batch_first_id = int(next_id)
+        self._ids_on_top = on_top
+
+    def reserve_entry_ids(self, end: int) -> None:
+        """Keep every entry id below ``end`` for the caller: later inserts (any writer) start at ``end`` or
+        above. Reuses ``meta['id_floor.entry']`` (the floor of removed ids), in the open transaction."""
+        self.begin()
+        if end - 1 > id_floor(self.conn, "entry"):
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                (ID_FLOOR_PREFIX + "entry", str(end - 1)),
+            )
+        if self._next_id < end and self._ids_on_top:
+            self.set_next_id(end, on_top=True)
 
     # ------------------------------------------------------------------ case, collections
 
@@ -562,13 +603,35 @@ class IndexWriter:
         self.begin()
         return self._delete_where("source_id = ?", [source_id], source_id, 0)
 
-    def _delete_where(self, where: str, params: list[Any], source_id: int, from_byte_off: int) -> int:
-        """Delete the records matching ``where``: those of ``source_id`` at or after ``from_byte_off``."""
+    def delete_id_range(
+        self, source_id: int, min_id: int, end_id: int, from_byte_off: int, to_byte_off: int
+    ) -> int:
+        """Delete the records of the source with ``min_id <= id < end_id`` (resuming a segment of a partial
+        open); they lie in ``[from_byte_off, to_byte_off)`` of the file, and records outside stay linked."""
+        self.begin()
+        return self._delete_where(
+            "source_id = ? AND id >= ? AND id < ?",
+            [source_id, min_id, end_id],
+            source_id,
+            from_byte_off,
+            to_byte_off,
+        )
+
+    def _delete_where(
+        self,
+        where: str,
+        params: list[Any],
+        source_id: int,
+        from_byte_off: int,
+        to_byte_off: int | None = None,
+    ) -> int:
+        """Delete the records matching ``where``: those of ``source_id`` at or after ``from_byte_off`` (and
+        before ``to_byte_off`` when given)."""
         conn = self.conn
         first = conn.execute(f"SELECT min(id), count(*) FROM entry WHERE {where}", params).fetchone()
         if not first[1]:
             return 0
-        bookmarks.detach_entries(conn, source_id, from_byte_off)
+        bookmarks.detach_entries(conn, source_id, from_byte_off, to_byte_off)
         # Bucket counts first: subtract what the removed records contributed.
         counts = conn.execute(
             f"SELECT ts / {MINUTE_MS}, sev, tpl_id, count(*) FROM entry WHERE {where} AND ts IS NOT NULL"
@@ -789,6 +852,8 @@ class IndexWriter:
         conn.execute("DELETE FROM collection WHERE ers_group = ?", (group,))
         keys = [f"{p}{group}" for p in ("correlate.", "correlate.links.", "payloads.", f"{EPOCH_KEY}.")]
         keys += [f"payload_extraction_version.{sid}" for sid in sources]
+        keys += [f"{PARTIAL_PREFIX}{sid}" for sid in sources]
+        keys += [f"{p}{cid}" for cid in cids for p in (PARTIAL_SCOPE_PREFIX, PARTIAL_ORDER_PREFIX)]
         conn.executemany("DELETE FROM meta WHERE key = ?", [(k,) for k in keys])
         for sid in streams:  # derive.<stream>.<chain>: '/' is the character after '.'
             conn.execute("DELETE FROM meta WHERE key >= ? AND key < ?", (f"derive.{sid}.", f"derive.{sid}/"))
@@ -803,6 +868,7 @@ class IndexWriter:
         self.commit()
         self._next_id = next_row_id(conn, "entry")
         self._batch_first_id = self._next_id
+        self._ids_on_top = True
         return RemovedGroup(group, len(cids), len(sources), records, removed_bookmarks)
 
     # ------------------------------------------------------------------ insertion
@@ -914,9 +980,14 @@ class IndexWriter:
         self.begin()
         conn = self.conn
         conn.executemany(_ENTRY_SQL, self._rows)
-        # source.last_line (schema 7): ids only grow, so the last buffered row of a source is its highest id.
-        last_lines = {r[1]: r[2] + r[4] - 1 for r in self._rows}
-        conn.executemany(_SET_LAST_LINE_SQL, [(line, sid) for sid, line in last_lines.items()])
+        # source.last_line (schema 7): ids only grow, so the last buffered row of a source is its highest id
+        # (except while filling a reserved range below existing records: recomputed from the table then).
+        if self._ids_on_top:
+            last_lines = {r[1]: r[2] + r[4] - 1 for r in self._rows}
+            conn.executemany(_SET_LAST_LINE_SQL, [(line, sid) for sid, line in last_lines.items()])
+        else:
+            for sid in {r[1] for r in self._rows}:
+                self._refresh_last_line(sid)
         if self._bodies:
             conn.executemany(_BODY_SQL, self._bodies)
         conn.execute(_FTS_INSERT_SQL, (self._batch_first_id, self._next_id))

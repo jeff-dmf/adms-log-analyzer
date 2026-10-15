@@ -134,6 +134,10 @@ API_CASE_DELETE_FAILED = "Case {case!r} could not be deleted: {error}"
 API_CASE_CREATE_FAILED = "Case {case!r} could not be created: {error}"
 API_MISSING_FIELD = "Missing or invalid field {field!r}"
 API_BAD_SCOPE = "scope must be 'default' or 'all'"
+API_BAD_FIRST = (
+    "first must be an object with 'from' and/or 'to' (integer ms, from lower than to) and/or 'sources'"
+    " (1 to 500 names as /collections/plan lists them)"
+)
 API_PATH_NOT_FOUND = "Path does not exist: {path}"
 API_PATH_NOT_ABSOLUTE = "The collection path must be absolute"
 API_BAD_LIMIT = "limit must be an integer from 1 to {limit}"
