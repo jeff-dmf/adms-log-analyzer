@@ -28,3 +28,7 @@ test("the bar hidden until ready reveals itself by CSS after a delay, and a fail
   assert.match(main, /classList\.add\("is-ready", "is-failed"\)/);
   assert.match(main, /setAttribute\("role", "alert"\)/);
 });
+
+test("UI-14: the panels are not painted until the bar is ready, with the same safety net (no CLS from the texts arriving)", () => {
+  assert.match(css, /\.topbar:not\(\.is-ready\) ~ #panels\s*\{[^}]*visibility:\s*hidden[^}]*animation:\s*topbar-reveal 0s 3s forwards/);
+});

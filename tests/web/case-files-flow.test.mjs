@@ -382,3 +382,14 @@ test("typing in the path field clears its error", async () => {
   panel.refs.pathInput.fire("input");
   assert.equal(panel.refs.pathInput.attrs["aria-invalid"], undefined);
 });
+
+test("UI-14: when the folder browser cannot open, Browse says so and is usable again", async () => {
+  // Native dialog unavailable -> the built-in browser; this fake document has no body, so opening it rejects.
+  const fs = { capabilities: async () => ({ native: { available: false } }), pick: async () => ({}), cancelPick: async () => null };
+  const { host, files } = setup(fs);
+  const browse = byClass(host, "cf-browse")[0];
+  await files.browse();
+  assert.match(byClass(host, "cf-notices")[0].textContent, /folder browser could not be loaded/);
+  assert.equal(files.waiting, false);
+  assert.equal(browse.disabled, false);
+});
