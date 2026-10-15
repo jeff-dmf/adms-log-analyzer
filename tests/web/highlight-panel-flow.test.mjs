@@ -1,4 +1,4 @@
-// Highlights UI on a small fake DOM: panel list and quick form, "Highlight this key" in the detail, the
+// Highlights UI on a small fake DOM: the dock panel (list and quick form), "Highlight this key" in the detail, the
 // footer help and the ]/[ navigation. Rule names and log values are written only as text.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -74,7 +74,7 @@ const keydown = async (key, target = new FakeElement("div")) => {
   return prevented;
 };
 
-const { mountHighlights } = await import("../../src/dmslog/web/js/highlight-panel.js");
+const { mountHighlightPanel, mountHighlights } = await import("../../src/dmslog/web/js/highlight-panel.js");
 const { createHighlightStore } = await import("../../src/dmslog/web/js/highlight-model.js");
 const { S } = await import("../../src/dmslog/web/js/strings.js");
 
@@ -103,36 +103,30 @@ function setup(extraRules = 0) {
     },
   };
   let ui = null;
-  const store = createHighlightStore({ api, getCase: () => "C1", onChange: () => ui && ui.storeChanged() });
-  const toolbar = new FakeElement("header");
-  const theme = toolbar.appendChild(new FakeElement("button"));
-  const panelParent = new FakeElement("section");
-  const filterForm = panelParent.appendChild(new FakeElement("form"));
+  let panelUi = null;
+  const store = createHighlightStore({
+    api, getCase: () => "C1", onChange: () => { ui && ui.storeChanged(); panelUi && panelUi.storeChanged(); },
+  });
+  const host = new FakeElement("section"); // the dock gives the panel its host
   const footerParent = new FakeElement("section");
   const footer = footerParent.appendChild(new FakeElement("div"));
   const detailParent = new FakeElement("aside");
   const anchor = detailParent.appendChild(new FakeElement("section"));
   let selected = { id: 3, ts: 2 };
+  panelUi = mountHighlightPanel(host, { store, getCase: () => "C1", getFilter: () => ({ sev: { le: 3 } }) });
   ui = mountHighlights({
-    toolbar, beforeButton: theme, panelParent, beforePanel: filterForm, footer, detailAnchor: anchor, store,
+    footer, detailAnchor: anchor, store,
     getCase: () => "C1", getFilter: () => ({ sev: { le: 3 } }), getSelectedRow: () => selected,
     getTemplateCode: () => "TST-001", reveal: async (row) => calls.reveal.push(row.id),
     showMessage: (text, isError) => calls.messages.push([text, Boolean(isError)]),
   });
-  return { calls, store, ui, toolbar, panelParent, footerParent, detailParent, setSelected: (row) => { selected = row; } };
+  return { calls, store, ui, host, panelUi, footerParent, detailParent, setSelected: (row) => { selected = row; } };
 }
 
 test("panel lists the rules as text, toggles, recolors, moves and deletes them", async () => {
-  const { calls, toolbar, panelParent } = setup();
-  const button = toolbar.children[0];
-  assert.equal(button.textContent, S.hlButton);
-  assert.equal(button.getAttribute("aria-expanded"), "false");
-  const panel = panelParent.byId("hl-panel");
-  assert.equal(panelParent.children[0], panel); // before the filter bar
-  button.click();
+  const { calls, host: panel, panelUi } = setup();
+  panelUi.refresh(); // the dock opened the panel
   await tick();
-  assert.equal(panel.hidden, false);
-  assert.equal(button.getAttribute("aria-expanded"), "true");
   const items = panel.byClass("hl-rule");
   assert.equal(items.length, 2);
   assert.equal(items[0].byClass("hl-name")[0].textContent, HOSTILE); // literal text
@@ -156,10 +150,9 @@ test("panel lists the rules as text, toggles, recolors, moves and deletes them",
 });
 
 test("quick form validates, builds the leaf and adds the current filter", async () => {
-  const { calls, toolbar, panelParent } = setup();
-  toolbar.children[0].click();
+  const { calls, host: panel, panelUi } = setup();
+  panelUi.refresh();
   await tick();
-  const panel = panelParent.byId("hl-panel");
   const form = panel.byClass("hl-form")[0];
   const kind = panel.byId("hl-kind");
   const status = panel.byClass("hl-status")[0];
@@ -241,8 +234,24 @@ test("footer documents ] and [, and the keys walk the highlighted records", asyn
   const typing = new FakeElement("input");
   assert.equal(await keydown("]", typing), false); // typing in a field is not a shortcut
   assert.equal(calls.next.length, 2);
+  const menuItem = new FakeElement("div");
+  menuItem.parent = Object.assign(new FakeElement("div"), { attrs: { role: "menu" } });
+  assert.equal(await keydown("]", menuItem), false); // inside an open menu the keys belong to the menu
+  assert.equal(calls.next.length, 2);
   assert.equal(await keydown("n"), false); // n/N stay the error navigation
   setSelected(null);
   await keydown("]");
   assert.deepEqual(calls.messages.at(-1), [S.navNoSelection, false]);
+});
+
+test("reset forgets the old case's rules and status without asking the server", async () => {
+  const { calls, host, panelUi } = setup();
+  panelUi.refresh();
+  await tick();
+  assert.equal(host.byClass("hl-rule").length, 2);
+  const before = JSON.stringify(calls.create);
+  panelUi.reset();
+  assert.equal(host.byClass("hl-rule").length, 0);
+  assert.equal(host.byClass("hl-status")[0].textContent, "");
+  assert.equal(JSON.stringify(calls.create), before);
 });

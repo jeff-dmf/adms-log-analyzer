@@ -1,0 +1,398 @@
+// Integration point (single owner, see docs/notas/ui-contratos.md, section 0): registers, synchronously and in one
+// place, every dock panel and every action of the viewer. main.js calls registerAppPanels() and
+// registerAppActions() once at the opening, before the top bar is drawn, so every menu item exists from the first
+// paint. No panel module registers itself and none touches the top bar or a host it was not given.
+//
+// `deps` is built in main.js and is visible only here (the AppContext stays small). What it holds:
+//   api, derivedApi            the plain API and the one whose queries carry the chosen collection
+//   highlightStore, bookmarkStore
+//   fieldNames(), hasCollections(), sourceName(id)
+//   showEntry(id), reveal(row), showEventInGrid({from, to, entryId}), exportContext()
+//   filterTreeOptions()        { onChange, getExtraFilter, onSavedApplied } of the filter tree
+//   onFilterTree(tree), onHighlightPanel(panel), onBookmarksPanel(panel)   main keeps these to talk to them
+//   alerts()                   the object startAlerts() returned, or null
+//   ready                      { alerts, followTail, copyExport }: promises of the modules loaded at the opening
+//   cases()                    [{id, name}] known cases;  selectCase(id), closeCase(), focusNewCase(), focusAddFiles()
+//   openColumns(), copyExportOpen(), followTailOn(), toggleFollowTail(), setTheme(choice), theme()
+//   shortcutsText()            the lines of the shortcut help (until the dialog of UI-28)
+import { S } from "./strings.js";
+import { THEME_CHOICES } from "./theme.js";
+
+// While a panel is being reset its getCase() answers null: the panels without a reset() of their own
+// (operations, dashboard, unknown types, configuration) clear everything of the old case synchronously and ask the
+// server for nothing when refreshed without a case. UI-15 gives them a real reset() and this goes away.
+function withoutCase(getCase) {
+  let resetting = false;
+  return {
+    getCase: () => (resetting ? null : getCase()),
+    clear(refresh) {
+      resetting = true;
+      try {
+        refresh();
+      } finally {
+        resetting = false;
+      }
+    },
+  };
+}
+
+export function registerAppPanels(dock, deps) {
+  const { api, derivedApi } = deps;
+
+  // The order of registration is the visual order of the hosts above the grid.
+  dock.register({
+    id: "filterTree",
+    titleKey: "actFilterTree",
+    mount: async (host, ctx) => {
+      const module = await import("./filter-tree.js");
+      deps.onFilterTree(module.initFilterTree(host, {
+        api,
+        caseId: ctx.caseId(),
+        initial: ctx.userFilter(),
+        ...deps.filterTreeOptions(),
+      }));
+      return {}; // main talks to the tree directly (setFilter, setCase) and invalidates it on a case change
+    },
+  });
+
+  dock.register({
+    id: "unknownTypes",
+    titleKey: "actUnknownTypes",
+    listens: ["case", "indexed"],
+    mount: async (host, ctx) => {
+      const module = await import("./unknown-panel.js");
+      const guard = withoutCase(ctx.caseId);
+      const panel = module.initUnknownPanel(host, {
+        api, getCase: guard.getCase, getFamily: () => null, onOpenEntry: (id) => deps.showEntry(id),
+      });
+      return { refresh: () => panel.refresh(), reset: () => guard.clear(() => panel.refresh()) };
+    },
+  });
+
+  dock.register({
+    id: "config",
+    titleKey: "actConfig",
+    listens: ["case", "indexed"],
+    mount: async (host, ctx) => {
+      const module = await import("./config-panel.js");
+      const guard = withoutCase(ctx.caseId);
+      const panel = module.initConfigPanel(host, {
+        api, getCase: guard.getCase, onOpenEntry: (id) => deps.showEntry(id),
+      });
+      return { refresh: () => panel.refresh(), reset: () => guard.clear(() => panel.refresh()) };
+    },
+  });
+
+  dock.register({
+    id: "operations",
+    titleKey: "actOperations",
+    listens: ["derived"],
+    mount: async (host, ctx) => {
+      const module = await import("./events-panel.js");
+      const guard = withoutCase(ctx.caseId);
+      const panel = module.initEventsPanel(host, {
+        api: derivedApi, getCase: guard.getCase, onShowInGrid: deps.showEventInGrid,
+      });
+      let stale = true; // a closed panel loads its list again when it is shown
+      return {
+        refresh() {
+          stale = false;
+          return panel.refresh();
+        },
+        // "Go to operation" (payload section): show the panel and open that event in its detail pane.
+        async show({ eventId }) {
+          if (stale) {
+            stale = false;
+            await panel.refresh();
+          }
+          return panel.open(eventId);
+        },
+        closed() {
+          stale = true;
+        },
+        reset: () => guard.clear(() => panel.refresh()),
+      };
+    },
+  });
+
+  dock.register({
+    id: "payloads",
+    titleKey: "actPayloads",
+    closeOnCase: true,
+    mount: async (host, ctx) => {
+      const module = await import("./payload-list.js");
+      const panel = module.initPayloadList(host, { api, getCase: ctx.caseId, onOpen: ctx.reveal });
+      return { refresh: () => panel.refresh(), closed: () => panel.close(), reset: () => panel.close() };
+    },
+  });
+
+  dock.register({
+    id: "dashboard",
+    titleKey: "actDashboard",
+    listens: ["derived"],
+    mount: async (host, ctx) => {
+      const module = await import("./dashboard.js");
+      const guard = withoutCase(ctx.caseId);
+      const panel = module.initDashboard(host, {
+        api: derivedApi, getCase: guard.getCase, onShowInGrid: deps.showEventInGrid,
+      });
+      return { refresh: () => panel.refresh(), reset: () => guard.clear(() => panel.refresh()) };
+    },
+  });
+
+  dock.register({
+    id: "sideBySide",
+    titleKey: "actSideBySide",
+    closeOnCase: true,
+    mount: async (host, ctx) => {
+      const module = await import("./side-by-side.js");
+      const panel = module.initSideBySide(host, { getCase: ctx.caseId });
+      return { show: ({ entryId }) => panel.open(entryId), closed: () => panel.close(), reset: () => panel.reset() };
+    },
+  });
+
+  dock.register({
+    id: "sameKey",
+    titleKey: "actSameKey",
+    closeOnCase: true,
+    mount: async (host, ctx) => {
+      const module = await import("./key-panel.js");
+      const panel = module.initKeyPanel(host, { getCase: ctx.caseId, onSelect: ctx.reveal });
+      return { show: ({ type, value }) => panel.open(type, value), closed: () => panel.close(), reset: () => panel.reset() };
+    },
+  });
+
+  dock.register({
+    id: "export",
+    titleKey: "actExportReport",
+    listens: ["case"],
+    mount: async (host, ctx) => {
+      const [exporting, redacting] = await Promise.all([import("./export-panel.js"), import("./redaction-panel.js")]);
+      host.textContent = "";
+      const exportBox = document.createElement("div");
+      const redactionBox = document.createElement("section");
+      redactionBox.className = "host-panel";
+      redactionBox.hidden = true;
+      host.append(exportBox, redactionBox);
+      let redactionPanel = null;
+      const openRedaction = () => {
+        redactionBox.hidden = false;
+        if (!redactionPanel) {
+          redactionPanel = redacting.initRedactionPanel(redactionBox);
+        }
+        redactionPanel.refresh();
+      };
+      const panel = exporting.initExportPanel(exportBox, {
+        getContext: () => deps.exportContext(),
+        onOpenRedaction: openRedaction,
+      });
+      return {
+        refresh: () => panel.refresh(),
+        reset: () => panel.reset(),
+        closed() {
+          redactionBox.hidden = true;
+        },
+      };
+    },
+  });
+
+  dock.register({
+    id: "bookmarks",
+    titleKey: "actBookmarks",
+    listens: ["case", "indexed"],
+    mount: async (host, ctx) => {
+      const module = await import("./bookmarks-panel.js");
+      const panel = module.initBookmarksPanel(host, {
+        getCase: ctx.caseId, store: deps.bookmarkStore, onReveal: ctx.reveal, onError: deps.onError,
+      });
+      deps.onBookmarksPanel(panel);
+      return { refresh: () => panel.open(), update: () => panel.refresh(), closed: () => panel.close(), reset: () => panel.reset() };
+    },
+  });
+
+  dock.register({
+    id: "compare",
+    titleKey: "actCompare",
+    closeOnCase: true,
+    mount: async (host, ctx) => {
+      const module = await import("./compare.js");
+      const panel = module.initCompare(host, { getCase: ctx.caseId });
+      return { show: ({ a, b }) => panel.open(a, b), closed: () => panel.close(), reset: () => panel.reset() };
+    },
+  });
+
+  dock.register({
+    id: "alerts",
+    titleKey: "actAlerts",
+    mount: async (host, ctx) => {
+      const module = await import("./alerts-panel.js");
+      const alerts = deps.alerts();
+      if (alerts === null) {
+        throw new Error(S.actionUnavailable);
+      }
+      const panel = module.mountAlertsPanel(host, {
+        alerts, getCase: ctx.caseId, getFilter: () => ctx.userFilter(), onError: deps.onError,
+      });
+      return { refresh: () => panel.open(), closed: () => panel.close() };
+    },
+  });
+
+  dock.register({
+    id: "highlights",
+    titleKey: "actHighlights",
+    mount: async (host, ctx) => {
+      const module = await import("./highlight-panel.js");
+      const panel = module.mountHighlightPanel(host, {
+        store: deps.highlightStore, getCase: ctx.caseId, getFilter: () => ctx.filter(),
+      });
+      deps.onHighlightPanel(panel);
+      return { refresh: () => panel.refresh(), reset: () => panel.reset() };
+    },
+  });
+
+  dock.register({
+    id: "distinct",
+    titleKey: "actDistinct",
+    listens: ["view"],
+    mount: async (host, ctx) => {
+      const [module, model] = await Promise.all([import("./distinct-panel.js"), import("./distinct-model.js")]);
+      const panel = module.mountDistinctPanel(host, {
+        api,
+        getCase: ctx.caseId,
+        getFilter: () => ctx.filter(),
+        getFieldNames: deps.fieldNames,
+        hasCollections: deps.hasCollections,
+        onDrill: (leaf, exclude) => ctx.setUserFilter(model.drillFilter(ctx.userFilter(), leaf, exclude)),
+      });
+      return { refresh: () => panel.refresh(), closed: () => panel.reset(), reset: () => panel.reset() };
+    },
+  });
+
+  dock.register({
+    id: "groupByType",
+    titleKey: "actGroupByType",
+    listens: ["view"],
+    mount: async (host, ctx) => {
+      const module = await import("./distinct-panel.js");
+      const panel = module.mountGroupPanel(host, {
+        api,
+        getCase: ctx.caseId,
+        getFilter: () => ctx.filter(),
+        getSourceName: deps.sourceName,
+        onReveal: ctx.reveal,
+      });
+      return { refresh: () => panel.refresh(), closed: () => panel.reset(), reset: () => panel.reset() };
+    },
+  });
+
+  dock.register({
+    id: "aggregate",
+    titleKey: "actAggregate",
+    listens: ["view"],
+    mount: async (host, ctx) => {
+      const [module, model] = await Promise.all([import("./aggregate-panel.js"), import("./aggregate-model.js")]);
+      return module.mountAggregatePanel(host, {
+        api,
+        getCase: ctx.caseId,
+        getFilter: () => ctx.filter(),
+        getFieldNames: deps.fieldNames,
+        onDrill: (drill) => ctx.setUserFilter(model.drillFilter(ctx.userFilter(), drill)),
+      });
+    },
+  });
+}
+
+// Until the tabs of UI-15 a panel has no tab to close, so the menu item and the toggle button open it when it is
+// closed and close it when it is open (pressed shows which).
+const togglePanel = (id) => (ctx) => (ctx.dock.isOpen(id) ? ctx.dock.close(id) : ctx.dock.open(id).then(() => undefined));
+const panelOpen = (id) => (ctx) => ctx.dock.isOpen(id);
+
+export function registerAppActions(actions, deps) {
+  const always = () => true;
+
+  // ---- case menu
+  actions.register({
+    id: "case.open",
+    labelKey: "actCaseOpen",
+    group: "case",
+    enabled: always,
+    emptyKey: "caseNone",
+    children: (ctx) => deps.cases().map((c) => ({ label: c.name, args: c.id, checked: String(c.id) === String(ctx.caseId()) })),
+    run: (ctx, id) => deps.selectCase(id),
+  });
+  actions.register({ id: "case.new", labelKey: "actCaseNew", group: "case", enabled: always, run: () => deps.focusNewCase() });
+  actions.register({ id: "case.addFiles", labelKey: "actCaseAddFiles", group: "case", run: () => deps.focusAddFiles() });
+  actions.register({ id: "case.close", labelKey: "actCaseClose", group: "case", run: () => deps.closeCase() });
+
+  // ---- toggles of the bar
+  const toggle = (id, labelKey, panelId, extra = {}) => actions.register({
+    id, labelKey, group: "toggle", pressed: panelOpen(panelId), run: togglePanel(panelId), ...extra,
+  });
+  toggle("toggle.filterTree", "actFilterTree", "filterTree", { load: () => import("./filter-tree.js") });
+  toggle("toggle.highlights", "actHighlights", "highlights", { load: () => import("./highlight-panel.js") });
+  toggle("toggle.bookmarks", "actBookmarks", "bookmarks", { shortcut: "B", load: () => import("./bookmarks-panel.js") });
+  toggle("toggle.alerts", "actAlerts", "alerts", { load: () => deps.ready.alerts });
+
+  // ---- Analyze
+  const analyze = (id, labelKey, panelId, specifier) => actions.register({
+    id, labelKey, group: "analyze", pressed: panelOpen(panelId), run: togglePanel(panelId), load: () => import(specifier),
+  });
+  analyze("analyze.distinct", "actDistinct", "distinct", "./distinct-panel.js");
+  analyze("analyze.groupByType", "actGroupByType", "groupByType", "./distinct-panel.js");
+  analyze("analyze.aggregate", "actAggregate", "aggregate", "./aggregate-panel.js");
+  analyze("analyze.operations", "actOperations", "operations", "./events-panel.js");
+  analyze("analyze.dashboard", "actDashboard", "dashboard", "./dashboard.js");
+  analyze("analyze.payloads", "actPayloads", "payloads", "./payload-list.js");
+  analyze("analyze.unknownTypes", "actUnknownTypes", "unknownTypes", "./unknown-panel.js");
+  analyze("analyze.config", "actConfig", "config", "./config-panel.js");
+
+  // ---- Export
+  actions.register({
+    id: "export.report",
+    labelKey: "actExportReport",
+    group: "export",
+    pressed: panelOpen("export"),
+    run: togglePanel("export"),
+    load: () => import("./export-panel.js"),
+  });
+  actions.register({
+    id: "export.copyAs",
+    labelKey: "actCopyAs",
+    group: "export",
+    load: () => deps.ready.copyExport,
+    run: () => deps.copyExportOpen(),
+  });
+
+  // ---- View
+  actions.register({ id: "view.columns", labelKey: "actColumns", group: "view", enabled: always, run: () => deps.openColumns() });
+  actions.register({
+    id: "view.followTail",
+    labelKey: "actFollowTail",
+    group: "view",
+    pressed: () => deps.followTailOn(),
+    load: () => deps.ready.followTail,
+    run: () => deps.toggleFollowTail(),
+  });
+  actions.register({
+    id: "view.theme",
+    labelKey: "actTheme",
+    group: "view",
+    enabled: always,
+    children: () => THEME_CHOICES.map((choice) => ({
+      label: S[{ system: "themeSystem", light: "themeLight", dark: "themeDark" }[choice]],
+      args: choice,
+      checked: deps.theme() === choice,
+    })),
+    run: (ctx, choice) => deps.setTheme(choice),
+  });
+
+  // ---- Help (a plain list until the dialog of UI-28)
+  actions.register({
+    id: "help.shortcuts",
+    labelKey: "actShortcuts",
+    group: "help",
+    shortcut: "?",
+    enabled: always,
+    run: (ctx) => ctx.status.message(deps.shortcutsText(), { kind: "info" }),
+  });
+}

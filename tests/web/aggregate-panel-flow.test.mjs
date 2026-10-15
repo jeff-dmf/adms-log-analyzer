@@ -1,4 +1,4 @@
-// "Aggregate" panel mounted on a small fake DOM: toolbar button, form, examples, run, table as text,
+// "Aggregate" panel mounted in a host (the dock gives it, UI-12) on a small fake DOM: form, examples, run, table as text,
 // drill-down, stale marker, "Compute exactly" and copy. Log text is written only as text, never markup.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -81,7 +81,7 @@ Object.defineProperty(globalThis, "navigator", {
   value: { clipboard: { writeText: async (text) => { copied.push(text); } } }, configurable: true,
 });
 
-const { mountAggregate } = await import("../../src/dmslog/web/js/aggregate-panel.js");
+const { mountAggregatePanel } = await import("../../src/dmslog/web/js/aggregate-panel.js");
 const { S } = await import("../../src/dmslog/web/js/strings.js");
 
 const tick = async () => { for (let i = 0; i < 10; i += 1) { await Promise.resolve(); } };
@@ -102,33 +102,25 @@ function answer(body) {
 }
 
 function setup({ estimate = false } = {}) {
-  const toolbar = new FakeElement("div");
-  const theme = toolbar.appendChild(new FakeElement("button"));
-  const panelParent = new FakeElement("div");
+  const host = new FakeElement("section");
   const calls = { aggregate: [], drill: [] };
   const api = {
     aggregate: async (caseId, body) => { calls.aggregate.push([caseId, body]); return answer({ ...body, estimate: estimate && !body.exact }); },
     aggregateCsv: async () => ({ data: "a,b\r\n" }),
     keyTypes: async () => ({ types: [{ type: "msgid" }, { type: "errcode" }] }),
   };
-  const ui = mountAggregate({
-    toolbar, beforeButton: theme, panelParent, beforePanel: null, api,
+  const ui = mountAggregatePanel(host, {
+    api,
     getCase: () => "C1", getFilter: () => ({ sev: { le: 3 } }), getFieldNames: () => ["op", "n"],
     onDrill: (drill) => calls.drill.push(drill),
   });
-  const host = panelParent.byId("aggregate-host");
-  return { toolbar, host, calls, ui };
+  return { host, calls, ui };
 }
 
 test("aggregate panel: opens, runs the default question, shows text only and drills down", async () => {
-  const { toolbar, host, calls, ui } = setup();
-  const button = toolbar.byId("aggregate-button");
-  assert.equal(button.textContent, S.aggButton);
-  assert.equal(host.hidden, true);
-  button.click();
+  const { host, calls, ui } = setup();
+  ui.refresh(); // the dock opened the panel
   await tick();
-  assert.equal(host.hidden, false);
-  assert.equal(button.getAttribute("aria-expanded"), "true");
   assert.equal(calls.aggregate.length, 0); // opening does not run anything
   host.byClass("agg-run")[0].click();
   await tick();
@@ -142,21 +134,20 @@ test("aggregate panel: opens, runs the default question, shows text only and dri
   assert.equal(drills[1].disabled, true);
   assert.equal(drills[1].title, S.aggNoDrill);
   assert.match(host.byClass("agg-status")[0].textContent, /^2 groups\. Total 43\.$/);
-  ui.viewChanged(); // the view changed: the result is marked stale, nothing re-runs by itself
+  ui.update(); // dock.notify("view"): the result is marked stale, nothing re-runs by itself
   await tick();
   assert.equal(calls.aggregate.length, 1);
   assert.match(host.byClass("agg-status")[0].textContent, new RegExp(S.aggStale.replace(/[.:]/g, "\\$&")));
   host.byClass("agg-copy")[0].click();
   await tick();
   assert.match(copied.at(-1), /^Message type\tCount\n/);
-  button.click(); // closing cancels; later view changes do nothing
-  ui.viewChanged();
-  assert.equal(host.hidden, true);
+  ui.reset(); // closing or a case change cancels and clears the result
+  assert.equal(host.byClass("agg-table").length, 0);
 });
 
 test("aggregate panel: examples fill the form and run; events show their conditions", async () => {
-  const { toolbar, host, calls } = setup();
-  toolbar.byId("aggregate-button").click();
+  const { host, calls, ui } = setup();
+  ui.refresh();
   await tick();
   const examples = host.byId("agg-examples");
   examples.value = "op_duration";
@@ -191,8 +182,8 @@ test("aggregate panel: examples fill the form and run; events show their conditi
 });
 
 test("aggregate panel: an estimate offers 'Compute exactly' once", async () => {
-  const { toolbar, host, calls } = setup({ estimate: true });
-  toolbar.byId("aggregate-button").click();
+  const { host, calls, ui } = setup({ estimate: true });
+  ui.refresh();
   await tick();
   host.byClass("agg-run")[0].click();
   await tick();
@@ -206,9 +197,7 @@ test("aggregate panel: an estimate offers 'Compute exactly' once", async () => {
 });
 
 test("aggregate panel: after the case changes, an old result cannot drill into the new case", async () => {
-  const toolbar = new FakeElement("div");
-  const theme = toolbar.appendChild(new FakeElement("button"));
-  const panelParent = new FakeElement("div");
+  const host = new FakeElement("section");
   const drills = [];
   let caseId = "A";
   let release;
@@ -217,17 +206,16 @@ test("aggregate panel: after the case changes, an old result cannot drill into t
     aggregateCsv: async () => ({ data: "" }),
     keyTypes: async () => ({ types: [] }),
   };
-  const ui = mountAggregate({
-    toolbar, beforeButton: theme, panelParent, beforePanel: null, api,
+  const ui = mountAggregatePanel(host, {
+    api,
     getCase: () => caseId, getFilter: () => null, getFieldNames: () => [], onDrill: (d) => drills.push(d),
   });
-  const host = panelParent.byId("aggregate-host");
-  toolbar.byId("aggregate-button").click();
+  ui.refresh();
   await tick();
   host.byClass("agg-run")[0].click();
   await tick();
   caseId = "B";
-  ui.viewChanged(); // case A -> B while A is pending: A's answer is dropped
+  ui.update(); // case A -> B while A is pending: A's answer is dropped
   release();
   await tick();
   assert.equal(host.byClass("agg-table").length, 0);
@@ -238,7 +226,7 @@ test("aggregate panel: after the case changes, an old result cannot drill into t
   release();
   await tick();
   assert.equal(host.byClass("agg-drill")[0].disabled, false);
-  ui.viewChanged();
+  ui.update();
   await tick();
   const button = host.byClass("agg-drill")[0];
   assert.equal(button.disabled, true);

@@ -1,7 +1,7 @@
 // Chained views UI (ROADMAP 9.5): breadcrumbs above the grid, back/forward, "Narrow this view",
 // rename, and "Show in parent" / "Show in root" for the selected record. The model is
 // views-stack-model.js; everything written to the page is text (names may contain user text).
-import { isTypingTarget } from "./filters.js";
+import { ignoresShortcut } from "./filters.js";
 import { S, format, pluralKey } from "./strings.js";
 import { MAX_NAME, loadStack, saveStack, viewsKey } from "./views-stack-model.js";
 
@@ -202,7 +202,7 @@ export function mountViewsStack(options) {
 
   document.addEventListener("keydown", (event) => {
     const action = viewsKey(event);
-    if (!action || isTypingTarget(event.target) || getCase() === null) {
+    if (!action || ignoresShortcut(event) || getCase() === null) {
       return;
     }
     event.preventDefault(); // Alt+Left/Right would otherwise leave the app (browser history)

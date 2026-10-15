@@ -74,23 +74,7 @@ input[type="checkbox"] {
   min-height: 0;
 }
 
-/* Toolbar */
-#toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3) var(--space-5);
-  min-height: var(--bar-height);
-  padding: var(--space-2) var(--space-4);
-  background: var(--surface-panel);
-  border-bottom: 1px solid var(--line);
-}
-
-.app-name {
-  font-weight: var(--weight-strong);
-  font-size: var(--text-lg);
-}
-
+/* Top bar: css/topbar.css */
 .inline-form {
   display: flex;
   align-items: center;
@@ -101,14 +85,6 @@ input[type="checkbox"] {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-
-#search-input {
-  width: min(32vw, 360px);
-}
-
-#goto-input {
-  width: 170px;
 }
 
 .menu-wrap {

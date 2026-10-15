@@ -1,0 +1,145 @@
+/* Top bar (UI-12): one line of --bar-height, never wrapping. Every control exists in index.html from the first
+   paint, so nothing is inserted later and the bar never changes size. Tokens only (no literal colors).
+   Buttons use .ui-button (components.css): aria-pressed and aria-expanded show the pressed and open states. */
+.topbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  flex: none;
+  gap: var(--space-3);
+  height: var(--bar-height);
+  padding: 0 var(--space-4);
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar > *,
+.topbar-group > * {
+  flex: none;
+}
+
+/* Until main.js has filled in the texts and states the controls are invisible (not removed): the bar keeps its
+   size and nothing visible moves when the labels arrive, so the bar causes no layout shift on opening. */
+.topbar:not(.is-ready) > * {
+  visibility: hidden;
+  animation: topbar-reveal 0s 3s forwards; /* safety net: if the script never runs the bar shows after 3 s */
+}
+
+@keyframes topbar-reveal {
+  to {
+    visibility: visible;
+  }
+}
+
+.topbar-failed {
+  padding: 0 var(--space-3);
+  color: var(--status-error-ink);
+  background: var(--status-error-bg);
+  border-radius: var(--radius-md);
+}
+
+.app-name {
+  font-weight: var(--weight-strong);
+  font-size: var(--text-lg);
+}
+
+/* Case selector: the open case, ellipsized when long, with the drop-down mark. */
+.topbar > .topbar-case {
+  flex: 0 1 var(--topbar-case-w);
+  justify-content: space-between;
+  width: var(--topbar-case-w);
+  min-width: var(--topbar-case-min);
+}
+
+.topbar-case-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-caret,
+.topbar-menu::after {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+}
+
+.topbar-menu::after {
+  content: "";
+}
+
+/* Search takes the free room first (up to 560 px for the field); the spacer takes what is left. */
+.topbar > .topbar-search {
+  display: flex;
+  align-items: center;
+  flex: 100 1 auto;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: var(--topbar-search-box-max);
+}
+
+.topbar-search #search-input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: var(--topbar-search-min);
+  max-width: var(--topbar-search-max);
+}
+
+.topbar-search .ui-button {
+  flex: none;
+}
+
+.topbar-clear::before {
+  content: "\00d7"; /* the multiplication sign, a mark and not text */
+}
+
+.topbar > .topbar-goto {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.topbar-goto #goto-input {
+  width: var(--topbar-goto-w);
+}
+
+.topbar > .topbar-spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.topbar-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.topbar .ui-button {
+  white-space: nowrap;
+}
+
+.topbar-count {
+  margin-left: var(--space-2);
+}
+
+/* "Columns…" of the View menu: a popover placed under the View button by main.js. */
+.columns-popover {
+  position: fixed;
+  z-index: var(--z-menu);
+  max-height: calc(100dvh - var(--bar-height) - var(--space-5));
+  overflow: auto;
+}
+
+@media (max-width: 1100px) {
+  .topbar .app-name {
+    display: none;
+  }
+
+  .topbar-goto #goto-input {
+    width: var(--topbar-goto-w-narrow);
+  }
+}

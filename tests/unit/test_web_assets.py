@@ -89,6 +89,10 @@ EXPECTED_MODULES = {
     "alerts-panel.js",
     "aggregate-model.js",
     "aggregate-panel.js",
+    "actions.js",
+    "app-actions.js",
+    "dock-legacy.js",
+    "menubar.js",
 }
 
 FORBIDDEN_JS = [

@@ -12,15 +12,11 @@ export const S = {
   searchPlaceholder: "Search text (words, \"phrase\", prefix*)",
   searchButton: "Search",
   clearButton: "Clear search",
-  themeToggle: "Theme",
   themeLight: "Light",
   themeDark: "Dark",
   themeSystem: "System",
-  themeCurrent: "Theme: {theme}",
-  columnsButton: "Columns",
   gotoLabel: "Go to time",
   gotoPlaceholder: "YYYY-MM-DD HH:MM:SS",
-  gotoButton: "Go to time",
   loading: "Loading…",
 
   // Case and collections
@@ -66,9 +62,6 @@ export const S = {
   filterReset: "Reset",
   filterHideNoise: "Hide noise",
   filterUnclassified: "Unclassified only",
-  toolbarFilterTree: "Filter tree",
-  toolbarUnknown: "Unknown message types",
-  toolbarConfig: "Effective configuration",
   tplAddFilter: "Filter by message type {code}",
   navNone: "No more matching records.",
   navNoTemplate: "This record has no message type.",
@@ -100,7 +93,6 @@ export const S = {
   rowLabel: "Record {id}",
 
   // Follow tail
-  followLabel: "Follow tail",
   followNewOne: "{count} new record",
   followNewOther: "{count} new records",
 
@@ -358,8 +350,6 @@ export const S = {
   cfgWindowOpen: "open",
 
   // Operations panel (derived events)
-  toolbarEvents: "Operations and events",
-  toolbarDashboard: "Adapter dashboard",
   evTitle: "Operations and events",
   evKind: "Kind",
   evStatus: "Status",
@@ -671,7 +661,6 @@ export const S = {
   },
 
   // Payload list panel
-  plgButton: "Payloads…",
   plgTitle: "Payloads",
   plgClose: "Close",
   plgRole: "Role",
@@ -727,7 +716,6 @@ export const S = {
   plNoticeLevelUnknown: "unknown",
   plNoticeTitle: "Payload",
   // Export report (.txt) and redaction settings
-  toolbarExport: "Export…",
   exportTitle: "Export a report (.txt) for a support ticket",
   exportClose: "Close",
   exportNoCase: "Open a case first.",
@@ -798,7 +786,6 @@ export const S = {
 
   // Bookmarks
   bmTitle: "Bookmarks",
-  bmButton: "Bookmarks…",
   bmClose: "Close",
   bmToggleOn: "Bookmark this record",
   bmToggleOff: "Remove bookmark",
@@ -881,7 +868,6 @@ export const S = {
   shortcutsHelp: "Shortcuts: n/N next/previous error, t/T next/previous record of the message type, b bookmark the selected record, B open the bookmarks, c compare two records.",
 
   // Copy as / export of the view
-  cxButton: "Copy or export…",
   cxTitle: "Copy or export the current view",
   cxWhat: "What",
   cxKindValues: "List of values (a column or a key)",
@@ -1009,7 +995,6 @@ export const S = {
   sourceFilterCountOther: "{visible} of {total} sources",
   sourceFilterNone: "No source matches the filter.",
   // Distinct values of a field and the "Group by template" view (ROADMAP 9.2)
-  dstButton: "Distinct values",
   dstTitle: "Distinct values",
   dstFieldLabel: "Field",
   dstTopLabel: "Top",
@@ -1042,7 +1027,6 @@ export const S = {
   dstNoCase: "Open a case first.",
   dstError: "Could not count the values: {error}. Narrow the filter and try again.",
   dstBadTop: "Top must be a whole number from 1 to {max}.",
-  grpButton: "Group by message type",
   grpTitle: "Records grouped by message type",
   grpCount: "{count} ({pct})",
   grpSpan: "{first} to {last}",
@@ -1054,7 +1038,6 @@ export const S = {
   dstEstimateWarning: "Estimate: rare values may be missing.",
   dstExactTooSlow: "The exact count took too long; this is still an estimate. Narrow the filter (sources or time).",
   // Highlight rules (highlight-panel.js, highlight-model.js)
-  hlButton: "Highlights",
   hlTitle: "Highlight rules",
   hlCountOne: "{count} of {max} rule; the first rule that matches gives the color",
   hlCountOther: "{count} of {max} rules; the first rule that matches gives the color",
@@ -1265,7 +1248,6 @@ export const S = {
   vsAtRoot: "Already at the root view.",
   vsNeedCase: "Open a case first.",
   vsShortcutsHelp: "Alt+Left/Alt+Right previous/next view of the stack.",
-  alToolbar: "Alerts…",
   alTitle: "Alerts",
   alIntro: "Local alerts while the folder is followed (dmslog serve --watch). Rules look only at the records of each follow cycle; nothing leaves this computer.",
   alClose: "Close",
@@ -1341,7 +1323,6 @@ export const S = {
   alAt: "Time",
 
   // Aggregate panel (aggregate-panel.js; POST /api/entries/aggregate)
-  aggButton: "Aggregate",
   aggTitle: "Aggregate",
   aggExamples: "Examples",
   aggExamplesNone: "Choose a ready-made question…",
@@ -1429,6 +1410,45 @@ export const S = {
   aggGroupCount: "Count",
   aggGroupDistinct: "Distinct values",
   aggGroupNumbers: "Numbers",
+
+  // Top bar and actions (UI-12): menu titles, action labels (registry in actions.js) and reasons.
+  topbarPanels: "Panels",
+  gotoButtonShort: "Go",
+  actGroupAnalyze: "Analyze",
+  actGroupExport: "Export",
+  actGroupView: "View",
+  actCaseOpen: "Open case",
+  actCaseNew: "New case…",
+  actCaseAddFiles: "Add files…",
+  actCaseClose: "Close case",
+  actFilterTree: "Filter tree",
+  actHighlights: "Highlights",
+  actBookmarks: "Bookmarks",
+  actAlerts: "Alerts",
+  actAlertsCountOne: "Alerts, 1 new",
+  actAlertsCountOther: "Alerts, {count} new",
+  actDistinct: "Distinct values",
+  actGroupByType: "Group by message type",
+  actAggregate: "Aggregate",
+  actOperations: "Operations",
+  actDashboard: "Adapter dashboard",
+  actPayloads: "Payloads",
+  actUnknownTypes: "Unknown message types",
+  actConfig: "Effective configuration",
+  actExportReport: "Export report…",
+  actCopyAs: "Copy as…",
+  actColumns: "Columns…",
+  actFollowTail: "Follow tail",
+  actTheme: "Theme",
+  actShortcuts: "Keyboard shortcuts",
+  actSideBySide: "Normal and sensitive side by side",
+  actSameKey: "Same key",
+  actCompare: "Compare…",
+  errorStartup: "The viewer could not start. Reload the page; if it happens again, restart dmslog.",
+  actionUnavailable: "This feature could not be loaded.",
+  keyNames: {
+    ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down", Escape: "Esc",
+  },
 };
 
 // Picks the One or Other form of a plural pair: format(S[pluralKey("keyCount", n)], { count: n }).

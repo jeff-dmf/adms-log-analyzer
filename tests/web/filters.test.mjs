@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   bookmarkKey,
-  NAV_ERROR_FILTER, TPL_LEAF, andFilters, buildFilter, composeFilter, isTypingTarget, navKey, navRequest,
+  NAV_ERROR_FILTER, TPL_LEAF, andFilters, buildFilter, composeFilter, ignoresShortcut, isInMenu, isTypingTarget, navKey, navRequest,
   parseTplList, stateFromForm, timeSpan, withTemplate, withTsRange,
 } from "../../src/dmslog/web/js/filters.js";
 
@@ -124,4 +124,26 @@ test("bookmarkKey maps b, B and c and ignores modified keys", () => {
   assert.equal(bookmarkKey({ key: "c", metaKey: true }), null);
   assert.equal(bookmarkKey({ key: "constructor" }), null);
   assert.equal(bookmarkKey({ key: "x" }), null);
+});
+
+// A tiny node with a role and a parent, like the elements of ui-menu.js.
+const node = (role, parent = null, tagName = "DIV") => ({
+  tagName, parent, getAttribute: (k) => (k === "role" && role ? role : null),
+});
+
+test("keys typed inside an open menu are not global shortcuts (c and B stay with the menu)", () => {
+  const menu = node("menu");
+  const item = node("menuitem", menu);
+  assert.equal(isInMenu(item), true);
+  assert.equal(isInMenu(menu), true);
+  assert.equal(isInMenu(node(null, node("banner"))), false);
+  assert.equal(isInMenu(null), false);
+  assert.equal(ignoresShortcut({ key: "c", target: item }), true);
+  assert.equal(ignoresShortcut({ key: "B", target: item }), true);
+  assert.equal(ignoresShortcut({ key: "c", target: node(null) }), false);
+});
+
+test("an event somebody already handled, or typed in a field, is not a global shortcut", () => {
+  assert.equal(ignoresShortcut({ key: "c", target: node(null), defaultPrevented: true }), true);
+  assert.equal(ignoresShortcut({ key: "c", target: node(null, null, "INPUT") }), true);
 });
