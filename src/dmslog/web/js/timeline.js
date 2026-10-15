@@ -1,31 +1,61 @@
-// Timeline: stacked histogram of the entries matching the current filter (uPlot, vendored).
+// Timeline: compact alarm strip of the entries matching the current filter (uPlot, vendored).
+// Split by severity: Critical/Error/Warning as stacked bars on their own scale plus Info + Noise as a
+// thin line on a second scale (see alarmLayers); other splits keep the plain stacked histogram.
 // Drag selects a time range (reported through onRangeSelected), double-click clears it.
 // Only text nodes and class names are written to the DOM; log-derived values never reach HTML.
 import uPlot from "../vendor/uplot/uPlot.esm.js";
 import { S, format, pluralKey } from "./strings.js";
 import {
+  NORMAL_SERIES_KEY,
   TimelineLoader,
+  alarmDrawOrder,
+  alarmLayers,
+  alarmReadoutAt,
+  alarmTotals,
+  axisLabel,
   chooseBucketMs,
   colorIndex,
   compactCount,
+  ERRORS_ONLY_HIDDEN,
   formatBucketStart,
+  isErrorsOnly,
+  parsePx,
   rangeToBox,
   readoutAt,
   requestKey,
   selectionToRange,
   splitTimeFilter,
   stackSeries,
+  stripHeight,
   toChartData,
   widthParts,
 } from "./timeline-model.js";
 
-const PLOT_HEIGHT = 120;
+const EXPANDED_KEY = "dmslog.timelineExpanded";
+const AXIS_SIZE = 14;
+const LINE_WIDTH = 1.5;
 const REFRESH_DELAY_MS = 120;
 const SPLITS = [
   ["sev", "timelineSplitSev"],
   ["source", "timelineSplitSource"],
   ["tpl", "timelineSplitTpl"],
 ];
+
+function readExpanded() {
+  try {
+    return window.localStorage.getItem(EXPANDED_KEY) === "1";
+  } catch (err) {
+    return false;
+  }
+}
+
+function writeExpanded(value) {
+  try {
+    window.localStorage.setItem(EXPANDED_KEY, value ? "1" : "0");
+  } catch (err) {
+    // Storage may be blocked: the choice then lasts for this page only.
+  }
+}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -59,12 +89,18 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
   }
   const status = element("span", "tl-status");
   status.setAttribute("role", "status");
+  const undatedNote = element("span", "tl-undated");
+  undatedNote.hidden = true;
   const legend = element("ul", "tl-legend");
-  head.append(splitLabel, splitSelect, status, legend);
+  const errorsOnly = element("button", "tl-toggle", S.timelineErrorsOnly);
+  errorsOnly.type = "button";
+  errorsOnly.hidden = true;
+  const expandButton = element("button", "tl-toggle");
+  expandButton.type = "button";
+  head.append(splitLabel, splitSelect, status, undatedNote, legend, errorsOnly, expandButton);
   const plot = element("div", "tl-plot");
   plot.title = S.timelineHint;
-  const readout = element("div", "tl-readout");
-  root.append(head, plot, readout);
+  root.append(head, plot);
   container.textContent = "";
   container.appendChild(root);
 
@@ -76,6 +112,8 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
   let range = null; // time condition of the current filter, drawn as the selection band
   let timer = null;
   let destroyed = false;
+  let expanded = readExpanded();
+  let statusText = ""; // the base status; a hovered bucket replaces it until the pointer leaves
   let forcedBucketMs = null; // set after a resize that calls for a clearly different bar width
 
   function labelOf(split, key) {
@@ -97,13 +135,47 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
     return value || fallback;
   }
 
+  function alarmMode() {
+    return Boolean(response) && response.split === "sev";
+  }
+
+  function normalLabel() {
+    return S.severityNames[4] + " + " + S.severityNames[5];
+  }
+
+  function plotHeight() {
+    return stripHeight(
+      expanded,
+      parsePx(cssColor("--timeline-h", ""), 40),
+      parsePx(cssColor("--timeline-h-expanded", ""), 120),
+    );
+  }
+
   function defaultReadout() {
-    readout.textContent = data && data.series.length > 0 ? S.timelineHint : "";
+    status.textContent = statusText;
   }
 
   function setStatus(text, isError) {
+    statusText = text;
     status.textContent = text;
     status.classList.toggle("tl-error", Boolean(isError));
+  }
+
+  function renderExpand() {
+    expandButton.textContent = expanded ? S.timelineCollapse : S.timelineExpand;
+    expandButton.setAttribute("aria-expanded", expanded ? "true" : "false");
+    root.classList.toggle("tl-expanded", expanded);
+  }
+
+  function renderUndated() {
+    const count = response && Number.isFinite(response.undated) ? response.undated : 0;
+    undatedNote.hidden = count <= 0;
+    undatedNote.textContent = count > 0 ? format(S[pluralKey("timelineUndated", count)], { count: count.toLocaleString("en-US") }) : "";
+  }
+
+  function renderErrorsOnly() {
+    errorsOnly.hidden = !alarmMode();
+    errorsOnly.setAttribute("aria-pressed", isErrorsOnly(hidden) ? "true" : "false");
   }
 
   function destroyChart() {
@@ -118,28 +190,41 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
     if (!data) {
       return;
     }
-    data.series.forEach((s, position) => {
+    const entries = alarmMode()
+      ? alarmTotals(data.series, (key) => labelOf("sev", key), normalLabel()).map((t) => ({
+          key: t.key,
+          label: t.label,
+          total: t.total,
+          swatch: t.key === NORMAL_SERIES_KEY ? "tl-swatch tl-swatch-line tl-c3" : "tl-swatch tl-c" + colorIndex("sev", t.key, 0),
+        }))
+      : data.series.map((s, position) => ({
+          key: s.key,
+          label: s.label,
+          total: s.values.reduce((a, b) => a + b, 0),
+          swatch: "tl-swatch tl-c" + colorIndex(response.split, s.key, position),
+        }));
+    for (const entry of entries) {
       const item = document.createElement("li");
       const button = element("button", "tl-legend-item");
       button.type = "button";
-      button.setAttribute("aria-pressed", hidden.has(s.key) ? "false" : "true");
-      const total = s.values.reduce((a, b) => a + b, 0);
+      button.setAttribute("aria-pressed", hidden.has(entry.key) ? "false" : "true");
       button.append(
-        element("span", "tl-swatch tl-c" + colorIndex(response.split, s.key, position)),
-        document.createTextNode(s.label + " " + compactCount(total)),
+        element("span", entry.swatch),
+        document.createTextNode(entry.label + " " + compactCount(entry.total)),
       );
       button.addEventListener("click", () => {
-        if (hidden.has(s.key)) {
-          hidden.delete(s.key);
+        if (hidden.has(entry.key)) {
+          hidden.delete(entry.key);
         } else {
-          hidden.add(s.key);
+          hidden.add(entry.key);
         }
         renderChart();
         renderLegend();
       });
       item.appendChild(button);
       legend.appendChild(item);
-    });
+    }
+    renderErrorsOnly();
   }
 
   function applyRange() {
@@ -162,27 +247,60 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
     }
     plot.hidden = false;
     const n = data.xs.length;
-    const { draw, max } = stackSeries(data.series, hidden, n);
     const muted = cssColor("--muted", "#888");
     const border = cssColor("--border", "#ccc");
-    const split = response.split;
+    const alarm = alarmMode();
     const series = [{}];
-    for (const entry of draw) {
-      const s = data.series[entry.index];
-      const color = cssColor("--tl-c" + colorIndex(split, s.key, entry.index), "#888");
-      series.push({
-        label: s.label,
-        fill: color,
-        stroke: color,
-        width: 0,
-        points: { show: false },
-        paths: uPlot.paths.bars({ size: [1, Infinity, 1], align: 1, gap: 0 }),
-      });
+    const columns = [data.xs];
+    let yRange;
+    if (alarm) {
+      const layers = alarmLayers(data.series, hidden, n);
+      for (const layer of alarmDrawOrder(layers.bars)) {
+        const color = cssColor("--tl-c" + colorIndex("sev", layer.key, 0), "#888");
+        series.push({
+          label: labelOf("sev", layer.key),
+          fill: color,
+          stroke: color,
+          width: 0,
+          points: { show: false },
+          paths: uPlot.paths.bars({ size: [1, Infinity, 1], align: 1, gap: 0 }),
+        });
+        columns.push(layer.tops);
+      }
+      if (layers.line) {
+        series.push({
+          label: normalLabel(),
+          stroke: cssColor("--tl-c3", "#6f7a8c"),
+          width: LINE_WIDTH,
+          points: { show: false },
+          paths: uPlot.paths.stepped({ align: 1 }),
+        });
+        columns.push(layers.line);
+      }
+      yRange = () => [0, 1];
+    } else {
+      const { draw, max } = stackSeries(data.series, hidden, n);
+      for (const entry of draw) {
+        const s = data.series[entry.index];
+        const color = cssColor("--tl-c" + colorIndex(response.split, s.key, entry.index), "#888");
+        series.push({
+          label: s.label,
+          fill: color,
+          stroke: color,
+          width: 0,
+          points: { show: false },
+          paths: uPlot.paths.bars({ size: [1, Infinity, 1], align: 1, gap: 0 }),
+        });
+        columns.push(entry.tops);
+      }
+      yRange = () => [0, Math.max(1, max) * 1.08];
     }
+    const spanSec = (data.window.to - data.window.from) / 1000;
     const axisBase = { stroke: muted, grid: { stroke: border, width: 1 }, ticks: { stroke: border, width: 1 } };
     const options = {
       width: Math.max(100, plot.clientWidth),
-      height: PLOT_HEIGHT,
+      height: plotHeight(),
+      padding: [2, 0, 0, 0],
       // The log clock is stored as UTC: draw the axis with UTC getters, never the browser zone.
       tzDate: (ts) => uPlot.tzDate(new Date(ts * 1000), "Etc/UTC"),
       legend: { show: false },
@@ -190,17 +308,31 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       select: { show: true, left: 0, top: 0, width: 0, height: 0 },
       scales: {
         x: { time: true, range: () => [data.window.from / 1000, data.window.to / 1000] },
-        y: { range: () => [0, Math.max(1, max) * 1.08] },
+        y: { range: yRange },
       },
-      axes: [axisBase, { ...axisBase, size: 46, values: (_u, ticks) => ticks.map(compactCount) }],
+      axes: [
+        {
+          ...axisBase,
+          size: AXIS_SIZE,
+          gap: 1,
+          font: "10px system-ui, sans-serif",
+          space: spanSec >= 2 * 86400 ? 80 : 110,
+          values: (_u, ticks) => ticks.map((t) => axisLabel(t, spanSec)),
+        },
+        { show: alarm ? false : true, ...axisBase, size: 46, values: (_u, ticks) => ticks.map(compactCount) },
+      ],
       series,
       hooks: {
         setSelect: [onSelect],
         setCursor: [onCursor],
-        ready: [(u) => u.over.addEventListener("dblclick", onClear)],
+        ready: [
+          (u) => {
+            u.over.addEventListener("dblclick", onClear);
+            u.over.addEventListener("pointerleave", defaultReadout);
+          },
+        ],
       },
     };
-    const columns = [data.xs, ...draw.map((entry) => entry.tops)];
     chart = new uPlot(options, columns, plot);
     applyRange();
   }
@@ -237,8 +369,9 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       return;
     }
     const time = formatBucketStart(data.xs[idx] * 1000);
-    const parts = readoutAt(data.series, hidden, idx).map((p) => p.label + ": " + p.count);
-    readout.textContent =
+    const found = alarmMode() ? alarmReadoutAt(data.series, hidden, idx, normalLabel()) : readoutAt(data.series, hidden, idx);
+    const parts = found.map((p) => p.label + ": " + p.count);
+    status.textContent =
       parts.length > 0
         ? format(S.timelineReadout, { time, parts: parts.join(", ") })
         : format(S.timelineReadoutNone, { time });
@@ -263,8 +396,8 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       data = null;
       renderChart();
       renderLegend();
+      renderUndated();
       setStatus("", false);
-      defaultReadout();
       return;
     }
     const split = splitSelect.value;
@@ -284,13 +417,8 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       data = toChartData(response, (k) => labelOf(response.split, k));
       renderChart();
       renderLegend();
-      if (data.series.length === 0) {
-        setStatus(S.timelineEmpty, false);
-        readout.textContent = "";
-      } else {
-        setStatus(describeTotals(), false);
-        defaultReadout();
-      }
+      renderUndated();
+      setStatus(data.series.length === 0 ? S.timelineEmpty : describeTotals(), false);
     } catch (err) {
       setStatus(format(S.timelineError, { error: err && err.message ? err.message : "" }), true);
     }
@@ -330,13 +458,34 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
     hidden.clear();
     refresh();
   });
+  errorsOnly.addEventListener("click", () => {
+    const wasOn = isErrorsOnly(hidden);
+    hidden.clear();
+    if (!wasOn) {
+      for (const key of ERRORS_ONLY_HIDDEN) {
+        hidden.add(key);
+      }
+    }
+    renderChart();
+    renderLegend();
+  });
+  expandButton.addEventListener("click", () => {
+    expanded = !expanded;
+    writeExpanded(expanded);
+    renderExpand();
+    if (chart) {
+      chart.setSize({ width: Math.max(100, plot.clientWidth), height: plotHeight() });
+      applyRange();
+    }
+  });
+  renderExpand();
 
   const resizeObserver =
     typeof ResizeObserver === "undefined"
       ? null
       : new ResizeObserver(() => {
           if (chart) {
-            chart.setSize({ width: Math.max(100, plot.clientWidth), height: PLOT_HEIGHT });
+            chart.setSize({ width: Math.max(100, plot.clientWidth), height: plotHeight() });
             applyRange();
             rebucketIfNeeded();
           }
