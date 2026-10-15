@@ -21,9 +21,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from dmslog.aliases import Aliases
+from dmslog.parse.formats import EnvelopeConfigError, compile_envelopes
 
 FAMILIES_RESOURCE = "families.toml"
-ENVELOPES = ("adms", "oaserr", "plain")
+ENVELOPES = ("adms", "oaserr", "plain")  # built-in; families.toml may declare more ([[envelope]])
 SCOPES = ("default", "service", "optional")
 FALLBACK_FAMILY = "UNKNOWN"
 
@@ -155,11 +156,16 @@ class RuleSet:
         raw_rules = data.get("rule", [])
         if not isinstance(raw_rules, list) or not raw_rules:
             raise FamiliesConfigError("families.toml needs at least one [[rule]]")
-        rules = [_compile_rule(raw, layouts, f"rule #{i + 1}") for i, raw in enumerate(raw_rules)]
+        try:
+            generic = tuple(env.name for env in compile_envelopes(data))
+        except EnvelopeConfigError as exc:
+            raise FamiliesConfigError(str(exc)) from None
+        envelopes = (*ENVELOPES, *generic)
+        rules = [_compile_rule(raw, layouts, f"rule #{i + 1}", envelopes) for i, raw in enumerate(raw_rules)]
         fb = data.get("fallback")
         if not isinstance(fb, dict):
             raise FamiliesConfigError("families.toml needs a [fallback] table")
-        fallback = _compile_rule({**fb, "pattern": ""}, layouts, "[fallback]")
+        fallback = _compile_rule({**fb, "pattern": ""}, layouts, "[fallback]", envelopes)
         return cls(rules, fallback)
 
     @classmethod
@@ -188,7 +194,9 @@ class RuleSet:
 _RULE_KEYS = {"family", "envelope", "scope", "anchor", "indexable", "layout", "process", "pattern"}
 
 
-def _compile_rule(raw: dict[str, Any], layouts: dict[str, str], where: str) -> Rule:
+def _compile_rule(
+    raw: dict[str, Any], layouts: dict[str, str], where: str, envelopes: tuple[str, ...] = ENVELOPES
+) -> Rule:
     unknown = set(raw) - _RULE_KEYS
     if unknown:
         raise FamiliesConfigError(f"{where}: unknown keys {sorted(unknown)}")
@@ -196,8 +204,8 @@ def _compile_rule(raw: dict[str, Any], layouts: dict[str, str], where: str) -> R
     if not isinstance(family, str) or not family:
         raise FamiliesConfigError(f"{where}: 'family' is required")
     envelope = raw.get("envelope", "plain")
-    if envelope not in ENVELOPES:
-        raise FamiliesConfigError(f"{where}: envelope must be one of {ENVELOPES}, got {envelope!r}")
+    if envelope not in envelopes:
+        raise FamiliesConfigError(f"{where}: envelope must be one of {envelopes}, got {envelope!r}")
     scope = raw.get("scope", "optional")
     if scope not in SCOPES:
         raise FamiliesConfigError(f"{where}: scope must be one of {SCOPES}, got {scope!r}")

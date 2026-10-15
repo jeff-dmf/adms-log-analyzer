@@ -199,6 +199,9 @@ OASERR = OasErrEnvelope()
 PLAIN = PlainEnvelope()
 
 ENVELOPES: dict[str, Envelope] = {}
+# Generic envelopes declared in families.toml (parse/formats.py): considered by detect_envelope only
+# when no envelope of ENVELOPES recognizes a line, so they never change a built-in detection.
+FALLBACK_ENVELOPES: dict[str, Envelope] = {}
 
 
 def register_envelope(envelope: Envelope) -> Envelope:
@@ -207,29 +210,72 @@ def register_envelope(envelope: Envelope) -> Envelope:
     return envelope
 
 
+def register_fallback_envelope(envelope: Envelope) -> Envelope:
+    """Register a fallback envelope (see ``detect_envelope``); its name must be new."""
+    if envelope.name in ENVELOPES:
+        raise ValueError(f"envelope {envelope.name!r} is already registered")
+    FALLBACK_ENVELOPES[envelope.name] = envelope
+    return envelope
+
+
 for _env in (ADMS, OASERR, PLAIN):
     register_envelope(_env)
 
 
+def _load_fallbacks() -> None:
+    from .formats import ensure_registered  # lazy: formats imports this module
+
+    ensure_registered()
+
+
 def get_envelope(name: str) -> Envelope:
-    """Return the registered envelope called ``name`` (KeyError when unknown)."""
-    return ENVELOPES[name]
+    """Return the envelope called ``name``, built-in or fallback (KeyError when unknown)."""
+    try:
+        return ENVELOPES[name]
+    except KeyError:
+        _load_fallbacks()
+        return FALLBACK_ENVELOPES[name]
 
 
-def detect_envelope(head: bytes, *, max_lines: int = 50) -> Envelope:
+def is_known_envelope(name: str) -> bool:
+    """True when ``get_envelope(name)`` resolves (a source indexed with an envelope that no longer
+    exists must be re-indexed instead of resumed)."""
+    try:
+        get_envelope(name)
+    except KeyError:
+        return False
+    return True
+
+
+def detect_envelope(head: bytes, *, max_lines: int = 50, fallbacks: bool = True) -> Envelope:
     """Pick the envelope of a file from its first bytes.
 
     Each registered envelope except ``plain`` counts how many of the first ``max_lines``
     lines it recognizes as headers; the highest count wins (ties go to the envelope
-    registered first). When no line is recognized, ``plain`` is returned.
+    registered first).
+
+    Only when none of them recognizes a single line (the file would be ``plain``), and
+    ``fallbacks`` is true, the fallback envelopes of families.toml get a turn: the one
+    with most header lines wins (ties: declaration order), provided it passes its own
+    threshold (``accepts``: a minimum of header lines and a minimum share of the non-blank
+    sampled lines). Otherwise ``plain`` is returned.
     """
     lines = head.split(b"\n", max_lines)[:max_lines]
     best: Envelope = PLAIN
     best_count = 0
-    for envelope in ENVELOPES.values():
+    for envelope in tuple(ENVELOPES.values()):
         if envelope.name == PLAIN.name:
             continue
         count = sum(1 for line in lines if envelope.match(line) is not None)
         if count > best_count:
+            best, best_count = envelope, count
+    if best_count or not fallbacks:
+        return best
+    _load_fallbacks()
+    nonblank = sum(1 for line in lines if line.strip(b" \t\r\n" + BOM))
+    for envelope in tuple(FALLBACK_ENVELOPES.values()):
+        count = sum(1 for line in lines if envelope.match(line) is not None)
+        accepts = getattr(envelope, "accepts", None)
+        if count > best_count and (accepts is None or accepts(count, nonblank)):
             best, best_count = envelope, count
     return best
