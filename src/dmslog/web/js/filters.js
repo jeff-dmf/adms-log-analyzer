@@ -94,7 +94,8 @@ export function timeSpan(sources, selectedIds, from, to) {
 
 const TS_KEYS = new Set(["ge", "le"]);
 
-function topNodes(filter) {
+// The top-level conditions of a filter (an {and:[...]} is unwrapped; any other node is one condition).
+export function topNodes(filter) {
   if (!filter) {
     return [];
   }
@@ -102,7 +103,7 @@ function topNodes(filter) {
   return keys.length === 1 && keys[0] === "and" && Array.isArray(filter.and) ? filter.and.slice() : [filter];
 }
 
-function wrapNodes(nodes) {
+export function wrapNodes(nodes) {
   return nodes.length === 0 ? null : { and: nodes };
 }
 
