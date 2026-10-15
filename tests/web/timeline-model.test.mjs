@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  ERRORS_ONLY_HIDDEN,
+  NORMAL_LINE_FRACTION,
+  NORMAL_SERIES_KEY,
+  alarmDrawOrder,
+  alarmLayers,
+  alarmReadoutAt,
+  alarmTotals,
+  axisLabel,
+  isErrorsOnly,
+  parsePx,
+  stripHeight,
   BUCKET_LADDER_MS,
   MAX_BUCKETS,
   TimelineLoader,
@@ -205,4 +216,96 @@ test("TimelineLoader.invalidate (case switch / destroy) makes the pending respon
   loader.invalidate();
   pending.resolve("x");
   assert.deepEqual(await run, { stale: true });
+});
+
+// Synthetic case of the issue: 160 thousand Info records, 20.6 thousand Errors with one sharp peak.
+function peakCase() {
+  const n = 10;
+  const info = new Array(n).fill(16000);
+  const error = [100, 100, 100, 100, 18000, 100, 100, 1000, 500, 500];
+  return [
+    { key: 2, label: "Error", values: error },
+    { key: 4, label: "Info", values: info },
+  ];
+}
+
+test("alarmLayers: the error peak fills the plot whatever the volume of Info", () => {
+  const layers = alarmLayers(peakCase(), new Set(), 10);
+  assert.equal(layers.peak, 18000);
+  assert.equal(layers.bars.length, 1);
+  assert.equal(layers.bars[0].tops[4], 1); // the peak bar is 100% of the strip (acceptance: >= 50%)
+  assert.ok(layers.bars[0].tops[4] >= 0.5);
+  assert.ok(Math.abs(layers.bars[0].tops[0] - 100 / 18000) < 1e-12);
+  // Info (a flat 16000 per bucket) is a line on its own scale, never above 40% of the height.
+  assert.equal(layers.normalPeak, 16000);
+  assert.ok(layers.line.every((v) => v <= NORMAL_LINE_FRACTION + 1e-12));
+  assert.equal(Math.max(...layers.line), NORMAL_LINE_FRACTION);
+});
+
+test("alarmLayers: severities stack bottom-up and Info + Noise are summed into one line", () => {
+  const series = [
+    { key: 3, values: [1, 0, 0] },
+    { key: 1, values: [0, 0, 2] },
+    { key: 2, values: [1, 0, 1] },
+    { key: 4, values: [10, 0, 5] },
+    { key: 5, values: [10, 0, 0] },
+  ];
+  const layers = alarmLayers(series, new Set(), 3);
+  assert.deepEqual(layers.bars.map((b) => b.key), [1, 2, 3]); // Critical at the bottom
+  assert.equal(layers.peak, 3);
+  assert.deepEqual(layers.bars[2].tops, [2 / 3, 0, 1]);
+  assert.deepEqual(layers.line, [0.4, 0, 0.1]);
+  assert.deepEqual(alarmDrawOrder(layers.bars).map((b) => b.key), [3, 2, 1]);
+  // Gaps stay visible: a bucket without records is 0 in the bars and in the line.
+  assert.equal(layers.bars[2].tops[1], 0);
+  assert.equal(layers.line[1], 0);
+});
+
+test("alarmLayers honours hidden series and an empty case", () => {
+  const series = peakCase();
+  const noNormal = alarmLayers(series, new Set([NORMAL_SERIES_KEY]), 10);
+  assert.equal(noNormal.line, null);
+  const noError = alarmLayers(series, new Set([2]), 10);
+  assert.equal(noError.peak, 0);
+  assert.ok(noError.bars[0].tops.every((v) => v === 0));
+  const empty = alarmLayers([], new Set(), 0);
+  assert.deepEqual(empty, { bars: [], line: null, peak: 0, normalPeak: 0 });
+  const onlyInfo = alarmLayers([{ key: 4, values: [3, 6] }], new Set(), 2);
+  assert.deepEqual(onlyInfo.line, [0.2, 0.4]);
+});
+
+test("alarm legend totals, readout and the Errors only view", () => {
+  const series = peakCase();
+  const totals = alarmTotals(series, (k) => "s" + k, "Info + Noise");
+  assert.deepEqual(totals.map((t) => [t.key, t.label, t.total]), [
+    [1, "s1", 0],
+    [2, "s2", 20600],
+    [3, "s3", 0],
+    [NORMAL_SERIES_KEY, "Info + Noise", 160000],
+  ]);
+  assert.deepEqual(alarmReadoutAt(series, new Set(), 4, "Info + Noise"), [
+    { key: 2, label: "Error", count: 18000 },
+    { key: NORMAL_SERIES_KEY, label: "Info + Noise", count: 16000 },
+  ]);
+  assert.deepEqual(alarmReadoutAt(series, new Set([NORMAL_SERIES_KEY]), 4, "n"), [
+    { key: 2, label: "Error", count: 18000 },
+  ]);
+  assert.equal(isErrorsOnly(new Set()), false);
+  assert.equal(isErrorsOnly(new Set(ERRORS_ONLY_HIDDEN)), true);
+  assert.equal(isErrorsOnly(new Set([...ERRORS_ONLY_HIDDEN, 2])), false);
+});
+
+test("strip height, token parsing and ISO axis labels", () => {
+  assert.equal(stripHeight(false), 40);
+  assert.equal(stripHeight(true), 120);
+  assert.equal(stripHeight(true, 40, 150), 150);
+  assert.equal(parsePx("40px", 1), 40);
+  assert.equal(parsePx("", 40), 40);
+  assert.equal(parsePx("auto", 120), 120);
+  const jan15 = Date.UTC(2030, 0, 15, 7, 8) / 1000;
+  assert.equal(axisLabel(jan15, 5 * 86400), "2030-01-15");
+  assert.equal(axisLabel(jan15, 3 * 3600), "2030-01-15 07:08");
+  // Short spans keep the seconds: ticks inside one minute stay distinct.
+  assert.equal(axisLabel(jan15 + 5, 60), "2030-01-15 07:08:05");
+  assert.notEqual(axisLabel(jan15 + 5, 60), axisLabel(jan15 + 10, 60));
 });

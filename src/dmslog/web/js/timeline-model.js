@@ -112,6 +112,120 @@ export function stackSeries(series, hiddenKeys, n) {
   return { draw: order.map((index) => ({ index, tops: tops[index] })), max };
 }
 
+// ---- Alarm strip (split by severity) -------------------------------------------------------------
+// Critical, Error and Warning are stacked bars on their own scale (the tallest bar fills the plot);
+// Info and Noise are summed into one line on a second scale that tops out at NORMAL_LINE_FRACTION of
+// the height, so a burst of errors is never flattened by 160 thousand ordinary records.
+export const ABNORMAL_KEYS = [1, 2, 3];
+export const NORMAL_KEYS = [4, 5];
+export const NORMAL_SERIES_KEY = "normal"; // toggle id of the combined Info + Noise line
+export const NORMAL_LINE_FRACTION = 0.4;
+// Options of the uPlot stepped path of the Info + Noise line: `extend` draws the last bucket to the
+// right edge of the plot (otherwise the path ends where the last bucket starts and a single bucket
+// leaves no line at all).
+export const NORMAL_LINE_PATH = { align: 1, extend: true };
+export const ERRORS_ONLY_HIDDEN = [3, NORMAL_SERIES_KEY];
+
+// hiddenKeys holds severity keys (1..3) and NORMAL_SERIES_KEY. Returns
+// { bars: [{ key, index, tops }] (bottom layer first, tops are fractions 0..1 of the plot height),
+//   line: [fraction 0..NORMAL_LINE_FRACTION per bucket] | null, peak: tallest stack in records,
+//   normalPeak: highest Info + Noise bucket in records }.
+export function alarmLayers(series, hiddenKeys, n) {
+  const bars = series
+    .map((s, index) => ({ s, index }))
+    .filter(({ s }) => ABNORMAL_KEYS.includes(s.key))
+    .sort((a, b) => a.s.key - b.s.key);
+  const running = new Array(n).fill(0);
+  const raw = [];
+  for (const { s, index } of bars) {
+    const hidden = hiddenKeys.has(s.key);
+    for (let i = 0; i < n; i += 1) {
+      running[i] += hidden ? 0 : s.values[i] || 0;
+    }
+    raw.push({ key: s.key, index, tops: running.slice() });
+  }
+  const peak = running.reduce((a, b) => Math.max(a, b), 0);
+  const scaled = raw.map((layer) => ({ ...layer, tops: layer.tops.map((v) => (peak > 0 ? v / peak : 0)) }));
+  const normal = new Array(n).fill(0);
+  for (const s of series) {
+    if (NORMAL_KEYS.includes(s.key)) {
+      for (let i = 0; i < n; i += 1) {
+        normal[i] += s.values[i] || 0;
+      }
+    }
+  }
+  const normalPeak = normal.reduce((a, b) => Math.max(a, b), 0);
+  const showLine = !hiddenKeys.has(NORMAL_SERIES_KEY) && normalPeak > 0;
+  const line = showLine ? normal.map((v) => (v / normalPeak) * NORMAL_LINE_FRACTION) : null;
+  return { bars: scaled, line, peak, normalPeak };
+}
+
+// Draw order for uPlot: the top of the stack first so lower layers paint over it.
+export function alarmDrawOrder(bars) {
+  return bars.slice().reverse();
+}
+
+// Per-severity totals for the legend: [{ key, label, total }] for the three alarm series and, last,
+// the combined Info + Noise line (key NORMAL_SERIES_KEY). Absent severities are listed with 0.
+export function alarmTotals(series, labelOf, normalLabel) {
+  const total = (keys) =>
+    series.filter((s) => keys.includes(s.key)).reduce((sum, s) => sum + s.values.reduce((a, b) => a + b, 0), 0);
+  const out = ABNORMAL_KEYS.map((key) => ({ key, label: labelOf(key), total: total([key]) }));
+  out.push({ key: NORMAL_SERIES_KEY, label: normalLabel, total: total(NORMAL_KEYS) });
+  return out;
+}
+
+// Whether the hidden set is exactly the "Errors only" view (Warning and the normal line hidden).
+export function isErrorsOnly(hiddenKeys) {
+  return hiddenKeys.size === ERRORS_ONLY_HIDDEN.length && ERRORS_ONLY_HIDDEN.every((k) => hiddenKeys.has(k));
+}
+
+// Per-bucket readout of the alarm strip: severity counts in order, hidden series left out.
+export function alarmReadoutAt(series, hiddenKeys, idx, normalLabel) {
+  const parts = [];
+  for (const key of ABNORMAL_KEYS) {
+    const s = series.find((x) => x.key === key);
+    const count = s ? s.values[idx] || 0 : 0;
+    if (count > 0 && !hiddenKeys.has(key)) {
+      parts.push({ key, label: s.label, count });
+    }
+  }
+  if (!hiddenKeys.has(NORMAL_SERIES_KEY)) {
+    const count = series
+      .filter((s) => NORMAL_KEYS.includes(s.key))
+      .reduce((sum, s) => sum + (s.values[idx] || 0), 0);
+    if (count > 0) {
+      parts.push({ key: NORMAL_SERIES_KEY, label: normalLabel, count });
+    }
+  }
+  return parts;
+}
+
+// Height (px) of the strip: collapsed or expanded, from the CSS tokens' values.
+export function stripHeight(expanded, collapsedPx = 40, expandedPx = 120) {
+  return expanded ? expandedPx : collapsedPx;
+}
+
+// "40px" / "120" -> number, or the fallback.
+export function parsePx(text, fallback) {
+  const value = Number.parseFloat(String(text || ""));
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+// ISO calendar date of an epoch-seconds tick (UTC): "2030-01-15".
+export function isoDate(sec) {
+  return formatTs(sec * 1000).slice(0, 10);
+}
+
+// Axis label of a tick (UTC): the ISO date for a span of two days or more, date and minutes for two
+// hours or more, otherwise date and seconds so ticks inside one minute stay distinct.
+export function axisLabel(sec, spanSec) {
+  if (spanSec >= 2 * 86400) {
+    return isoDate(sec);
+  }
+  return formatTs(sec * 1000).slice(0, spanSec >= 7200 ? 16 : 19);
+}
+
 // Per-bucket readout for the bucket at `idx`: [{ key, label, count }] without hidden/zero series.
 export function readoutAt(series, hiddenKeys, idx) {
   const out = [];
