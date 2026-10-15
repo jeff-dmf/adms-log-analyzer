@@ -31,6 +31,8 @@ class FakeNode {
   }
 
   setAttribute(name, value) { this.attrs[name] = String(value); }
+  getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; }
+  get ownerDocument() { return globalThis.document; }
   removeAttribute(name) { delete this.attrs[name]; }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   focus() {}
@@ -63,7 +65,7 @@ globalThis.document = {
 
 const { CaseFiles } = await import("../../src/dmslog/web/js/case-files.js");
 const { SourcesPanel } = await import("../../src/dmslog/web/js/sources.js");
-const { api } = await import("../../src/dmslog/web/js/api.js");
+const { api, ApiError } = await import("../../src/dmslog/web/js/api.js");
 
 const GUID = "0A1B2C3D-0000-1111-2222-333344445555";
 const ENT = `/data/ERS_CL_${GUID}_20260101120000_Enterprise.zip`;
@@ -134,12 +136,14 @@ test("submit needs a name, then creates through the deps", async () => {
     openPath: async () => ({ status: "ok" }),
   };
   assert.equal(await files.submit(deps), null);
-  assert.equal(messages.at(-1)[1], true);
+  assert.equal(nameInput.attrs["aria-invalid"], "true"); // the error sits with the field, not in the status bar
+  assert.equal(messages.length, 0);
   nameInput.value = "Case A";
   const result = await files.submit(deps);
   assert.equal(result.state, "ok");
   assert.deepEqual(calls, ["Case A"]);
   assert.equal(nameInput.value, "");
+  assert.equal(nameInput.attrs["aria-invalid"], undefined);
 });
 
 // -- SourcesPanel.runCollection ------------------------------------------------------------
@@ -339,4 +343,42 @@ test("an old stream closing does not affect the waiter of the current job", asyn
   assert.notEqual(panel.waiter, null);
   FakeEventSource.instances.at(-1).emit("done", { job_id: "j", status: "ok" });
   assert.deepEqual(await pending, { status: "ok" });
+});
+
+test("typing in the case name clears its error; a refused name shows under the field", async () => {
+  const { files, nameInput, messages } = setup({});
+  files.state.add([ENT]);
+  assert.equal(await files.submit({}), null); // empty name
+  assert.equal(nameInput.attrs["aria-invalid"], "true");
+  nameInput.fire("input");
+  assert.equal(nameInput.attrs["aria-invalid"], undefined);
+  nameInput.value = "Dup";
+  const deps = { createCase: async () => { throw new Error("A case with this name already exists."); }, selectCase: async () => {}, openPath: async () => ({ status: "ok" }) };
+  await files.submit(deps);
+  assert.equal(nameInput.attrs["aria-invalid"], "true");
+  assert.equal(messages.length, 0);
+  nameInput.fire("input");
+  assert.equal(nameInput.attrs["aria-invalid"], undefined);
+});
+
+test("a failure to open the created case is a message, not a name error", async () => {
+  const { files, nameInput, messages } = setup({});
+  files.state.add([ENT]);
+  nameInput.value = "Fine";
+  const deps = { createCase: async (n) => ({ id: n }), selectCase: async () => { throw new Error("could not open it"); }, openPath: async () => ({ status: "ok" }) };
+  await files.submit(deps);
+  assert.equal(nameInput.attrs["aria-invalid"], undefined);
+  assert.deepEqual(messages.at(-1), ["could not open it", true]);
+});
+
+test("typing in the path field clears its error", async () => {
+  api.addCollection = async () => { throw new ApiError(400, "path_not_found", "Path does not exist: /x"); };
+  api.progressUrl = () => "/p";
+  globalThis.EventSource = undefined;
+  const { panel } = panelSetup();
+  panel.refs.pathInput.value = "/x";
+  await panel.openCollection();
+  assert.equal(panel.refs.pathInput.attrs["aria-invalid"], "true");
+  panel.refs.pathInput.fire("input");
+  assert.equal(panel.refs.pathInput.attrs["aria-invalid"], undefined);
 });

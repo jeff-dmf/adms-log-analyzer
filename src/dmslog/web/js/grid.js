@@ -38,7 +38,7 @@ function fieldText(value) {
 
 export class Grid {
   constructor({
-    viewport, rowsLayer, spacer, header, onSelect, onStatus, onError, getMark, onVisible, onView,
+    viewport, rowsLayer, spacer, header, onSelect, onCount, onPosition, onError, getMark, onVisible, onView,
     getHighlight,
   }) {
     this.viewport = viewport;
@@ -46,7 +46,8 @@ export class Grid {
     this.spacer = spacer;
     this.header = header;
     this.onSelect = onSelect;
-    this.onStatus = onStatus;
+    this.onCount = onCount || (() => {}); // ({n, exact} | "loading" | null, {announce}) -> status bar (UI-13)
+    this.onPosition = onPosition || (() => {}); // (ts | null): first visible record's time; never announced
     this.onError = onError;
     this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
     this.getHighlight = getHighlight || (() => null); // highlight rule of a record id: {color, label} | null
@@ -255,7 +256,6 @@ export class Grid {
     this.window.reset();
     // New case or filter: the old count is no longer a baseline, and its answer must not arrive.
     this.total = null;
-    this.countText = "";
     this.countGeneration += 1;
     if (this.countController) {
       this.countController.abort();
@@ -263,16 +263,18 @@ export class Grid {
     }
     this.render();
     if (this.caseId === null) {
-      this.onStatus("");
+      this.onCount(null);
+      this.onPosition(null);
       return;
     }
-    this.refreshCount();
+    this.onCount("loading");
+    this.refreshCount(true);
     await this.jump(null, "fwd");
   }
 
   // The count has its own generation: navigation (jump, scroll) must not discard its answer; only a newer
   // count or a reload (new case or filter) does.
-  async refreshCount() {
+  async refreshCount(announce = false) {
     this.countGeneration += 1;
     const generation = this.countGeneration;
     if (this.countController) {
@@ -284,13 +286,11 @@ export class Grid {
       const result = await api.count(this.caseId, this.filter, controller.signal);
       if (generation === this.countGeneration) {
         this.total = Number(result.count);
-        const template = S[pluralKey(result.exact ? "gridCount" : "gridCountApprox", result.count)];
-        this.countText = format(template, { count: Number(result.count).toLocaleString("en-US") });
-        this.updateStatus();
+        this.onCount({ n: this.total, exact: Boolean(result.exact) }, { announce });
       }
     } catch (err) {
       if (generation === this.countGeneration && !(err && err.name === "AbortError")) {
-        this.countText = "";
+        this.onCount(null);
         this.onError(err);
       }
     } finally {
@@ -302,14 +302,7 @@ export class Grid {
 
   updateStatus() {
     const row = this.window.topRow();
-    const parts = [];
-    if (this.countText) {
-      parts.push(this.countText);
-    }
-    if (row) {
-      parts.push(format(S.gridPosition, { time: formatTs(row.ts) }));
-    }
-    this.onStatus(parts.join(" - "));
+    this.onPosition(row ? row.ts : null);
   }
 
   // Replaces the window with the page found at `cursor` (null = first page).
@@ -318,7 +311,6 @@ export class Grid {
     const generation = this.generation;
     this.controller = new AbortController();
     this.loading = true;
-    this.onStatus(S.loading);
     try {
       const page = await api.page(this.caseId, this.filter, cursor, dir, PAGE_LIMIT, this.controller.signal, this.columnNames());
       if (generation !== this.generation) {

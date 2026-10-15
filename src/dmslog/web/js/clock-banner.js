@@ -3,12 +3,12 @@
 import { bannerText, createClockJumpFlow } from "./events-model.js";
 import { S } from "./strings.js";
 
-// container: the (hidden) banner element. Options:
+// container: the clock segment of the status bar (status.slot("clock"), hidden until there is a warning). Options:
 //   api               needs events(caseId, params, signal)
 //   getCase()         current case id or null
 //   onShowInGrid(t)   t = { from, to, entryId }
 // Returns { refresh() }; call it when the case changed or indexing finished.
-export function initClockBanner(container, { api, getCase, onShowInGrid }) {
+export function initClockBanner(container, { api, getCase, onShowInGrid, onAnnounce }) {
   container.textContent = "";
   const text = document.createElement("span");
   const show = document.createElement("button");
@@ -16,10 +16,17 @@ export function initClockBanner(container, { api, getCase, onShowInGrid }) {
   show.textContent = S.clkShow;
   container.append(text, " ", show);
 
+  let announced = "";
   function onState(state) {
     const summary = state.summary;
     container.hidden = summary === null;
     text.textContent = summary === null ? "" : bannerText(summary);
+    text.title = text.textContent; // the status bar cuts a long text with an ellipsis
+    const key = summary === null ? "" : state.caseId + "|" + text.textContent;
+    if (onAnnounce && key !== "" && key !== announced) {
+      announced = key; // refresh() clears the summary first: only a different warning (or case) is spoken again
+      onAnnounce(text.textContent); // the slot is not a live region; the message region speaks it
+    }
   }
 
   const flow = createClockJumpFlow({ api, getCase, onState });

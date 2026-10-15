@@ -5,6 +5,7 @@ import {
   CaseFilesState, KIND_ENTERPRISE, KIND_SENSITIVE, PickFlow, STATUS_FAILED, STATUS_OK, STATUS_REFUSED,
   STATUS_WORKING, formatSize,
 } from "./case-files-model.js";
+import { setFieldError } from "./field-error.js";
 import { openFolderBrowser } from "./folder-browser.js";
 import { S, format, pluralKey } from "./strings.js";
 
@@ -62,6 +63,9 @@ export class CaseFiles {
     this.state = new CaseFilesState(() => this.render());
     this.waiting = false;
     this.dialogBusy = false; // the server says another dialog is open: keep a way to cancel it
+    if (this.nameInput) {
+      this.nameInput.addEventListener("input", () => setFieldError(this.nameInput, null));
+    }
     this.build();
     this.render();
   }
@@ -205,9 +209,10 @@ export class CaseFiles {
   async submit(deps) {
     const name = this.nameInput.value.trim();
     if (name === "") {
-      this.onMessage(S.cfNeedName, true);
+      setFieldError(this.nameInput, S.cfNeedName);
       return null;
     }
+    setFieldError(this.nameInput, null);
     if (this.state.items.length === 0) {
       this.onMessage(S.cfNeedFiles, true);
       return null;
@@ -220,8 +225,15 @@ export class CaseFiles {
       this.onMessage(format(S[pluralKey("cfPartial", result.total)], { ok: result.ok, total: result.total }), true);
     } else if (result.reason === "busy") {
       this.onMessage(S.cfQueueBusy, true);
-    } else if (result.reason === "case") {
+    } else if (result.reason === "select") {
       this.onMessage(this.state.notices.length > 0 ? this.state.notices[this.state.notices.length - 1].message : "", true);
+    } else if (result.reason === "case") {
+      const note = this.state.notices.length > 0 ? this.state.notices[this.state.notices.length - 1].message : "";
+      if (note === "") {
+        this.onMessage("", true);
+      } else {
+        setFieldError(this.nameInput, note); // the case name was refused (duplicate, invalid): under the field
+      }
     }
     return result;
   }

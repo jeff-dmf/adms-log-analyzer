@@ -288,6 +288,7 @@ class IngestJobs:
         self._threads: set[threading.Thread] = set()
         self.stopping = threading.Event()
         self._watched: dict[str, str] = {}  # case -> resolved folder followed by ``serve --watch``
+        self._watch_enabled = False  # set when ``serve --watch`` starts; kept while serving
         self.alerts = alerts.AlertState()  # cooldowns, alerted operations and history of the local alerts
 
     def _describe(self, error: BaseException) -> str:
@@ -303,6 +304,11 @@ class IngestJobs:
         """Resolved path of the folder ``serve --watch`` follows into the case, if any."""
         with self._lock:
             return self._watched.get(case_id)
+
+    def is_watching(self) -> bool:
+        """True once ``serve --watch`` started (stable for the run; drives the Alerts indicator)."""
+        with self._lock:
+            return self._watch_enabled
 
     def is_running(self, case_id: str) -> bool:
         try:
@@ -418,6 +424,7 @@ class IngestJobs:
         with self._lock:
             self._threads.add(thread)
             self._watched[cid] = folder
+            self._watch_enabled = True
         thread.start()
         return cid
 
@@ -979,7 +986,7 @@ class Api:
         cases = [self.store.summary(cid) for cid in self.store.ids()]
         for info in cases:
             info["ingesting"] = self.jobs.is_running(info["id"])
-        return Response(200, {"cases": cases})
+        return Response(200, {"cases": cases, "watching": self.jobs.is_watching()})
 
     def create_case(self, request: Request) -> Response:
         body = request.read_body()

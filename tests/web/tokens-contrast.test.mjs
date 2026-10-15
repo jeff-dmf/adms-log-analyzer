@@ -424,6 +424,10 @@ for (const theme of Object.keys(THEMES)) {
   test(`${theme}: text on status, filter, mark and highlight surfaces has at least 4.5:1`, () => {
     check(theme, "--status-info-ink", "--status-info-bg", 4.5);
     check(theme, "--status-error-ink", "--status-error-bg", 4.5);
+    // The status bar (UI-13): its resting text and the clock warning sit on the raised surface; the error mode on its own tokens.
+    check(theme, "--ink-muted", "--surface-raised", 4.5);
+    check(theme, "--status-error-ink", "--surface-raised", 4.5);
+    check(theme, "--status-info-ink", "--surface-raised", 4.5);
     check(theme, "--filtered-ink", "--filtered-bg", 4.5);
     check(theme, "--accent-ink", "--accent", 4.5);
     check(theme, "--ink", "--mark", 4.5);

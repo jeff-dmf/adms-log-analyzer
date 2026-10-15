@@ -54,12 +54,6 @@
 .grid-row[data-bm="purple"] .grid-cell:first-child { color: var(--bm-purple); }
 .grid-row[data-bm="gray"] .grid-cell:first-child { color: var(--bm-gray); }
 
-.shortcuts-help {
-  color: var(--muted);
-  font-size: 0.85em;
-  padding: 2px 6px;
-}
-
 .bm-muted {
   color: var(--muted);
   font-size: 0.9em;

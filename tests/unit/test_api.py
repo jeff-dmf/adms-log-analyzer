@@ -102,7 +102,7 @@ def case(client, zip_path):
 
 
 def test_cases_lifecycle(client, tmp_path):
-    assert client.get("/api/cases")[1] == {"cases": []}
+    assert client.get("/api/cases")[1] == {"cases": [], "watching": False}
     assert client.post("/api/cases", {"name": "one"})[0] == 201
     status, body, _ = client.get("/api/cases")
     assert status == 200
@@ -110,7 +110,7 @@ def test_cases_lifecycle(client, tmp_path):
     assert info["id"] == "one" and info["name"] == "one"
     assert info["sources"] == 0 and info["records"] == 0 and info["size_bytes"] > 0
     assert client.request("DELETE", "/api/cases/one")[0] == 204
-    assert client.get("/api/cases")[1] == {"cases": []}
+    assert client.get("/api/cases")[1] == {"cases": [], "watching": False}
     assert not (tmp_path / "data" / "cases" / "one").exists()
 
 

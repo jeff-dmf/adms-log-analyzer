@@ -25,7 +25,7 @@ function button(className, text, title) {
   return node;
 }
 
-// options: parent, beforePanel (node the bar goes before), footer (shortcut help goes after it),
+// options: parent, beforePanel (node the bar goes before),
 //   stack (createViewsStack), getCase, restoreState(state), applyView() -> Promise, getSelectedRow(),
 //   reveal(row) -> Promise, showMessage(text, isError), storage (sessionStorage or null).
 export function mountViewsStack(options) {
@@ -59,11 +59,6 @@ export function mountViewsStack(options) {
   renameForm.append(renameLabel, renameInput, renameOk, renameCancel);
   bar.append(backButton, forwardButton, crumbs, narrowButton, renameButton, parentButton, rootButton, renameForm);
   options.parent.insertBefore(bar, options.beforePanel || null);
-
-  const help = element("div", "shortcuts-help", S.vsShortcutsHelp);
-  if (options.footer && options.footer.parentNode) {
-    options.footer.parentNode.insertBefore(help, options.footer.nextSibling);
-  }
 
   let seq = 0; // a newer view change makes a pending "show record" obsolete
 

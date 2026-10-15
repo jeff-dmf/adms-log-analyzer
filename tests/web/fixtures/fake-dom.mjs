@@ -30,7 +30,7 @@ export class El {
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   appendChild(c) { c.remove(); c.parent = this; this.children.push(c); return c; }
-  append(...cs) { for (const c of cs) this.appendChild(c); }
+  append(...cs) { for (const c of cs) this.appendChild(typeof c === "string" ? Object.assign(new El(this.doc, "#text"), { _text: c }) : c); }
   insertBefore(c, ref) {
     c.remove();
     c.parent = this;
@@ -104,6 +104,8 @@ export class El {
   get selectedOptions() { return this.options.filter((o) => o.value === this.value); }
   scrollIntoView() {}
   select() {}
+  get parentNode() { return this.parent; }
+  get nextSibling() { const i = this.parent ? this.parent.children.indexOf(this) : -1; return i >= 0 ? this.parent.children[i + 1] ?? null : null; }
   get previousElementSibling() { const i = this.parent ? this.parent.children.indexOf(this) : -1; return i > 0 ? this.parent.children[i - 1] : null; }
 }
 

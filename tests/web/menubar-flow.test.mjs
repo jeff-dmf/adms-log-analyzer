@@ -259,10 +259,15 @@ test("keyboard: ArrowDown opens a menu on its first item, Escape closes it and g
   assert.equal(trigger.attrs["aria-expanded"], "false");
 });
 
-test("the Alerts indicator shows a count only when alerts arrived, with an accessible name", () => {
+test("the Alerts indicator appears only with serve --watch on, with a count and an accessible name", () => {
   const { refs, bridge, toggles } = setup();
   const alerts = toggles.find((t) => t.dataset.action === "toggle.alerts");
   assert.equal(refs.alertsBadge.hidden, true);
+  bridge.setAlertsCount(2); // alerts arrive, but the server is not following a folder: no indicator
+  assert.equal(refs.alertsBadge.hidden, true);
+  assert.equal(alerts.attrs["aria-label"], S.actAlerts);
+  bridge.setAlertsCount(0);
+  bridge.setWatching(true);
   bridge.setAlertsCount(1);
   assert.equal(refs.alertsBadge.hidden, false);
   assert.equal(refs.alertsBadge.textContent, "1");

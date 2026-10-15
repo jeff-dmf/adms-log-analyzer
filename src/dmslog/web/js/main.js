@@ -2,7 +2,7 @@
 // and reaches the page through textContent / DOM nodes only.
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
-import { api, onForbidden } from "./api.js";
+import { api, onForbidden, onNetworkError } from "./api.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
 import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
@@ -21,6 +21,9 @@ import { CollectionsPanel } from "./collections-panel.js";
 import {
   columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi,
 } from "./collections-model.js";
+import { resetFormWithErrors, setFieldError } from "./field-error.js";
+import { createStatusBar } from "./status-bar.js";
+import { createConnectionRetry } from "./status-bar-model.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { mountMenubar } from "./menubar.js";
 import { searchTerms } from "./search.js";
@@ -145,23 +148,31 @@ function start() {
   applyTheme();
   document.title = S.appName;
 
-  const messageEl = byId("message");
-  const showMessage = (text, isError) => {
-    messageEl.textContent = text;
-    messageEl.classList.toggle("error", Boolean(isError));
-    messageEl.hidden = text === "";
+  // The status bar (UI-13). showMessage stays as the adapter the modules already call.
+  const status = createStatusBar(byId("status-bar"), {
+    S,
+    helpText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp].join(" "),
+  });
+  const showMessage = (text, isError) => status.message(text, { kind: isError ? "error" : "info" });
+  // Connection errors already own the bar: do not repeat them as a message.
+  const showError = (err) => {
+    if (err && (err.code === "network" || err.code === "forbidden")) {
+      return;
+    }
+    showMessage(err && err.message ? err.message : S.errorGeneric, true);
   };
-  const showError = (err) => showMessage(err && err.message ? err.message : S.errorGeneric, true);
-  onForbidden(() => showMessage(S.errorForbidden, true));
+  let casesLoaded = false; // the opening (GET /api/cases) finished: until then Retry reloads the cases
+  const retryConnection = createConnectionRetry({
+    health: () => api.health(),
+    setOnline: () => status.connection("online"),
+    openingPending: () => !casesLoaded,
+    reloadCases: () => panel.loadCases(null).then(() => { casesLoaded = true; }),
+    refreshView: () => (caseId !== null ? applyView() : Promise.resolve()),
+    onError: (err) => showError(err),
+  });
+  onForbidden(() => status.connection("forbidden"));
+  onNetworkError(() => status.connection("offline", { onRetry: retryConnection }));
 
-  // Until the status bar of UI-13 exists, ctx.status is a small adapter over #message with the final API.
-  const status = {
-    message: (text, { kind = "info" } = {}) => {
-      showMessage(text, kind === "error");
-      return { dismiss: () => showMessage("", false) };
-    },
-    count() {}, position() {}, progress() {}, connection() {}, slot: () => null,
-  };
   const actions = createActionRegistry({ onError: (err) => showError(err), singleKeysOn: () => true });
   // Step 1 of the dock: it exists before the context that holds it; bind(ctx) is step 2.
   const dock = createDock({
@@ -300,9 +311,8 @@ function start() {
     spacer: byId("grid-spacer"),
     header: byId("grid-header"),
     onSelect: (row) => detail.show(row.id),
-    onStatus: (text) => {
-      byId("grid-status").textContent = text;
-    },
+    onCount: (value, options) => status.count(value, options),
+    onPosition: (ts) => status.position(ts),
     onError: showError,
     getMark: (id) => bookmarkStore.get(id),
     getHighlight: (id) => highlightStore.get(id),
@@ -431,8 +441,6 @@ function start() {
     openForm: byId("open-form"),
     pathInput: byId("path-input"),
     scopeSelect: byId("scope-select"),
-    progressBar: byId("progress-bar"),
-    progressText: byId("progress-text"),
     sourceList: byId("source-list"),
   }, {
     onCase: (id) => {
@@ -490,6 +498,12 @@ function start() {
       }
     },
     onSelection: () => applyView(),
+    onProgress: (value) => status.progress(value),
+    onWatching: (on) => {
+      if (menubar) {
+        menubar.setWatching(on);
+      }
+    },
     onDone: () => {
       bookmarkStore.invalidate(); // the records were (re)indexed: markers are looked up again
       highlightStore.invalidateMarks();
@@ -566,15 +580,17 @@ function start() {
       from: byId("from-input").value,
       to: byId("to-input").value,
     });
+    for (const [key, id] of [["from", "from-input"], ["to", "to-input"]]) {
+      setFieldError(byId(id), errors.includes(key) ? S.filterBadTime : null); // under the field that is wrong
+    }
     if (errors.length > 0) {
-      showMessage(S.filterBadTime, true);
       return;
     }
     formState = { sevMax: state.sevMax, levelMax: state.levelMax, from: state.from, to: state.to };
     applyView();
   });
   byId("filter-reset").addEventListener("click", () => {
-    byId("filter-form").reset();
+    resetFormWithErrors(byId("filter-form"), [byId("from-input"), byId("to-input")]);
     formState = { sevMax: null, levelMax: null, from: null, to: null };
     toggles = { hideNoise: false, unclassified: false };
     applyView();
@@ -588,13 +604,21 @@ function start() {
   byId("goto-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const ms = parseTs(byId("goto-input").value);
+    const gotoInput = byId("goto-input");
     if (ms === null) {
+      // The top bar has no room under the field: aria-invalid on the field, the text in the status bar.
+      gotoInput.setAttribute("aria-invalid", "true");
       showMessage(S.filterBadTime, true);
       return;
     }
+    gotoInput.removeAttribute("aria-invalid");
     showMessage("", false);
     grid.jumpToTime(ms);
   });
+  for (const id of ["from-input", "to-input"]) {
+    byId(id).addEventListener("input", () => setFieldError(byId(id), null));
+  }
+  byId("goto-input").addEventListener("input", (event) => event.target.removeAttribute("aria-invalid"));
 
   // Column chooser: the fixed columns, then the parsed-field names seen so far.
   const menu = byId("columns-menu");
@@ -769,7 +793,6 @@ function start() {
   // Highlight rules (detail section, ]/[ navigation): optional module; the store is above. The panel is a dock panel.
   import("./highlight-panel.js").then((module) => {
     highlightUi = module.mountHighlights({
-      footer: document.querySelector(".shortcuts-help"),
       detailAnchor: byId("detail-bookmark"),
       store: highlightStore,
       getCase: () => caseId,
@@ -789,7 +812,6 @@ function start() {
     viewsUi = uiModule.mountViewsStack({
       parent: byId("grid-panel"),
       beforePanel: byId("filter-form"),
-      footer: document.querySelector(".shortcuts-help"),
       stack: viewsStack,
       storage: (() => {
         try {
@@ -892,7 +914,8 @@ function start() {
   // Local alerts (9.13): banner, stream and counter run from the opening; the panel is a dock panel.
   ready.alerts = settled(import("./alerts-panel.js").then((module) => {
     alertsUi = module.startAlerts({
-      banner: byId("alert-banner"),
+      slot: status.slot("alerts"),
+      onAnnounce: (text) => status.message(text, { kind: "warning" }),
       getCase: () => caseId,
       onShowRecords: (filter) => setUserFilter(filter).catch(showError),
     });
@@ -933,10 +956,11 @@ function start() {
     if (typeof module.initClockBanner !== "function") {
       return;
     }
-    clockBanner = module.initClockBanner(byId("clock-banner"), {
+    clockBanner = module.initClockBanner(status.slot("clock"), {
       api: derivedApi,
       getCase: () => caseId,
       onShowInGrid: showEventInGrid,
+      onAnnounce: (text) => status.message(text, { kind: "warning" }),
     });
     clockBanner.refresh();
   }).catch(() => {
@@ -1020,7 +1044,7 @@ function start() {
       // Saved filters can include the toolbar filters; applying one replaces them.
       getExtraFilter: () => composeFilter({ sourceIds: [], text: searchText, ...formState }, null, toggles),
       onSavedApplied: () => {
-        byId("filter-form").reset();
+        resetFormWithErrors(byId("filter-form"), [byId("from-input"), byId("to-input")]);
         byId("search-input").value = "";
         searchText = "";
         formState = { sevMax: null, levelMax: null, from: null, to: null };
@@ -1089,7 +1113,7 @@ function start() {
     actions.preload(control.dataset.action); // the modules behind the toggles are loaded at the opening anyway
   }
 
-  panel.loadCases(null).catch(showError);
+  panel.loadCases(null).then(() => { casesLoaded = true; }).catch(showError);
 }
 
 // If the opening fails the bar is not left invisible: it is shown, with an alert that says what happened

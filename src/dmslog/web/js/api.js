@@ -11,9 +11,22 @@ export class ApiError extends Error {
 }
 
 let forbiddenHandler = null;
+let networkHandler = null;
 
 export function onForbidden(handler) {
   forbiddenHandler = handler;
+}
+
+// Called when a request cannot reach the server at all (server stopped, network down): the status bar shows it.
+export function onNetworkError(handler) {
+  networkHandler = handler;
+}
+
+function networkFailed() {
+  if (networkHandler) {
+    networkHandler();
+  }
+  return new ApiError(0, "network", S.errorNetwork);
 }
 
 async function request(method, url, body, signal) {
@@ -29,7 +42,7 @@ async function request(method, url, body, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw new ApiError(0, "network", S.errorNetwork);
+    throw networkFailed();
   }
   if (response.status === 204) {
     return null;
@@ -70,7 +83,7 @@ async function requestFile(url, body, as, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw new ApiError(0, "network", S.errorNetwork);
+    throw networkFailed();
   }
   if (response.status === 403) {
     if (forbiddenHandler) {
@@ -96,7 +109,7 @@ async function requestFile(url, body, as, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw new ApiError(0, "network", S.errorNetwork); // the stream broke: never a half file
+    throw networkFailed(); // the stream broke: never a half file
   }
   const rows = Number(response.headers.get("X-Dmslog-Rows"));
   return {
@@ -123,6 +136,7 @@ function segment(value) {
 }
 
 export const api = {
+  health: () => request("GET", "/api/health"),
   cases: () => request("GET", "/api/cases"),
   createCase: (name) => request("POST", "/api/cases", { name }),
   addCollection: (caseId, path, scope) =>

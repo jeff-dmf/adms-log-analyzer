@@ -231,14 +231,6 @@
   outline-offset: 1px;
 }
 
-/* Clock-jump banner above the timeline. */
-.clock-banner {
-  padding: 6px 12px;
-  background: var(--error-bg);
-  color: var(--error-text);
-  border-bottom: 1px solid var(--sev-3);
-}
-
 /* Payload expected / not expected notice in the operation detail. */
 .ev-notice {
   margin: 6px 0;

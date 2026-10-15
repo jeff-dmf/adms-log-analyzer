@@ -72,10 +72,6 @@
   margin-top: 36px; /* the chained-views bar (28px + 2 x 4px margin) mounts here */
 }
 
-#grid-panel:not(:has(#views-stack-bar)) .shortcuts-help {
-  margin-bottom: 18px; /* the bar adds its own shortcut help line */
-}
-
 .detail-fields {
   margin-top: 8px;
   overflow: auto;
