@@ -3,7 +3,7 @@
 import { api } from "./api.js";
 import {
   END_CURSOR, PAGE_LIMIT, ROW_HEIGHT, SCROLL_SPAN, RowWindow, fetchPlan, jumpCursor, scrollToTs,
-  tsToScroll,
+  topAfterResize, tsToScroll,
 } from "./grid-model.js";
 import { ColumnResizer } from "./column-resize.js";
 import { baseName } from "./source-filter-model.js";
@@ -75,6 +75,7 @@ export class Grid {
     this.pendingJump = null;
     this.selectTimer = null;
     this.wheelRemainder = 0;
+    this.knownHeight = 0; // viewport height at the last resize (ensureSelectedVisible)
     this.spacer.style.height = SCROLL_SPAN + "px";
     this.resizer = new ColumnResizer({
       viewport, rowsLayer, header,
@@ -114,8 +115,42 @@ export class Grid {
       }
     });
     if (typeof ResizeObserver === "function") {
-      new ResizeObserver(() => this.render()).observe(this.viewport);
+      // The grid owns the rule "the selected row stays visible" (docs/notas/ui-contratos.md, 2.5): a dock opening,
+      // dragging or maximizing, a drawer or a breakpoint all arrive here as a size change of the viewport.
+      new ResizeObserver((entries) => {
+        const last = entries && entries.length ? entries[entries.length - 1] : null;
+        this.ensureSelectedVisible(last && last.contentRect ? last.contentRect.height : this.viewport.clientHeight);
+      }).observe(this.viewport);
     }
+  }
+
+  // Keeps the selected row visible after the viewport changed height. Public and idempotent. Height 0 (the dock is
+  // maximized and hides the grid) recalculates nothing and leaves `top` alone; the same height twice does nothing.
+  ensureSelectedVisible(height = this.viewport.clientHeight) {
+    if (!(height > 0)) {
+      this.render();
+      return;
+    }
+    const before = this.knownHeight;
+    this.knownHeight = height;
+    if (before > 0 && before !== height) {
+      const w = this.window;
+      const top = topAfterResize({
+        selected: w.selected,
+        top: w.top,
+        visibleBefore: Math.max(1, Math.floor(before / ROW_HEIGHT)),
+        visibleAfter: Math.max(1, Math.floor(height / ROW_HEIGHT)),
+        length: w.rows.length,
+      });
+      if (top !== w.top) {
+        w.top = top;
+        this.render();
+        this.syncScroll();
+        this.pump();
+        return;
+      }
+    }
+    this.render();
   }
 
   // -- configuration ------------------------------------------------------------------------

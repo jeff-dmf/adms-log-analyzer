@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  RowWindow, fetchPlan, jumpCursor, makeCursor, parseCursor, scrollToTs, tsToScroll,
+  RowWindow, fetchPlan, jumpCursor, makeCursor, parseCursor, scrollToTs, topAfterResize, tsToScroll,
 } from "../../src/dmslog/web/js/grid-model.js";
 
 const rows = (start, count) => Array.from({ length: count }, (_, i) => ({ id: start + i, ts: 1000 + start + i }));
@@ -91,4 +91,30 @@ test("moveTop clamps and selection scrolls into view", () => {
   w.moveSelection(1000, 10);
   assert.equal(w.selected, 49);
   assert.equal(w.top, 40);
+});
+
+// UI-15: the grid keeps the selected row visible when its height changes (a dock opens, is dragged or maximized).
+test("topAfterResize: no selection or a selection outside the old window leaves the top alone", () => {
+  assert.equal(topAfterResize({ selected: -1, top: 50, visibleBefore: 30, visibleAfter: 10, length: 200 }), 50);
+  assert.equal(topAfterResize({ selected: 5, top: 50, visibleBefore: 30, visibleAfter: 10, length: 200 }), 50);
+  assert.equal(topAfterResize({ selected: 90, top: 50, visibleBefore: 30, visibleAfter: 10, length: 200 }), 50);
+});
+
+test("topAfterResize: a selection that still fits keeps its distance from the top", () => {
+  assert.equal(topAfterResize({ selected: 54, top: 50, visibleBefore: 30, visibleAfter: 10, length: 200 }), 50);
+  assert.equal(topAfterResize({ selected: 50, top: 50, visibleBefore: 30, visibleAfter: 10, length: 200 }), 50);
+  assert.equal(topAfterResize({ selected: 59, top: 50, visibleBefore: 30, visibleAfter: 10, length: 200 }), 50);
+});
+
+test("topAfterResize: a selection that would fall out goes to a third of the new height", () => {
+  assert.equal(topAfterResize({ selected: 70, top: 50, visibleBefore: 30, visibleAfter: 10, length: 200 }), 67);
+  assert.equal(topAfterResize({ selected: 60, top: 50, visibleBefore: 30, visibleAfter: 10, length: 200 }), 57);
+  assert.equal(topAfterResize({ selected: 2, top: 0, visibleBefore: 30, visibleAfter: 1, length: 200 }), 2);
+});
+
+test("topAfterResize: never negative, never past the last full page, a growing grid changes nothing", () => {
+  assert.equal(topAfterResize({ selected: 5, top: 0, visibleBefore: 30, visibleAfter: 3, length: 200 }), 4);
+  assert.equal(topAfterResize({ selected: 198, top: 175, visibleBefore: 30, visibleAfter: 10, length: 200 }), 190);
+  assert.equal(topAfterResize({ selected: 20, top: 10, visibleBefore: 5, visibleAfter: 30, length: 200 }), 10);
+  assert.equal(topAfterResize({ selected: 10, top: 190, visibleBefore: 5, visibleAfter: 30, length: 200 }), 170); // top capped
 });

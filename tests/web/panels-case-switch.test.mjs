@@ -8,7 +8,7 @@ import { installGlobalDom, tick, until } from "./fixtures/fake-dom.mjs";
 
 const doc = installGlobalDom();
 const { api } = await import("../../src/dmslog/web/js/api.js");
-const { createDock } = await import("../../src/dmslog/web/js/dock-legacy.js");
+const { createDock } = await import("../../src/dmslog/web/js/dock.js");
 const { registerAppPanels } = await import("../../src/dmslog/web/js/app-actions.js");
 const { createBookmarkStore } = await import("../../src/dmslog/web/js/bookmarks-model.js");
 const { createHighlightStore } = await import("../../src/dmslog/web/js/highlight-model.js");
@@ -100,7 +100,7 @@ function world({ stripReset = null } = {}) {
   return { state, dock, root, switchTo, gates, calls, messages };
 }
 
-const hostText = (w, id) => w.root.children.find((c) => c.id === id + "-host")?.textContent ?? "";
+const hostText = (w, id) => w.root.all().find((c) => c.id === id + "-host")?.textContent ?? "";
 
 // Each panel: how it is opened, what extra the user does to produce content, and the text that shows it.
 const PANELS = [
@@ -113,7 +113,7 @@ const PANELS = [
 async function scenario(panel, options) {
   const w = world(options);
   assert.equal(await w.dock.open(panel.id, panel.args), true);
-  const host = w.root.children.find((c) => c.id === panel.id + "-host");
+  const host = w.root.all().find((c) => c.id === panel.id + "-host");
   if (panel.after) {
     panel.after(host);
   }
@@ -133,7 +133,7 @@ async function scenario(panel, options) {
 async function stayingOpen(panel, options) {
   const w = world(options);
   assert.equal(await w.dock.open(panel.id, panel.args), true);
-  const host = w.root.children.find((c) => c.id === panel.id + "-host");
+  const host = w.root.all().find((c) => c.id === panel.id + "-host");
   if (panel.after) {
     panel.after(host);
   }
@@ -165,7 +165,7 @@ for (const panel of PANELS) {
     w.gates.get(panel.id).release();
     assert.equal(await opening, false);
     await tick();
-    const host = w.root.children.find((c) => c.id === panel.id + "-host");
+    const host = w.root.all().find((c) => c.id === panel.id + "-host");
     assert.equal(host.hidden, true);
     assert.equal(w.dock.isOpen(panel.id), false);
     assert.equal(calls.slice(before).filter(([id]) => id === "A").length, 0, "no request for the old case");

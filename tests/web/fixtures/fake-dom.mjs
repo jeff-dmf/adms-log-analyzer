@@ -56,8 +56,8 @@ export class El {
     for (const fn of this.doc.listeners.focusin ?? []) fn({ type: "focusin", target: this });
   }
   dispatch(type, init = {}) {
-    const event = { type, target: this, key: "", detail: 0, ctrlKey: false, altKey: false, metaKey: false, prevented: false, ...init,
-      preventDefault() { this.prevented = true; }, stopPropagation() {} };
+    const event = { type, target: this, key: "", detail: 0, ctrlKey: false, altKey: false, metaKey: false, prevented: false, defaultPrevented: false, ...init,
+      preventDefault() { this.prevented = true; this.defaultPrevented = true; }, stopPropagation() {} };
     for (let n = this; n; n = n.parent) for (const fn of n.listeners[type] ?? []) fn(event);
     return event;
   }

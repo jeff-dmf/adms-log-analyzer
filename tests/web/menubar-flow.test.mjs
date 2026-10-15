@@ -1,4 +1,4 @@
-// UI-12: the top bar on a fake DOM, wired to the real registry (app-actions.js), the legacy dock and ui-menu.js.
+// UI-12: the top bar on a fake DOM, wired to the real registry (app-actions.js), the dock and ui-menu.js.
 // Every panel opens from its menu item or toggle, the states (pressed, disabled with a reason) follow the
 // registry, an unavailable module is disabled (never hidden) and the menus work from the keyboard.
 import test from "node:test";
@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { createActionRegistry } from "../../src/dmslog/web/js/actions.js";
 import { registerAppActions } from "../../src/dmslog/web/js/app-actions.js";
-import { createDock } from "../../src/dmslog/web/js/dock-legacy.js";
+import { createDock } from "../../src/dmslog/web/js/dock.js";
 import { mountMenubar } from "../../src/dmslog/web/js/menubar.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 import { makeDoc, menuEls, menuItems, tick, until } from "./fixtures/fake-dom.mjs";

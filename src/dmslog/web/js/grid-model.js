@@ -40,6 +40,21 @@ export function scrollToTs(position, range, span = SCROLL_SPAN) {
   return Math.round(range.min + fraction * (range.max - range.min));
 }
 
+// New first visible row after the grid changed height (a dock opened, dragged or maximized, a breakpoint change).
+// selected < 0 or outside the old window: the top stays (only capped to maxTop). Selected row still inside the new
+// height: the top stays, so it keeps its distance from the top. It would fall out: it goes to a third of the height.
+export function topAfterResize({ selected, top, visibleBefore, visibleAfter, length }) {
+  const maxTop = Math.max(0, length - visibleAfter);
+  const kept = Math.min(Math.max(0, top), maxTop);
+  if (selected < 0 || selected < top || selected >= top + visibleBefore) {
+    return kept;
+  }
+  if (selected - top < visibleAfter) {
+    return kept;
+  }
+  return Math.min(Math.max(0, selected - Math.floor(visibleAfter / 3)), maxTop);
+}
+
 // Which page to fetch next, if any: "fwd" near the buffered end, "back" near the start.
 export function fetchPlan(top, visible, length, atStart, atEnd, margin = PREFETCH_MARGIN) {
   if (length === 0) {
