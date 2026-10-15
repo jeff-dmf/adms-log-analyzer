@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import shutil
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -24,9 +26,10 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import HealthCheck, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
-from dmslog.ingest.partial import FirstPass  # noqa: E402
-from dmslog.ingest.pipeline import IngestOptions, run_ingest  # noqa: E402
-from dmslog.ingest.reader import SourceReader  # noqa: E402
+from dmslog.ingest.ers import select_sources  # noqa: E402
+from dmslog.ingest.partial import FirstPass, load_state  # noqa: E402
+from dmslog.ingest.pipeline import IngestOptions, build_plan, resume_pending, run_ingest  # noqa: E402
+from dmslog.ingest.reader import ReadLimits, SourceReader  # noqa: E402
 from dmslog.store import create_case_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -129,6 +132,79 @@ def first_pass(spec, times: list[int], members: list[str]) -> FirstPass:
     return FirstPass(members=chosen, ts_from=lo, ts_to=hi, defer_rest=defer)
 
 
+def write_other(root: Path) -> Path:
+    """Another collection whose unknown records share signatures with the chain of ``write_case``."""
+    base = root / LOGDIR
+    base.mkdir(parents=True)
+    lines = [mf.header(i * 700, "INFO", f"[Alpha] item {i} step {i} done", pid=6666, tid=7) for i in range(8)]
+    (base / "WfmAdapter_6666.log").write_bytes(mf.render(lines))
+    return root
+
+
+def chosen_sources(selected, first: FirstPass) -> set[str]:
+    """The members a first pass must index: the requested ones and the rest of their rotation chains."""
+    if first.members is None:
+        return {s.member for s in selected}
+
+    def chain(info):
+        return (info.stream_key, re.sub(r"\.\d+$", "", info.file_name))
+
+    wanted = {chain(s) for s in selected if s.member in first.members}
+    return {s.member for s in selected if chain(s) in wanted}
+
+
+def expected_first(
+    reference_rows: list[tuple], picked: set[str], first: FirstPass
+) -> dict[str, set[int]] | None:
+    """Lines each picked source must show at ``first_ready`` (None for a source whose time goes back: the
+    window is only located approximately there)."""
+    out: dict[str, set[int] | None] = {}
+    by_member: dict[str, list[tuple]] = {}
+    for row in reference_rows:
+        by_member.setdefault(row[1], []).append(row)
+    for member in picked:
+        rows = sorted(by_member.get(member, []), key=lambda r: r[2])
+        if not first.windowed:
+            out[member] = {r[2] for r in rows}
+            continue
+        times = [r[5] for r in rows if r[5] is not None]
+        if times != sorted(times):
+            out[member] = None
+            continue
+        lo = (
+            0
+            if first.ts_from is None
+            else next(
+                (k for k, r in enumerate(rows) if r[5] is not None and r[5] >= first.ts_from), len(rows)
+            )
+        )
+        hi = next(
+            (k for k in range(lo, len(rows)) if first.ts_to is not None and rows[k][5] is not None
+             and rows[k][5] >= first.ts_to),
+            len(rows),
+        )  # fmt: skip
+        out[member] = {r[2] for r in rows[lo:hi]}
+    return out
+
+
+def alter(folder: Path, member: str, kind: str) -> None:
+    """Change a source between the passes: same size inside, append, or a new head."""
+    path = folder / member
+    data = path.read_bytes()
+    if kind == "inside":
+        at = data.find(b"done", len(data) // 2)
+        if at >= 0:
+            path.write_bytes(data[:at] + b"DONE" + data[at + 4 :])
+    elif kind == "append" and member.endswith(".log"):
+        path.write_bytes(
+            data + mf.render([mf.header(10**7, "INFO", "[Alpha] item 999 step 1 done", pid=4444)])
+        )
+    else:
+        k = next((n for n, b in enumerate(data) if 0x61 <= b <= 0x7A), None)
+        if k is not None:
+            path.write_bytes(data[:k] + bytes([data[k] - 32]) + data[k + 1 :])
+
+
 @settings(max_examples=EXAMPLES, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     chain=chain_spec,
@@ -137,23 +213,52 @@ def first_pass(spec, times: list[int], members: list[str]) -> FirstPass:
     firsts=st.lists(first_spec, min_size=1, max_size=2),
     interrupt=st.one_of(st.none(), st.integers(1, 80)),
     sizes=st.sampled_from([(300, 900), (1000, 2500), (1 << 20, 16 << 20)]),
+    change=st.one_of(st.none(), st.tuples(st.integers(0, 40), st.sampled_from(["inside", "append", "head"]))),
+    other=st.booleans(),  # another collection indexed between the passes
+    resume=st.booleans(),  # complete with resume_pending (else a plain run of the same path)
 )
-def test_partial_open_completed_equals_full_indexing(chain, pairs, families, firsts, interrupt, sizes):
+def test_partial_open_completed_equals_full_indexing(
+    chain, pairs, families, firsts, interrupt, sizes, change, other, resume
+):
     work = Path(tempfile.mkdtemp(prefix="dmslog-partial-"))
     chunk_size, batch_bytes = sizes
+    plain = IngestOptions(chunk_size=chunk_size, batch_bytes=batch_bytes)
     try:
         folder = write_case(work / "Log", chain, pairs, families)
+        second = write_other(work / "Other") if other else None
         full = create_case_db(work / "full" / "case.sqlite")
         part = create_case_db(work / "part" / "case.sqlite")
         try:
-            run_ingest(full, folder, IngestOptions(chunk_size=chunk_size, batch_bytes=batch_bytes))
-            reference = ph.content(full)
-            times = sorted({r[5] for r in reference["entries"] if r[5] is not None})
+            run_ingest(full, folder, plain)
+            first_ref = ph.content(full)
+            times = sorted({r[5] for r in first_ref["entries"] if r[5] is not None})
             members = sorted(r[0] for r in full.execute("SELECT member FROM source"))
             for i, spec in enumerate(firsts):
-                options = IngestOptions(
-                    chunk_size=chunk_size, batch_bytes=batch_bytes, first=first_pass(spec, times, members)
-                )
+                fp = first_pass(spec, times, members)
+                options = IngestOptions(chunk_size=chunk_size, batch_bytes=batch_bytes, first=fp)
+                seen: list[bool] = []
+
+                def progress(event, _fp=fp, _check=i == 0, _seen=seen):
+                    if event.phase != "first_ready" or not _check:
+                        return
+                    # what the first pass chose is committed and readable by another connection
+                    selected = select_sources(build_plan(folder, ReadLimits()).sources, "default")
+                    picked = chosen_sources(selected, _fp)
+                    reader = sqlite3.connect(f"file:{work / 'part' / 'case.sqlite'}?mode=ro", uri=True)
+                    try:
+                        shown: dict[str, set[int]] = {}
+                        for member, line in reader.execute(
+                            "SELECT s.member, e.line_no FROM entry e JOIN source s ON s.id = e.source_id"
+                        ):
+                            shown.setdefault(member, set()).add(line)
+                    finally:
+                        reader.close()
+                    assert set(shown) <= picked
+                    for member, lines in expected_first(first_ref["entries"], picked, _fp).items():
+                        if lines is not None:
+                            assert shown.get(member, set()) == lines, member
+                    _seen.append(True)
+
                 if i == 0 and interrupt is not None:
                     original = SourceReader.iter_chunks
                     count = [0]
@@ -167,22 +272,43 @@ def test_partial_open_completed_equals_full_indexing(chain, pairs, families, fir
 
                     SourceReader.iter_chunks = flaky
                     try:
-                        run_ingest(part, folder, options)
+                        run_ingest(part, folder, options, progress)
                     except Interrupted:
                         pass
                     finally:
                         SourceReader.iter_chunks = original
                 else:
-                    run_ingest(part, folder, options)
+                    run_ingest(part, folder, options, progress)
                 ph.assert_integrity(part)
                 ph.assert_ids_follow_chains(part)
-            run_ingest(part, folder, IngestOptions(chunk_size=chunk_size, batch_bytes=batch_bytes))
+            if change is not None:  # only a source that is still incomplete (partial or never indexed)
+                open_members = sorted(
+                    m
+                    for sid, m, status in part.execute("SELECT id, member, status FROM source")
+                    if status == "pending" or load_state(part, sid) is not None
+                )
+                if open_members:
+                    alter(folder, open_members[change[0] % len(open_members)], change[1])
+            if second is not None:
+                run_ingest(part, second, plain)
+            if resume:
+                resume_pending(part, plain)
+            else:
+                run_ingest(part, folder, plain)
+            reference_db = create_case_db(work / "ref" / "case.sqlite")
+            try:
+                run_ingest(reference_db, folder, plain)
+                if second is not None:
+                    run_ingest(reference_db, second, plain)
+                reference = ph.content(reference_db)
+            finally:
+                reference_db.close()
             ph.assert_same(ph.content(part), reference)
             ph.assert_integrity(part)
             ph.assert_ids_follow_chains(part)
             assert part.execute("SELECT count(*) FROM meta WHERE key LIKE 'partial%'").fetchone()[0] == 0
             before = part.total_changes
-            run_ingest(part, folder, IngestOptions(chunk_size=chunk_size, batch_bytes=batch_bytes))
+            run_ingest(part, folder, plain)
             assert part.total_changes == before
         finally:
             full.close()

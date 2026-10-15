@@ -502,3 +502,141 @@ def test_utf16_source_window_first_equals_full_indexing(tmp_path, container):
         assert unchanged_again(conn, path)
     finally:
         conn.close()
+
+
+# --------------------------------------------------------------------------- review of PR #193 (regressions)
+
+
+def test_locating_the_window_keeps_memory_bounded_by_the_chunk(tmp_path):
+    import tracemalloc
+
+    data = make_log(400_000)  # ~17 MiB
+    path = write_folder(tmp_path / "Log", {WFM: data})
+    info = info_of(path, WFM)
+    with SourceReader() as reader:
+        tracemalloc.start()
+        try:
+            span = locate_window(reader, info, ms(10_000), ms(20_000), 1 << 20)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    assert span.size == len(data)
+    assert peak < 8 * (1 << 20), peak  # a few chunks, not the whole source
+
+
+def test_interrupted_at_first_ready_of_a_sources_first_open_is_resumable(tmp_path):
+    ont = f"{LOGDIR}/OntAdapter_2222.log"
+    path = write_folder(tmp_path / "Log", {WFM: make_log(50), ont: make_log(40, pid=2222)})
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+
+        def stop_at_first_ready(event):
+            if event.phase == "first_ready":
+                raise Interrupted
+
+        with pytest.raises(Interrupted):
+            run_ingest(
+                conn, path, IngestOptions(first=FirstPass(members=frozenset({WFM}))), stop_at_first_ready
+            )
+        assert dict(conn.execute("SELECT member, status FROM source")) == {WFM: "ready", ont: "pending"}
+        assert [(p.partial, p.pending) for p in pending_work(conn)] == [(0, 1)]
+        resume_pending(conn)
+        assert_same(content(conn), full_content(tmp_path, path))
+        assert pending_work(conn) == []
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("where", ["window", "prefix_done"])
+def test_change_inside_indexed_content_beyond_the_head_is_detected(tmp_path, monkeypatch, where):
+    root = write_folder(tmp_path / "Log", {WFM: make_log(300)})
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        first = FirstPass(ts_from=ms(200_000), ts_to=ms(250_000), defer_rest=True)
+        run_ingest(conn, root, IngestOptions(first=first, **SMALL))
+        if where == "prefix_done":  # interrupt the completion in the middle of the prefix
+            with monkeypatch.context() as patch:
+                flaky_reader(patch, 30)
+                with pytest.raises(Interrupted):
+                    run_ingest(conn, root, IngestOptions(**SMALL))
+            target = b"item 80 done"  # inside the part of the prefix already stored
+            sid = conn.execute("SELECT id FROM source").fetchone()[0]
+            assert load_state(conn, sid).segment == partial.SEG_PREFIX
+            assert conn.execute("SELECT 1 FROM entry WHERE msg = '[Alpha] item 90 done'").fetchone()
+        else:
+            target = b"item 220 done"  # inside the window, far beyond the first 4 KiB
+        data = (root / WFM).read_bytes()
+        assert data.index(target) > 4096
+        (root / WFM).write_bytes(data.replace(target, target.upper(), 1))  # same size
+        run_ingest(conn, root, IngestOptions(**SMALL))
+        assert_same(content(conn), full_content(tmp_path, root))
+        assert unchanged_again(conn, root)
+    finally:
+        conn.close()
+
+
+def test_unknown_example_follows_the_order_of_the_collections(tmp_path):
+    other = f"{LOGDIR}/WfmAdapter_3333.log"
+    beta = mf.render([mf.header(i * 1000, "INFO", f"[Beta] thing {i} seen", pid=3333) for i in range(5)])
+    a = write_folder(tmp_path / "A", {WFM: make_log(20), other: beta})
+    b_beta = mf.render([mf.header(i * 1000, "INFO", f"[Beta] thing {i} seen", pid=4444) for i in range(5)])
+    b = write_folder(tmp_path / "B", {f"{LOGDIR}/WfmAdapter_4444.log": b_beta})
+    ref = create_case_db(tmp_path / "ref" / "case.sqlite")
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        run_ingest(ref, a)
+        run_ingest(ref, b)
+        run_ingest(conn, a, IngestOptions(first=FirstPass(members=frozenset({WFM}), defer_rest=True)))
+        run_ingest(conn, b)
+        resume_pending(conn)
+        assert_same(content(conn), content(ref))
+    finally:
+        conn.close()
+        ref.close()
+
+
+def test_reservation_beyond_int64_falls_back_without_touching_the_case(tmp_path):
+    path = write_folder(tmp_path / "Log", {WFM: make_log(100)})
+    top = 2**63 - 1
+    floor = top - 110  # 100 records fit, the 125 lines of the file do not
+    ref = create_case_db(tmp_path / "ref" / "case.sqlite")
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        for c in (ref, conn):
+            c.execute("INSERT INTO meta(key, value) VALUES ('id_floor.entry', ?)", (str(floor),))
+        run_ingest(ref, path)
+        run_ingest(conn, path, IngestOptions(first=FirstPass(ts_from=ms(30_000), ts_to=ms(40_000))))
+        assert_same(content(conn), content(ref))
+        stored = int(conn.execute("SELECT value FROM meta WHERE key = 'id_floor.entry'").fetchone()[0])
+        assert stored <= top
+        assert conn.execute("SELECT max(id) FROM entry").fetchone()[0] <= top
+    finally:
+        conn.close()
+        ref.close()
+
+
+def test_changed_older_file_of_a_chain_keeps_the_chain_in_id_order(tmp_path):
+    root = write_folder(tmp_path / "Log", {WFM0: make_log(100), WFM: make_log(100, start_ms=100_000)})
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        first = FirstPass(ts_from=ms(80_000), ts_to=ms(130_000), defer_rest=True)
+        run_ingest(conn, root, IngestOptions(first=first, **SMALL))
+        data = (root / WFM0).read_bytes()
+        (root / WFM0).write_bytes(data.replace(b"item 0 done", b"ITEM 0 DONE", 1))  # new head, same size
+        run_ingest(conn, root, IngestOptions(**SMALL))
+        assert_ids_follow_chains(conn)
+        assert_same(content(conn), full_content(tmp_path, root))
+    finally:
+        conn.close()
+
+
+def test_reopening_a_complete_sources_first_selection_writes_nothing(tmp_path):
+    ont = f"{LOGDIR}/WfmAdapter_2222.log"  # same family, after WFM in the order
+    path = write_folder(tmp_path / "Log", {WFM: make_log(50), ont: make_log(40, pid=2222)})
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        options = IngestOptions(first=FirstPass(members=frozenset({ont})))
+        run_ingest(conn, path, options)
+        assert unchanged_again(conn, path, first=FirstPass(members=frozenset({ont})))
+    finally:
+        conn.close()

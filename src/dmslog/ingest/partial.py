@@ -34,11 +34,13 @@ the run that completes the collection sets those examples as a full indexing wou
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from itertools import chain
 
 from dmslog.ingest.discover import SourceInfo
 from dmslog.ingest.fingerprint import HASH_SPAN, sha1_hex, span_for
@@ -131,6 +133,9 @@ class PartialState:
     head_hash: str
     envelope: str
     sfx: int | None = None
+    # content already indexed, per segment: [start, end, sha1 of stream bytes start..end) (files only; a zip
+    # member is identified by its CRC). Checked before the stored records are reused (``_partial_valid``).
+    hashes: dict[str, list] = field(default_factory=dict)
     v: int = STATE_VERSION
 
     def to_json(self) -> str:
@@ -327,7 +332,7 @@ def locate_window(
             offset += end
             carry = buf[end:]
 
-        for data in (first, *rest):
+        for data in chain((first,), rest):  # lazily: memory stays O(chunk)
             if not data:
                 continue
             if len(head) < HASH_SPAN:
@@ -344,6 +349,20 @@ def locate_window(
     return WindowSpan(
         envelope.name, lo, lo_line, hi, hi_line, size, lines, sha1_hex(bytes(head[: span_for(size)]))
     )
+
+
+def hash_stream(reader: SourceReader, info: SourceInfo, start: int, end: int, chunk_size: int) -> str:
+    """sha1 of the stream bytes ``[start, end)`` of ``info`` (shorter when the stream ends before)."""
+    digest = hashlib.sha1()
+    pos = start
+    with closing(reader.iter_chunks(info, start, chunk_size)) as chunks:
+        for chunk in chunks:
+            if pos >= end:
+                break
+            piece = chunk[: end - pos]
+            digest.update(piece)
+            pos += len(piece)
+    return digest.hexdigest() if pos == end else ""
 
 
 def head_hash_of(reader: SourceReader, info: SourceInfo, size: int) -> str:

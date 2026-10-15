@@ -17,6 +17,7 @@ again from its ``byte_off``/``line_no``, because that record may have gained lin
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -62,6 +63,7 @@ from dmslog.ingest.partial import (
     FirstPass,
     PartialState,
     drop_state,
+    hash_stream,
     head_hash_of,
     load_state,
     locate_window,
@@ -411,7 +413,8 @@ class _Run:
         self.catalog: Catalog = options.catalog if options.catalog is not None else default_catalog()
         self.severity = SeverityHook()
         self.stage: str | None = None
-        self.scope_mark: tuple[str, str] | None = None  # meta key/value telling pending_work the run's scope
+        self.pending: dict[str, int | None] = {}  # pending_bytes per member (None: unchanged)
+        self.reset_members: set[str] = set()  # sources reset during the run (their rows must be read again)
 
     def _shown(self, text: str | None) -> str | None:
         """A name as presented or stored (progress, results): public spelling, control characters escaped."""
@@ -757,25 +760,37 @@ class _Run:
         self, selected: list[SourceInfo], rows: dict[str, SourceRow], reader: SourceReader
     ) -> int:
         """Bytes the run will add to the index, from ``plan_action`` of every source (nothing is written).
+        The per-member detail stays in ``self.pending`` (None = unchanged), which the partial open uses."""
+        self.pending = self.pending_by_member(selected, rows, reader)
+        return sum(n for n in self.pending.values() if n)
+
+    def pending_by_member(
+        self, selected: list[SourceInfo], rows: dict[str, SourceRow], reader: SourceReader
+    ) -> dict[str, int | None]:
+        """Per member, the bytes the run will add to the index (None: unchanged, nothing to write).
 
         Nothing for an unchanged source, only the new tail for an append or a resume, the whole source for
-        a new one or a re-index. A source that cannot be read here counts as zero (``process`` reports it).
+        a new one, a re-index or a partial one. A source that cannot be read here counts as zero bytes of
+        work (``process`` reports it).
         """
-        total = 0
+        out: dict[str, int | None] = {}
         for info in selected:
             row = rows.get(info.member)
             if row is None or load_state(self.w.conn, row.id) is not None:
-                total += info.size
+                out[info.member] = info.size
                 continue
             try:
                 action, _key_only = self.plan_action(row, info, reader)
             except (OSError, zipfile.BadZipFile, ReadLimitError):
+                out[info.member] = 0
                 continue
             if action in (Action.APPEND, Action.RESUME):
-                total += max(info.size - row.indexed_bytes, 0)
+                out[info.member] = max(info.size - row.indexed_bytes, 0)
             elif action is not Action.UNCHANGED:
-                total += info.size
-        return total
+                out[info.member] = info.size
+            else:
+                out[info.member] = None
+        return out
 
     def _finish_source(self, info: SourceInfo, fed: int, records: int = 0) -> None:
         self.bytes_done += info.size
@@ -918,16 +933,6 @@ class _Run:
 
     # ---- partial open (ROADMAP 9.9, ingest/partial.py)
 
-    def mark_scope(self) -> None:
-        """Remember the scope of this partial open (in the open transaction, or in one of its own)."""
-        if self.scope_mark is None:
-            return
-        own = not self.w.conn.in_transaction
-        self.w.begin()
-        self.w.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", self.scope_mark)
-        if own:
-            self.w.commit()
-
     def process_first(self, row: SourceRow, info: SourceInfo, reader: SourceReader, first: FirstPass) -> bool:
         """First pass of a partial open for one source; True when the source is left incomplete (window only).
 
@@ -957,6 +962,9 @@ class _Run:
         fixed_size = info.container_kind == "zip" or reader.is_utf16(info)
         w.set_next_id(next_row_id(w.conn, "entry"), on_top=True)
         base = w.next_id
+        if base + span.lines > INT64_MAX:  # the reservation would not fit SQLite ids: index it whole
+            self.process(row, info, reader)
+            return False
         state = PartialState(
             segment=SEG_WINDOW, base=base, win=base + span.lo_line - 1, end=base + span.lines + 1,
             lo=span.lo, lo_line=span.lo_line, hi=span.hi, hi_line=span.hi_line, size=span.size,
@@ -965,7 +973,6 @@ class _Run:
         w.begin()
         w.reserve_entry_ids(state.end)
         save_state(w.conn, row.id, state)
-        self.mark_scope()
         w.update_source(
             row.id, status="indexing", error=None, envelope=span.envelope, head_hash=None, tail_hash=None,
             indexed_bytes=0, size=info.size if fixed_size else span.size, mtime=info.mtime,
@@ -979,7 +986,7 @@ class _Run:
         try:
             fed = self._run_segments(row, info, reader, state, stats, stop_after=SEG_WINDOW)
         except _RangeOverflow:
-            self._abandon_partial(row)
+            self._abandon_partial(row, info)
             self.process(w.sources(row.collection_id)[row.member], info, reader)
             return False
         except (OSError, zipfile.BadZipFile, ReadLimitError, RecordTooLargeError) as exc:
@@ -1016,7 +1023,7 @@ class _Run:
         except (OSError, zipfile.BadZipFile, ReadLimitError):
             valid = False
         if not valid:
-            self._abandon_partial(row)
+            self._abandon_partial(row, info)
             return _ABANDONED
         self.current_action = ACTION_COMPLETE
         self.emit("source_start", 0, info.size)
@@ -1034,7 +1041,7 @@ class _Run:
         try:
             fed = self._run_segments(row, info, reader, state, stats, stop_after=None)
         except _RangeOverflow:
-            self._abandon_partial(row)
+            self._abandon_partial(row, info)
             return _ABANDONED
         except (OSError, zipfile.BadZipFile, ReadLimitError, RecordTooLargeError) as exc:
             w.rollback()
@@ -1053,7 +1060,12 @@ class _Run:
             SourceResult(self._shown(info.member), ACTION_COMPLETE, stats.records, stats.lines, fed)
         )
         if info.container_kind != "zip" and self._file_path(info).stat().st_size > state.raw_size:
-            return _GROWN  # the regular append takes the rest (and reports the source as done)
+            # the regular append takes the rest (and reports the source as done); its records get ids above
+            # sources indexed before and collections added meanwhile: the family's unknown_sig examples are
+            # set again at the end
+            _remember_reorder(w, row.collection_id, both={info.family})
+            w.commit()
+            return _GROWN
         self.result.sources_indexed += 1
         self._finish_source(info, fed, stats.records)
         return _DONE
@@ -1068,18 +1080,48 @@ class _Run:
                 return False
         elif size < state.size:
             return False
-        return head_hash_of(reader, info, state.size) == state.head_hash
+        if head_hash_of(reader, info, state.size) != state.head_hash:
+            return False
+        # every byte range whose records are kept must still hold the same bytes (not only the head)
+        return all(
+            hash_stream(reader, info, start, end, self.opt.chunk_size) == digest
+            for start, end, digest in state.hashes.values()
+            if end > start
+        )
 
-    def _abandon_partial(self, row: SourceRow) -> None:
-        """Drop the records and the state of a partial source; it becomes a source never indexed."""
+    def _abandon_partial(self, row: SourceRow, info: SourceInfo) -> None:
+        """Drop the records and the state of a partial source; it becomes a source never indexed.
+
+        It is indexed again with new (higher) ids, so the newer files of its rotation chain that already hold
+        records are reset too and indexed after it (ids must grow along the chain); the run picks them up
+        (``reset_members``). Its family is remembered for the ``unknown_sig`` example repair (``both``).
+        """
+        from dmslog.derive.engine import chain_of
+
         w = self.w
         w.rollback()
-        w.delete_source_entries(row.id)
-        drop_state(w.conn, row.id)
-        w.update_source(
-            row.id, status="pending", error=None, indexed_bytes=0, head_hash=None, tail_hash=None,
-            n_entries=0, first_ts=None, last_ts=None,
-        )  # fmt: skip
+        victims = [row.id]
+        if row.stream_id is not None:
+            chain = chain_of(info.file_name)
+            newer = (
+                (lambda r: r is None) if row.rotation is None else (lambda r: r is None or r < row.rotation)
+            )
+            for sid, member, file_name, rotation, n in w.conn.execute(
+                "SELECT id, member, file_name, rotation, n_entries FROM source"
+                " WHERE stream_id = ? AND id <> ?",
+                (row.stream_id, row.id),
+            ).fetchall():
+                if chain_of(file_name) == chain and newer(rotation) and (n or load_state(w.conn, sid)):
+                    victims.append(sid)
+                    self.reset_members.add(member)
+        for sid in victims:
+            w.delete_source_entries(sid)
+            drop_state(w.conn, sid)
+            w.update_source(
+                sid, status="pending", error=None, indexed_bytes=0, head_hash=None, tail_hash=None,
+                n_entries=0, first_ts=None, last_ts=None,
+            )  # fmt: skip
+        _remember_reorder(w, row.collection_id, both={info.family})
         w.commit()
         w.set_next_id(next_row_id(w.conn, "entry"), on_top=True)
 
@@ -1169,8 +1211,13 @@ class _Run:
             max_record_bytes=self.opt.max_record_bytes,
         )
         tail = TailWindow()
-        read_from = start - min(start, HASH_SPAN) if seg == SEG_SUFFIX else start
-        skip = start - read_from
+        seg_start = {SEG_WINDOW: state.lo, SEG_PREFIX: 0, SEG_SUFFIX: state.hi}[seg]
+        # files: the bytes of the segment are hashed from its start (a resume reads its stored part again) so
+        # that the next run can check them before it reuses the records; zip members have their CRC
+        hashing = info.container_kind != "zip"
+        digest = hashlib.sha1()
+        base_from = seg_start if hashing else start
+        read_from = base_from - min(base_from, HASH_SPAN) if seg == SEG_SUFFIX else base_from
         fed = batch_start = start
 
         def covered() -> int:
@@ -1182,6 +1229,9 @@ class _Run:
 
         def commit() -> None:
             w.flush()
+            if hashing:
+                state.hashes[seg] = [seg_start, fed, digest.copy().hexdigest()]
+                save_state(conn, row.id, state)
             n, first_ts, last_ts = w.source_totals(row.id)
             w.update_source(
                 row.id, indexed_bytes=covered(), n_entries=n, first_ts=first_ts, last_ts=last_ts,
@@ -1191,20 +1241,23 @@ class _Run:
 
         if start < stop:
             chunks = reader.iter_chunks(info, read_from, self.opt.chunk_size)
+            pos = read_from
             try:
                 for chunk in chunks:
-                    if skip:
-                        cut = chunk[:skip]
-                        tail.update(cut)
-                        chunk = chunk[len(cut) :]
-                        skip -= len(cut)
-                        if not chunk:
-                            continue
-                    if fed + len(chunk) > stop:
-                        chunk = chunk[: stop - fed]
-                    tail.update(chunk)
-                    fed += len(chunk)
-                    w.append(row.id, grouper.feed(chunk), stats)
+                    if pos + len(chunk) > stop:
+                        chunk = chunk[: stop - pos]
+                    end = pos + len(chunk)
+                    tail.update(chunk)  # bytes before the segment only feed the tail hash
+                    if hashing and end > seg_start:
+                        digest.update(chunk[max(seg_start - pos, 0) :])
+                    if end <= start:  # the part of a resumed segment that is already stored
+                        pos = end
+                        if pos >= stop:
+                            break
+                        continue
+                    part = chunk[max(start - pos, 0) :]
+                    pos = fed = end
+                    w.append(row.id, grouper.feed(part), stats)
                     if w.next_id > hi_id:
                         raise _RangeOverflow
                     if fed >= stop:
@@ -1217,8 +1270,8 @@ class _Run:
                         self.emit("progress", covered(), info.size, stats.records)
             finally:
                 chunks.close()
-        elif seg == SEG_SUFFIX and skip:  # empty suffix: the tail hash still needs the bytes before it
-            tail.update(_stream_range(reader, info, read_from, skip, self.opt.chunk_size))
+        elif seg == SEG_SUFFIX and start > read_from:  # empty suffix: the tail hash needs the bytes before it
+            tail.update(_stream_range(reader, info, read_from, start - read_from, self.opt.chunk_size))
         if fed < stop:
             raise _RangeOverflow  # the stream ended before the segment: the source changed
         w.append(row.id, grouper.finish(final=True), stats)
@@ -1264,6 +1317,7 @@ class _Run:
         drop_state(w.conn, row.id)
 
 
+INT64_MAX = 2**63 - 1  # largest SQLite rowid
 _DONE, _GROWN, _ABANDONED = "done", "grown", "abandoned"  # outcomes of _Run._complete_partial
 
 
@@ -1341,66 +1395,100 @@ def _first_members(order: list[SourceInfo], first: FirstPass, shown) -> tuple[li
     return picked, sorted(wanted - hit)
 
 
-def _mark_reordered(writer: IndexWriter, cid: int, order: list[SourceInfo], picked: list[SourceInfo]) -> None:
-    """Sources picked first get lower ids than sources that come before them in the regular order. The only
-    result that depends on the id order across sources is the example record of an unknown signature
-    (``unknown_sig.first_entry_id``, the lowest id): remember the families to repair once all is indexed."""
+def _reorder_families(
+    order: list[SourceInfo], picked: list[SourceInfo], work: set[str]
+) -> tuple[set[str], set[str]]:
+    """Families whose ``unknown_sig`` examples a partial open may misplace (only sources this run writes
+    count): ``both`` = a picked source comes after a source of the same family that is indexed later, so it
+    gets lower ids; ``rest`` = families of every source this run writes: if the run stops before one of them
+    gets its ids, another collection added meanwhile overtakes it (checked cheaply: only examples in later
+    collections)."""
     chosen = {i.member for i in picked}
-    families: set[str] = set()
-    seen_other: set[str] = set()
+    both: set[str] = set()
+    later: set[str] = set()
     for info in order:
+        if info.member not in work:
+            continue
         if info.member not in chosen:
-            seen_other.add(info.family)
-        elif info.family in seen_other:
-            families.add(info.family)
-    if not families:
+            later.add(info.family)
+        elif info.family in later:
+            both.add(info.family)
+    return both, {i.family for i in order if i.member in work}
+
+
+def _remember_reorder(
+    writer: IndexWriter, cid: int, both: set[str] = frozenset(), rest: set[str] = frozenset()
+):
+    """Merge families into ``meta['partial_order.<cid>']`` (in the caller's transaction)."""
+    if not both and not rest:
         return
     key = f"{PARTIAL_ORDER_PREFIX}{cid}"
-    row = writer.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
-    try:
-        families |= set(json.loads(row[0])) if row else set()
-    except (TypeError, ValueError):
-        pass
+    stored = _load_reorder(writer.conn, cid)
+    value = {"both": sorted(stored["both"] | set(both)), "rest": sorted(stored["rest"] | set(rest))}
     writer.begin()
-    writer.conn.execute(
-        "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, json.dumps(sorted(families)))
-    )
-    writer.commit()
+    writer.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, json.dumps(value)))
+
+
+def _load_reorder(conn, cid: int) -> dict[str, set[str]]:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"{PARTIAL_ORDER_PREFIX}{cid}",)).fetchone()
+    out: dict[str, set[str]] = {"both": set(), "rest": set()}
+    try:
+        data = json.loads(row[0]) if row else {}
+        if isinstance(data, list):  # first format: the families of ``both``
+            data = {"both": data}
+        for name in out:
+            out[name] = {str(f) for f in data.get(name, [])}
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return out
 
 
 def _repair_unknown_first(writer: IndexWriter, cid: int, order: list[SourceInfo]) -> None:
-    """``unknown_sig.first_entry_id`` as a full indexing sets it (the first record of the signature in the
-    regular source order), for the families ``_mark_reordered`` remembered; then forget them. Reads the
-    records without a template of those families in this collection (signatures are memoized)."""
+    """``unknown_sig.first_entry_id`` as a full indexing (collections in the order they were added, sources in
+    the regular order) sets it, for the families ``_remember_reorder`` noted; then forget them.
+
+    Collection precedence is the collection id: an example in an earlier collection stays; one in this or a
+    later collection is replaced by the first record of the signature in this collection, if it has one.
+    ``both`` families read every record without a template of the family in this collection; ``rest``
+    families only when an example lies in a later collection, and only until those signatures are found."""
     conn = writer.conn
     key = f"{PARTIAL_ORDER_PREFIX}{cid}"
-    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
-    if row is None:
+    if conn.execute("SELECT 1 FROM meta WHERE key = ?", (key,)).fetchone() is None:
         return
-    try:
-        families = set(json.loads(row[0]))
-    except (TypeError, ValueError):
-        families = set()
+    marks = _load_reorder(conn, cid)
+    later_sql = (
+        "SELECT u.signature FROM unknown_sig u JOIN entry e ON e.id = u.first_entry_id"
+        " JOIN source s ON s.id = e.source_id WHERE u.family = ? AND s.collection_id > ?"
+    )
+    wanted: dict[str, set[str] | None] = {f: None for f in marks["both"]}  # None = every signature
+    for family in marks["rest"] - marks["both"]:
+        later = {r[0] for r in conn.execute(later_sql, (family, cid))}
+        if later:
+            wanted[family] = later
     rows = writer.sources(cid)
     first: dict[tuple[str, str], int] = {}
     for info in order:
-        if info.family not in families or info.member not in rows:
+        sigs = wanted.get(info.family, ())
+        if sigs == () or info.member not in rows:
             continue
         for eid, msg in conn.execute(
             "SELECT id, msg FROM entry WHERE source_id = ? AND tpl_id = 0 ORDER BY id",
             (rows[info.member].id,),
         ):
             sig = cached_signature(msg)
-            if sig:
-                first.setdefault((info.family, sig), eid)
+            if sig and (sigs is None or sig in sigs) and (info.family, sig) not in first:
+                first[(info.family, sig)] = eid
+                if sigs is not None:
+                    sigs.discard(sig)
+                    if not sigs:
+                        break
     writer.begin()
     for (family, sig), eid in first.items():
-        # a record of another (earlier) collection keeps its place: its id is lower in a full indexing too
         conn.execute(
             "UPDATE unknown_sig SET first_entry_id = ? WHERE family = ? AND signature = ?"
             " AND (SELECT s.collection_id FROM entry e JOIN source s ON s.id = e.source_id"
-            " WHERE e.id = unknown_sig.first_entry_id) = ?",
-            (eid, family, sig, cid),
+            " WHERE e.id = unknown_sig.first_entry_id) >= ? AND first_entry_id <> ?",
+            (eid, family, sig, cid, eid),
         )
     conn.execute("DELETE FROM meta WHERE key = ?", (key,))
     writer.commit()
@@ -1471,6 +1559,7 @@ def run_ingest(
         by_member = {s.member: s for s in plan.sources}
         # refuse BEFORE writing any source state, so a refusal leaves the case as it was
         _check_free_space(conn, run.pending_bytes(selected, writer.sources(cid), reader))
+        pending = run.pending
         run.follow_rotations(cid, by_member, reader)
         run.register_sources(cid, list(plan.sources), selected_members)
         run.store_installation(cid, list(selected))
@@ -1478,9 +1567,17 @@ def run_ingest(
         order = canonical = _oldest_first(selected)
         done: set[str] = set()
         if first is not None:
-            run.scope_mark = (f"{SCOPE_KEY_PREFIX}{cid}", options.scope)
             picked, run.result.first_unmatched = _first_members(order, first, run._shown)
-            _mark_reordered(writer, cid, order, picked)
+            work = {m for m, n in pending.items() if n is not None}
+            if work:  # before anything that can be interrupted: pending_work must see the collection
+                writer.begin()
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                    (f"{SCOPE_KEY_PREFIX}{cid}", options.scope),
+                )
+                both, rest_families = _reorder_families(order, picked, work)
+                _remember_reorder(writer, cid, both, rest_families)
+                writer.commit()
             run.stage = STAGE_FIRST
             run.sources_total = run.result.first_sources = len(picked)
             run.bytes_total = sum(s.size for s in picked)
@@ -1500,14 +1597,15 @@ def run_ingest(
             if first.defer_rest:
                 run.result.deferred = True
                 order = []
-                if any(load_state(conn, rows[i.member].id) is None for i in rest):
-                    run.mark_scope()  # sources not indexed at all: pending_work must list the collection
             else:
                 order = rest
             rows = writer.sources(cid)
         for info in order:
+            if info.member in run.reset_members:  # reset by an abandoned partial source of its chain
+                rows = writer.sources(cid)
+                run.reset_members.discard(info.member)
             run.process(rows[info.member], info, reader)
-    if not run.result.deferred and not _left_incomplete(conn, cid):
+    if not _left_incomplete(conn, cid):
         _repair_unknown_first(writer, cid, canonical)
     if first is None or not first.defer_rest:
         _finish_pass(run, conn, changes_before)
