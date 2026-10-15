@@ -75,13 +75,15 @@ function setup({ caseId = "C1", selected = null } = {}) {
   docListeners.keydown = []; // only this setup's handler is live
   let live = emptyState();
   const stack = createViewsStack({ ownFilter, getLive: () => live });
-  const parent = new FakeElement("div");
+  const trailHost = new FakeElement("div");
+  const actionsHost = new FakeElement("div");
+  const parent = trailHost;
   const calls = { apply: [], reveal: [], messages: [], restore: [] };
   const store = new Map();
   const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
   const ctx = { caseId, selected };
   const ui = mountViewsStack({
-    parent, beforePanel: null, footer: null, stack, storage,
+    trailHost, actionsHost, stack, storage,
     getCase: () => ctx.caseId,
     restoreState: (state) => { live = state; calls.restore.push(state); },
     applyView: async () => {
@@ -91,7 +93,8 @@ function setup({ caseId = "C1", selected = null } = {}) {
     reveal: async (row) => { calls.reveal.push(row); },
     showMessage: (text, isError) => calls.messages.push([text, isError]),
   });
-  const bar = parent.children[0];
+  const bar = new FakeElement("div"); // the two ends of the strip, searched as one
+  bar.children = [trailHost, actionsHost];
   const btn = (cls) => bar.byClass(cls)[0];
   const crumbs = () => bar.byClass("vs-crumb");
   const key = (event) => {
@@ -112,7 +115,8 @@ test("narrow builds the stack, breadcrumbs show it and the effective filter is t
   t.btn("vs-narrow").click();
   await tick();
   assert.deepEqual(t.crumbs().map((c) => c.textContent), ["tid = 12", "View 2"]);
-  assert.equal(t.crumbs()[1].getAttribute("aria-current"), "true");
+  assert.equal(t.crumbs()[1].getAttribute("aria-current"), "page");
+  assert.equal(t.crumbs()[0].getAttribute("aria-current"), undefined);
   assert.deepEqual(t.calls.apply.at(-1), { and: [{ tid: [12] }] });
   t.setLive({ userFilter: { key: { type: "gid", eq: HOSTILE } } });
   t.ui.changed();
@@ -157,19 +161,19 @@ test("show in parent / root keeps the selected record and reveals it after the r
   t.ui.changed();
   t.btn("vs-narrow").click();
   assert.equal(t.stack.index, 2);
-  t.btn("vs-show-parent").click();
+  t.ui.showInParent();
   await tick();
   assert.equal(t.stack.index, 1);
   assert.deepEqual(t.calls.reveal, [{ id: 77, ts: 5000 }]);
-  t.btn("vs-show-root").click();
+  t.ui.showInRoot();
   await tick();
   assert.equal(t.stack.index, 0);
   assert.equal(t.calls.reveal.length, 2);
-  t.btn("vs-show-root").click(); // disabled in the browser; still harmless here
+  t.ui.showInRoot(); // disabled in the browser; still harmless here
   assert.equal(t.calls.messages.at(-1)[0], S.vsAtRoot);
   t.ctx.selected = null;
   t.crumbs()[1].click();
-  t.btn("vs-show-parent").click();
+  t.ui.showInParent();
   assert.equal(t.calls.messages.at(-1)[0], S.navNoSelection);
   assert.equal(t.stack.index, 1);
 });
@@ -178,7 +182,7 @@ test("a newer view change cancels a pending reveal", async () => {
   const t = setup({ selected: { id: 5, ts: null } });
   t.setLive({ userFilter: { tid: [1] } });
   t.btn("vs-narrow").click();
-  t.btn("vs-show-parent").click(); // reveal waits one tick
+  t.ui.showInParent(); // reveal waits one tick
   t.btn("vs-forward").click(); // newer change before the await finished
   await tick();
   assert.equal(t.calls.reveal.length, 0);
@@ -187,7 +191,7 @@ test("a newer view change cancels a pending reveal", async () => {
 test("rename shows the new name; limit message", () => {
   const t = setup();
   t.setLive({ userFilter: { tid: [1] } });
-  t.btn("vs-rename").click();
+  t.ui.rename();
   const [input] = t.bar.byClass("vs-rename-input");
   input.value = HOSTILE;
   const [form] = t.bar.byClass("vs-rename-form");
@@ -215,4 +219,19 @@ test("the stack is saved per case and comes back on onCase", () => {
   assert.equal(t.ui.onCase("C2"), null);
   assert.equal(t.stack.size, 1);
   assert.equal(t.crumbs().length, 1);
+});
+
+test("the trail is nav > ol > li with the active view as aria-current=page; back/forward are labelled icons", () => {
+  const t = setup();
+  t.setLive({ userFilter: { tid: [1] } });
+  t.btn("vs-narrow").click();
+  const [nav] = t.bar.all().filter((n) => n.tagName === "NAV");
+  assert.equal(nav.getAttribute("aria-label"), S.vsCrumbsLabel);
+  assert.equal(nav.children[0].tagName, "OL");
+  assert.deepEqual(nav.children[0].children.map((n) => n.tagName), ["LI", "LI"]);
+  assert.equal(nav.children[0].children[1].children[0].getAttribute("aria-current"), "page");
+  assert.equal(t.btn("vs-back").getAttribute("aria-label"), S.vsBack);
+  assert.equal(t.btn("vs-forward").getAttribute("aria-label"), S.vsForward);
+  assert.equal(t.btn("vs-more").getAttribute("aria-label"), S.vsMoreLabel);
+  assert.equal(t.btn("vs-more").getAttribute("aria-haspopup"), "menu");
 });

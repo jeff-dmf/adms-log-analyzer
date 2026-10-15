@@ -1,18 +1,36 @@
-/* Chained views: breadcrumbs and buttons above the filter bar. Colours come from app.css tokens. */
-.vs-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin: 4px 0;
+/* Chained views in the filter strip: back/forward icons, the trail and the rename form (UI-18).
+   The strip itself is filter-strip.css. Colours come from the tokens. */
+.vs-back,
+.vs-forward {
+  flex: none;
+  min-width: 24px;
+  padding: 0 var(--space-2);
 }
 
 .vs-crumbs {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none; /* one line; a long trail scrolls by wheel and focus */
+}
+
+.vs-trail {
   display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
   align-items: center;
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vs-item {
+  display: flex;
+  min-width: 0;
+}
+
+.vs-item + .vs-item::before {
+  content: "\203a"; /* separator; decorative, not read */
+  padding: 0 2px;
+  color: var(--ink-muted);
 }
 
 .vs-crumb {
@@ -31,12 +49,15 @@
   font-style: italic;
 }
 
-.vs-sep {
-  color: var(--muted);
+.vs-narrow,
+.vs-more {
+  flex: none;
+  white-space: nowrap;
 }
 
 .vs-rename-form {
   display: inline-flex;
+  flex: none;
   gap: 4px;
   align-items: center;
 }

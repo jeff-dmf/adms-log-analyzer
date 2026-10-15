@@ -32,6 +32,8 @@ EXPECTED_MODULES = {
     "detail.js",
     "events-model.js",
     "events-panel.js",
+    "filter-chips-model.js",
+    "filter-chips.js",
     "filter-tree-model.js",
     "views-stack-model.js",
     "views-stack.js",

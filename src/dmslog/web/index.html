@@ -32,6 +32,7 @@
   <link rel="stylesheet" href="/css/payload-list.css">
   <link rel="stylesheet" href="/css/highlight.css">
   <link rel="stylesheet" href="/css/distinct.css">
+  <link rel="stylesheet" href="/css/filter-strip.css">
   <link rel="stylesheet" href="/css/views-stack.css">
   <link rel="stylesheet" href="/css/export.css">
   <link rel="stylesheet" href="/css/copy-export.css">
@@ -53,6 +54,8 @@
   <link rel="modulepreload" href="/js/detail.js">
   <link rel="modulepreload" href="/js/dock.js">
   <link rel="modulepreload" href="/js/field-error.js">
+  <link rel="modulepreload" href="/js/filter-chips-model.js">
+  <link rel="modulepreload" href="/js/filter-chips.js">
   <link rel="modulepreload" href="/js/filter-tree-model.js">
   <link rel="modulepreload" href="/js/filters.js">
   <link rel="modulepreload" href="/js/grid-model.js">
@@ -144,28 +147,39 @@
         <h2 id="grid-title" class="visually-hidden" data-i18n="panelGrid"></h2>
         <div id="collections-note" hidden></div>
         <div id="timeline" class="timeline-host"></div>
-        <form id="filter-form" class="filter-bar">
-          <div class="field">
-            <label for="sev-select" data-i18n="filterSeverity"></label>
-            <select id="sev-select"></select>
+        <div id="filter-strip" class="filter-strip" role="group" data-i18n-aria-label="stripLabel">
+          <div id="strip-trail" class="fs-trail"></div>
+          <span id="strip-state" class="fs-state"></span>
+          <div id="strip-chips" class="fs-chips"></div>
+          <div id="strip-actions" class="fs-actions">
+            <button type="button" id="strip-filters" class="ui-button is-ghost fs-filters" aria-controls="filter-form"></button>
           </div>
-          <div class="field">
-            <label for="level-select" data-i18n="filterLevel"></label>
-            <select id="level-select"></select>
-          </div>
-          <div class="field">
-            <label for="from-input" data-i18n="filterFrom"></label>
-            <input id="from-input" type="text" autocomplete="off" data-i18n-placeholder="filterTimePlaceholder">
-          </div>
-          <div class="field">
-            <label for="to-input" data-i18n="filterTo"></label>
-            <input id="to-input" type="text" autocomplete="off" data-i18n-placeholder="filterTimePlaceholder">
-          </div>
-          <button type="submit" data-i18n="filterApply"></button>
-          <button type="button" id="filter-reset" data-i18n="filterReset"></button>
-          <label class="toggle"><input type="checkbox" id="hide-noise"> <span data-i18n="filterHideNoise"></span></label>
-          <label class="toggle"><input type="checkbox" id="unclassified-only"> <span data-i18n="filterUnclassified"></span></label>
-        </form>
+          <form id="filter-form" class="filter-bar" hidden>
+            <div class="field">
+              <label for="sev-select" data-i18n="stripSeverity"></label>
+              <select id="sev-select"></select>
+            </div>
+            <div class="field">
+              <label for="from-input" data-i18n="filterFrom"></label>
+              <input id="from-input" type="text" autocomplete="off" data-i18n-placeholder="filterTimePlaceholder">
+            </div>
+            <div class="field">
+              <label for="to-input" data-i18n="filterTo"></label>
+              <input id="to-input" type="text" autocomplete="off" data-i18n-placeholder="filterTimePlaceholder">
+            </div>
+            <label class="toggle"><input type="checkbox" id="hide-noise"> <span data-i18n="filterHideNoise"></span></label>
+            <label class="toggle"><input type="checkbox" id="unclassified-only"> <span data-i18n="filterUnclassified"></span></label>
+            <details class="fs-advanced">
+              <summary data-i18n="stripAdvanced"></summary>
+              <div class="field">
+                <label for="level-select" data-i18n="filterLevel"></label>
+                <select id="level-select"></select>
+              </div>
+            </details>
+            <button type="submit" data-i18n="filterApply"></button>
+            <button type="button" id="filter-reset" data-i18n="filterReset"></button>
+          </form>
+        </div>
         <div id="grid-header" class="grid-header" role="row"></div>
         <div id="grid-viewport" class="grid-viewport" role="grid" tabindex="0" data-i18n-aria-label="panelGrid">
           <div id="grid-rows" class="grid-rows"></div>
