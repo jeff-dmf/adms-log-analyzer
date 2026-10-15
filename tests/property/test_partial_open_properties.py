@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -27,10 +28,11 @@ from hypothesis import HealthCheck, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
 from dmslog.ingest.ers import select_sources  # noqa: E402
-from dmslog.ingest.partial import FirstPass, load_state  # noqa: E402
+from dmslog.ingest.partial import FirstPass, load_state, pending_work  # noqa: E402
 from dmslog.ingest.pipeline import IngestOptions, build_plan, resume_pending, run_ingest  # noqa: E402
 from dmslog.ingest.reader import ReadLimits, SourceReader  # noqa: E402
 from dmslog.store import create_case_db  # noqa: E402
+from dmslog.store.writer import IndexWriter  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -211,21 +213,24 @@ def alter(folder: Path, member: str, kind: str) -> None:
     pairs=avl_spec,
     families=st.lists(st.sampled_from(FAMILY_FILES), max_size=4, unique=True),
     firsts=st.lists(first_spec, min_size=1, max_size=2),
-    interrupt=st.one_of(st.none(), st.integers(1, 80)),
+    # crash at the n-th chunk read or at the n-th writer commit (any point that writes)
+    interrupt=st.one_of(st.none(), st.tuples(st.sampled_from(["read", "commit"]), st.integers(1, 80))),
     sizes=st.sampled_from([(300, 900), (1000, 2500), (1 << 20, 16 << 20)]),
     change=st.one_of(st.none(), st.tuples(st.integers(0, 40), st.sampled_from(["inside", "append", "head"]))),
-    other=st.booleans(),  # another collection indexed between the passes
-    resume=st.booleans(),  # complete with resume_pending (else a plain run of the same path)
+    other=st.sampled_from(["none", "full", "partial"]),  # another collection added between the passes
+    other_first=first_spec,  # its partial open
+    resume=st.booleans(),  # complete with resume_pending (else plain runs of the paths)
+    a_last=st.booleans(),  # plain runs: complete the other collection first
 )
 def test_partial_open_completed_equals_full_indexing(
-    chain, pairs, families, firsts, interrupt, sizes, change, other, resume
+    chain, pairs, families, firsts, interrupt, sizes, change, other, other_first, resume, a_last
 ):
     work = Path(tempfile.mkdtemp(prefix="dmslog-partial-"))
     chunk_size, batch_bytes = sizes
     plain = IngestOptions(chunk_size=chunk_size, batch_bytes=batch_bytes)
     try:
         folder = write_case(work / "Log", chain, pairs, families)
-        second = write_other(work / "Other") if other else None
+        second = write_other(work / "Other") if other != "none" else None
         full = create_case_db(work / "full" / "case.sqlite")
         part = create_case_db(work / "part" / "case.sqlite")
         try:
@@ -259,26 +264,44 @@ def test_partial_open_completed_equals_full_indexing(
                             assert shown.get(member, set()) == lines, member
                     _seen.append(True)
 
+                stopped = False
                 if i == 0 and interrupt is not None:
-                    original = SourceReader.iter_chunks
+                    kind, at = interrupt
                     count = [0]
+                    if kind == "read":
+                        original = SourceReader.iter_chunks
 
-                    def flaky(self, info, start=0, size=1 << 20, _orig=original, _count=count):
-                        for piece in _orig(self, info, start, size):
+                        def flaky(self, info, start=0, size=1 << 20, _orig=original, _count=count, _at=at):
+                            for piece in _orig(self, info, start, size):
+                                _count[0] += 1
+                                if _count[0] == _at:
+                                    raise Interrupted
+                                yield piece
+
+                        owner, name = SourceReader, "iter_chunks"
+                    else:
+                        original = IndexWriter.commit
+
+                        def flaky(self, _orig=original, _count=count, _at=at):
                             _count[0] += 1
-                            if _count[0] == interrupt:
-                                raise Interrupted
-                            yield piece
+                            if _count[0] == _at:
+                                raise Interrupted  # before the COMMIT: the open transaction is lost
+                            return _orig(self)
 
-                    SourceReader.iter_chunks = flaky
+                        owner, name = IndexWriter, "commit"
+                    setattr(owner, name, flaky)
                     try:
                         run_ingest(part, folder, options, progress)
                     except Interrupted:
-                        pass
+                        stopped = True
+                        if part.in_transaction:  # what a crash does
+                            part.rollback()
                     finally:
-                        SourceReader.iter_chunks = original
+                        setattr(owner, name, original)
                 else:
                     run_ingest(part, folder, options, progress)
+                if i == 0 and not stopped:
+                    assert seen, "first_ready was not reported"
                 ph.assert_integrity(part)
                 ph.assert_ids_follow_chains(part)
             if change is not None:  # only a source that is still incomplete (partial or never indexed)
@@ -289,17 +312,33 @@ def test_partial_open_completed_equals_full_indexing(
                 )
                 if open_members:
                     alter(folder, open_members[change[0] % len(open_members)], change[1])
-            if second is not None:
+            # the collections in the order they were added (a crash before A existed adds the other one first)
+            a_first = part.execute(
+                "SELECT 1 FROM collection WHERE path = ?", (str(folder.resolve()),)
+            ).fetchone()
+            if other == "full":
                 run_ingest(part, second, plain)
-            if resume:
+            elif other == "partial":
+                fp = first_pass(other_first, [0, 2000, 4000], ["dnaApp_zone1/SVC/WfmAdapter_6666.log"])
+                run_ingest(part, second, replace(plain, first=replace(fp, defer_rest=True)))
+            known = part.execute(
+                "SELECT 1 FROM collection WHERE path = ?", (str(folder.resolve()),)
+            ).fetchone()
+            if resume and known:  # a crash before the collection existed leaves nothing to resume
+                resume_pending(part, plain)
+            elif resume:
+                assert not pending_work(part) or other == "partial"
+                run_ingest(part, folder, plain)
                 resume_pending(part, plain)
             else:
-                run_ingest(part, folder, plain)
+                paths = [folder] + ([second] if other == "partial" else [])
+                for path in reversed(paths) if a_last else paths:
+                    run_ingest(part, path, plain)
             reference_db = create_case_db(work / "ref" / "case.sqlite")
             try:
-                run_ingest(reference_db, folder, plain)
-                if second is not None:
-                    run_ingest(reference_db, second, plain)
+                for path in [folder, second] if a_first else [second, folder]:
+                    if path is not None:
+                        run_ingest(reference_db, path, plain)
                 reference = ph.content(reference_db)
             finally:
                 reference_db.close()

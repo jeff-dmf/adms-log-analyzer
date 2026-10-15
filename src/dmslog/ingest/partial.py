@@ -28,8 +28,9 @@ record anyway.
 
 Sources chosen first get ids below sources that come before them in the regular order. The only result that
 depends on the id order across sources is the example record of an unknown signature
-(``unknown_sig.first_entry_id``): ``meta['partial_order.<collection_id>']`` names the families to repair, and
-the run that completes the collection sets those examples as a full indexing would.
+(``unknown_sig.first_entry_id``). Across collections the writer keeps the example of the earliest collection
+whatever the ids; inside a collection ``meta['partial_order.<collection_id>']`` names the families to repair,
+and the run that completes the collection sets those examples as a full indexing would.
 """
 
 from __future__ import annotations
@@ -202,7 +203,8 @@ class PendingCollection:
 
 
 def pending_work(conn: sqlite3.Connection) -> list[PendingCollection]:
-    """Collections a partial open left incomplete, with the scope it used (to complete them with
+    """Collections a partial open left incomplete (its ``partial_scope`` mark is written before any work and
+    removed when the collection is complete), with the scope it used (to complete them with
     ``run_ingest(path, IngestOptions(scope=...))``). Collections without a ``partial_scope`` mark (no
     partial open ever ran on them) are not listed: their pending sources follow the old rules."""
     marks = {
@@ -231,8 +233,8 @@ def pending_work(conn: sqlite3.Connection) -> list[PendingCollection]:
                 counts["pending"] += 1
             elif status == "indexing":
                 counts["indexing"] += 1
-        if any(counts.values()):
-            out.append(PendingCollection(cid, int(row[1]), row[0], scope, **counts))
+        # listed even when every source looks done: the run stopped before it finished (derivation, ...)
+        out.append(PendingCollection(cid, int(row[1]), row[0], scope, **counts))
     return out
 
 

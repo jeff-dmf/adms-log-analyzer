@@ -640,3 +640,132 @@ def test_reopening_a_complete_sources_first_selection_writes_nothing(tmp_path):
         assert unchanged_again(conn, path, first=FirstPass(members=frozenset({ont})))
     finally:
         conn.close()
+
+
+# --------------------------------------------------------------------------- second review of PR #193
+
+
+def test_interrupted_while_reading_the_installation_is_resumable(tmp_path, monkeypatch):
+    from dmslog.ingest import pipeline as pl
+
+    ont = f"{LOGDIR}/OntAdapter_2222.log"
+    path = write_folder(tmp_path / "Log", {WFM: make_log(50), ont: make_log(40, pid=2222)})
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+
+        def broken(self, cid, selected):
+            raise Interrupted
+
+        with monkeypatch.context() as patch:
+            patch.setattr(pl._Run, "store_installation", broken)
+            with pytest.raises(Interrupted):
+                run_ingest(conn, path, IngestOptions(first=FirstPass(members=frozenset({WFM}))))
+        assert pending_work(conn)
+        resume_pending(conn)
+        assert_same(content(conn), full_content(tmp_path, path))
+        assert pending_work(conn) == []
+    finally:
+        conn.close()
+
+
+def test_unknown_example_keeps_collection_order_when_two_partial_opens_interleave(tmp_path):
+    other = f"{LOGDIR}/WfmAdapter_3333.log"
+
+    def beta(pid: int, n: int) -> bytes:
+        return mf.render([mf.header(i * 1000, "INFO", f"[Beta] thing {i} seen", pid=pid) for i in range(n)])
+
+    a = write_folder(tmp_path / "A", {WFM: make_log(20), other: beta(3333, 5)})
+    b = write_folder(tmp_path / "B", {f"{LOGDIR}/WfmAdapter_4444.log": beta(4444, 60)})
+    ref = create_case_db(tmp_path / "ref" / "case.sqlite")
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        run_ingest(ref, a)
+        run_ingest(ref, b)
+        run_ingest(conn, a, IngestOptions(first=FirstPass(members=frozenset({WFM}), defer_rest=True)))
+        run_ingest(conn, b, IngestOptions(first=FirstPass(ts_from=ms(50_000), defer_rest=True)))
+        run_ingest(conn, a)  # A's rest gets ids above B's reservation
+        run_ingest(conn, b)  # B fills its reserved (lower) ids
+        assert_same(content(conn), content(ref))
+    finally:
+        conn.close()
+        ref.close()
+
+
+@pytest.mark.parametrize("slack", [-1, 0, 1])  # exclusive end of the reservation = INT64_MAX + slack
+def test_reservation_at_the_exact_int64_limit(tmp_path, slack):
+    data = make_log(100)
+    lines = data.count(b"\n")
+    path = write_folder(tmp_path / "Log", {WFM: data})
+    top = 2**63 - 1
+    floor = top - lines - 1 + slack  # base = floor + 1, end = base + lines + 1
+    ref = create_case_db(tmp_path / "ref" / "case.sqlite")
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        for c in (ref, conn):
+            c.execute("INSERT INTO meta(key, value) VALUES ('id_floor.entry', ?)", (str(floor),))
+        run_ingest(ref, path)
+        run_ingest(conn, path, IngestOptions(first=FirstPass(ts_from=ms(30_000), ts_to=ms(40_000))))
+        assert_same(content(conn), content(ref))
+        assert int(conn.execute("SELECT value FROM meta WHERE key = 'id_floor.entry'").fetchone()[0]) <= top
+    finally:
+        conn.close()
+        ref.close()
+
+
+def test_reset_newer_file_already_done_in_the_first_pass_is_indexed_again(tmp_path):
+    root = write_folder(tmp_path / "Log", {WFM0: make_log(100), WFM: make_log(100, start_ms=100_000)})
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        first = FirstPass(ts_from=ms(50_000), defer_rest=True)  # all of .log, the end of .log.0
+        run_ingest(conn, root, IngestOptions(first=first))
+        status = dict(conn.execute("SELECT member, status FROM source"))
+        assert status == {WFM0: "indexing", WFM: "ready"}
+        data = (root / WFM0).read_bytes()
+        (root / WFM0).write_bytes(data.replace(b"item 0 done", b"ITEM 0 DONE", 1))
+        run_ingest(conn, root, IngestOptions(first=FirstPass(ts_from=ms(50_000))))
+        assert_ids_follow_chains(conn)
+        assert_same(content(conn), full_content(tmp_path, root))
+        assert pending_work(conn) == []
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("b_first", [False, True])
+def test_partial_opens_a_b_a_b_then_completion_in_any_order(tmp_path, b_first):
+    def files(pid: int, n: int) -> dict[str, bytes]:
+        return {
+            f"{LOGDIR}/WfmAdapter_{pid}.log.0": make_log(n, pid=pid),
+            f"{LOGDIR}/WfmAdapter_{pid}.log": make_log(n, start_ms=n * 1000, pid=pid),
+            f"{LOGDIR}/WfmAdapter_{pid + 1}.log": make_log(n // 2, pid=pid + 1),
+        }
+
+    a = write_folder(tmp_path / "A", files(1000, 60))
+    b = write_folder(tmp_path / "B", files(2000, 80))
+    ref = create_case_db(tmp_path / "ref" / "case.sqlite")
+    conn = create_case_db(tmp_path / "p" / "case.sqlite")
+    try:
+        run_ingest(ref, a)
+        run_ingest(ref, b)
+        defer = {"defer_rest": True}
+        run_ingest(
+            conn, a, IngestOptions(first=FirstPass(ts_from=ms(40_000), ts_to=ms(70_000), **defer), **SMALL)
+        )
+        run_ingest(
+            conn,
+            b,
+            IngestOptions(first=FirstPass(members=frozenset({f"{LOGDIR}/WfmAdapter_2001.log"}), **defer)),
+        )
+        run_ingest(
+            conn,
+            a,
+            IngestOptions(first=FirstPass(members=frozenset({f"{LOGDIR}/WfmAdapter_1001.log"}), **defer)),
+        )
+        run_ingest(conn, b, IngestOptions(first=FirstPass(ts_from=ms(10_000), **defer), **SMALL))
+        for path in (b, a) if b_first else (a, b):
+            run_ingest(conn, path, IngestOptions(**SMALL))
+        assert_same(content(conn), content(ref))
+        assert_ids_follow_chains(conn)
+        assert pending_work(conn) == []
+    finally:
+        conn.close()
+        ref.close()

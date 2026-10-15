@@ -60,10 +60,19 @@ _KEY_SQL = "INSERT OR IGNORE INTO entry_key(key_type, value, entry_id) VALUES (?
 _PAYLOAD_KEY_SQL = "INSERT OR IGNORE INTO entry_key(key_type, value, entry_id, origin) VALUES (?,?,?,1)"
 KEY_ORIGIN_PAYLOAD = 1
 _XML_FORMATS = ("xml", "xml_seq")
+# The example of a signature is its first record by (collection, id): collections in the order they were
+# added, whatever ids a later write gets (a partial open fills ids reserved earlier, ARQUITETURA 9.3b).
+_COLLECTION_OF = "(SELECT s.collection_id FROM entry e JOIN source s ON s.id = e.source_id WHERE e.id = {})"
 _UNKNOWN_SQL = (
     "INSERT INTO unknown_sig(family, signature, n, first_entry_id) VALUES (?,?,?,?)"
     " ON CONFLICT(family, signature) DO UPDATE SET n = n + excluded.n,"
-    " first_entry_id = min(first_entry_id, excluded.first_entry_id)"
+    " first_entry_id = CASE"
+    f" WHEN coalesce({_COLLECTION_OF.format('unknown_sig.first_entry_id')}, 9223372036854775807)"
+    f" > {_COLLECTION_OF.format('excluded.first_entry_id')} THEN excluded.first_entry_id"
+    f" WHEN {_COLLECTION_OF.format('unknown_sig.first_entry_id')}"
+    f" = {_COLLECTION_OF.format('excluded.first_entry_id')}"
+    " THEN min(unknown_sig.first_entry_id, excluded.first_entry_id)"
+    " ELSE unknown_sig.first_entry_id END"
 )
 _BODY_SQL = "INSERT INTO entry_body(entry_id, cont) VALUES (?,?)"
 _FTS_INSERT_SQL = (
@@ -781,7 +790,8 @@ class IndexWriter:
             todo = set(sigs)
             for entry_id, msg in conn.execute(
                 "SELECT e.id, e.msg FROM entry e JOIN source s ON s.id = e.source_id"
-                " JOIN stream t ON t.id = s.stream_id WHERE t.family = ? AND e.tpl_id = 0 ORDER BY e.id",
+                " JOIN stream t ON t.id = s.stream_id WHERE t.family = ? AND e.tpl_id = 0"
+                " ORDER BY s.collection_id, e.id",
                 (family,),
             ):
                 sig = cached_signature(msg)

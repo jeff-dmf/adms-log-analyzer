@@ -962,7 +962,9 @@ class _Run:
         fixed_size = info.container_kind == "zip" or reader.is_utf16(info)
         w.set_next_id(next_row_id(w.conn, "entry"), on_top=True)
         base = w.next_id
-        if base + span.lines > INT64_MAX:  # the reservation would not fit SQLite ids: index it whole
+        # the reservation (``end`` exclusive, and every id below it) must fit SQLite ids: else index it whole,
+        # before anything of it is written
+        if base + span.lines + 1 > INT64_MAX:
             self.process(row, info, reader)
             return False
         state = PartialState(
@@ -1063,7 +1065,7 @@ class _Run:
             # the regular append takes the rest (and reports the source as done); its records get ids above
             # sources indexed before and collections added meanwhile: the family's unknown_sig examples are
             # set again at the end
-            _remember_reorder(w, row.collection_id, both={info.family})
+            _remember_reorder(w, row.collection_id, {info.family})
             w.commit()
             return _GROWN
         self.result.sources_indexed += 1
@@ -1121,7 +1123,7 @@ class _Run:
                 sid, status="pending", error=None, indexed_bytes=0, head_hash=None, tail_hash=None,
                 n_entries=0, first_ts=None, last_ts=None,
             )  # fmt: skip
-        _remember_reorder(w, row.collection_id, both={info.family})
+        _remember_reorder(w, row.collection_id, {info.family})
         w.commit()
         w.set_next_id(next_row_id(w.conn, "entry"), on_top=True)
 
@@ -1395,14 +1397,11 @@ def _first_members(order: list[SourceInfo], first: FirstPass, shown) -> tuple[li
     return picked, sorted(wanted - hit)
 
 
-def _reorder_families(
-    order: list[SourceInfo], picked: list[SourceInfo], work: set[str]
-) -> tuple[set[str], set[str]]:
-    """Families whose ``unknown_sig`` examples a partial open may misplace (only sources this run writes
-    count): ``both`` = a picked source comes after a source of the same family that is indexed later, so it
-    gets lower ids; ``rest`` = families of every source this run writes: if the run stops before one of them
-    gets its ids, another collection added meanwhile overtakes it (checked cheaply: only examples in later
-    collections)."""
+def _reorder_families(order: list[SourceInfo], picked: list[SourceInfo], work: set[str]) -> set[str]:
+    """Families whose ``unknown_sig`` examples a sources-first open may misplace inside the collection (only
+    sources this run writes count): a picked source comes after a source of the same family that is indexed
+    later, so it gets lower ids. Across collections nothing is needed: the writer keeps the example of the
+    earliest collection whatever the ids (``writer._UNKNOWN_SQL``)."""
     chosen = {i.member for i in picked}
     both: set[str] = set()
     later: set[str] = set()
@@ -1413,75 +1412,51 @@ def _reorder_families(
             later.add(info.family)
         elif info.family in later:
             both.add(info.family)
-    return both, {i.family for i in order if i.member in work}
+    return both
 
 
-def _remember_reorder(
-    writer: IndexWriter, cid: int, both: set[str] = frozenset(), rest: set[str] = frozenset()
-):
+def _remember_reorder(writer: IndexWriter, cid: int, families: set[str]) -> None:
     """Merge families into ``meta['partial_order.<cid>']`` (in the caller's transaction)."""
-    if not both and not rest:
+    if not families:
         return
     key = f"{PARTIAL_ORDER_PREFIX}{cid}"
-    stored = _load_reorder(writer.conn, cid)
-    value = {"both": sorted(stored["both"] | set(both)), "rest": sorted(stored["rest"] | set(rest))}
+    value = json.dumps(sorted(_load_reorder(writer.conn, cid) | set(families)))
     writer.begin()
-    writer.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, json.dumps(value)))
+    writer.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, value))
 
 
-def _load_reorder(conn, cid: int) -> dict[str, set[str]]:
+def _load_reorder(conn, cid: int) -> set[str]:
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"{PARTIAL_ORDER_PREFIX}{cid}",)).fetchone()
-    out: dict[str, set[str]] = {"both": set(), "rest": set()}
     try:
-        data = json.loads(row[0]) if row else {}
-        if isinstance(data, list):  # first format: the families of ``both``
-            data = {"both": data}
-        for name in out:
-            out[name] = {str(f) for f in data.get(name, [])}
+        data = json.loads(row[0]) if row else []
+        if isinstance(data, dict):  # an older draft stored {"both": [...], "rest": [...]}
+            data = data.get("both", [])
+        return {str(f) for f in data}
     except (TypeError, ValueError, AttributeError):
-        pass
-    return out
+        return set()
 
 
 def _repair_unknown_first(writer: IndexWriter, cid: int, order: list[SourceInfo]) -> None:
-    """``unknown_sig.first_entry_id`` as a full indexing (collections in the order they were added, sources in
-    the regular order) sets it, for the families ``_remember_reorder`` noted; then forget them.
-
-    Collection precedence is the collection id: an example in an earlier collection stays; one in this or a
-    later collection is replaced by the first record of the signature in this collection, if it has one.
-    ``both`` families read every record without a template of the family in this collection; ``rest``
-    families only when an example lies in a later collection, and only until those signatures are found."""
+    """``unknown_sig.first_entry_id`` as a full indexing sets it inside this collection (the first record of
+    the signature in the regular source order), for the families ``_remember_reorder`` noted; then forget
+    them. An example in an earlier collection stays (collection precedence, as in the writer)."""
     conn = writer.conn
     key = f"{PARTIAL_ORDER_PREFIX}{cid}"
     if conn.execute("SELECT 1 FROM meta WHERE key = ?", (key,)).fetchone() is None:
         return
-    marks = _load_reorder(conn, cid)
-    later_sql = (
-        "SELECT u.signature FROM unknown_sig u JOIN entry e ON e.id = u.first_entry_id"
-        " JOIN source s ON s.id = e.source_id WHERE u.family = ? AND s.collection_id > ?"
-    )
-    wanted: dict[str, set[str] | None] = {f: None for f in marks["both"]}  # None = every signature
-    for family in marks["rest"] - marks["both"]:
-        later = {r[0] for r in conn.execute(later_sql, (family, cid))}
-        if later:
-            wanted[family] = later
+    families = _load_reorder(conn, cid)
     rows = writer.sources(cid)
     first: dict[tuple[str, str], int] = {}
     for info in order:
-        sigs = wanted.get(info.family, ())
-        if sigs == () or info.member not in rows:
+        if info.family not in families or info.member not in rows:
             continue
         for eid, msg in conn.execute(
             "SELECT id, msg FROM entry WHERE source_id = ? AND tpl_id = 0 ORDER BY id",
             (rows[info.member].id,),
         ):
             sig = cached_signature(msg)
-            if sig and (sigs is None or sig in sigs) and (info.family, sig) not in first:
-                first[(info.family, sig)] = eid
-                if sigs is not None:
-                    sigs.discard(sig)
-                    if not sigs:
-                        break
+            if sig:
+                first.setdefault((info.family, sig), eid)
     writer.begin()
     for (family, sig), eid in first.items():
         conn.execute(
@@ -1545,6 +1520,15 @@ def run_ingest(
     writer.sync_templates(run.catalog)
     writer.commit()
     cid = run.resolve_collection()
+    if (
+        options.first is not None
+        and not conn.execute("SELECT 1 FROM source WHERE collection_id = ? LIMIT 1", (cid,)).fetchone()
+    ):  # a new collection: its partial open is visible to pending_work from its first commit on
+        writer.begin()
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+            (f"{SCOPE_KEY_PREFIX}{cid}", options.scope),
+        )
     writer.commit()
     run.result.collection_id = cid
     selected = select_sources(plan.sources, options.scope)
@@ -1560,28 +1544,34 @@ def run_ingest(
         # refuse BEFORE writing any source state, so a refusal leaves the case as it was
         _check_free_space(conn, run.pending_bytes(selected, writer.sources(cid), reader))
         pending = run.pending
-        run.follow_rotations(cid, by_member, reader)
-        run.register_sources(cid, list(plan.sources), selected_members)
-        run.store_installation(cid, list(selected))
-        rows = writer.sources(cid)
         order = canonical = _oldest_first(selected)
         done: set[str] = set()
         if first is not None:
             picked, run.result.first_unmatched = _first_members(order, first, run._shown)
             work = {m for m, n in pending.items() if n is not None}
-            if work:  # before anything that can be interrupted: pending_work must see the collection
+            if (
+                work
+            ):  # before anything that writes or can be interrupted: pending_work must see the collection
                 writer.begin()
                 conn.execute(
                     "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
                     (f"{SCOPE_KEY_PREFIX}{cid}", options.scope),
                 )
-                both, rest_families = _reorder_families(order, picked, work)
-                _remember_reorder(writer, cid, both, rest_families)
+                _remember_reorder(writer, cid, _reorder_families(order, picked, work))
                 writer.commit()
+        run.follow_rotations(cid, by_member, reader)
+        run.register_sources(cid, list(plan.sources), selected_members)
+        run.store_installation(cid, list(selected))
+        rows = writer.sources(cid)
+        if first is not None:
             run.stage = STAGE_FIRST
             run.sources_total = run.result.first_sources = len(picked)
             run.bytes_total = sum(s.size for s in picked)
             for info in picked:
+                if info.member in run.reset_members:  # reset by an abandoned older file of its chain
+                    rows = writer.sources(cid)
+                    run.reset_members.discard(info.member)
+                    done.discard(info.member)
                 if not run.process_first(rows[info.member], info, reader, first):
                     done.add(info.member)
             _finish_pass(run, conn, changes_before)
@@ -1590,7 +1580,7 @@ def run_ingest(
             run.result.first_records = run.result.records
             run.current_member = None
             run.emit("first_ready")
-            rest = [info for info in order if info.member not in done]
+            rest = [info for info in order if info.member not in done or info.member in run.reset_members]
             run.stage = STAGE_REST
             run.sources_total, run.sources_done = len(rest), 0
             run.bytes_total, run.bytes_done = sum(s.size for s in rest), 0
@@ -1600,10 +1590,15 @@ def run_ingest(
             else:
                 order = rest
             rows = writer.sources(cid)
-        for info in order:
-            if info.member in run.reset_members:  # reset by an abandoned partial source of its chain
+        queued = {info.member for info in order}
+        for info in canonical:
+            # a source reset by an abandoned older file of its chain is indexed again, even if this run had
+            # already finished it (it comes later in the chain order, so the loop has not passed it yet)
+            if info.member in run.reset_members:
                 rows = writer.sources(cid)
                 run.reset_members.discard(info.member)
+            elif info.member not in queued:
+                continue
             run.process(rows[info.member], info, reader)
     if not _left_incomplete(conn, cid):
         _repair_unknown_first(writer, cid, canonical)
