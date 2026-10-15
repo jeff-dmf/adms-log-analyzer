@@ -715,6 +715,55 @@ Desenho:
 
 `tools/mine_templates.py` (dev, PR #77, 2026-10-11) agrupa registros desconhecidos de um caso já indexado por essa assinatura e propõe um esboço de TOML com exemplos, para a inclusão dos demais logs do ERS (seção 9.1a). Abre o caso só para leitura (`immutable=1`; recusa um `-wal`/`-shm` pendente), valida o rascunho com o carregador do catálogo (comenta como `SKIPPED` o candidato em conflito) e só escreve em `--out`; tudo o que vem do caso é dado não confiável (tipos validados, comentários e stderr sanitizados, resumo com motivos genéricos). Uso e limites em `docs/FAMILIA-NOVA.md`.
 
+### 6.1a Envelopes genéricos declarados em `families.toml` (9.14)
+
+Logs fora do escopo da 1.0 com cabeçalho próprio (logs .NET de ferramentas e instaladores, ferramenta do ERS, motivo de desligamento) eram lidos como `plain`: um registro por linha, sem `ts`, sem nível. Cada formato desses passa a ser **dado**: uma tabela `[[envelope]]` em `src/dmslog/families.toml`, compilada por `parse/formats.py` em `GenericEnvelope` (protocolo `Envelope` com `match`/`scan`).
+
+```toml
+[[envelope]]
+name = "dmy_tid_level"            # gravado em source.envelope; estável (retomada usa o nome)
+description = "..."
+header = '^(?P<day>\d\d)\.(?P<month>\d\d)\.(?P<year>\d{4}) (?P<hour>\d\d):...(?P<ms>\d{3}) \[TID=(?P<tid>\d{1,10})\] \[(?P<level>[A-Za-z]{1,11}) {0,8}\] - '
+tid_base = 10                     # ou 16
+levels = { SEVERE = "FATAL" }     # soma-se ao padrão (DEBUG=DEBUGLOG, WARN=WARNING, TRACE=VERBOSE, ...)
+min_lines = 2                     # padrão
+min_ratio = 0.2                   # padrão
+examples = ["15.10.2026 13:04:05.123 [TID=12] [DEBUG] - Starting step"]
+```
+
+- **Grupos nomeados**: obrigatórios `year` (4 dígitos), `month`, `day`, `hour`, `minute`, `second`; opcionais `ms` (fração; 3 primeiros dígitos), `pid`, `tid`, `level`, `process`. Outro nome ou grupo sem nome: erro de carga. Data impossível não é cabeçalho (como no `adms`). `pid`/`tid` acima de 2^63−1 viram NULL. Hora local do log, codificada como UTC (seção 5, U6).
+- **Nível**: o token é comparado sem caixa com a tabela padrão + `levels`; token desconhecido → `level` NULL. `DEBUG` → `DEBUGLOG` (5), e não `VERBOSE`, para que a saída normal desses processos não vire ruído oculto (6.4, passo 6).
+- **Contrato de prefixo (6.1)** garantido por construção e por validação: a regex é ASCII, começa com `^`, é aplicada com `pattern.match(buf, pos, endpos)` sobre a linha **sem** o fim de linha e no máximo `HEADER_WINDOW` = 512 bytes (o BOM é pulado antes e contado em `msg_start`); `.`, `$`/`\Z` e look-arounds são rejeitados; passa pelas mesmas verificações de segurança das regex de template (`templates._compile_regex`: sem flags inline, sem backreference, sem repetição aninhada, orçamento de passos); cada `example` precisa casar e o cabeçalho não pode mudar quando se acrescenta texto (sondas fixas). O `^` é removido na compilação em bytes (o `match` já é ancorado em `pos`; `^` sem MULTILINE só casaria no início real do buffer).
+- **Erros**: `EnvelopeConfigError` (em `parse/formats.py`); `RuleSet.from_dict` o converte em `FamiliesConfigError`, então `families.toml` inválido falha na descoberta, como hoje. `[[rule]].envelope` aceita os embutidos e os nomes declarados (dica usada só para arquivo vazio).
+
+#### Detecção (segura por construção)
+
+`detect_envelope(head, *, max_lines=50, fallbacks=True)`:
+1. **Primeira passada inalterada**: os envelopes de `ENVELOPES` (embutidos e os registrados por `register_envelope`) contam cabeçalhos nas 50 primeiras linhas; maior contagem vence; empate, o registrado primeiro.
+2. **Só se nenhum reconhecer uma linha sequer** (o arquivo seria `plain`), os envelopes de `FALLBACK_ENVELOPES` (os genéricos, carregados de forma preguiçosa e thread-safe do `families.toml` empacotado) contam cabeçalhos; vence o de maior contagem (empate: ordem do arquivo) **desde que** `accepts(hits, nonblank)`: `hits >= min(min_lines, nonblank)` e `hits >= ceil(min_ratio × nonblank)`, com `nonblank` = linhas da amostra que não são vazias. Senão, `plain`.
+
+Consequências: todo arquivo antes detectado como `adms`/`oaserr` continua exatamente igual (propriedade testada com hypothesis: `fallbacks=False` ≠ `plain` ⇒ mesmo resultado); um genérico só toma um arquivo que seria `plain`; uma linha `adms` na amostra basta para o embutido vencer 30 linhas genéricas. Falso positivo controlado por: data e hora completas e válidas no cabeçalho, limiar mínimo de linhas e de proporção, e o custo de um falso positivo é baixo (o texto continua inteiro, só agrupado por cabeçalho). Formato desconhecido continua `plain` e nunca interrompe a ingestão.
+
+`get_envelope(name)` resolve embutidos e genéricos (carrega os genéricos sob demanda), então a retomada (`APPEND`/`RESUME`) de uma fonte indexada com um genérico funciona sem que a descoberta tenha rodado antes. `is_known_envelope(name)` diz se o nome ainda existe.
+
+Esquema: nenhuma migração. `source.envelope` já é texto livre (o comentário `adms | oaserr | plain` passa a incluir os nomes de `[[envelope]]`).
+
+#### Envelopes entregues (formas medidas nas amostras, por script; só contagens)
+
+| Nome | Forma do cabeçalho | Fontes nas amostras (antes `plain`) |
+|---|---|---|
+| `dmy_tid_level` | `DD.MM.AAAA hh:mm:ss.mmm [TID=n] [LEVEL] - ` (dia primeiro: o 1º campo passa de 12, o 2º nunca) | PROCESS 75, INSTALL 42, SERVERLOG 3 |
+| `ymd_level_colon` | `AAAA.MM.DD hh:mm:ss.mmm     LEVEL: ` (nível alinhado à direita) | ERS 18 |
+| `ymd_colon` | `AAAA-MM-DD hh:mm:ss.mmm: ` | SHUTDOWN 36 |
+
+Medidas (3 ERS × Enterprise/Sensitive das amostras): 6.452 fontes detectadas como `adms`/`oaserr` continuam idênticas; 174 fontes (~33 MB) passam de `plain` a genérico, todas com 100% dos registros com `ts`; 507 continuam `plain` (relatórios `.txt`, logs MSI, banners). Nenhum `.txt` de relatório casou com genérico. Menor proporção de cabeçalhos observada entre os detectados: 0,35 (limiar 0,2). Vazão do parser genérico (sintético, 31,6 MB): ~27 MB/s, contra ~38 MB/s do `adms` e ~50 MB/s do `plain`; nas amostras reais, 47 a 63 MB/s.
+
+#### Fora do escopo (decisões)
+
+- **Log MSI** (`MSI (s) (8C:44) [hh:mm:ss:mmm]: `, ~200 fontes INSTALL): o cabeçalho só tem hora; a data está numa linha de banner. Dar `ts` exigiria estado entre linhas (quebra o contrato de prefixo por linha) e, sem `ts`, cortar o prefixo do `msg` apagaria a hora visível. Fica `plain`.
+- **Casos já indexados**: fontes gravadas como `plain` antes da 9.14 ficam `plain` até reindexar (a ação é `UNCHANGED`); arquivo vivo pequeno (< 64 KiB indexados) já é redetectado pela regra existente de `plan_action`. Redetecção automática uma vez por caso após atualização fica como sugestão (abaixo), não implementada.
+- **Override do usuário** (escolher o envelope de uma fonte na UI) e `families.toml` do usuário: não entram; os envelopes vêm só do arquivo empacotado.
+
 ## 7. Camada de conhecimento
 
 ### 7.1 Do vault (pacote local, fora do repositório)
@@ -1467,3 +1516,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-15 | UI-19 (issue #159): timeline como faixa de alarme (`js/timeline.js`, `js/timeline-model.js`, `css/timeline.css`): 40 px (`--timeline-h`), expansível a 120 px (lembrado em `localStorage` `dmslog.timelineExpanded`); no split por severidade, Critical/Error/Warning em barras empilhadas com escala própria e Info + Noise numa linha de 1,5 px (`--chart-normal`) com escala própria até 40% da altura; legenda numa linha com contagens e séries alternáveis (`aria-pressed`), "Errors only", "N undated records" (só aparece se a resposta trouxer `undated`); eixo com data ISO; cores dos tokens `--chart-*`; os splits Source e Message type mantêm o histograma empilhado | Sonnet |
 | 2026-10-15 | UI-14 (issue #154): abertura rápida. `js/boot.js` (entrada mínima) dispara `GET /api/cases` e, ao chegar, `/sources` e `/collections` do primeiro caso em paralelo (`js/prefetch.js`: `takeCases`/`takeSources`/`takeCollections`, entrega única, falha refaz pela API) e então carrega `main.js`; `index.html` lista o grafo estático em `<link rel="modulepreload">`. Sob demanda: árvore de filtros (`js/tpl-leaf.js` registra a folha `tpl` junto), seções do detalhe (na primeira vez que um registro é mostrado), Copy as (`deps.loadCopyExport()`), `folder-browser`; depois da primeira view: Follow tail, alertas e aviso de relógio. Toggles pré-carregam o módulo em `pointerenter`/`focus`. `css/topbar.css`: `#panels` não é pintado até `.is-ready` (CLS da abertura 0,02). `deps.ready` perde `copyExport`; `js/late-init.js` (`mountLate`, `retryable`, `loadSections`: módulos tardios com nova tentativa e aviso único) e `js/boot-failure.js` (alerta mínimo se `main.js` não carregar) | Sonnet |
 | 2026-10-15 | UI-15 (issue #155): doca inferior com abas (`js/dock.js`, DOM; `js/dock-model.js`, puro; `css/dock.css`) no lugar de `js/dock-legacy.js` (removido), com a mesma API e a inicialização em duas etapas (`createDock({ root: #dock, storage, onFocusOut })` + `bind(ctx)`); `#dock` dentro de `#grid-panel`, depois de `#follow-new` e antes do detalhe (ordem do Tab e do F6); abas ARIA (`tablist`/`tab`/`tabpanel`, roving tabindex, `×` por aba, Delete e Esc fecham), divisor `separator` (setas 5%, Home/End, arraste, duplo clique 40% ↔ maximizada), Maximize/Restore e Close all; altura inicial `clamp(160 px, conteúdo, 40%)`, lembrada em `localStorage` `dmslog.dockHeight` (fração, com `try/catch`), grid com mínimo de 8 linhas (a doca nunca passa de `limits.max`; sem espaço, abre maximizada), janela < 640 px abre maximizada; aba atrás de um aviso `notify` fica velha e atualiza uma vez ao ser mostrada; `Grid.ensureSelectedVisible()` + `topAfterResize` (`grid-model.js`) pelo `ResizeObserver` do viewport; `dock-model.js` carrega no primeiro `open()` (fora do grafo estático da abertura, UI-14); falha de `import()` do painel mostra `S.panelLoadFailed` na barra de status e na aba; os módulos de painel continuam fechando-se por `host.hidden` (a doca percebe pelo atributo); `onRequestClose` nos módulos fica para a UI-23 | Sonnet |
+| 2026-10-15 | 9.14: envelopes genéricos declarados em `families.toml` (`[[envelope]]`, `parse/formats.py`), tentados só quando nenhum embutido reconhece linha (detecção `adms`/`oaserr` inalterada por construção); 3 formatos das amostras (174 fontes deixam de ser `plain`); `get_envelope` resolve os genéricos; sem migração (seção 6.1a) | Opus |

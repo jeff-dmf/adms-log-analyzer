@@ -79,7 +79,7 @@ from dmslog.ingest.reader import (
 )
 from dmslog.knowledge.installation import InstallationConfig, read_installation
 from dmslog.knowledge.registry import RegistryError
-from dmslog.parse.envelope import detect_envelope, get_envelope
+from dmslog.parse.envelope import detect_envelope, get_envelope, is_known_envelope
 from dmslog.parse.records import DEFAULT_MAX_RECORD_BYTES, RecordGrouper, RecordTooLargeError
 from dmslog.parse.severity import generic_severity, infer_severity
 from dmslog.parse.templates import Catalog, load_catalog
@@ -754,6 +754,8 @@ class _Run:
         ):
             # picked as plain from a first, still tiny read (a live file): detect the envelope again
             action = Action.REINDEX
+        if action in (Action.APPEND, Action.RESUME) and not is_known_envelope(row.envelope):
+            action = Action.REINDEX  # its [[envelope]] was removed or renamed in families.toml
         return action, key_only
 
     def pending_bytes(

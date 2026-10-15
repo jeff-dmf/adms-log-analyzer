@@ -107,3 +107,16 @@ def test_single_file_with_a_generic_format(tmp_path, db):
     result = run_ingest(db, path)
     assert result.sources_failed == 0
     assert sources(db)["anything.log"] == ("ready", "dmy_tid_level", 3)
+
+
+def test_removed_generic_envelope_reindexes_instead_of_failing(tmp_path, db, monkeypatch):
+    from dmslog.ingest import pipeline
+
+    root = write_folder(tmp_path / "Log", {TOOL: dmy_log(10)})
+    run_ingest(db, root, IngestOptions(scope="all"))
+    with (root / TOOL).open("ab") as fh:
+        fh.write(dmy_log(6, start=10))
+    # the [[envelope]] the source was indexed with no longer exists in families.toml
+    monkeypatch.setattr(pipeline, "is_known_envelope", lambda name: name != "dmy_tid_level")
+    result = run_ingest(db, root, IngestOptions(scope="all"))
+    assert [d.action for d in result.details] == ["reindex"]
