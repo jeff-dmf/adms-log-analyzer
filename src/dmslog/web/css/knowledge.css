@@ -1,3 +1,134 @@
+/* Record detail in investigation order (UI-20) and the Knowledge section ("What it means").
+   Reading order is set here with `order` (the panel is a flex column), so index.html can keep its markup:
+   1 header, 2 actions, 3 message type, 4 text, 5 What it means, 6 Fields and Keys, 7 Links, 8 Payload, 9 bookmark note.
+   Colours come from tokens.css only. */
+#detail-panel > #detail-title { order: 0; }
+#detail-panel > #detail-empty { order: 1; }
+#detail-panel > #detail-meta { order: 1; }
+#detail-panel > #detail-actions { order: 2; }
+#detail-panel > .detail-highlight { order: 2; } /* the "Highlight" popover opens right under the actions */
+#detail-panel > #detail-template { order: 3; }
+#detail-panel > #detail-text { order: 4; }
+#detail-panel > #detail-knowledge { order: 5; }
+#detail-panel > #detail-fields { order: 6; }
+#detail-panel > #detail-keys { order: 6; }
+#detail-panel > #detail-links { order: 7; }
+#detail-panel > #detail-payload { order: 8; }
+#detail-panel > #detail-bookmark { order: 9; }
+#detail-panel > #context-box { order: 10; }
+
+/* Header: facts, not a sentence. */
+.dt-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.dt-time {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-strong);
+  color: var(--ink);
+}
+
+.dt-source {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.dt-facts {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+/* The level name is always written; the severity colour only reinforces it (and a border keeps it a badge). */
+.dt-level {
+  font-weight: var(--weight-strong);
+}
+
+.dt-sev-1 { color: var(--sev-1); border-color: var(--sev-1); }
+.dt-sev-2 { color: var(--sev-2); border-color: var(--sev-2); }
+.dt-sev-3 { color: var(--sev-3); border-color: var(--sev-3); }
+.dt-sev-4 { color: var(--sev-4); border-color: var(--sev-4); }
+.dt-sev-5 { color: var(--sev-5); border-color: var(--sev-5); }
+
+/* Actions: ghost buttons with icon + short label, never two lines. */
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.detail-actions .ui-button {
+  white-space: nowrap;
+}
+
+.detail-actions .ui-select {
+  max-width: 9em;
+}
+
+.dt-icon {
+  font-size: var(--text-md);
+  line-height: 1;
+}
+
+.detail-actions .ui-button[aria-pressed="true"] .dt-icon,
+.detail-actions .ui-button[aria-expanded="true"] .dt-icon {
+  color: var(--accent);
+}
+
+/* The empty state replaces the whole detail until a record is selected. */
+#detail-empty[hidden] {
+  display: none;
+}
+
+/* Collapsible sections 5 to 9: the heading is a button; the rest of the section folds away. The Knowledge heading
+   sits inside .kn-head (next to the out-of-vault badge), so that row stays visible too. */
+.ds-heading {
+  margin: var(--space-2) 0;
+  font-size: var(--text-md);
+}
+
+.ds-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  font: inherit;
+  font-weight: var(--weight-strong);
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.ds-toggle::before {
+  content: "\25B8"; /* right-pointing: closed */
+  display: inline-block;
+  width: 1em;
+  color: var(--ink-muted);
+}
+
+.ds-toggle[aria-expanded="true"]::before {
+  content: "\25BE"; /* down-pointing: open */
+}
+
+.ds-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+#detail-knowledge[data-collapsed="true"] > :not(.ds-heading):not(.kn-head),
+#detail-fields[data-collapsed="true"] > :not(.ds-heading),
+#detail-keys[data-collapsed="true"] > :not(.ds-heading),
+#detail-links[data-collapsed="true"] > :not(.ds-heading),
+#detail-payload[data-collapsed="true"] > :not(.ds-heading),
+#detail-bookmark[data-collapsed="true"] > :not(.ds-heading) {
+  display: none;
+}
+
 /* Knowledge section of the entry detail. Colours come from the tokens of app.css. */
 .kn-head {
   display: flex;

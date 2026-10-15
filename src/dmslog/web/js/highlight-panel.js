@@ -257,7 +257,8 @@ export function mountHighlightPanel(host, options) {
 }
 
 // options: detailAnchor (element after which the detail section
-// goes), store (createHighlightStore), getCase, getFilter (the view filter), getSelectedRow, reveal(row),
+// goes), detailTrigger (optional "Highlight" action button of the detail: the section opens under it and stays closed
+// until it is pressed; without it the section is always shown), store (createHighlightStore), getCase, getFilter (the view filter), getSelectedRow, reveal(row),
 // getTemplateCode, showMessage(text, isError). The "Highlights" panel itself is mountHighlightPanel (dock).
 export function mountHighlights(options) {
   const { store, getCase, getFilter, getSelectedRow, reveal, showMessage } = options;
@@ -270,10 +271,22 @@ export function mountHighlights(options) {
     options.detailAnchor.parentNode.insertBefore(detail, options.detailAnchor.nextSibling);
   }
   let entry = null;
+  const trigger = options.detailTrigger || null;
+  let expanded = false;
+  if (trigger) {
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.addEventListener("click", () => {
+      expanded = !expanded;
+      renderDetail();
+    });
+  }
 
   function renderDetail() {
     detail.textContent = "";
-    if (!entry || !getCase()) {
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", expanded && entry ? "true" : "false");
+    }
+    if (!entry || !getCase() || (trigger && !expanded)) {
       detail.hidden = true;
       return;
     }

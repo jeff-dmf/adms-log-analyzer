@@ -253,3 +253,13 @@
   text-align: center;
   font-style: italic;
 }
+
+/* Detail (UI-20): the star in the action row toggles the bookmark, so the note section shows only for a bookmarked
+   record and its own toggle button is not repeated. */
+.detail-bookmark .bm-toggle {
+  display: none;
+}
+
+.detail-bookmark:not(:has(.bm-editor:not([hidden]))) {
+  display: none;
+}

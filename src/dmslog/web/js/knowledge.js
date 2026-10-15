@@ -2,6 +2,7 @@
 // vault note path. Texts come from the API (vault and ERS configuration): textContent only.
 import { api } from "./api.js";
 import { RequestGuard } from "./detail-model.js";
+import { sectionHeading } from "./detail.js";
 import { buildKnowledgeView, planKnowledge } from "./knowledge-model.js";
 import { S, format } from "./strings.js";
 
@@ -107,9 +108,15 @@ export class KnowledgeSection {
       host.hidden = true;
       return;
     }
+    // Without the knowledge pack (and without an ERS-defined error code) there is nothing to explain: the section is
+    // not shown at all. The pack notice belongs to the status of the pack, not to every record.
+    if (view.hint === null && view.errors.length === 0) {
+      host.hidden = true;
+      return;
+    }
     host.hidden = false;
     const head = element("div", "kn-head");
-    head.appendChild(element("h3", "kn-title", S.knowTitle));
+    head.appendChild(sectionHeading(host, "knowledge", S.knowMeansTitle, "kn-title"));
     if (view.outOfVault) {
       const badge = element("span", "kn-badge", S.knowOutOfVault);
       badge.title = S.knowOutOfVaultTitle;
@@ -120,7 +127,6 @@ export class KnowledgeSection {
       host.appendChild(element("div", "kn-adapter", format(S.knowAdapter, { title: view.adapterTitle })));
     }
     if (view.hint !== null) {
-      host.appendChild(element("div", "kn-label", S.knowHint));
       host.appendChild(element("p", "kn-hint", view.hint));
     }
     if (view.params.length > 0) {
@@ -131,9 +137,6 @@ export class KnowledgeSection {
     }
     if (view.note !== null) {
       host.appendChild(this.noteRow(view.note));
-    }
-    if (view.packNotice !== null) {
-      host.appendChild(element("p", "kn-pack-notice", view.packNotice));
     }
   }
 
