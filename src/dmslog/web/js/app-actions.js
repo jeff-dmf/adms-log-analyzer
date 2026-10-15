@@ -11,7 +11,8 @@
 //   filterTreeOptions()        { onChange, getExtraFilter, onSavedApplied } of the filter tree
 //   onFilterTree(tree), onHighlightPanel(panel), onBookmarksPanel(panel)   main keeps these to talk to them
 //   alerts()                   the object startAlerts() returned, or null
-//   ready                      { alerts, followTail, copyExport }: promises of the modules loaded at the opening
+//   ready                      { alerts, followTail }: promises of the modules loaded at the opening
+//   loadCopyExport()           loads (once) and mounts the "Copy as" popover; resolves when it can open
 //   cases()                    [{id, name}] known cases;  selectCase(id), closeCase(), focusNewCase(), focusAddFiles()
 //   openColumns(), copyExportOpen(), followTailOn(), toggleFollowTail(), setTheme(choice), theme()
 //   shortcutsText()            the lines of the shortcut help (until the dialog of UI-28)
@@ -36,6 +37,9 @@ function withoutCase(getCase) {
   };
 }
 
+// The tree and its template leaf (tpl-leaf.js registers the leaf type and editor) load together, on demand.
+const loadFilterTree = () => Promise.all([import("./filter-tree.js"), import("./tpl-leaf.js")]);
+
 export function registerAppPanels(dock, deps) {
   const { api, derivedApi } = deps;
 
@@ -44,7 +48,7 @@ export function registerAppPanels(dock, deps) {
     id: "filterTree",
     titleKey: "actFilterTree",
     mount: async (host, ctx) => {
-      const module = await import("./filter-tree.js");
+      const [module] = await loadFilterTree();
       deps.onFilterTree(module.initFilterTree(host, {
         api,
         caseId: ctx.caseId(),
@@ -328,7 +332,7 @@ export function registerAppActions(actions, deps) {
   const toggle = (id, labelKey, panelId, extra = {}) => actions.register({
     id, labelKey, group: "toggle", pressed: panelOpen(panelId), run: togglePanel(panelId), ...extra,
   });
-  toggle("toggle.filterTree", "actFilterTree", "filterTree", { load: () => import("./filter-tree.js") });
+  toggle("toggle.filterTree", "actFilterTree", "filterTree", { load: loadFilterTree });
   toggle("toggle.highlights", "actHighlights", "highlights", { load: () => import("./highlight-panel.js") });
   toggle("toggle.bookmarks", "actBookmarks", "bookmarks", { shortcut: "B", load: () => import("./bookmarks-panel.js") });
   toggle("toggle.alerts", "actAlerts", "alerts", { load: () => deps.ready.alerts });
@@ -359,7 +363,7 @@ export function registerAppActions(actions, deps) {
     id: "export.copyAs",
     labelKey: "actCopyAs",
     group: "export",
-    load: () => deps.ready.copyExport,
+    load: () => deps.loadCopyExport(),
     run: () => deps.copyExportOpen(),
   });
 

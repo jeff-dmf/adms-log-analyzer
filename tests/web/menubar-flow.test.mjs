@@ -42,7 +42,8 @@ function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
     });
   }
   registerAppActions(actions, {
-    ready: { alerts: Promise.resolve(), followTail: Promise.resolve(), copyExport: Promise.resolve(), ...ready },
+    ready: { alerts: Promise.resolve(), followTail: Promise.resolve(), ...ready },
+    loadCopyExport: async () => { calls.copyLoaded = (calls.copyLoaded || 0) + 1; },
     cases: () => state.cases,
     selectCase: (id) => calls.select.push(id),
     closeCase: () => { calls.closeCase += 1; },
@@ -81,7 +82,6 @@ function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
   const bridge = mountMenubar({ actions, ctx, refs, doc, getCaseLabel: () => (state.caseId === null ? "" : "Case one") });
   dock.on("open", bridge.refresh);
   dock.on("close", bridge.refresh);
-  for (const t of toggles) actions.preload(t.dataset.action);
   return { doc, state, calls, messages, actions, dock, refs, bridge, toggles };
 }
 
@@ -234,6 +234,7 @@ test("no case open: the known cases and New case stay; Add files and Close case 
 
 test("a module that fails to load disables its item with a reason; nothing is ever hidden", async () => {
   const { refs, toggles, actions } = setup({ ready: { alerts: Promise.reject(new Error("alerts module missing")) } });
+  toggles.find((t) => t.dataset.action === "toggle.alerts").dispatch("pointerenter");
   await tick();
   const alerts = toggles.find((t) => t.dataset.action === "toggle.alerts");
   assert.equal(alerts.disabled, true);
@@ -277,4 +278,29 @@ test("the Alerts indicator appears only with serve --watch on, with a count and 
   bridge.setAlertsCount(0);
   assert.equal(refs.alertsBadge.hidden, true);
   assert.equal(alerts.attrs["aria-label"], S.actAlerts);
+});
+
+test("UI-14: the module behind a toggle loads on hover or focus, never at the opening", async () => {
+  const { toggles, actions } = setup();
+  const original = toggles.map((t) => actions.state(t.dataset.action, { caseId: () => 1 }));
+  assert.ok(original.every((state) => state.loaded === false), "nothing is loaded before the pointer arrives");
+  const [filterTree, highlights] = toggles;
+  filterTree.dispatch("pointerenter");
+  highlights.dispatch("focus");
+  await tick();
+  assert.equal(actions.state(filterTree.dataset.action, { caseId: () => 1 }).loaded, true);
+  assert.equal(actions.state(highlights.dataset.action, { caseId: () => 1 }).loaded, true);
+  assert.equal(actions.state(toggles[2].dataset.action, { caseId: () => 1 }).loaded, false, "the others stay unloaded");
+});
+
+test("UI-14: Copy as loads its module on the first use of the item (hover or click), once", async () => {
+  const { doc, refs, calls } = setup();
+  const menu = open(doc, refs.menus.export);
+  assert.equal(calls.copyLoaded || 0, 0);
+  itemByLabel(menu, S.actCopyAs).dispatch("pointerenter");
+  await tick();
+  assert.equal(calls.copyLoaded, 1);
+  itemByLabel(menu, S.actCopyAs).dispatch("click");
+  await until(() => calls.copy === 1, "copy");
+  assert.equal(calls.copyLoaded, 1);
 });

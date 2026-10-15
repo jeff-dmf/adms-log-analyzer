@@ -17,6 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "src" / "dmslog" / "web"
 JS_DIR = WEB / "js"
 EXPECTED_MODULES = {
+    "boot.js",
+    "prefetch.js",
+    "tpl-leaf.js",
     "api.js",
     "clock-banner.js",
     "config-panel-model.js",

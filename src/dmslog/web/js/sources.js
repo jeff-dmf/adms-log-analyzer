@@ -1,5 +1,6 @@
 // Sources panel: case selection, opening a collection with live progress (SSE), source list.
 import { ApiError, api } from "./api.js";
+import { takeCases, takeSources } from "./prefetch.js";
 import { filterSources, highlightParts, isFiltering } from "./source-filter-model.js";
 import { refusalResult } from "./case-files-model.js";
 import { setFieldError } from "./field-error.js";
@@ -51,7 +52,8 @@ export class SourcesPanel {
   // -- cases --------------------------------------------------------------------------------
 
   async loadCases(preferredId) {
-    const data = await api.cases();
+    // The first call of the opening was started by boot.js (prefetch.js); later ones ask the API.
+    const data = await (takeCases(() => api.cases()) || api.cases());
     if (this.handlers.onWatching) {
       this.handlers.onWatching(Boolean(data.watching));
     }
@@ -178,7 +180,7 @@ export class SourcesPanel {
       return;
     }
     try {
-      const data = await api.sources(this.caseId);
+      const data = await (takeSources(this.caseId, () => api.sources(this.caseId)) || api.sources(this.caseId));
       this.sources = data.sources;
     } catch (err) {
       this.sources = [];

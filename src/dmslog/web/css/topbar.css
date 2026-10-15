@@ -25,6 +25,14 @@
   animation: topbar-reveal 0s 3s forwards; /* safety net: if the script never runs the bar shows after 3 s */
 }
 
+/* The panels below are laid out but not painted until the same moment (UI-14): start() fills the headings, builds the
+   controls and the lists, and every size change that causes happens while nothing is visible, so it counts as no
+   layout shift. The same 3 s safety net. */
+.topbar:not(.is-ready) ~ #panels {
+  visibility: hidden;
+  animation: topbar-reveal 0s 3s forwards;
+}
+
 @keyframes topbar-reveal {
   to {
     visibility: visible;
