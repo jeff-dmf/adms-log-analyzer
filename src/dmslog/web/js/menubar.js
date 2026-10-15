@@ -22,13 +22,15 @@ function setDisabled(control, disabled, reason) {
  *   -> trigger buttons), caseControls (search and go-to-time fields and buttons, disabled without a case),
  *   alertsBadge (count holder inside the alerts toggle) or null.
  * options: actions, ctx, getCaseLabel() -> text of the open case or "", strings, doc.
- * Returns { refresh(), setAlertsCount(n), menus }.
+ * The alerts indicator (the count badge) is shown only while `serve --watch` is on: setWatching(bool).
+ * Returns { refresh(), setAlertsCount(n), setWatching(on), menus }.
  */
 export function mountMenubar({ actions, ctx, refs, getCaseLabel = () => "", strings = defaultStrings, doc = null }) {
   const S = strings;
   const owner = doc || (refs.caseButton && refs.caseButton.ownerDocument);
   const menus = {};
   let alertsCount = 0;
+  let watching = false; // `serve --watch` is on (GET /api/cases `watching`): the only case with a live indicator
 
   // The View menu also carries the help items (keyboard shortcuts), after a divider.
   function menuDefs(group) {
@@ -106,11 +108,12 @@ export function mountMenubar({ actions, ctx, refs, getCaseLabel = () => "", stri
     if (!badge) {
       return;
     }
-    badge.hidden = alertsCount <= 0;
-    badge.textContent = alertsCount > 0 ? String(alertsCount) : "";
+    const shown = watching && alertsCount > 0;
+    badge.hidden = !shown;
+    badge.textContent = shown ? String(alertsCount) : "";
     const button = refs.toggles && refs.toggles.find((c) => c.dataset.action === "toggle.alerts");
     if (button) {
-      const label = alertsCount > 0
+      const label = shown
         ? format(S[pluralKey("actAlertsCount", alertsCount)], { count: alertsCount })
         : S.actAlerts;
       button.setAttribute("aria-label", label);
@@ -142,6 +145,10 @@ export function mountMenubar({ actions, ctx, refs, getCaseLabel = () => "", stri
   return {
     refresh,
     menus,
+    setWatching(on) {
+      watching = Boolean(on);
+      paintAlerts();
+    },
     setAlertsCount(n) {
       alertsCount = Math.max(0, Number(n) || 0);
       paintAlerts();

@@ -92,6 +92,9 @@ EXPECTED_MODULES = {
     "actions.js",
     "app-actions.js",
     "dock-legacy.js",
+    "field-error.js",
+    "status-bar-model.js",
+    "status-bar.js",
     "menubar.js",
 }
 

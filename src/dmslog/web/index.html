@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/css/components.css">
   <link rel="stylesheet" href="/css/app.css">
   <link rel="stylesheet" href="/css/topbar.css">
+  <link rel="stylesheet" href="/css/status-bar.css">
   <link rel="stylesheet" href="/css/grid-extras.css">
   <link rel="stylesheet" href="/css/column-resize.css">
   <link rel="stylesheet" href="/css/source-filter.css">
@@ -69,9 +70,6 @@
     </header>
     <div id="columns-menu" class="menu columns-popover" role="group" data-i18n-aria-label="actColumns" hidden></div>
 
-    <div id="message" class="message" role="status" aria-live="polite" hidden></div>
-    <div id="alert-banner" class="al-banner" role="status" aria-live="polite" hidden></div>
-
     <main id="panels">
       <aside id="sources-panel" class="panel" aria-labelledby="sources-title">
         <h2 id="sources-title" data-i18n="panelSources"></h2>
@@ -94,10 +92,6 @@
           </div>
           <div id="add-files-host" class="add-files"></div>
         </form>
-        <div class="progress-box">
-          <progress id="progress-bar" hidden data-i18n-aria-label="progressLabel"></progress>
-          <div id="progress-text" class="source-meta"></div>
-        </div>
         <section id="collections-host" hidden></section>
         <div id="source-filter-host" class="source-filter"></div>
         <ul id="source-list" class="source-list"></ul>
@@ -106,7 +100,6 @@
       <section id="grid-panel" class="panel" aria-labelledby="grid-title">
         <h2 id="grid-title" class="visually-hidden" data-i18n="panelGrid"></h2>
         <div id="collections-note" hidden></div>
-        <div id="clock-banner" class="clock-banner" role="status" hidden></div>
         <div id="timeline" class="timeline-host"></div>
         <form id="filter-form" class="filter-bar">
           <div class="field">
@@ -136,8 +129,6 @@
           <div id="grid-spacer" class="grid-spacer" aria-hidden="true"></div>
         </div>
         <button type="button" id="follow-new" class="follow-new" hidden></button>
-        <div id="grid-status" class="grid-status" role="status" aria-live="polite"></div>
-        <div class="shortcuts-help" data-i18n="shortcutsHelp"></div>
       </section>
 
       <aside id="detail-panel" class="panel" aria-labelledby="detail-title">
@@ -167,6 +158,7 @@
         </div>
       </aside>
     </main>
+    <footer id="status-bar" class="ui-statusbar"></footer>
   </div>
 </body>
 </html>

@@ -326,6 +326,17 @@ def test_serve_watch_publishes_one_watch_event_per_change(tmp_path):
         assert conn.execute("SELECT count(*) FROM entry").fetchone()[0] > 20
 
 
+def test_cases_listing_reports_whether_serve_watch_is_on(tmp_path):
+    root = tp.write_folder(tmp_path / "Log", {WFM: tp.make_log(5)})
+    api = Api(tmp_path / "data")
+    try:
+        assert api.list_cases(None).body["watching"] is False
+        api.jobs.start_watch("followed", root, "default", 0.05)
+        assert api.list_cases(None).body["watching"] is True
+    finally:
+        api.shutdown()
+
+
 def test_the_followed_folder_is_released_when_the_watcher_ends(tmp_path):
     root = tp.write_folder(tmp_path / "Log", {WFM: tp.make_log(20)})
     api = Api(tmp_path / "data")

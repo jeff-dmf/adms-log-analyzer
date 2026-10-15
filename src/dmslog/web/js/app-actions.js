@@ -393,6 +393,6 @@ export function registerAppActions(actions, deps) {
     group: "help",
     shortcut: "?",
     enabled: always,
-    run: (ctx) => ctx.status.message(deps.shortcutsText(), { kind: "info" }),
+    run: (ctx) => (ctx.status.help ? ctx.status.help() : ctx.status.message(deps.shortcutsText(), { kind: "info" })),
   });
 }

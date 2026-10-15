@@ -107,18 +107,6 @@ input[type="checkbox"] {
   box-shadow: var(--shadow-overlay);
 }
 
-.message {
-  min-height: var(--status-height);
-  padding: var(--space-2) var(--space-4);
-  background: var(--status-info-bg);
-  color: var(--status-info-ink);
-}
-
-.message.error {
-  background: var(--status-error-bg);
-  color: var(--status-error-ink);
-}
-
 /* Three panels: sources, grid, detail */
 #panels {
   flex: 1;
@@ -199,10 +187,6 @@ input[type="checkbox"] {
   flex: 1;
   min-width: 0;
   width: 100%;
-}
-
-.progress-box {
-  margin: var(--space-3) 0;
 }
 
 progress {
@@ -414,13 +398,6 @@ progress {
 
 .grid-spacer {
   width: 1px;
-}
-
-.grid-status {
-  padding: var(--space-2) var(--space-1) 0;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  min-height: var(--status-height);
 }
 
 mark {

@@ -31,6 +31,8 @@ class FakeNode {
   }
 
   setAttribute(name, value) { this.attrs[name] = String(value); }
+  getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; }
+  get ownerDocument() { return globalThis.document; }
   removeAttribute(name) { delete this.attrs[name]; }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   focus() {}
@@ -134,12 +136,14 @@ test("submit needs a name, then creates through the deps", async () => {
     openPath: async () => ({ status: "ok" }),
   };
   assert.equal(await files.submit(deps), null);
-  assert.equal(messages.at(-1)[1], true);
+  assert.equal(nameInput.attrs["aria-invalid"], "true"); // the error sits with the field, not in the status bar
+  assert.equal(messages.length, 0);
   nameInput.value = "Case A";
   const result = await files.submit(deps);
   assert.equal(result.state, "ok");
   assert.deepEqual(calls, ["Case A"]);
   assert.equal(nameInput.value, "");
+  assert.equal(nameInput.attrs["aria-invalid"], undefined);
 });
 
 // -- SourcesPanel.runCollection ------------------------------------------------------------

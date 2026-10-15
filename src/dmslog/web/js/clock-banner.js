@@ -3,7 +3,7 @@
 import { bannerText, createClockJumpFlow } from "./events-model.js";
 import { S } from "./strings.js";
 
-// container: the (hidden) banner element. Options:
+// container: the clock segment of the status bar (status.slot("clock"), hidden until there is a warning). Options:
 //   api               needs events(caseId, params, signal)
 //   getCase()         current case id or null
 //   onShowInGrid(t)   t = { from, to, entryId }
@@ -20,6 +20,7 @@ export function initClockBanner(container, { api, getCase, onShowInGrid }) {
     const summary = state.summary;
     container.hidden = summary === null;
     text.textContent = summary === null ? "" : bannerText(summary);
+    text.title = text.textContent; // the status bar cuts a long text with an ellipsis
   }
 
   const flow = createClockJumpFlow({ api, getCase, onState });

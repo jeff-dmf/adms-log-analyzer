@@ -256,17 +256,11 @@ export function mountHighlightPanel(host, options) {
   };
 }
 
-// options: footer (element after which the help line goes), detailAnchor (element after which the detail section
+// options: detailAnchor (element after which the detail section
 // goes), store (createHighlightStore), getCase, getFilter (the view filter), getSelectedRow, reveal(row),
 // getTemplateCode, showMessage(text, isError). The "Highlights" panel itself is mountHighlightPanel (dock).
 export function mountHighlights(options) {
   const { store, getCase, getFilter, getSelectedRow, reveal, showMessage } = options;
-
-  // -- footer help: the shortcuts of this module (n/N, t/T, b/B, c are taken; see highlightNavKey)
-  const help = element("div", "shortcuts-help", S.hlShortcutsHelp);
-  if (options.footer && options.footer.parentNode) {
-    options.footer.parentNode.insertBefore(help, options.footer.nextSibling);
-  }
 
   // -- detail section
   const detail = element("section", "detail-highlight");

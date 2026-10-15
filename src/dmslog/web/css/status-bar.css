@@ -1,0 +1,202 @@
+/* Status bar (UI-13): fixed 22 px footer of #app. Only tokens; no rule here can change the height, so showing
+   or hiding a message moves nothing. A global error replaces the segments (.is-error), never overlays. */
+.ui-statusbar {
+  position: relative; /* anchors the help popover */
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--status-height);
+  min-height: var(--status-height);
+  max-height: var(--status-height);
+  padding: 0 var(--space-4);
+  /* no overflow clipping here: the help popover opens upward; every segment shrinks by itself instead */
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+  line-height: var(--status-height);
+  white-space: nowrap;
+}
+
+.ui-statusbar .sb-seg,
+.ui-statusbar .sb-slot {
+  flex: none;
+}
+
+.ui-statusbar .sb-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.ui-statusbar .sb-count.is-loading {
+  opacity: 0.6;
+}
+
+.ui-statusbar .sb-count.is-estimate {
+  font-style: italic;
+}
+
+.ui-statusbar .sb-position {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-statusbar .sb-progress {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ui-statusbar .sb-progress-bar {
+  width: 96px;
+  height: 8px;
+}
+
+/* The slots hold the clock warning and the alert line: compact, one line, hidden when their content is. */
+.ui-statusbar .sb-slot {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+}
+
+.ui-statusbar .sb-slot:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
+.ui-statusbar .sb-slot-content,
+.ui-statusbar .sb-slot .al-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  line-height: var(--status-height);
+  flex-wrap: nowrap;
+}
+
+.ui-statusbar .sb-slot-content[hidden],
+.ui-statusbar .sb-slot .al-banner[hidden] {
+  display: none;
+}
+
+/* The clock warning keeps its meaning with text first; the color only adds to it. */
+.ui-statusbar .sb-slot-clock .sb-slot-content {
+  color: var(--status-error-ink);
+}
+
+.ui-statusbar .sb-slot-content > span,
+.ui-statusbar .sb-slot .al-banner .al-banner-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-statusbar .sb-slot .al-banner.al-sev-critical {
+  background: transparent;
+  color: var(--status-error-ink);
+}
+
+.ui-statusbar .sb-slot button {
+  min-height: 0;
+  height: calc(var(--status-height) - 4px);
+  padding: 0 var(--space-3);
+  line-height: 1;
+}
+
+.ui-statusbar .sb-message {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.ui-statusbar .sb-message-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-statusbar .sb-message.is-error {
+  color: var(--status-error-ink);
+}
+
+.ui-statusbar .sb-message.is-success,
+.ui-statusbar .sb-message.is-warning {
+  color: var(--status-info-ink);
+}
+
+.ui-statusbar .sb-button {
+  flex: none;
+  font-size: var(--text-sm);
+  min-height: 0;
+  height: calc(var(--status-height) - 4px);
+  padding: 0 var(--space-3);
+  line-height: 1;
+}
+
+.ui-statusbar .sb-help {
+  margin-left: auto;
+}
+
+.ui-statusbar .sb-message ~ .sb-help {
+  margin-left: 0;
+}
+
+.ui-statusbar .sb-help-pop {
+  position: absolute;
+  right: var(--space-4);
+  bottom: 100%;
+  z-index: var(--z-menu);
+  width: min(560px, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-3) var(--space-4);
+  white-space: normal;
+  line-height: var(--leading-md);
+  color: var(--ink);
+  background: var(--surface-overlay);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+}
+
+/* Global error: the bar changes color and shows only the error. */
+.ui-statusbar.is-error {
+  background: var(--status-error-bg);
+  color: var(--status-error-ink);
+  border-top-color: var(--status-error-ink);
+}
+
+.ui-statusbar.is-error > :not(.sb-error) {
+  display: none;
+}
+
+.ui-statusbar .sb-error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.ui-statusbar .sb-error-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-statusbar .sb-error[hidden] {
+  display: none;
+}

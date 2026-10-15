@@ -1,5 +1,5 @@
 // Highlights UI on a small fake DOM: the dock panel (list and quick form), "Highlight this key" in the detail, the
-// footer help and the ]/[ navigation. Rule names and log values are written only as text.
+// the ]/[ navigation. Rule names and log values are written only as text.
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -108,19 +108,17 @@ function setup(extraRules = 0) {
     api, getCase: () => "C1", onChange: () => { ui && ui.storeChanged(); panelUi && panelUi.storeChanged(); },
   });
   const host = new FakeElement("section"); // the dock gives the panel its host
-  const footerParent = new FakeElement("section");
-  const footer = footerParent.appendChild(new FakeElement("div"));
   const detailParent = new FakeElement("aside");
   const anchor = detailParent.appendChild(new FakeElement("section"));
   let selected = { id: 3, ts: 2 };
   panelUi = mountHighlightPanel(host, { store, getCase: () => "C1", getFilter: () => ({ sev: { le: 3 } }) });
   ui = mountHighlights({
-    footer, detailAnchor: anchor, store,
+    detailAnchor: anchor, store,
     getCase: () => "C1", getFilter: () => ({ sev: { le: 3 } }), getSelectedRow: () => selected,
     getTemplateCode: () => "TST-001", reveal: async (row) => calls.reveal.push(row.id),
     showMessage: (text, isError) => calls.messages.push([text, Boolean(isError)]),
   });
-  return { calls, store, ui, host, panelUi, footerParent, detailParent, setSelected: (row) => { selected = row; } };
+  return { calls, store, ui, host, panelUi, detailParent, setSelected: (row) => { selected = row; } };
 }
 
 test("panel lists the rules as text, toggles, recolors, moves and deletes them", async () => {
@@ -217,9 +215,8 @@ test("Highlight this key at the rule limit still asks the server, and shows the 
   assert.equal(calls.messages.some(([text]) => text === S.hlLimitOther.replace("{max}", "20")), false);
 });
 
-test("footer documents ] and [, and the keys walk the highlighted records", async () => {
-  const { calls, store, footerParent, setSelected } = setup();
-  assert.equal(footerParent.children[1].textContent, S.hlShortcutsHelp);
+test("the keys ] and [ walk the highlighted records", async () => {
+  const { calls, store, setSelected } = setup();
   assert.equal(await keydown("]"), true);
   await tick();
   assert.deepEqual(calls.messages.at(-1), [S.hlNavNoRules, false]); // rules not loaded yet

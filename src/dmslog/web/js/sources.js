@@ -2,6 +2,7 @@
 import { ApiError, api } from "./api.js";
 import { filterSources, highlightParts, isFiltering } from "./source-filter-model.js";
 import { refusalResult } from "./case-files-model.js";
+import { setFieldError } from "./field-error.js";
 import { S, format, pluralKey } from "./strings.js";
 
 export function conflictMessage(error) {
@@ -9,10 +10,13 @@ export function conflictMessage(error) {
   return Object.prototype.hasOwnProperty.call(S, key) ? S[key] : S.conflict_generic + " " + error.message;
 }
 
+const PATH_FIELD_ERRORS = new Set(["path_not_found", "path_not_absolute", "not_a_directory", "permission_denied", "path_unreadable"]);
+
 export class SourcesPanel {
   constructor(refs, handlers) {
     this.refs = refs;
-    this.handlers = handlers; // {onCase(caseId), onSources(sources, quiet), onSelection(ids), onDone(), onMessage(text, isError)}
+    this.handlers = handlers; // {onCase(caseId), onSources(sources, quiet), onSelection(ids), onDone(), onMessage(text, isError),
+    // onProgress({value, max, text} | null): indexing progress for the status bar; onWatching(bool): serve --watch is on}
     this.caseId = null;
     this.sources = [];
     this.selected = new Set();
@@ -35,6 +39,9 @@ export class SourcesPanel {
       event.preventDefault();
       this.createCase();
     });
+    if (refs.pathInput) {
+      refs.pathInput.addEventListener("input", () => setFieldError(refs.pathInput, null));
+    }
     refs.openForm.addEventListener("submit", (event) => {
       event.preventDefault();
       this.openCollection();
@@ -45,6 +52,9 @@ export class SourcesPanel {
 
   async loadCases(preferredId) {
     const data = await api.cases();
+    if (this.handlers.onWatching) {
+      this.handlers.onWatching(Boolean(data.watching));
+    }
     const select = this.refs.caseSelect;
     select.textContent = "";
     const none = document.createElement("option");
@@ -364,9 +374,10 @@ export class SourcesPanel {
     }
     const path = this.refs.pathInput.value.trim();
     if (path === "") {
-      this.handlers.onMessage(S.needPath, true);
+      setFieldError(this.refs.pathInput, S.needPath);
       return;
     }
+    setFieldError(this.refs.pathInput, null);
     const scope = this.refs.scopeSelect.value === "all" ? "all" : "default";
     this.watchProgress(this.caseId);
     try {
@@ -376,6 +387,8 @@ export class SourcesPanel {
       this.closeEvents();
       if (err instanceof ApiError && err.status === 409) {
         this.handlers.onMessage(conflictMessage(err), true);
+      } else if (err instanceof ApiError && PATH_FIELD_ERRORS.has(err.code)) {
+        setFieldError(this.refs.pathInput, err.message); // "Path does not exist: ..." under the field
       } else {
         this.handlers.onMessage(err.message, true);
       }
@@ -387,10 +400,7 @@ export class SourcesPanel {
     if (typeof EventSource !== "function") {
       return;
     }
-    const bar = this.refs.progressBar;
-    bar.hidden = false;
-    bar.removeAttribute("value");
-    this.refs.progressText.textContent = "";
+    this.reportProgress({ value: null, max: null, text: "" });
     const events = new EventSource(api.progressUrl(caseId));
     this.events = events;
     events.addEventListener("progress", (event) => {
@@ -398,13 +408,13 @@ export class SourcesPanel {
       if (!data) {
         return;
       }
-      if (data.bytes_total > 0) {
-        bar.max = data.bytes_total;
-        bar.value = data.bytes_done;
-      }
-      this.refs.progressText.textContent = format(S[pluralKey("progressLine", data.records || 0)], {
-        source: data.source === null || data.source === undefined ? "" : data.source,
-        records: Number(data.records || 0).toLocaleString("en-US"),
+      this.reportProgress({
+        value: data.bytes_total > 0 ? data.bytes_done : null,
+        max: data.bytes_total > 0 ? data.bytes_total : null,
+        text: format(S[pluralKey("statusIndexing", data.records || 0)], {
+          source: data.source === null || data.source === undefined ? "" : data.source,
+          records: Number(data.records || 0).toLocaleString("en-US"),
+        }),
       });
       this.refreshThrottled();
     });
@@ -423,7 +433,7 @@ export class SourcesPanel {
     events.addEventListener("error", () => {
       // The browser retries by itself; a closed stream just stops the bar.
       if (events.readyState === 2) {
-        bar.hidden = true;
+        this.reportProgress(null);
         // Only the current stream matters; CONNECTING (0) keeps the automatic reconnection.
         if (this.events === events) {
           this.events = null;
@@ -448,7 +458,13 @@ export class SourcesPanel {
       this.events.close();
       this.events = null;
     }
-    this.refs.progressBar.hidden = true;
+    this.reportProgress(null);
+  }
+
+  reportProgress(value) {
+    if (this.handlers.onProgress) {
+      this.handlers.onProgress(value);
+    }
   }
 }
 

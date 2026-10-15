@@ -104,6 +104,8 @@ export class El {
   get selectedOptions() { return this.options.filter((o) => o.value === this.value); }
   scrollIntoView() {}
   select() {}
+  get parentNode() { return this.parent; }
+  get nextSibling() { const i = this.parent ? this.parent.children.indexOf(this) : -1; return i >= 0 ? this.parent.children[i + 1] ?? null : null; }
   get previousElementSibling() { const i = this.parent ? this.parent.children.indexOf(this) : -1; return i > 0 ? this.parent.children[i - 1] : null; }
 }
 
