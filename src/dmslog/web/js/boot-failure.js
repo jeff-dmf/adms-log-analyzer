@@ -4,6 +4,12 @@ export const BOOT_FAILURE_TEXT = "The viewer could not start. Reload the page; i
 
 export function showBootFailure(doc, text = BOOT_FAILURE_TEXT) {
   const bar = doc.getElementById("toolbar");
+  // main.js shows this same alert itself when its start() is what failed: never two of them.
+  const shown = bar ? Array.from(bar.children).find((n) => n.className === "topbar-failed") : null;
+  if (shown) {
+    bar.classList.add("is-ready", "is-failed");
+    return shown;
+  }
   const alert = doc.createElement("span");
   alert.className = "topbar-failed";
   alert.setAttribute("role", "alert");

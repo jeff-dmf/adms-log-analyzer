@@ -205,14 +205,16 @@ test("a failure to load main.js shows an alert, reveals the bar and leaves no un
   const original = console.error;
   console.error = (...args) => errors.push(args);
   try {
-    await import("../../src/dmslog/web/js/boot.js"); // main.js cannot start on this empty page and rejects
-    const { until } = await import("./fixtures/fake-dom.mjs");
-    await until(() => bar.all().some((n) => n.attrs && n.attrs.role === "alert" && /could not start/.test(n.textContent)), "boot alert");
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const { booted } = await import("../../src/dmslog/web/js/boot.js"); // main.js cannot start on this empty page
+    await booted; // the failure handling has finished
+    await new Promise((resolve) => setImmediate(resolve)); // lets a pending unhandledRejection surface
   } finally {
     console.error = original;
   }
   assert.ok(bar.classList.contains("is-ready") && bar.classList.contains("is-failed"));
   assert.deepEqual(unhandled, []);
   assert.ok(errors.length >= 1);
+  const alerts = bar.all().filter((n) => n.attrs && n.attrs.role === "alert");
+  assert.equal(alerts.length, 1, "main.js and boot.js must not both show the startup alert");
+  assert.match(alerts[0].textContent, /could not start/);
 });

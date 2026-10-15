@@ -13,7 +13,7 @@ try {
 
 // A module that fails to load must not leave an unhandled rejection and a blank page: the text comes from
 // strings.js when that loads, otherwise from boot-failure.js.
-import("./main.js").catch(async (err) => {
+export const booted = import("./main.js").catch(async (err) => {
   let text;
   try {
     text = (await import("./strings.js")).S.errorStartup;
