@@ -33,9 +33,16 @@ export class SourcesPanel {
     this.order = []; // source ids in the order of the rows on screen
     this.emptyNode = null; // the "no sources" / "no match" line, when shown
     this.tabStop = null; // id of the row whose checkbox is the list's one tab stop (roving tabindex)
-    this.showNewCase = false; // the "new case" form is open although a case is
-    this.showAdd = false; // the "add files" / path form is open although a case is
-    this.settled = false; // the first selectCase() ran: until then the forms stay hidden, so the column does not jump
+    this.settled = false; // the first selectCase() ran: until then the empty state is not shown, so the page does not flash
+    this.recentCases = []; // [{id, name, sources, records}] of the last /cases answer, for the empty state
+    this.dialogs = null; // the New case / Add files dialogs (case-dialogs.js), after their first use
+    this.dialogsReady = null; // promise of their mount; reset by a failed load so the next use tries again
+    this.dialogWanted = null; // the last request to open one ({kind, opener, focusPath}): older ones are dropped
+    this.focusEmpty = false; // a case was just closed: the empty state takes the focus
+    this.empty = null; // the empty state without a case (case-empty.js)
+    this.emptyReady = null;
+    this.loadDialogs = () => import("./case-dialogs.js"); // replaced by tests
+    this.loadEmpty = () => import("./case-empty.js"); // replaced by tests
     this.menuReady = null; // promise of the case menu (ui-menu.js loads on first use)
     this.loadMenu = () => import("./ui-menu.js"); // replaced by tests
     this.bindList();
@@ -55,6 +62,9 @@ export class SourcesPanel {
     if (refs.pathInput) {
       refs.pathInput.addEventListener("input", () => setFieldError(refs.pathInput, null));
     }
+    if (refs.newCaseName) {
+      refs.newCaseName.addEventListener("input", () => setFieldError(refs.newCaseName, null));
+    }
     refs.openForm.addEventListener("submit", (event) => {
       event.preventDefault();
       this.openCollection();
@@ -67,19 +77,25 @@ export class SourcesPanel {
   bindHeader() {
     const { caseAddFiles, caseMenu } = this.refs;
     if (caseAddFiles) {
-      caseAddFiles.setAttribute("aria-expanded", "false");
-      caseAddFiles.addEventListener("click", () => (this.showAdd ? this.hideAdd() : this.revealAddFiles()));
+      caseAddFiles.removeAttribute("aria-controls"); // the form is a dialog now, not a part of the column
+      caseAddFiles.setAttribute("aria-haspopup", "dialog");
+      caseAddFiles.addEventListener("click", () => this.revealAddFiles(false, caseAddFiles));
     }
     if (caseMenu) {
       caseMenu.addEventListener("click", (event) => this.openCaseMenu(event));
     }
   }
 
-  // With a case open the side column shows its fixed header and the sources; the forms to create a case or add
-  // files appear on demand (Add files…, the ⋯ menu). Without a case everything stays as it was.
+  // With a case open the side column shows its fixed header and the sources; without one the page body gets the
+  // `no-case` class (css/case-dialogs.css hides the column, the detail, the filters and the timeline) and the empty
+  // state takes the middle. New case and Add files are dialogs (case-dialogs.js), never part of the column.
   applyLayout() {
     const refs = this.refs;
     const open = this.caseId !== null;
+    if (typeof document !== "undefined" && document.body && document.body.classList) {
+      document.body.classList.toggle("no-case", this.settled && !open);
+    }
+    this.syncCaseEmpty();
     if (!refs.caseHeader) {
       return;
     }
@@ -91,44 +107,152 @@ export class SourcesPanel {
     if (refs.caseRow) {
       refs.caseRow.hidden = open;
     }
-    refs.newCaseForm.hidden = !this.settled || (open && !this.showNewCase);
-    refs.openForm.hidden = !this.settled || (open && !this.showAdd);
-    if (refs.caseAddFiles) {
-      refs.caseAddFiles.setAttribute("aria-expanded", open && this.showAdd ? "true" : "false");
+  }
+
+  // The empty state exists only while no case is open; it is loaded on demand and a failed load is tried again at the
+  // next layout pass. While it is shown the dialogs are preloaded, so New case… opens without waiting for a module.
+  syncCaseEmpty() {
+    const host = this.refs.emptyHost;
+    if (!host) {
+      return;
+    }
+    const wanted = this.settled && this.caseId === null;
+    if (!wanted) {
+      if (this.empty && this.empty.isShown()) {
+        const hadFocus = this.empty.contains(document.activeElement);
+        this.empty.hide(); // the button that had the focus is hidden now: the grid takes it, never the page behind
+        if (hadFocus) {
+          this.focusGrid();
+        }
+      }
+      return;
+    }
+    this.ensureDialogs(true);
+    if (this.empty) {
+      this.empty.setCases(this.recentCases);
+      this.empty.show();
+      if (this.focusEmpty) {
+        this.focusEmpty = false;
+        this.empty.focusPrimary();
+      }
+      return;
+    }
+    if (!this.emptyReady) {
+      this.emptyReady = this.loadEmpty().then((mod) => {
+        this.empty = mod.mountCaseEmpty({
+          host,
+          onNewCase: (opener) => this.revealNewCase(opener),
+          onOpenPath: (opener) => this.revealNewCase(opener, true),
+          onSelectCase: (id) => this.pickCase(id),
+        });
+        this.syncCaseEmpty();
+      });
+      this.emptyReady.catch((err) => {
+        this.emptyReady = null; // tried again at the next layout pass
+        this.handlers.onMessage(S.cdLoadFailed + (err && err.message ? " " + err.message : ""), true);
+      });
     }
   }
 
-  revealNewCase() {
-    this.showNewCase = true;
-    this.applyLayout();
-    if (this.refs.newCaseName && !this.refs.newCaseForm.hidden) {
-      this.refs.newCaseName.focus();
-    }
-  }
-
-  revealAddFiles(focusPath = false) {
-    this.showAdd = true;
-    this.applyLayout();
-    const host = this.refs.addFilesHost;
-    const inner = host && !host.hidden && typeof host.querySelector === "function" ? host.querySelector("button, input") : null;
-    const target = focusPath || !inner ? this.refs.pathInput : inner;
-    if (target) {
+  focusGrid() {
+    const target = typeof document !== "undefined" && document.getElementById ? document.getElementById("grid-viewport") : null;
+    if (target && typeof target.focus === "function") {
       target.focus();
     }
   }
 
-  hideAdd() {
-    this.showAdd = false;
-    this.applyLayout();
-    if (this.refs.caseAddFiles) {
-      this.refs.caseAddFiles.focus(); // the form that held the focus is gone
+  // A recent case chosen in the empty state.
+  pickCase(id) {
+    if (this.queueBusy) {
+      this.handlers.onMessage(S.cfQueueBusy, true);
+      return Promise.resolve();
     }
+    return this.selectCase(id);
+  }
+
+  // -- dialogs (New case, Add files) ---------------------------------------------------------
+
+  // Loads and mounts case-dialogs.js once; concurrent calls share the promise, a failed load resets it. `quiet` (a
+  // preload nobody asked for) does not report a failure.
+  ensureDialogs(quiet = false) {
+    if (this.dialogs) {
+      return Promise.resolve(this.dialogs);
+    }
+    if (!this.dialogsReady) {
+      const refs = this.refs;
+      const ready = this.loadDialogs().then((mod) => {
+        this.dialogs = mod.mountCaseDialogs({
+          refs,
+          caseFiles: this.caseFiles,
+          addFiles: this.addFiles,
+          fallback: () => (typeof document !== "undefined" && document.getElementById ? document.getElementById("grid-viewport") : null),
+        });
+        return this.dialogs;
+      });
+      this.dialogsReady = ready;
+      ready.catch(() => {
+        if (this.dialogsReady === ready) {
+          this.dialogsReady = null;
+        }
+      });
+    }
+    return this.dialogsReady.catch((err) => {
+      if (!quiet) {
+        this.handlers.onMessage(S.cdLoadFailed + (err && err.message ? " " + err.message : ""), true);
+      }
+      return null;
+    });
+  }
+
+  // Opens a dialog. Only the last request counts: a slow load never opens a dialog the user has since replaced.
+  openDialog(kind, opener, focusPath) {
+    const request = { kind, opener: opener || (typeof document !== "undefined" ? document.activeElement : null), focusPath: Boolean(focusPath) };
+    this.dialogWanted = request;
+    return this.ensureDialogs().then((dialogs) => {
+      if (!dialogs || this.dialogWanted !== request) {
+        return;
+      }
+      this.dialogWanted = null;
+      if (kind === "add" && this.caseId === null) {
+        this.handlers.onMessage(S.needCase, true);
+        return;
+      }
+      dialogs.open(kind, request.opener, { focusPath: request.focusPath });
+    });
+  }
+
+  closeDialog(kind) {
+    if (this.dialogWanted && this.dialogWanted.kind === kind) {
+      this.dialogWanted = null;
+    }
+    if (this.dialogs) {
+      this.dialogs.close(kind);
+    }
+  }
+
+  closeDialogs() {
+    this.dialogWanted = null;
+    if (this.dialogs) {
+      this.dialogs.closeAll();
+    }
+  }
+
+  revealNewCase(opener = null, focusPath = false) {
+    return this.openDialog("new", opener, focusPath);
+  }
+
+  revealAddFiles(focusPath = false, opener = null) {
+    return this.openDialog("add", opener, focusPath);
+  }
+
+  hideAdd() {
+    this.closeDialog("add");
   }
 
   caseMenuItems() {
     return [
-      { id: "case-new", label: S.caseMenuNew, run: () => this.revealNewCase() },
-      { id: "case-open-path", label: S.caseMenuOpenPath, run: () => this.revealAddFiles(true) },
+      { id: "case-new", label: S.caseMenuNew, run: () => this.revealNewCase(this.refs.caseMenu) },
+      { id: "case-open-path", label: S.caseMenuOpenPath, run: () => this.revealAddFiles(true, this.refs.caseMenu) },
     ];
   }
 
@@ -165,6 +289,7 @@ export class SourcesPanel {
     none.textContent = S.caseNone;
     select.appendChild(none);
     this.caseNames = new Map(data.cases.map((item) => [item.id, item.name]));
+    this.recentCases = data.cases;
     for (const item of data.cases) {
       const option = document.createElement("option");
       option.value = item.id;
@@ -209,9 +334,9 @@ export class SourcesPanel {
       }
       this.resetRows(); // source ids are per case: no row of the old case is reused
       if (!this.queueBusy) {
-        this.showNewCase = false; // a case being created keeps its form (and its results) in view
-        this.showAdd = false;
+        this.closeDialogs(); // a case being created keeps its dialog (and its results) in view
       }
+      this.focusEmpty = caseId === null && this.caseId !== null; // a case was closed: the empty state takes the focus
     }
     this.caseId = caseId;
     this.settled = true;
@@ -229,11 +354,10 @@ export class SourcesPanel {
         return;
       }
       let boundCase = null;
-      this.showNewCase = true; // the form holds the progress, the per-file results and Retry: it stays in view
-      this.applyLayout();
-      this.setQueueBusy(true);
+      let result = null;
+      this.setQueueBusy(true); // the dialog holds the progress, the per-file results and Retry: it stays open
       try {
-        await this.caseFiles.submit({
+        result = await this.caseFiles.submit({
           createCase: (name) => api.createCase(name),
           selectCase: async (id) => {
             await this.loadCases(id);
@@ -244,18 +368,24 @@ export class SourcesPanel {
       } finally {
         this.setQueueBusy(false);
       }
+      if (result && result.state === "ok") {
+        this.closeDialog("new"); // all files opened: done. Anything else stays in view with its per-file results and Retry
+      }
       return;
     }
     const name = this.refs.newCaseName.value.trim();
     if (name === "") {
+      setFieldError(this.refs.newCaseName, S.cfNeedName);
       return;
     }
+    setFieldError(this.refs.newCaseName, null);
     try {
       const created = await api.createCase(name);
       this.refs.newCaseName.value = "";
       await this.loadCases(created.id);
+      this.closeDialog("new");
     } catch (err) {
-      this.handlers.onMessage(err.message, true);
+      setFieldError(this.refs.newCaseName, err.message); // the name was refused (duplicate, invalid): under the field
     }
   }
 
@@ -274,12 +404,16 @@ export class SourcesPanel {
     }
     const boundCase = this.caseId;
     this.setQueueBusy(true);
+    let result = null;
     try {
-      await this.addFiles.submitAdd({
+      result = await this.addFiles.submitAdd({
         openPath: (path) => this.runCollection(path, this.currentScope(), boundCase),
       }, boundCase);
     } finally {
       this.setQueueBusy(false);
+    }
+    if (result && result.state === "ok" && this.caseId === boundCase) {
+      this.closeDialog("add");
     }
   }
 
@@ -686,6 +820,8 @@ export class SourcesPanel {
     try {
       await api.addCollection(this.caseId, path, scope);
       this.handlers.onMessage(S.collectionStarted, false);
+      this.refs.pathInput.value = "";
+      this.closeDialog("add"); // the job runs on; its progress is in the status bar
     } catch (err) {
       this.closeEvents();
       if (err instanceof ApiError && err.status === 409) {

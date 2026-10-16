@@ -58,6 +58,22 @@ export const S = {
   caseMenuLabel: "Case actions",
   caseMenuNew: "New case…",
   caseMenuOpenPath: "Open a path…",
+  // New case / Add files dialogs and the empty state without a case (UI-22)
+  cdNewTitle: "New case",
+  cdAddTitle: "Add files",
+  cdFolderSection: "Folder or single file",
+  cdLoadFailed: "The dialog could not be loaded. Try again.",
+  ceTitle: "Open an ERS to start",
+  ceNoCase: "No case open.",
+  ceNewCase: "New case…",
+  ceOpenPath: "Open a path…",
+  ceHint: "Paste a path or use Browse.",
+  ceRecent: "Recent cases",
+  ceOpenCase: "Open case {name}",
+  ceRecentSourcesOne: "{n} file",
+  ceRecentSourcesOther: "{n} files",
+  ceRecentRecordsOne: "{n} record",
+  ceRecentRecordsOther: "{n} records",
 
   // Filters
   filterSource: "Source",

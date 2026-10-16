@@ -450,6 +450,7 @@ function start() {
     caseAddFiles: byId("case-add-files"),
     caseMenu: byId("case-header-menu"),
     addFilesHost: byId("add-files-host"),
+    emptyHost: byId("grid-panel"), // the empty state without a case (case-empty.js, loaded on demand)
   }, {
     onCase: (id) => {
       caseId = id;
