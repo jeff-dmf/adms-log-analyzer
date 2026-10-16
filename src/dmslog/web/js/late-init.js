@@ -27,6 +27,38 @@ export function retryable(load) {
   };
 }
 
+// Gate for a button whose action lives in a module that loads late: disabled (with a title that says why) while the
+// module loads and after it failed, enabled once it is in. track(promise) is called for every load attempt; after a
+// success it is a no-op, so a focused button is never disabled again. A failed attempt rethrows (the caller reports it).
+export function createButtonGate(button, { loadingTitle, failedTitle }) {
+  let ready = false;
+  const set = (disabled, title) => {
+    button.disabled = disabled;
+    button.title = title;
+    button.setAttribute("aria-disabled", disabled ? "true" : "false");
+  };
+  set(true, loadingTitle);
+  return {
+    track(promise) {
+      if (ready) {
+        return promise;
+      }
+      set(true, loadingTitle);
+      return promise.then(
+        (value) => {
+          ready = true;
+          set(false, "");
+          return value;
+        },
+        (err) => {
+          set(true, failedTitle);
+          throw err;
+        },
+      );
+    },
+  };
+}
+
 // Starts every loader; resolves to the number of failures and calls onFailure(errors) once per call that had any.
 export async function loadSections(loaders, onFailure) {
   const results = await Promise.allSettled(loaders.map((load) => load()));

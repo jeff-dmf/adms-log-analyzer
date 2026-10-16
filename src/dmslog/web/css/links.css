@@ -163,3 +163,8 @@
   max-height: 50vh;
   overflow: auto;
 }
+
+/* "Keys" has its own host in the detail (UI-20), next to the parsed fields. */
+.detail-keys {
+  margin-top: var(--space-3);
+}
