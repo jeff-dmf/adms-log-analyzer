@@ -14,6 +14,7 @@
 //   ready                      { alerts, followTail }: promises of the modules loaded at the opening
 //   loadCopyExport()           loads (once) and mounts the "Copy as" popover; resolves when it can open
 //   cases()                    [{id, name}] known cases;  selectCase(id), closeCase(), focusNewCase(), focusAddFiles()
+//   drawerOpen(id), toggleDrawer(id)   the sources rail and drawers of UI-17 ("side" | "detail"); loaded on demand, retried on failure
 //   openColumns(), copyExportOpen(), followTailOn(), toggleFollowTail(), setTheme(choice), theme()
 //   recordShown(), hasType(), copyRecord(), loadContext(same), filterType(), highlightType(), highlightReady()   the record actions
 //   shortcutsText()            the lines of the shortcut help (until the dialog of UI-28)
@@ -360,6 +361,9 @@ export function registerAppActions(actions, deps) {
 
   // ---- View
   actions.register({ id: "view.columns", labelKey: "actColumns", group: "view", enabled: always, run: () => deps.openColumns() });
+  // The sources panel and the record detail (UI-17): in a drawer they open and close; in the flow they collapse.
+  actions.register({ id: "view.sources", labelKey: "actSources", group: "view", enabled: always, pressed: () => deps.drawerOpen("side"), run: () => deps.toggleDrawer("side") });
+  actions.register({ id: "view.detail", labelKey: "actDetail", group: "view", enabled: always, pressed: () => deps.drawerOpen("detail"), run: () => deps.toggleDrawer("detail") });
   actions.register({
     id: "view.followTail",
     labelKey: "actFollowTail",

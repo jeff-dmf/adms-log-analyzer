@@ -19,8 +19,8 @@ function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
   const doc = makeDoc();
   const root = doc.createElement("section");
   doc.body.appendChild(root);
-  const state = { caseId, follow: false, theme, cases: [{ id: "1", name: "Case one" }, { id: "2", name: "Case two" }] };
-  const calls = { columns: 0, copy: 0, follow: 0, theme: [], select: [], closeCase: 0, newCase: 0, addFiles: 0, mounted: [] };
+  const state = { caseId, follow: false, theme, drawers: new Set(), cases: [{ id: "1", name: "Case one" }, { id: "2", name: "Case two" }] };
+  const calls = { columns: 0, copy: 0, follow: 0, theme: [], select: [], closeCase: 0, newCase: 0, addFiles: 0, mounted: [], drawers: [] };
   const messages = [];
   const actions = createActionRegistry({ onError: (err) => messages.push(["error", err.message]) });
   const dock = createDock({ root, storage: null, onFocusOut: () => {}, doc });
@@ -52,6 +52,8 @@ function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
     focusNewCase: () => { calls.newCase += 1; },
     focusAddFiles: () => { calls.addFiles += 1; },
     openColumns: () => { calls.columns += 1; },
+    drawerOpen: (id) => state.drawers.has(id),
+    toggleDrawer: (id) => { calls.drawers.push(id); state.drawers.has(id) ? state.drawers.delete(id) : state.drawers.add(id); },
     copyExportOpen: () => { calls.copy += 1; },
     followTailOn: () => state.follow,
     toggleFollowTail: () => { calls.follow += 1; state.follow = !state.follow; },
@@ -181,10 +183,24 @@ test("a panel that closes itself updates the toggle too", async () => {
 });
 
 test("the View menu: Columns, Follow tail (pressed), Theme with System, Light and Dark, then Keyboard shortcuts", async () => {
-  const { doc, refs, calls, state, messages } = setup({ theme: "dark" });
+  const { doc, refs, calls, state, messages, actions } = setup({ theme: "dark" });
+  for (const id of ["view.sources", "view.detail"]) {
+    assert.equal(actions.get(id).group, "view", id + " is registered for the menus and the keyboard regions");
+  }
   let menu = open(doc, refs.menus.view);
-  assert.deepEqual(labels(menu), [S.actColumns, S.actFollowTail, S.actTheme, S.actShortcuts]);
-  assert.equal(menu.children[3].attrs.role, "separator");
+  assert.deepEqual(labels(menu), [S.actColumns, S.actSources, S.actDetail, S.actFollowTail, S.actTheme, S.actShortcuts]);
+  assert.equal(menu.children[5].attrs.role, "separator");
+  // UI-17: the two panels are toggles of the same registry (the ones the keyboard regions and the menus share)
+  assert.equal(itemByLabel(menu, S.actSources).attrs["aria-checked"], "false");
+  itemByLabel(menu, S.actSources).dispatch("click");
+  await until(() => calls.drawers.length === 1, "sources");
+  assert.deepEqual(calls.drawers, ["side"]);
+  menu = open(doc, refs.menus.view);
+  assert.equal(itemByLabel(menu, S.actSources).attrs["aria-checked"], "true");
+  itemByLabel(menu, S.actDetail).dispatch("click");
+  await until(() => calls.drawers.length === 2, "detail");
+  assert.equal(calls.drawers[1], "detail");
+  menu = open(doc, refs.menus.view);
   assert.equal(itemByLabel(menu, S.actFollowTail).attrs.role, "menuitemcheckbox");
   assert.equal(itemByLabel(menu, S.actFollowTail).attrs["aria-checked"], "false");
   assert.equal(itemByLabel(menu, S.actShortcuts).children[1].textContent, "?");

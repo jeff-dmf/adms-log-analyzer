@@ -1,0 +1,231 @@
+/* Responsive layout without overlap (UI-17). Tokens only. Loaded after the other sheets so its panel rules win.
+   Wide  (>= 1600px): sources 248 | grid | detail 380.
+   Rail  (1280-1599px): sources become a 44px rail that opens as a 280px drawer | grid | detail 340.
+   Narrow (< 1280px): rail | grid; the detail is a 420px drawer on the right (Enter in the grid, or the Detail button).
+   The user can also collapse either panel in the wide layout (classes is-side-collapsed and is-detail-collapsed on
+   #panels, set by js/drawers.js). The layout is decided here by media queries, so it is right before any script runs;
+   drawers.js only adds the open state (is-side-open, is-detail-open), the focus and the remembered choices.
+   Each layout is a handful of variables, so the media query and the class set the same lines (a test compares them). */
+:root {
+  --rail-w: 44px;
+  --drawer-side-w: 280px;
+  --drawer-detail-w: 420px;
+}
+
+#panels {
+  position: relative; /* the drawers are positioned against the three-column area */
+  grid-template-columns: var(--side-col) minmax(0, 1fr) var(--detail-col);
+  /* wide layout */
+  --side-col: var(--side-w);
+  --side-pos: relative;
+  --side-area: 1 / 1;
+  --side-display: flex;
+  --side-left: 0;
+  --side-width: auto;
+  --side-z: auto;
+  --side-shadow: none;
+  --side-bg: var(--surface-panel);
+  --rail-display: none;
+  --detail-col: var(--detail-w);
+  --detail-toggle-display: none;
+  --detail-pos: relative;
+  --detail-area: 1 / 3;
+  --detail-display: flex;
+  --detail-right: 0;
+  --detail-width: auto;
+  --detail-z: auto;
+  --detail-shadow: none;
+  --detail-bg: var(--surface-panel);
+}
+
+/* Rail layout: below 1600px, or the sources panel collapsed by the user. */
+@media (width < 1600px) {
+  #panels {
+    --side-col: var(--rail-w);
+    --side-pos: absolute;
+    --side-area: auto;
+    --side-display: none;
+    --side-left: var(--rail-w);
+    --side-width: min(var(--drawer-side-w), calc(100% - var(--rail-w)));
+    --side-z: var(--z-drawer);
+    --side-shadow: var(--shadow-overlay);
+    --side-bg: var(--surface-overlay);
+    --rail-display: flex;
+    --detail-col: 340px;
+  }
+}
+
+/* Drawer layout of the detail: below 1280px, or the detail collapsed by the user. */
+@media (width < 1280px) {
+  #panels {
+    --detail-col: 0px;
+    --detail-toggle-display: inline-flex;
+    --detail-pos: absolute;
+    --detail-area: auto;
+    --detail-display: none;
+    --detail-width: min(var(--drawer-detail-w), 100%);
+    --detail-z: var(--z-drawer);
+    --detail-shadow: var(--shadow-overlay);
+    --detail-bg: var(--surface-overlay);
+  }
+}
+
+#panels.is-side-collapsed {
+  --side-col: var(--rail-w);
+  --side-pos: absolute;
+  --side-area: auto;
+  --side-display: none;
+  --side-left: var(--rail-w);
+  --side-width: min(var(--drawer-side-w), calc(100% - var(--rail-w)));
+  --side-z: var(--z-drawer);
+  --side-shadow: var(--shadow-overlay);
+  --side-bg: var(--surface-overlay);
+  --rail-display: flex;
+}
+
+#panels.is-detail-collapsed {
+  --detail-col: 0px;
+  --detail-toggle-display: inline-flex;
+  --detail-pos: absolute;
+  --detail-area: auto;
+  --detail-display: none;
+  --detail-width: min(var(--drawer-detail-w), 100%);
+  --detail-z: var(--z-drawer);
+  --detail-shadow: var(--shadow-overlay);
+  --detail-bg: var(--surface-overlay);
+}
+
+#panels > #sources-panel {
+  grid-area: var(--side-area);
+  position: var(--side-pos);
+  display: var(--side-display);
+  top: 0;
+  bottom: 0;
+  left: var(--side-left);
+  width: var(--side-width);
+  z-index: var(--side-z);
+  box-shadow: var(--side-shadow);
+  background: var(--side-bg);
+}
+
+#panels > #grid-panel {
+  grid-area: 1 / 2;
+  min-width: 0;
+}
+
+#panels > #detail-panel {
+  grid-area: var(--detail-area);
+  position: var(--detail-pos);
+  display: var(--detail-display);
+  top: 0;
+  bottom: 0;
+  right: var(--detail-right);
+  width: var(--detail-width);
+  z-index: var(--detail-z);
+  box-shadow: var(--detail-shadow);
+  background: var(--detail-bg);
+}
+
+/* An open drawer shows; the rule is stronger than the variable that hides it. */
+#panels.is-side-open > #sources-panel,
+#panels.is-detail-open > #detail-panel {
+  display: flex;
+}
+
+/* The drawer fills the height of the area and scrolls inside, never over the top bar or the status bar. */
+#panels > #sources-panel:focus,
+#panels > #detail-panel:focus {
+  outline: none; /* the panel only receives the focus so keys work inside; the controls show their own ring */
+}
+
+/* The rail: one column of --rail-w with the vertical name and the count of selected sources. */
+#panels > #side-rail {
+  display: var(--rail-display);
+  grid-area: 1 / 1;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: var(--rail-w);
+  min-width: 0;
+  padding: var(--space-3) 0;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-panel);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  color: var(--ink-muted);
+}
+
+#panels > #side-rail:hover,
+#panels > #side-rail[aria-expanded="true"] {
+  color: var(--ink);
+  background: var(--surface-raised);
+}
+
+.side-rail-label,
+.side-rail-count {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg); /* reads from the bottom up */
+  white-space: nowrap;
+}
+
+.side-rail-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: normal;
+}
+
+/* Collapse and keep-open buttons sit at the top corner of their panel. */
+.panel-collapse {
+  position: absolute;
+  top: var(--space-2);
+  min-width: var(--control-height);
+  padding: 0;
+}
+
+.panel-collapse::before {
+  font-size: var(--text-lg);
+}
+
+#side-collapse {
+  right: var(--space-2);
+}
+
+#side-collapse::before {
+  content: "\00AB"; /* « */
+}
+
+#detail-collapse {
+  right: var(--space-2);
+}
+
+#detail-collapse::before {
+  content: "\00BB"; /* » */
+}
+
+#sources-panel > h2,
+#detail-panel > h2 {
+  padding-right: calc(var(--control-height) + var(--space-2)); /* the heading never runs under the corner button */
+}
+
+/* The Detail button of the filter strip exists only where the detail is a drawer. */
+#detail-toggle {
+  display: var(--detail-toggle-display);
+}
+
+#detail-toggle[aria-expanded="true"] {
+  background: var(--surface-raised);
+}
+
+/* Windows high contrast: shadows disappear, so the drawers and the rail are drawn with borders. */
+@media (forced-colors: active) {
+  #panels > #sources-panel,
+  #panels > #detail-panel {
+    border: 1px solid CanvasText;
+  }
+
+  #panels > #side-rail {
+    border-right: 1px solid CanvasText;
+    color: ButtonText;
+  }
+}
