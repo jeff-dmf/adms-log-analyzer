@@ -20,6 +20,7 @@ Grammar (each node is an object with exactly one key)::
                | {"payload": {"role"|"roles"|"direction"|"peer"|"operation"|"fmt"|"msg_id"|"corr_id"
                               |"root": strs, "orphan": bool}}
                | {"collection": ids}        (collection GROUP ids: one ERS capture, folder or file; U21)
+               | {"repeat": {"window_ms": int, "fields": [field_name, ...], "tid": bool}}   (keys optional)
     ids       := int | [int, ...]
     strs      := str | [str, ...]
     tpls      := (str code | int id) | [...]
@@ -52,6 +53,11 @@ line), through the SQL function :data:`REGEX_FUNCTION` that :func:`dmslog.store.
 The pattern is checked by the catalog's regex validator (whitelist, construction limits and a work
 budget for a search, ``parse.templates.compile_search_regex``); no flags, groups are ``(?:...)``. Like
 ``substr`` it scans rows; the function also stops at the deadline of :func:`query.read_guard`.
+
+``repeat`` keeps the records that repeat an earlier record of the same stream, template and key within
+``window_ms`` (default 1000) looking back (ROADMAP 9.12; definition and limits in :mod:`repeats`). It is a
+correlated lookup per row (``ix_entry_tpl_ts``), so like ``text.substr`` it should be paired with a
+source or time scope; ``{"not": {"repeat": {}}}`` hides the repeats.
 
 ``compile_filter(tree, rowwise=True)`` writes the set conditions (``text.fts``, ``key``, ``payload``,
 ``event_status``) as correlated ``EXISTS`` lookups of the current row instead of ``e.id IN (set)``:
@@ -581,6 +587,14 @@ class _Compiler:
         self.bind("$." + name, value)
         return "(json_extract(e.fields, ?) IS ?)"
 
+    def repeat(self, arg: Any, path: str) -> str:
+        """Records that repeat an earlier one (ROADMAP 9.12, :mod:`repeats`); already a per-row lookup."""
+        from .repeats import parse_spec, predicate_sql  # repeats imports this module
+
+        sql, params = predicate_sql(parse_spec(arg, path))
+        self.bind(*params)
+        return sql
+
     def payload(self, arg: Any, path: str) -> str:
         if not isinstance(arg, dict):
             raise FilterError("bad_type", path, expected="an object of payload attributes")
@@ -692,6 +706,7 @@ _LEAVES = {
     "payload": _Compiler.payload,
     "collection": _Compiler.collection,
     "field": _Compiler.field,
+    "repeat": _Compiler.repeat,
     "event_name": lambda compiler, arg, path: compiler.event_attr("name", arg, path),
     "event_kind": lambda compiler, arg, path: compiler.event_attr("kind", arg, path),
 }
