@@ -111,7 +111,7 @@ input[type="checkbox"] {
 #panels {
   flex: 1;
   display: grid;
-  grid-template-columns: var(--side-w) minmax(0, 1fr) var(--detail-w);
+  grid-template-columns: var(--side-w) minmax(0, 1fr) var(--detail-w); /* css/responsive.css replaces it with the layout variables */
   grid-template-rows: minmax(0, 1fr); /* the row never outgrows the viewport */
   min-height: 0;
 }
@@ -503,35 +503,7 @@ mark {
   text-overflow: ellipsis;
 }
 
-/* Responsive: stack panels on narrow screens */
-@media (max-width: 1100px) {
-  #panels {
-    grid-template-columns: var(--side-w) minmax(0, 1fr);
-  }
-
-  #detail-panel {
-    grid-column: 1 / -1;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    max-height: 40vh;
-  }
-}
-
-@media (max-width: 720px) {
-  #panels {
-    grid-template-columns: minmax(0, 1fr);
-    overflow: auto;
-  }
-
-  #sources-panel {
-    max-height: 40vh;
-    border-right: 0;
-  }
-
-  #grid-panel {
-    min-height: 70vh;
-  }
-}
+/* Responsive layout (rail, drawers, breakpoints): css/responsive.css. */
 
 /* Windows high contrast: box-shadow and fills are replaced by system colors, so the selection is an outline. */
 @media (forced-colors: active) {

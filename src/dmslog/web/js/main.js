@@ -3,7 +3,7 @@
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
 import { api, onForbidden, onNetworkError } from "./api.js";
-import { createButtonGate, loadSections, mountLate, retryable } from "./late-init.js";
+import { afterDrawerOpen, createButtonGate, loadSections, mountLate, openWhenLoaded, retryable } from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
@@ -155,7 +155,16 @@ function start() {
     promise.catch(() => {}); // the registry reports the failure; this only avoids an unhandled rejection
     return promise;
   };
-  const ready = { alerts: null, followTail: null };
+  const ready = { alerts: null, followTail: null, drawers: null };
+  // Sources rail and drawers (UI-17): the layout is CSS (css/responsive.css); drawers.js adds the open state, the focus,
+  // Escape and the "selected/total" count on the rail. It loads at once (not after the first view): below 1600 px it is
+  // the only way to the sources panel.
+  let drawers = null;
+  const updateRail = () => {
+    if (drawers) {
+      drawers.setSources(panel.selectedIds().length, sources.length);
+    }
+  };
 
   fillSelect(byId("scope-select"), [["default", S.scopeDefault], ["all", S.scopeAll]]);
   fillSelect(byId("sev-select"), [["", S.filterAny]].concat(
@@ -409,6 +418,7 @@ function start() {
 
   const applyView = () => {
     const ids = panel.selectedIds();
+    updateRail();
     const groups = collectionsPanel ? collectionsPanel.selectedGroups() : [];
     const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
     // The effective view: the ancestors' filters AND the active view's own.
@@ -496,6 +506,7 @@ function start() {
     },
     onSources: (list, quiet) => {
       sources = list;
+      updateRail();
       if (collectionsPanel) {
         collectionsPanel.setSources(list);
       }
@@ -977,6 +988,27 @@ function start() {
     }
   });
 
+  // retryable(): a failed import() is forgotten, so the next use of a control tries again (the rail never stays dead).
+  const loadDrawers = retryable(() => import("./drawers.js").then((module) => {
+    if (drawers === null) {
+      drawers = module.createDrawers({});
+    }
+    updateRail();
+    return drawers;
+  }));
+  ready.drawers = settled(loadDrawers().catch((err) => {
+    showError(err);
+    throw err;
+  }));
+  // The controls work even while the module is not in (or failed to load): the first use loads it, then does its job.
+  for (const [id, which] of [["side-rail", "side"], ["detail-toggle", "detail"]]) {
+    byId(id).addEventListener("click", () => {
+      openWhenLoaded({ current: () => drawers, load: loadDrawers, which, onError: showError });
+    });
+  }
+  // Opens the sources drawer (below 1600 px) before something inside the panel is revealed or focused.
+  const withSources = (action) => afterDrawerOpen({ current: () => drawers, load: loadDrawers, which: "side", action, onError: showError });
+
   ready.followTail = settled(mountLate({
     wait: afterFirstView,
     load: () => import("./follow-tail.js"),
@@ -1168,8 +1200,16 @@ function start() {
       return panel.selectCase(id);
     },
     closeCase: () => deps.selectCase(null),
-    focusNewCase: () => panel.revealNewCase(),
-    focusAddFiles: () => panel.revealAddFiles(),
+    focusNewCase: () => withSources(() => panel.revealNewCase()),
+    focusAddFiles: () => withSources(() => panel.revealAddFiles()),
+    drawerOpen: (id) => (drawers ? drawers.isOpen(id) : false),
+    toggleDrawer: async (id) => {
+      try {
+        (await loadDrawers()).toggle(id);
+      } catch (err) {
+        showError(err);
+      }
+    },
     openColumns,
     copyExportOpen: () => copyExport && copyExport.open(),
     followTailOn: () => byId("follow-tail").checked,

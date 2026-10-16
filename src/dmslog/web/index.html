@@ -40,6 +40,7 @@
   <link rel="stylesheet" href="/css/copy-export.css">
   <link rel="stylesheet" href="/css/presets.css">
   <link rel="stylesheet" href="/css/knowledge.css">
+  <link rel="stylesheet" href="/css/responsive.css">
   <link rel="modulepreload" href="/js/actions.js">
   <link rel="modulepreload" href="/js/api.js">
   <link rel="modulepreload" href="/js/app-actions.js">
@@ -120,8 +121,12 @@
     <div id="columns-menu" class="menu columns-popover" role="group" data-i18n-aria-label="actColumns" hidden></div>
 
     <main id="panels">
+      <button type="button" id="side-rail" class="side-rail" aria-controls="sources-panel" aria-expanded="false">
+        <span class="side-rail-label" data-i18n="panelSources"></span><span id="side-rail-count" class="side-rail-count"></span>
+      </button>
       <aside id="sources-panel" class="panel" aria-labelledby="sources-title">
         <h2 id="sources-title" data-i18n="panelSources"></h2>
+        <button type="button" id="side-collapse" class="ui-button is-ghost panel-collapse" aria-controls="sources-panel" hidden></button>
         <div id="case-header" class="case-header" hidden>
           <span id="case-header-name" class="case-header-name"></span>
           <button type="button" id="case-add-files" class="ui-button" aria-controls="open-form" data-i18n="caseHeaderAddFiles"></button>
@@ -160,6 +165,7 @@
           <span id="strip-state" class="fs-state"></span>
           <div id="strip-chips" class="fs-chips"></div>
           <div id="strip-actions" class="fs-actions">
+            <button type="button" id="detail-toggle" class="ui-button is-ghost" aria-controls="detail-panel" aria-expanded="false" data-i18n="railDetail"></button>
             <button type="button" id="strip-filters" class="ui-button is-ghost fs-filters" aria-controls="filter-form"></button>
           </div>
           <form id="filter-form" class="filter-bar" hidden>
@@ -198,7 +204,7 @@
       </section>
 
       <aside id="detail-panel" class="panel" aria-labelledby="detail-title">
-        <h2 id="detail-title" data-i18n="panelDetail"></h2>
+        <h2 id="detail-title" data-i18n="panelDetail"></h2><button type="button" id="detail-collapse" class="ui-button is-ghost panel-collapse" aria-controls="detail-panel" hidden></button>
         <div id="detail-empty" class="ui-empty"></div>
         <div id="detail-meta" class="detail-meta"></div>
         <div id="detail-actions" class="detail-actions" hidden>

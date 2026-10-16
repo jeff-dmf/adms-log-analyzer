@@ -68,3 +68,28 @@ export async function loadSections(loaders, onFailure) {
   }
   return errors.length;
 }
+
+// Opens a drawer (UI-17) before `action` reveals or focuses something inside it. With the drawers module already in,
+// everything runs synchronously (the focus the action sets is not overtaken by a later step); otherwise the module is
+// loaded first (load() is retryable, so a failed import is tried again here). A load or open failure goes to onError and
+// the action still runs: the panel is just not opened, the action is never lost.
+export function afterDrawerOpen({ current, load, which, action, onError }) {
+  const drawers = current();
+  if (drawers) {
+    drawers.open(which);
+    return action();
+  }
+  return Promise.resolve()
+    .then(load)
+    .then((loaded) => loaded.open(which))
+    .catch(onError)
+    .then(action);
+}
+
+// The first use of a control whose module is not in (or failed to load): loads it (again) and opens the drawer.
+export function openWhenLoaded({ current, load, which, onError }) {
+  if (current() !== null) {
+    return Promise.resolve(); // the module's own handler does the work
+  }
+  return Promise.resolve().then(load).then((loaded) => loaded.open(which)).catch(onError);
+}
