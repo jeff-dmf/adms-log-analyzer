@@ -39,7 +39,9 @@ consumed character is tested once and given back at most once; each optional gro
 attempt of its body and one failed skip). A search tries every start of a text of ``n`` characters, so
 ``steps(n) = (g+1)(q+1)(S(n) + k(n+1)) + q*k*(n+1)`` with ``S(n) = sum_{j<=n} min(j, M)``; an anchored
 regex tries one start. The window is the largest ``n`` (at most the target's window) with
-``steps(n) <= MAX_STEPS``; below :data:`MIN_WINDOW` the regex is refused (a bounded repeat or a leading
+``steps(n) <= MAX_STEPS``, everything multiplied by the weight of the costliest atom
+(:func:`set_weight`: ``re`` tests the ranges above U+FFFF of a class one by one); below
+:data:`MIN_WINDOW` the regex is refused (a bounded repeat or a leading
 ``^`` lowers the cost). A test simulator (``tests/property``) counts the steps of a backtracking matcher
 of this grammar and checks them against the bound, and the results against ``re``.
 """
@@ -490,18 +492,20 @@ class Cost:
     optional: int  # q
     reach: int  # g
     longest: int | None  # M (None = unbounded)
+    weight: int = 1  # steps one test of the costliest atom counts for (see :func:`set_weight`)
 
     def steps(self, n: int, anchored: bool) -> int:
-        """Bound of the character tests of one search (or one anchored match) on ``n`` characters."""
+        """Bound of the character tests of one search (or one anchored match) on ``n`` characters,
+        each counted with the weight of the costliest atom."""
         k, q, g, m = self.atoms, self.optional, self.reach, self.longest
         if anchored:
             reach = n if m is None else min(n, m)
-            return (g + 1) * (q + 1) * (reach + k) + q * k
+            return self.weight * ((g + 1) * (q + 1) * (reach + k) + q * k)
         if m is None or m >= n:
             total = n * (n + 1) // 2
         else:
             total = m * (m + 1) // 2 + m * (n - m)
-        return (g + 1) * (q + 1) * (total + k * (n + 1)) + q * k * (n + 1)
+        return self.weight * ((g + 1) * (q + 1) * (total + k * (n + 1)) + q * k * (n + 1))
 
 
 def _fail_tests(items: tuple[Item, ...], after: int) -> int:
@@ -561,9 +565,37 @@ def _measure(items: tuple[Item, ...]) -> tuple[int, int | None, int]:
     return atoms, longest, optional
 
 
+ASTRAL_RANGES_PER_STEP = 4
+
+
+def set_weight(cs: CharSet) -> int:
+    """Steps one test of the set costs. ``re`` tests a class in constant time below U+10000 (bitmaps),
+    but the ranges above U+FFFF of the emitted class one by one: measured, 32 of them cost ~7 times a
+    plain test (73 ms per search at the window of weight 1, against ~10 ms). Each started group of
+    :data:`ASTRAL_RANGES_PER_STEP` such ranges counts one more step."""
+    if (len(cs) == 1 and cs[0][0] == cs[0][1]) or cs == DOT:
+        return 1
+    comp = _complement(cs)
+    emitted = comp if 0 < len(comp) < len(cs) else cs  # the form :func:`_emit_set` writes
+    astral = sum(1 for _lo, hi in emitted if hi > 0xFFFF)
+    return 1 + -(-astral // ASTRAL_RANGES_PER_STEP)
+
+
+def _weight(items: tuple[Item, ...]) -> int:
+    best = 1
+    for item in items:
+        if item[0] == "set":
+            best = max(best, set_weight(item[1]))
+        elif item[0] == "rep":
+            best = max(best, set_weight(item[3]))
+        else:
+            best = max(best, _weight(item[2]))
+    return best
+
+
 def cost_of(parsed: Parsed) -> Cost:
     atoms, longest, optional = _measure(parsed.items)
-    return Cost(atoms, optional, _reach(parsed.items, 0), longest)
+    return Cost(atoms, optional, _reach(parsed.items, 0), longest, _weight(parsed.items))
 
 
 def window_for(cost: Cost, anchored: bool, limit: int, max_steps: int = MAX_STEPS) -> int:

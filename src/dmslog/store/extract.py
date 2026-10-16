@@ -50,6 +50,7 @@ MAX_IDS = 1_000
 MAX_PROMOTE_IDS = 20
 PROMOTE_EXAMPLES = 3
 EXTRACT_TIMEOUT_S = Q.PAGE_TIMEOUT_S
+_UTF8_MAX = 4  # bytes of one character in UTF-8, at most
 MAX_RESULT_CHARS = 8 * 1024 * 1024  # captured characters one request may keep (memory and response size)
 PERCENTILES = (50, 90, 99)
 _EXTRACTOR_CACHE = 64
@@ -109,14 +110,35 @@ def describe(ex: Extractor) -> dict[str, Any]:
 
 
 def _parts_sql(ex: Extractor) -> tuple[str, list[Any]]:
-    """The two SQL expressions over ``e`` that :meth:`Extractor.subject` takes (``Extractor.parts``)."""
-    w = ex.window + 1
+    """The two SQL expressions over ``e`` whose decoded values (:func:`_subject`) are ``Extractor.parts``.
+
+    Read as bytes (``CAST(... AS BLOB)``): SQLite's ``substr``/``length`` on TEXT stop at a NUL character,
+    which would cut a record silently. ``trim`` keeps the NUL; ``substr`` on a BLOB counts bytes, and
+    ``window + 1`` characters take at most 4 bytes each in UTF-8."""
+    w = _UTF8_MAX * (ex.window + 1)
     if ex.target == "msg":
-        return "substr(trim(e.msg, ' ' || char(9)), 1, ?), NULL", [w]
-    return "substr(e.msg, 1, ?), (SELECT substr(b.cont, 1, ?) FROM entry_body b WHERE b.entry_id = e.id)", [
-        w,
-        w,
-    ]
+        return "coalesce(substr(CAST(trim(e.msg, ' ' || char(9)) AS BLOB), 1, ?), X''), NULL", [w]
+    # substr of an empty BLOB is NULL: coalesce keeps an empty continuation apart from no continuation
+    return (
+        "coalesce(substr(CAST(e.msg AS BLOB), 1, ?), X''),"
+        " (SELECT coalesce(substr(CAST(b.cont AS BLOB), 1, ?), X'')"
+        " FROM entry_body b WHERE b.entry_id = e.id)",
+        [w, w],
+    )
+
+
+def _decode(value: Any, chars: int) -> str | None:
+    """A part read by :func:`_parts_sql`: the first ``chars`` characters. A character cut by the byte limit
+    decodes as U+FFFD, beyond the ``chars`` complete characters before it (4 bytes per character at most)."""
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else bytes(value).decode("utf-8", "replace")
+    return text[:chars]
+
+
+def _subject(ex: Extractor, msg_part: Any, cont_part: Any) -> tuple[str, bool]:
+    w1 = ex.window + 1
+    return ex.subject(_decode(msg_part, w1), _decode(cont_part, w1))
 
 
 def _check_deadline(deadline: float) -> None:
@@ -142,7 +164,7 @@ def sql_extract(key: str, msg_part: str | None, cont_part: str | None) -> Any:
     if deadline is not None and time.monotonic() >= deadline:
         raise RegexDeadline
     ex, group = _leaf(key)
-    values = ex.run(ex.subject(msg_part, cont_part)[0])
+    values = ex.run(_subject(ex, msg_part, cont_part)[0])
     return None if values is None else values[group]
 
 
@@ -195,8 +217,11 @@ def drill_leaf(ex: Extractor, group: str, value: Any) -> dict[str, Any] | None:
 
 # Stable order (module docstring): time (none first), origin of the source, file order.
 _ORDER_COLUMNS = (
-    "e.id, e.ts, e.source_id, s.rotation, s.file_name, s.member, coalesce(c.ers_variant, ''), c.path"
+    "e.id AS id, e.ts AS ts, e.source_id AS source_id, s.rotation AS rotation, s.file_name AS file_name,"
+    " s.member AS member, coalesce(c.ers_variant, '') AS variant, c.path AS path"
 )
+# The same order over those columns (SQL and :func:`_order_key` agree: BINARY collation is code point order).
+_STABLE_SQL = "ts, (rotation IS NULL), rotation DESC, file_name, member, variant, path, id"
 
 
 def _order_key(row: tuple) -> tuple:
@@ -274,10 +299,10 @@ def extract(
     # the order of the grid, which the planner serves from the index that suits the filter and stops
     # early. Every record with an earlier time than the last one of ``r`` (time ``k.t``) is in ``r``; ids
     # only order the records of that last time, so when ``r`` is full its time group is read again, in
-    # the stable order (origin, then file order), as far as the limit needs. The union has at most
-    # limit + 1 records; Python sorts it by the stable key and keeps ``limit``. The rows are streamed:
-    # only the parts of one record (up to window + 1 characters of the first line and of the
-    # continuation) are in memory at a time, and only the values are kept.
+    # the stable order (origin, then file order), as far as the limit needs: ``u`` holds the first
+    # limit + 1 records in the stable order (key columns only). The first ``limit`` of them are read
+    # with their parts, streamed (only the parts of one record, up to window + 1 characters of the first
+    # line and of the continuation, are in memory at a time); the extra one only tells ``truncated``.
     lim1 = limit + 1
     pick = (
         f"SELECT {_ORDER_COLUMNS} FROM entry e CROSS JOIN source s CROSS JOIN collection c"
@@ -287,36 +312,45 @@ def extract(
     sql = (
         "WITH r AS (SELECT e.id AS id, e.ts AS ts FROM entry e"  # noqa: S608 - constants and "?" only
         f" WHERE ({cf.sql}) ORDER BY e.ts, e.id LIMIT ?),"
-        " k AS (SELECT count(*) = ? AS full, max(ts) AS t FROM r)"
-        f" SELECT p.*, {parts} FROM ("
-        f"{pick} AND e.id IN (SELECT r.id {before})"
+        " k AS (SELECT count(*) = ? AS full, max(ts) AS t FROM r),"
+        f" u AS ({pick} AND e.id IN (SELECT r.id {before})"
         " UNION ALL SELECT * FROM ("
         f"SELECT {_ORDER_COLUMNS} FROM k CROSS JOIN entry e CROSS JOIN source s CROSS JOIN collection c"
         f" WHERE k.full AND e.ts IS k.t AND ({cf.sql}) AND s.id = e.source_id AND c.id = s.collection_id"
-        f" ORDER BY {_ORIGIN_SQL}, e.id LIMIT max(0, ? - (SELECT count(*) {before})))"
-        ") p CROSS JOIN entry e WHERE e.id = p.id"
+        f" ORDER BY {_ORIGIN_SQL}, e.id LIMIT max(0, ? - (SELECT count(*) {before}))))"
+        f" SELECT p.*, {parts}, (SELECT count(*) FROM u)"
+        f" FROM (SELECT * FROM u ORDER BY {_STABLE_SQL} LIMIT ?) p CROSS JOIN entry e WHERE e.id = p.id"
     )
-    params = (*cf.params, lim1, lim1, *part_params, *cf.params, lim1)
+    params = (*cf.params, lim1, lim1, *cf.params, lim1, *part_params, limit)
     done: list[tuple[tuple, int, Any, int, dict[str, Any] | None, bool]] = []
     budget = _Budget()
+    total = 0
     with Q.read_guard(conn, timeout_s):
         for row in conn.execute(sql, params):
-            _check_deadline(deadline)  # one search costs at most ~20 ms (MAX_STEPS): checked before each
-            subject, was_cut = ex.subject(row[8], row[9])
+            # The deadline is checked before each search; one search is an indivisible call into ``re``
+            # (bounded by MAX_STEPS; ARQUITETURA 10.11 gives the measured cost) and after the last one.
+            _check_deadline(deadline)
+            subject, was_cut = _subject(ex, row[8], row[9])
             raw = _raw(ex, subject)
             budget.add(raw)
+            total = row[10]
             done.append((_order_key(row), row[0], row[1], row[2], raw, was_cut))
+    _check_deadline(deadline)
     done.sort(key=lambda item: item[0])
-    truncated = len(done) > limit
-    done = done[:limit]
     raws = [item[4] for item in done]
     rows = [
         {"id": entry_id, "ts": ts, "source": source, "values": _convert(ex, raw), "cut": was_cut}
         for _key, entry_id, ts, source, raw, was_cut in done
         if raw is not None
     ]
-    columns = [_column(ex, j, raws, top) for j in range(len(ex.groups))]
-    return ExtractResult(ex, rows, columns, len(done), len(rows), sum(item[5] for item in done), truncated)
+    columns = []
+    for j in range(len(ex.groups)):
+        _check_deadline(deadline)
+        columns.append(_column(ex, j, raws, top, deadline))
+    _check_deadline(deadline)
+    return ExtractResult(
+        ex, rows, columns, len(done), len(rows), sum(item[5] for item in done), total > limit
+    )
 
 
 class _Budget:
@@ -361,11 +395,12 @@ def extract_values(conn: sqlite3.Connection, ex: Extractor, ids: list[int]) -> d
     with Q.read_guard(conn, Q.PAGE_TIMEOUT_S):
         for entry_id, msg_part, cont_part in conn.execute(sql, (*params, json.dumps(wanted))):
             _check_deadline(deadline)
-            subject, was_cut = ex.subject(msg_part, cont_part)
+            subject, was_cut = _subject(ex, msg_part, cont_part)
             raw = _raw(ex, subject)
             budget.add(raw)
             if raw is not None:
                 out[entry_id] = {"values": _convert(ex, raw), "cut": was_cut}
+    _check_deadline(deadline)
     return out
 
 
@@ -381,7 +416,9 @@ def _value_key(value: Any) -> tuple[int, Any]:
     return (2, str(value))
 
 
-def _column(ex: Extractor, j: int, raws: list[dict[str, Any] | None], top: int) -> dict[str, Any]:
+def _column(
+    ex: Extractor, j: int, raws: list[dict[str, Any] | None], top: int, deadline: float | None = None
+) -> dict[str, Any]:
     name, kind, conv = ex.groups[j], ex.types[j], ex.converters[j]
     raw_values = [None if r is None else r[name] for r in raws]
     values = [conv(v) if v and conv is not None else v for v in raw_values]
@@ -390,6 +427,8 @@ def _column(ex: Extractor, j: int, raws: list[dict[str, Any] | None], top: int) 
         key = _value_key(v)
         counts[key] = counts.get(key, 0) + 1
     order = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    if deadline is not None:
+        _check_deadline(deadline)
     total = len(values)
     shown = order[:top]
     top_values = [
@@ -430,11 +469,25 @@ def _numeric(kind: str, suggested: str, present: list[str]) -> dict[str, Any] | 
         return None
     cnt = len(nums)
     out: dict[str, Any] = {"type": numeric_kind, "count": cnt, "min": nums[0], "max": nums[-1]}
-    out["sum"] = math.fsum(nums) if numeric_kind == "float" else sum(nums)
-    out["avg"] = out["sum"] / cnt
+    if numeric_kind == "float":
+        # Every value is finite (the conversion keeps inf and nan as text), but a sum can leave the float
+        # range (two 1e308): then it is null, and the mean is the sum of value / count, which stays finite.
+        out["sum"] = _finite(lambda: math.fsum(nums))
+        out["avg"] = _finite(lambda: math.fsum(x / cnt for x in nums))
+    else:
+        out["sum"] = sum(nums)  # integers: exact
+        out["avg"] = _finite(lambda: out["sum"] / cnt)
     for p in PERCENTILES:
         out[f"p{p}"] = nums[max(1, math.ceil(cnt * p / 100)) - 1]
     return out
+
+
+def _finite(compute: Any) -> float | None:
+    try:
+        value = compute()
+    except OverflowError:
+        return None
+    return value if math.isfinite(value) else None
 
 
 def as_json(result: ExtractResult) -> dict[str, Any]:
@@ -483,6 +536,7 @@ def promote(conn: sqlite3.Connection, body: Mapping[str, Any]) -> dict[str, Any]
     code = body.get("code")
     if code is not None and (not isinstance(code, str) or not P.CODE_RE.fullmatch(code)):
         raise ExtractError("bad_code", "$.code")
+    deadline = time.monotonic() + Q.PAGE_TIMEOUT_S
     parts, params = _parts_sql(ex)
     sql = (
         f"SELECT {_ORDER_COLUMNS}, {parts}, st.family, t.code FROM entry e"  # noqa: S608
@@ -496,12 +550,14 @@ def promote(conn: sqlite3.Connection, body: Mapping[str, Any]) -> dict[str, Any]
         )
     records = []
     for row in fetched:
-        subject, was_cut = ex.subject(row[8], row[9])
+        subject, was_cut = _subject(ex, row[8], row[9])
         records.append(P.Example(row[0], subject, was_cut, row[10], row[11]))
     try:
-        return P.promote(ex, records, family=family, code=code)
+        out = P.promote(ex, records, family=family, code=code, tick=lambda: _check_deadline(deadline))
     except P.PromoteError as exc:
         raise ExtractError(exc.code, "$.ids" if exc.code != "mixed_families" else "$.family") from None
+    _check_deadline(deadline)
+    return out
 
 
 __all__ = [

@@ -276,3 +276,16 @@ def test_the_simulator_agrees_with_re_on_the_probes():
         got, steps = sim.search(parsed, subject)
         assert got == sim.re_result(ex.regex, ex.anchored, ex.groups, subject)
         assert steps <= ex.cost.steps(len(subject), ex.anchored)
+
+
+def test_classes_tested_range_by_range_weigh_more():
+    # re tests a class's ranges above U+FFFF one by one: 32 of them cost ~7 plain tests (review of PR #204)
+    astral = "".join(chr(0x20000 + 0x400 * i) + "-" + chr(0x20010 + 0x400 * i) for i in range(32))
+    heavy = compile_extractor(f"[{astral}]+(?P<x>!)")
+    assert heavy.cost.weight == 9 and heavy.window < 700
+    assert compile_extractor(f"[^{astral[:-3]}!]+(?P<x>!)").cost.weight == 9
+    bmp = "".join(chr(0x400 + 8 * i) + "-" + chr(0x403 + 8 * i) for i in range(32))
+    assert compile_extractor(f"[{bmp}]+(?P<x>!)").cost.weight == 1
+    assert compile_extractor(r"(?P<x>[^\U00020000!]+)!").cost.weight == 2
+    assert compile_extractor(r"(?P<x>.+)").cost.weight == 1
+    assert _probe(f"[{astral}]+(?P<x>!)", chr(0x20000 + 0x400 * 31) * 5000) < 0.25

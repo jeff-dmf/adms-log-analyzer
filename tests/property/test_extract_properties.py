@@ -16,6 +16,7 @@ records (other ids, as another indexing order would give). For random regexes, t
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -36,9 +37,24 @@ from dmslog.store.extract import as_json, extract, extractor  # noqa: E402
 EXAMPLES = int(os.environ.get("DMSLOG_EXTRACT_EXAMPLES", "40"))
 SETTINGS = settings(max_examples=EXAMPLES, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 
-WORDS = ["id=7", "id=42", "id=", "x", " id=9 ", "\tid=1\t", "code:E1", "code:", "\u00e9", "  "]
+WORDS = [
+    "\x00",
+    "\U0001f600",
+    "1e308",
+    "id=7",
+    "id=42",
+    "id=",
+    "x",
+    " id=9 ",
+    "\tid=1\t",
+    "code:E1",
+    "code:",
+    "\u00e9",
+    "  ",
+]
 REGEXES = [
     (r"id=(?P<n>\d*)", {"n": "int"}),
+    (r"^(?P<f>[^ ]+)", {"f": "float"}),
     (r"id=(?P<n>\d+)", {}),
     (r"^(?P<w>[^ ]+)", {}),
     (r"code:(?P<c>[A-Z]\d+)(?:;(?P<d>\d+))?", {}),
@@ -103,6 +119,7 @@ def test_extraction_is_a_function_of_the_records(
             ra = extract(a, ex, None, limit=limit)
             rb = extract(b, ex, None, limit=limit)
             assert _rows(a, ra) == _rows(b, rb)
+            json.dumps(as_json(ra), allow_nan=False)  # finite JSON, whatever the values
             ja, jb = as_json(ra), as_json(rb)
             ja.pop("rows"), jb.pop("rows")
             assert ja == jb

@@ -12,6 +12,7 @@ from dmslog.store import query as Q
 from dmslog.store.distinct import distinct, parse_field
 from dmslog.store.extract import (
     ExtractError,
+    _decode,
     _parts_sql,
     as_json,
     extract,
@@ -198,15 +199,20 @@ def test_cut_records(tmp_path):
 
 
 def test_sql_parts_equal_the_reference_parts(tmp_path):
-    msgs = ["  a\tb \t ", "\t\t", "", "\u00e9  ", "x" * 5000, " " * 3000 + "y" + " " * 3000, "a\u00a0 "]
-    c = build(tmp_path / "p.sqlite", [(0, k, m, "c" * 70000 if k % 2 else None) for k, m in enumerate(msgs)])
+    msgs = [
+        "  a\tb \t ", "\t\t", "", "\u00e9  ", "x" * 5000, " " * 3000 + "y" + " " * 3000, "a\u00a0 ",
+        " \x00a\x00 ", "a\x00" + "b" * 5000, "\U0001f600" * 5000, "\u00e9" * 4097 + "\U0001f600",
+    ]  # fmt: skip
+    conts = [None, "c" * 70000, "x\x00" + "y" * 70000, "\U0001f600" * 70000, ""]
+    c = build(tmp_path / "p.sqlite", [(0, k, m, conts[k % 5]) for k, m in enumerate(msgs)])
     for target in ("msg", "text"):
         for source in (r"(?P<a>[ab])", r"^(?P<a>.+)"):
             ex = extractor(source, target)
             parts, params = _parts_sql(ex)
             sql = f"SELECT e.msg, b.cont, {parts} FROM entry e LEFT JOIN entry_body b ON b.entry_id = e.id"
             for msg, cont, part_msg, part_cont in c.execute(sql, params):
-                assert (part_msg, part_cont) == ex.parts(msg, cont)
+                w1 = ex.window + 1
+                assert (_decode(part_msg, w1), _decode(part_cont, w1)) == ex.parts(msg, cont)
     c.close()
 
 
@@ -318,3 +324,98 @@ def test_the_captured_characters_are_bounded(conn, monkeypatch):
     with pytest.raises(ExtractError):
         extract_values(conn, ex, list(range(1, 10)))
     assert extract(conn, ex, None, limit=1).matched == 1
+
+
+# --------------------------------------------------------------------------- review of PR #204
+
+
+NUL_RECORDS = [
+    (0, 1, "prefix\x00id=7", None),
+    (0, 2, "id=8\x00" + "z" * 5000, None),
+    (4, 3, "head", "line\x00tail id=9"),
+]
+
+
+def test_a_nul_character_does_not_cut_the_record(tmp_path):
+    c = build(tmp_path / "nul.sqlite", NUL_RECORDS)
+    ex = extractor(r"id=(?P<n>\d+)", types={"n": "int"})
+    result = extract(c, ex, None)
+    assert [(r["values"], r["cut"]) for r in result.rows] == [([7], False), ([8], True)]
+    assert result.cut == 1
+    text = extractor(r"tail id=(?P<n>\d+)", "text", {"n": "int"})
+    assert [r["values"] for r in extract(c, text, None).rows] == [[9]]
+    ids = [r[0] for r in c.execute("SELECT id FROM entry ORDER BY id")]
+    assert sorted(v["values"][0] for v in extract_values(c, ex, ids).values()) == [7, 8]
+    assert [v["values"] for v in extract_values(c, text, ids).values()] == [[9]]
+    # the SQL function of the filter leaf reads the same text
+    for value, n in ((7, 1), (8, 1), (None, 0)):
+        leaf = {"extract": {"regex": ex.source, "group": "n", "type": "int", "eq": value}}
+        assert Q.count(c, {"and": [leaf, {"source": [1]}]}).n == n, value
+    leaf = {"extract": {"regex": text.source, "target": "text", "group": "n", "eq": "9"}}
+    assert Q.count(c, leaf).n == 1
+    # promotion: the cut record is not taken as a whole example; the NUL one is a full example
+    src0 = [r[0] for r in c.execute("SELECT id FROM entry WHERE source_id = 1")]
+    out = promote(c, {"ids": src0, "regex": r"id=(?P<n>\d+)", "family": "AWFM"})
+    assert [e["msg"] for e in out["template"]["examples"]] == ["prefix\x00id=7"]
+    assert [w["code"] for w in out["warnings"]] == ["cut_skipped"]
+    c.close()
+
+
+def test_the_extra_record_only_tells_truncated(tmp_path, monkeypatch):
+    from dmslog.store import extract as X
+
+    c = build(tmp_path / "b.sqlite", [(0, k, "v" * 10, None) for k in range(3)])
+    monkeypatch.setattr(X, "MAX_RESULT_CHARS", 20)
+    result = extract(c, extractor(r"^(?P<all>.+)"), None, limit=2)  # two values of 10 fit exactly
+    assert result.scanned == 2 and result.truncated
+    with pytest.raises(ExtractError):
+        extract(c, extractor(r"^(?P<all>.+)"), None, limit=3)
+    c.close()
+
+
+def test_extreme_floats_keep_the_summary_finite(tmp_path):
+    import json
+
+    values = ["1e308", "1e308", "-0.0", "inf", "nan", "-1e308", "1.5"]
+    c = build(tmp_path / "f.sqlite", [(0, k, v, None) for k, v in enumerate(values)])
+    for types in ({"n": "float"}, {}):
+        result = extract(c, extractor(r"^(?P<n>.+)", types=types), None)
+        json.dumps(as_json(result), allow_nan=False)  # valid JSON: no inf or nan anywhere
+    numeric = extract(c, extractor(r"^(?P<n>.+)", types={"n": "float"}), None).columns[0]["numeric"]
+    assert numeric["count"] == 5 and numeric["min"] == -1e308 and numeric["max"] == 1e308
+    big = build(tmp_path / "g.sqlite", [(0, k, "1e308", None) for k in range(2)])
+    numeric = extract(big, extractor(r"^(?P<n>.+)", types={"n": "float"}), None).columns[0]["numeric"]
+    assert numeric["sum"] is None and numeric["avg"] == 1e308
+    c.close()
+    big.close()
+
+
+class _Clock:
+    """A monotonic clock that jumps past every deadline after ``calls`` readings."""
+
+    def __init__(self, calls: int) -> None:
+        self.calls = calls
+
+    def monotonic(self) -> float:
+        self.calls -= 1
+        return 0.0 if self.calls >= 0 else 1e12
+
+
+def test_the_deadline_covers_every_phase(conn, monkeypatch):
+    from dmslog.store import extract as X
+
+    # readings: the start, one before each of the 9 searches, then the checks after the searches
+    for calls in range(10, 14):
+        monkeypatch.setattr(X, "time", _Clock(calls))
+        with pytest.raises(Q.QueryTimeout):
+            extract(conn, extractor(GID), None)
+    monkeypatch.setattr(X, "time", _Clock(10**6))
+    assert extract(conn, extractor(GID), None).matched == 7
+    for calls in (2, 3):
+        monkeypatch.setattr(X, "time", _Clock(calls))
+        with pytest.raises(Q.QueryTimeout):
+            extract_values(conn, extractor(GID), [1, 2])
+    ids = _ids(conn, 9)
+    monkeypatch.setattr(X, "time", _Clock(3))
+    with pytest.raises(Q.QueryTimeout):
+        promote(conn, {"ids": ids, "regex": r"GID: (?P<gid>\d+), Errors count: (?P<errors>\d+)"})

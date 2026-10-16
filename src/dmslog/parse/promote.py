@@ -18,7 +18,7 @@ from __future__ import annotations
 import functools
 import tomllib
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -97,7 +97,12 @@ def _surrogate_free(s: str) -> bool:
 
 
 def promote(
-    ex: Extractor, records: Sequence[Example], *, family: str | None = None, code: str | None = None
+    ex: Extractor,
+    records: Sequence[Example],
+    *,
+    family: str | None = None,
+    code: str | None = None,
+    tick: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """The template text and its check (module docstring). Raises PromoteError (``promote_needs_msg``,
     ``promote_no_match``, ``mixed_families``) when there is nothing sound to build."""
@@ -105,7 +110,9 @@ def promote(
         raise PromoteError("promote_needs_msg")
     matched = []
     skipped_cut = 0
+    tick = tick or (lambda: None)  # the caller's deadline: raises when it passed
     for rec in records:
+        tick()
         if rec.cut:
             skipped_cut += 1
             continue
@@ -160,6 +167,7 @@ def promote(
     lines.extend(f"  {{ msg = {toml_str(e['msg'])}, fields = {_inline(e['fields'])} }}," for e in examples)
     lines.append("]")
     snippet = "\n".join(lines) + "\n"
+    tick()
     error = None
     try:
         load_texts(
