@@ -88,3 +88,9 @@
 .pl-more {
   margin-top: 4px;
 }
+
+/* Wrap lines (remembered): long XML lines wrap instead of being cut at the right edge. */
+.pl-panes.is-wrap .pl-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

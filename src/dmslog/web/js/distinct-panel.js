@@ -4,6 +4,7 @@
 import {
   DEFAULT_TOP, MAX_TOP, buildView, createDistinctFlow, createGroupFlow, fieldOptions, parseTop,
 } from "./distinct-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format } from "./strings.js";
 import { formatTs } from "./time.js";
 
@@ -40,12 +41,14 @@ function warningNote(view, onExact) {
 
 // -- Distinct values ----------------------------------------------------------------------------
 
-function initDistinct(host, { api, getCase, getFilter, getFieldNames, hasCollections, onDrill }) {
-  host.textContent = "";
+function initDistinct(host, { api, getCase, getFilter, getFieldNames, hasCollections, onDrill, onRequestClose = null }) {
+  const shell = createPanelShell(host, {
+    title: S.dstTitle,
+    onRequestClose,
+    onRefresh: () => reload(),
+    refreshLabel: S.dstRefresh,
+  });
   const head = element("div", "dst-head");
-  const title = element("h3", "dst-title", S.dstTitle);
-  title.id = "dst-title";
-  host.setAttribute("aria-labelledby", title.id);
   const fieldLabel = element("label", "dst-label", S.dstFieldLabel);
   const fieldSelect = element("select", "dst-field");
   fieldSelect.id = "dst-field";
@@ -58,13 +61,11 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, hasCollect
   topInput.max = String(MAX_TOP);
   topInput.value = String(DEFAULT_TOP);
   topLabel.htmlFor = topInput.id;
-  const refreshButton = button("dst-refresh", S.dstRefresh);
-  head.append(title, fieldLabel, fieldSelect, topLabel, topInput, refreshButton);
-  const status = element("div", "dst-status");
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
+  head.append(fieldLabel, fieldSelect, topLabel, topInput);
+  shell.addTools(head);
+  const status = statusLine(document, "dst-status");
   const tableHost = element("div", "dst-table-host");
-  host.append(head, status, tableHost);
+  shell.body.append(status, tableHost);
 
   let keyTypes = [];
   let keyTypesCase = null;
@@ -108,8 +109,7 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, hasCollect
   }
 
   function setStatus(text, isError) {
-    status.textContent = text;
-    status.classList.toggle("is-error", Boolean(isError));
+    setStatusLine(status, text, isError);
   }
 
   function render(state) {
@@ -136,7 +136,7 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, hasCollect
       tableHost.appendChild(element("div", "dst-empty", S.dstEmptyResult));
       return;
     }
-    const table = element("table", "dst-table");
+    const table = element("table", "ui-table is-wrap dst-table");
     table.appendChild(element("caption", "visually-hidden", S.dstTitle));
     const headRow = element("tr");
     for (const [text, cls] of [[S.dstColValue, ""], [S.dstColCount, "dst-num"], [S.dstColShare, "dst-num"], [S.dstColActions, ""]]) {
@@ -199,7 +199,6 @@ function initDistinct(host, { api, getCase, getFilter, getFieldNames, hasCollect
       reload();
     }
   });
-  refreshButton.addEventListener("click", () => reload());
   fillFields();
 
   return {
@@ -225,25 +224,21 @@ function named(row) {
   return name;
 }
 
-function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
-  host.textContent = "";
-  const head = element("div", "dst-head");
-  const title = element("h3", "dst-title", S.grpTitle);
-  title.id = "grp-title";
-  host.setAttribute("aria-labelledby", title.id);
-  const refreshButton = button("dst-refresh", S.dstRefresh);
-  head.append(title, refreshButton);
-  const status = element("div", "dst-status");
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
+function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal, onRequestClose = null }) {
+  const shell = createPanelShell(host, {
+    title: S.grpTitle,
+    onRequestClose,
+    onRefresh: () => flow.load(),
+    refreshLabel: S.dstRefresh,
+  });
+  const status = statusLine(document, "dst-status");
   const notice = element("div", "grp-notice");
   const list = element("ul", "grp-list");
   const others = element("div", "dst-others");
-  host.append(head, status, notice, list, others);
+  shell.body.append(status, notice, list, others);
 
   function setStatus(text, isError) {
-    status.textContent = text;
-    status.classList.toggle("is-error", Boolean(isError));
+    setStatusLine(status, text, isError);
   }
 
   function rowsBlock(tplId, group, text) {
@@ -333,7 +328,6 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
   }
 
   const flow = createGroupFlow({ api, getCase, getFilter, onState: render });
-  refreshButton.addEventListener("click", () => flow.load());
 
   return {
     refresh: () => flow.load(),
@@ -349,6 +343,7 @@ function initGroup(host, { api, getCase, getFilter, getSourceName, onReveal }) {
 //   hasCollections()         the case has more than one collection (offers the "Collection" field)
 //   onDrill(leaf, exclude)   add the leaf (or its negation) to the user filter
 //   onReveal({id, ts})       select a record in the grid
+//   onRequestClose()         the dock closes the tab (the default hides the host)
 // Both return { refresh(), reset() }: refresh loads the view, reset cancels and clears it (case change, close).
 export function mountDistinctPanel(host, options) {
   return initDistinct(host, options);

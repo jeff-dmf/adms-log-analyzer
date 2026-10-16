@@ -5,6 +5,7 @@
 import {
   PAYLOAD_DIRECTIONS, PAYLOAD_FORMATS, PAYLOAD_ROLES, buildPayloadRow, createPayloadListFlow,
 } from "./payload-list-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
@@ -24,16 +25,20 @@ let uid = 0;
 //   api               needs payloadPage(caseId, params, signal)
 //   getCase()         current case id or null
 //   onOpen({id, ts})  select the record that holds the payload (its detail shows the Payload section)
-// Returns { refresh(), close() }.
-export function initPayloadList(host, { api, getCase, onOpen }) {
+//   onRequestClose()  the dock closes the tab (the default hides the host)
+// Returns { refresh(), close() }. The panel never shows or hides its host: opening is the dock's.
+export function initPayloadList(host, { api, getCase, onOpen, onRequestClose = null }) {
   uid += 1;
   const prefix = "pg" + uid + "-";
-  host.textContent = "";
-
-  const head = element("div", "pg-toolbar");
-  head.appendChild(element("h3", "pg-title", S.plgTitle));
-  const closeButton = element("button", "pg-close", S.plgClose);
-  closeButton.type = "button";
+  const shell = createPanelShell(host, {
+    title: S.plgTitle,
+    onRefresh: () => flow.refresh(),
+    refreshLabel: S.plgRefresh,
+    onRequestClose: onRequestClose || (() => {
+      flow.close();
+      host.hidden = true;
+    }),
+  });
 
   function field(labelText, control, id) {
     control.id = prefix + id;
@@ -70,8 +75,6 @@ export function initPayloadList(host, { api, getCase, onOpen }) {
   const queryInput = text(S.plgSearchPlaceholder);
   const orphanBox = element("input");
   orphanBox.type = "checkbox";
-  const refreshButton = element("button", "", S.plgRefresh);
-  refreshButton.type = "button";
   const filters = element("div", "pg-filters");
   filters.append(
     ...field(S.plgRole, roleSelect, "role"),
@@ -81,14 +84,12 @@ export function initPayloadList(host, { api, getCase, onOpen }) {
     ...field(S.plgFormat, formatSelect, "fmt"),
     ...field(S.plgSearch, queryInput, "q"),
     ...field(S.plgOrphan, orphanBox, "orphan"),
-    refreshButton,
   );
-  head.appendChild(closeButton);
+  shell.addTools(filters);
 
-  const status = element("div", "pg-status");
-  status.setAttribute("role", "status");
+  const status = statusLine(document, "pg-status");
   const wrap = element("div", "pg-list");
-  const table = element("table", "pg-table");
+  const table = element("table", "ui-table is-wrap pg-table");
   table.appendChild(element("caption", "visually-hidden", S.plgTableCaption));
   const tr = element("tr");
   for (const label of [
@@ -102,10 +103,12 @@ export function initPayloadList(host, { api, getCase, onOpen }) {
   table.appendChild(element("thead")).appendChild(tr);
   const tbody = element("tbody");
   table.appendChild(tbody);
-  const moreButton = element("button", "pg-more", S.plgLoadMore);
+  const moreButton = element("button", "ui-button pg-more", S.plgLoadMore);
   moreButton.type = "button";
-  wrap.append(table, moreButton);
-  host.append(head, filters, status, wrap);
+  wrap.append(table);
+  shell.body.append(status, wrap);
+  shell.addFoot(moreButton); // "Load more" is the main action of a long list: always in sight
+  shell.foot.hidden = true;
 
   let rendered = 0;
   let firstId = null;
@@ -148,25 +151,26 @@ export function initPayloadList(host, { api, getCase, onOpen }) {
   function onState(state) {
     if (state.status === "idle") {
       renderRows([]);
-      status.textContent = "";
+      setStatusLine(status, "", false);
       moreButton.hidden = true;
+      shell.foot.hidden = true;
       return;
     }
     renderRows(state.payloads);
     moreButton.hidden = state.next === null || state.status !== "ready";
+    shell.foot.hidden = moreButton.hidden;
     moreButton.disabled = state.loadingMore;
     moreButton.textContent = state.loadingMore ? S.plgLoadingMore : S.plgLoadMore;
-    status.classList.toggle("is-error", state.status === "error");
     if (state.status === "nocase") {
-      status.textContent = S.plgNoCase;
+      setStatusLine(status, S.plgNoCase, false);
     } else if (state.status === "loading") {
-      status.textContent = S.plgLoading;
+      setStatusLine(status, S.plgLoading, false);
     } else if (state.status === "error") {
-      status.textContent = S.plgError + (state.error ? ": " + state.error : "");
+      setStatusLine(status, S.plgError + (state.error ? ": " + state.error : ""), true);
     } else if (state.payloads.length === 0) {
-      status.textContent = S.plgEmpty;
+      setStatusLine(status, S.plgEmpty, false);
     } else {
-      status.textContent = format(S[pluralKey(state.next === null ? "plgCount" : "plgCountMore", state.payloads.length)], { count: state.payloads.length });
+      setStatusLine(status, format(S[pluralKey(state.next === null ? "plgCount" : "plgCountMore", state.payloads.length)], { count: state.payloads.length }), false);
     }
   }
 
@@ -193,12 +197,6 @@ export function initPayloadList(host, { api, getCase, onOpen }) {
     control.addEventListener("change", apply);
   }
   moreButton.addEventListener("click", () => flow.loadMore());
-  refreshButton.addEventListener("click", () => flow.refresh());
-  closeButton.addEventListener("click", () => {
-    flow.close();
-    host.hidden = true;
-    host.dispatchEvent(new Event("payload-list-closed"));
-  });
 
   return { refresh: () => flow.refresh(), close: () => flow.close() };
 }

@@ -2,6 +2,7 @@
 // Every panel opens from its menu item or toggle, the states (pressed, disabled with a reason) follow the
 // registry, an unavailable module is disabled (never hidden) and the menus work from the keyboard.
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
 import { createActionRegistry } from "../../src/dmslog/web/js/actions.js";
@@ -41,8 +42,9 @@ function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
       },
     });
   }
-  registerAppActions(actions, {
+  const appActions = registerAppActions(actions, {
     ready: { alerts: Promise.resolve(), followTail: Promise.resolve(), ...ready },
+    exportContext: () => ({ caseId: state.caseId, filter: null, recordId: 1, eventId: null }),
     loadCopyExport: async () => { calls.copyLoaded = (calls.copyLoaded || 0) + 1; },
     cases: () => state.cases,
     selectCase: (id) => calls.select.push(id),
@@ -82,7 +84,7 @@ function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
   const bridge = mountMenubar({ actions, ctx, refs, doc, getCaseLabel: () => (state.caseId === null ? "" : "Case one") });
   dock.on("open", bridge.refresh);
   dock.on("close", bridge.refresh);
-  return { doc, state, calls, messages, actions, dock, refs, bridge, toggles };
+  return { doc, state, calls, messages, actions, dock, refs, bridge, toggles, appActions };
 }
 
 const open = (doc, trigger) => { trigger.focus(); trigger.dispatch("keydown", { key: "ArrowDown" }); return menuEls(doc)[0]; };
@@ -136,15 +138,20 @@ test("the Analyze menu lists the eight analyses in order and each one opens its 
   await until(() => !dock.isOpen("distinct"), "distinct closed");
 });
 
-test("the Export menu opens the report panel and the Copy as popover", async () => {
+test("the Export menu opens the report dialog (not a dock tab) and the Copy as dialog", async () => {
   const { doc, refs, dock, calls } = setup();
+  // The dialog modules build their DOM through the global document: this page's fake is that document here.
+  doc.createTextNode = (text) => Object.assign(doc.createElement("#text"), { textContent: String(text) });
+  globalThis.document = doc;
+  Object.defineProperty(globalThis, "navigator", { value: { clipboard: null, platform: "Linux" }, configurable: true });
   const menu = open(doc, refs.menus.export);
   assert.deepEqual(labels(menu), [S.actExportReport, S.actCopyAs]);
   itemByLabel(menu, S.actCopyAs).dispatch("click");
   await until(() => calls.copy === 1, "copy");
   const again = open(doc, refs.menus.export);
   itemByLabel(again, S.actExportReport).dispatch("click");
-  await until(() => dock.isOpen("export"), "export");
+  await until(() => doc.body.all().some((n) => n.className.split(" ").includes("export-dialog") && n.getAttribute("open") !== null), "export dialog");
+  assert.equal(dock.isOpen("export"), false);
 });
 
 test("the toggles open and close their panel and carry aria-pressed", async () => {
@@ -303,4 +310,38 @@ test("UI-14: Copy as loads its module on the first use of the item (hover or cli
   itemByLabel(menu, S.actCopyAs).dispatch("click");
   await until(() => calls.copy === 1, "copy");
   assert.equal(calls.copyLoaded, 1);
+});
+
+// export.report: the dialog opens from the element that had the focus; opening it again never clears the report, but a
+// case change (main.js calls onCase(), also for a dialog that is closed and for a return to a case seen before) does.
+test("export.report: opens from the active element, keeps the report on reopening, forgets it on onCase()", async () => {
+  const { doc, refs, appActions } = setup();
+  doc.createTextNode = (text) => Object.assign(doc.createElement("#text"), { textContent: String(text) });
+  globalThis.document = doc;
+  Object.defineProperty(globalThis, "navigator", { value: { clipboard: null, platform: "Linux" }, configurable: true });
+  const exportItem = () => itemByLabel(open(doc, refs.menus.export), S.actExportReport);
+  const find = (name) => doc.body.all().find((n) => n.className.split(" ").includes(name));
+  const isOpen = () => find("export-dialog") && find("export-dialog").getAttribute("open") !== null;
+
+  exportItem().dispatch("click");
+  await until(isOpen, "dialog open");
+  assert.equal(typeof appActions.onCase, "function");
+  const result = find("export-result");
+  result.hidden = false; // stands for a report on screen
+  find("export-dialog").dispatch("keydown", { key: "Escape" });
+  assert.equal(isOpen(), false);
+  assert.equal(doc.activeElement, refs.menus.export, "the focus returned to the element that opened it");
+
+  exportItem().dispatch("click"); // same case: the report is still there
+  await until(isOpen, "reopened");
+  assert.equal(result.hidden, false, "opening does not clear the report");
+  find("export-dialog").dispatch("keydown", { key: "Escape" });
+
+  appActions.onCase(); // A -> B -> A with the dialog closed: it still forgets
+  assert.equal(result.hidden, true, "the report of the old case is gone");
+});
+
+test("main.js tells the actions about every case change", () => {
+  const main = readFileSync(new URL("../../src/dmslog/web/js/main.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(main, /onCase: \(id\) => \{[\s\S]*appActions\.onCase\(\)[\s\S]*dock\.notify\("case"\)/);
 });

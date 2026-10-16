@@ -1,6 +1,7 @@
 // "Effective configuration" panel: Registry keys with layers, the value the process logged, the
 // divergence flag, and per-operation payload expectation (GET /api/config).
 // Everything comes from the ERS (untrusted text): textContent and class names only.
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 import {
   buildKeyRows, buildOperationRows, countDiverging, createConfigFlow, filterKeyRows, logLevelText, productOptions,
@@ -40,8 +41,9 @@ let uid = 0;
 //   api                 needs configProducts(caseId, signal) and config(caseId, product, group, signal)
 //   getCase()           current case id or null
 //   onOpenEntry(id)     open the entry where the value was logged
+//   onRequestClose()    the dock closes the tab (the default hides the container)
 // Returns { refresh() }; call it when the case changed or indexing finished.
-export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
+export function initConfigPanel(container, { api, getCase, onOpenEntry, onRequestClose = null }) {
   uid += 1;
   const prefix = "cfg" + uid + "-";
   let products = [];
@@ -52,9 +54,13 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
   let renderedCase = null;
   const expanded = new Set();
 
-  container.textContent = "";
+  const shell = createPanelShell(container, {
+    title: S.cfgTitle,
+    onRequestClose,
+    onRefresh: () => flow.refresh(),
+    refreshLabel: S.cfgRefresh,
+  });
   const toolbar = element("div", "cfg-toolbar");
-  toolbar.appendChild(element("span", "cfg-title", S.cfgTitle));
   const productLabel = element("label", "", S.cfgProduct);
   productLabel.htmlFor = prefix + "product";
   const productSelect = element("select", "cfg-product");
@@ -67,22 +73,19 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
   const divBox = element("input");
   divBox.type = "checkbox";
   divLabel.append(divBox, document.createTextNode(" " + S.cfgOnlyDiverging));
-  const refreshButton = element("button", "cfg-refresh", S.cfgRefresh);
-  refreshButton.type = "button";
-  toolbar.append(productLabel, productSelect, filterInput, divLabel, refreshButton);
-  const status = element("div", "cfg-status");
-  status.setAttribute("role", "status");
+  toolbar.append(productLabel, productSelect, filterInput, divLabel);
+  shell.addTools(toolbar);
+  const status = statusLine(document, "cfg-status");
   const summary = element("div", "cfg-summary");
   const body = element("div", "cfg-body");
-  container.append(toolbar, status, summary, body);
+  shell.body.append(status, summary, body);
 
   function setStatus(text, isError) {
-    status.textContent = text;
-    status.classList.toggle("is-error", Boolean(isError));
+    setStatusLine(status, text, isError);
   }
 
   function layersTable(row) {
-    const table = element("table", "cfg-layers");
+    const table = element("table", "ui-table is-wrap cfg-layers");
     table.appendChild(element("caption", "", format(S.cfgLayers, { key: row.label })));
     table.appendChild(headRow([S.cfgLayerColLayer, S.cfgLayerColFile, S.cfgLayerColValue, S.cfgLayerColStatus]));
     const tbody = element("tbody");
@@ -101,7 +104,7 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
   }
 
   function keysTable(rows) {
-    const table = element("table", "cfg-table");
+    const table = element("table", "ui-table is-wrap cfg-table");
     table.appendChild(element("caption", "visually-hidden", S.cfgKeysCaption));
     table.appendChild(headRow([
       S.cfgColKey, S.cfgColValue, S.cfgColSource, S.cfgColStatus, S.cfgColObserved, S.cfgColDivergence,
@@ -174,7 +177,7 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
   }
 
   function operationsTable(rows) {
-    const table = element("table", "cfg-table cfg-ops");
+    const table = element("table", "ui-table is-wrap cfg-table cfg-ops");
     table.appendChild(element("caption", "cfg-caption", S.cfgOpsCaption));
     table.appendChild(headRow([S.cfgOpColOperation, S.cfgOpColLevel, S.cfgOpColPayload, S.cfgOpColReason, S.cfgOpColSource]));
     const tbody = element("tbody");
@@ -223,7 +226,6 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
   function onState(state) {
     const busy = state.status === "loading";
     productSelect.disabled = busy || state.products.length === 0;
-    refreshButton.disabled = false;
     if (state.products !== shownProducts) {
       shownProducts = state.products;
       products = state.products;
@@ -271,7 +273,6 @@ export function initConfigPanel(container, { api, getCase, onOpenEntry }) {
     onlyDiverging = divBox.checked;
     render();
   });
-  refreshButton.addEventListener("click", () => flow.refresh());
 
   return { refresh: () => flow.refresh() };
 }

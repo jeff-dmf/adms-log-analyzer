@@ -151,6 +151,7 @@ function checkForced(rules) {
     }
     assert.equal(winner(rules, `${row} .grid-cell.col-collection[data-tag][data-tag="1"]`, "background", f), "transparent");
     assert.equal(winner(rules, `${row} .grid-cell.col-collection[data-tag][data-tag="1"]`, "color", f), "HighlightText");
+    assert.equal(winner(rules, `${row} .grid-cell.col-source[data-badge]::before`, "border-color", f), "HighlightText", `${row}: S badge border`);
     assert.equal(winner(rules, `${row} mark`, "background", f), "HighlightText");
     assert.equal(winner(rules, `${row} mark`, "color", f), "Highlight");
     for (const prop of LAYOUT_PROPS) assert.equal(winner(rules, row, prop, f), winner(rules, ".grid-row", prop), `${row}: no ${prop} in forced colors`);
@@ -207,6 +208,7 @@ const mutations = {
   "forced box-shadow not cleared": (f) => ({ ...f, "app.css": f["app.css"].replace(/(@media \(forced-colors: active\)[\s\S]*?)box-shadow: none;/, "$1") }),
   "forced focus ring overridden": (f) => ({ ...f, "app.css": f["app.css"].replace("outline: 2px solid HighlightText;", "outline: 1px solid var(--focus-ring);") }),
   "bookmark color wins in the forced selection": (f) => ({ ...f, "bookmarks.css": f["bookmarks.css"] + '\n@media (forced-colors: active) { .grid-row.selected[data-bm="red"] .grid-cell.grid-cell:first-child { color: red; } }\n' }),
+  "S badge keeps its author border in the forced selection": (f) => ({ ...f, "app.css": f["app.css"].replace(/\.grid-row\.selected \.col-source\[data-badge\]::before \{[^}]*\}/, "") }),
   "mark keeps the yellow fill in the forced selection": (f) => ({ ...f, "app.css": f["app.css"].replace(/\.grid-row\.selected mark \{[^}]*\}/, "") }),
 };
 

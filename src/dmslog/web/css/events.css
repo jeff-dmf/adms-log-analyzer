@@ -29,18 +29,12 @@
   --ev-h-other: #a79cf0;
 }
 
-.ev-toolbar,
-.dash-toolbar {
+/* Filters of the panel: one row (the .ui-panel-tools row scrolls sideways instead of wrapping). */
+.ev-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 8px;
-}
-
-.ev-title {
-  font-weight: 600;
-  margin-right: 8px;
 }
 
 .ev-name,
@@ -48,13 +42,15 @@
   min-width: 12em;
 }
 
-.ev-status,
+.ev-toolbar label {
+  white-space: nowrap;
+}
+
 .ev-muted {
   color: var(--muted);
   font-size: 0.9em;
 }
 
-.ev-status.is-error,
 .ev-error {
   color: var(--error-text);
 }
@@ -78,52 +74,42 @@
   overflow-x: auto;
 }
 
-.ev-list {
-  max-height: 50vh;
-  overflow-y: auto;
-}
-
+/* The panel body scrolls; the list and the detail do not scroll on their own. */
 .ev-detail {
-  max-height: 50vh;
-  overflow-y: auto;
   padding-left: 8px;
   border-left: 1px solid var(--border);
 }
 
 .ev-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-3);
 }
 
-.ev-table th,
-.ev-table td {
-  text-align: left;
-  padding: 3px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-
-.ev-table th {
-  position: sticky;
-  top: 0;
-  background: var(--panel);
-}
-
+/* Names are code-like but must not break letter by letter: the cell keeps a minimum width and truncates
+   (the full text is in the title). */
 .ev-mono {
   font-family: ui-monospace, monospace;
+}
+
+.ev-name-cell {
+  min-width: 18ch;
+}
+
+.ev-key {
+  min-width: 14ch;
+}
+
+.ev-table .ev-text {
+  max-width: none;
+  height: auto;
+  overflow: visible;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.ev-key,
-.ev-text {
-  max-width: 28em;
-}
-
-.ev-num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.ev-entry-table td,
+.ev-table .ev-text {
+  height: auto;
+  vertical-align: top;
 }
 
 .ev-row.is-selected {

@@ -9,6 +9,7 @@ import {
 } from "./dashboard-model.js";
 import { gridTarget } from "./events-model.js";
 import { statusBadge } from "./events-panel.js";
+import { createPanelShell, statusLine } from "./panel-shell.js";
 import { S, format } from "./strings.js";
 import { compactCount, formatBucketStart, readoutAt, stackSeries } from "./timeline-model.js";
 
@@ -48,19 +49,19 @@ let uid = 0;
 //   api               needs eventStats, eventHistogram, statsMethods, statsSeries, events
 //   getCase()         current case id or null
 //   onShowInGrid(t)   t = { from, to, entryId }: set the grid time filter and select the entry
+//   onRequestClose()  the dock closes the tab (the default hides the container)
 // Returns { refresh() }; call it when the case changed or indexing finished.
-export function initDashboard(container, { api, getCase, onShowInGrid }) {
+export function initDashboard(container, { api, getCase, onShowInGrid, onRequestClose = null }) {
   uid += 1;
   const prefix = "dash" + uid + "-";
 
-  container.textContent = "";
-  const toolbar = element("div", "dash-toolbar");
-  toolbar.appendChild(element("span", "ev-title", S.dashTitle));
-  const refreshButton = element("button", "", S.dashRefresh);
-  refreshButton.type = "button";
-  toolbar.appendChild(refreshButton);
-  const status = element("div", "ev-status");
-  status.setAttribute("role", "status");
+  const shell = createPanelShell(container, {
+    title: S.dashTitle,
+    onRequestClose,
+    onRefresh: () => flow.refresh(),
+    refreshLabel: S.dashRefresh,
+  });
+  const status = statusLine(document, "ev-status");
   const body = element("div", "dash-body");
 
   function block(title) {
@@ -77,7 +78,7 @@ export function initDashboard(container, { api, getCase, onShowInGrid }) {
   const exceptionsHost = block(S.dashExceptionsTitle);
   const levelsHost = block(S.dashLevelsTitle);
   const lifecycleHost = block(S.dashLifecycleTitle);
-  container.append(toolbar, status, body);
+  shell.body.append(status, body);
 
   // Grid targets of the buttons of each list, kept by index so the delegated click finds them again.
   const targets = { exceptions: [], levels: [], lifecycle: [] };
@@ -120,7 +121,7 @@ export function initDashboard(container, { api, getCase, onShowInGrid }) {
   function statsRow(row, totals) {
     const tr = element("tr", totals ? "dash-total" : "");
     tr.appendChild(element("td", "", row.family));
-    const nameCell = element("td", "ev-mono");
+    const nameCell = element("td", "ev-mono is-text ev-name-cell");
     if (totals || row.rawName === "") {
       nameCell.textContent = row.name;
     } else {
@@ -146,7 +147,7 @@ export function initDashboard(container, { api, getCase, onShowInGrid }) {
       statsHost.appendChild(element("div", "ev-muted", S.dashEmpty));
       return;
     }
-    const table = element("table", "ev-table dash-stats");
+    const table = element("table", "ui-table ev-table dash-stats");
     table.appendChild(element("caption", "visually-hidden", S.dashStatsCaption));
     table.appendChild(headRow([
       S.dashColFamily, S.dashColName, S.dashColCount, S.dashColOk, S.dashColBusiness, S.dashColFail,
@@ -373,7 +374,7 @@ export function initDashboard(container, { api, getCase, onShowInGrid }) {
       exceptionsHost.appendChild(element("div", "ev-muted", S.dashEmpty));
       return;
     }
-    const table = element("table", "ev-table");
+    const table = element("table", "ui-table ev-table");
     table.appendChild(element("caption", "visually-hidden", S.dashExceptionsCaption));
     table.appendChild(headRow([S.dashColSignature, S.dashColOccurrences, S.dashColFirst, S.dashColLast]));
     const tbody = element("tbody");
@@ -410,7 +411,7 @@ export function initDashboard(container, { api, getCase, onShowInGrid }) {
       levelsHost.appendChild(element("div", "ev-muted", S.dashEmpty));
       return;
     }
-    const table = element("table", "ev-table");
+    const table = element("table", "ui-table ev-table");
     table.appendChild(element("caption", "visually-hidden", S.dashLevelsCaption));
     table.appendChild(headRow([S.dashColLevel, S.dashColFrom, S.dashColTo, S.dashColDuration, S.evColProcess, ""]));
     const tbody = element("tbody");
@@ -440,7 +441,7 @@ export function initDashboard(container, { api, getCase, onShowInGrid }) {
       lifecycleHost.appendChild(element("div", "ev-muted", S.dashEmpty));
       return;
     }
-    const table = element("table", "ev-table");
+    const table = element("table", "ui-table ev-table");
     table.appendChild(element("caption", "visually-hidden", S.dashLifecycleCaption));
     table.appendChild(headRow([S.dashColKind, S.dashColWhen, S.evColProcess, S.dashColWhat, ""]));
     const tbody = element("tbody");
@@ -571,7 +572,6 @@ export function initDashboard(container, { api, getCase, onShowInGrid }) {
       drawSeries();
     }
   });
-  refreshButton.addEventListener("click", () => flow.refresh());
 
   // Canvas colours come from CSS tokens: redraw when the theme changes; resize with the container.
   const redraw = () => {

@@ -6,6 +6,7 @@ import {
   EVENT_KINDS, OPERATION_KIND, STATUS_VALUES, buildDetailView, buildEventRow, createEventsFlow, kindLabel, statusLabel,
 } from "./events-model.js";
 import { createPayloadNoticeFlow } from "./payload-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
@@ -42,14 +43,22 @@ let uid = 0;
 //   api               needs events(caseId, params, signal) and event(caseId, id, signal)
 //   getCase()         current case id or null
 //   onShowInGrid(t)   t = { from, to, entryId }: set the grid time filter and select the entry
+//   onRequestClose()  the dock closes the tab (the default hides the container)
 // Returns { refresh(), open(id) }; call refresh() when the case changed or indexing finished.
-export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
+export function initEventsPanel(container, { api, getCase, onShowInGrid, onRequestClose = null }) {
   uid += 1;
   const prefix = "ev" + uid + "-";
 
-  container.textContent = "";
+  const shell = createPanelShell(container, {
+    title: S.evTitle,
+    onRequestClose,
+    onRefresh: () => {
+      notices.clearCache();
+      return flow.refresh();
+    },
+    refreshLabel: S.evRefresh,
+  });
   const toolbar = element("div", "ev-toolbar");
-  toolbar.appendChild(element("span", "ev-title", S.evTitle));
 
   function field(labelText, control, id) {
     const label = element("label", "", labelText);
@@ -82,35 +91,34 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
   queryInput.type = "search";
   queryInput.autocomplete = "off";
   queryInput.placeholder = S.evSearchPlaceholder;
-  const refreshButton = element("button", "", S.evRefresh);
-  refreshButton.type = "button";
   toolbar.append(
     ...field(S.evKind, kindSelect, "kind"),
     ...field(S.evStatus, statusSelect, "status"),
     ...field(S.evName, nameInput, "name"),
     ...field(S.evSearch, queryInput, "q"),
-    refreshButton,
   );
+  shell.addTools(toolbar);
 
-  const status = element("div", "ev-status");
-  status.setAttribute("role", "status");
+  const status = statusLine(document, "ev-status");
   const layout = element("div", "ev-layout");
   const listWrap = element("div", "ev-list");
-  const table = element("table", "ev-table");
+  const table = element("table", "ui-table ev-table");
   table.appendChild(element("caption", "visually-hidden", S.evTableCaption));
   table.appendChild(headRow([
     S.evColTime, S.evColProcess, S.evColName, S.evColKey, S.evColDuration, S.evColStatus, S.evColEntries,
   ]));
   const tbody = element("tbody");
   table.appendChild(tbody);
-  const moreButton = element("button", "ev-more", S.evLoadMore);
+  const moreButton = element("button", "ui-button ev-more", S.evLoadMore);
   moreButton.type = "button";
-  listWrap.append(table, moreButton);
+  listWrap.append(table);
+  shell.addFoot(moreButton); // "Load more" is the main action of a long list: always in sight
+  shell.foot.hidden = true;
   const detailPane = element("section", "ev-detail");
   detailPane.setAttribute("aria-label", S.evDetailTitle);
   detailPane.tabIndex = -1;
   layout.append(listWrap, detailPane);
-  container.append(toolbar, status, layout);
+  shell.body.append(status, layout);
 
   // Rows are appended incrementally; a changed first row or a shorter list rebuilds the table.
   let rendered = 0;
@@ -129,14 +137,18 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
     open.setAttribute("aria-label", format(S.evOpenRelated, { kind: row.kindLabel, name: row.name }));
     timeCell.appendChild(open);
     tr.appendChild(timeCell);
-    tr.appendChild(element("td", "", row.process));
-    tr.appendChild(element("td", "ev-mono", row.name));
-    tr.appendChild(element("td", "ev-mono ev-key", row.key));
-    tr.appendChild(element("td", "ev-num", row.durationText));
+    tr.appendChild(element("td", "is-text", row.process));
+    const nameCell = element("td", "ev-mono is-text ev-name-cell", row.name);
+    nameCell.title = row.name;
+    tr.appendChild(nameCell);
+    const keyCell = element("td", "ev-mono is-text ev-key", row.key);
+    keyCell.title = row.key;
+    tr.appendChild(keyCell);
+    tr.appendChild(element("td", "ev-num is-num", row.durationText));
     const statusCell = element("td");
     statusCell.appendChild(statusBadge(row.statusLabel, row.tone));
     tr.appendChild(statusCell);
-    tr.appendChild(element("td", "ev-num", row.entries));
+    tr.appendChild(element("td", "ev-num is-num", row.entries));
     tbody.appendChild(tr);
     rowById.set(String(row.id), tr);
   }
@@ -208,7 +220,7 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
         shown: view.entries.length, total: view.entriesTotal,
       })));
     }
-    const entries = element("table", "ev-table ev-entry-table");
+    const entries = element("table", "ui-table ev-table ev-entry-table");
     entries.appendChild(headRow([S.evEntryColTime, S.evEntryColTid, S.evEntryColLevel, S.evEntryColText]));
     const body = element("tbody");
     for (const entry of view.entries) {
@@ -272,14 +284,14 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
   }
 
   function setStatus(text, isError) {
-    status.textContent = text;
-    status.classList.toggle("is-error", Boolean(isError));
+    setStatusLine(status, text, isError);
   }
 
   function onState(state) {
     renderRows(state.events);
     markSelected(state.selectedId);
     moreButton.hidden = state.next === null || state.status !== "ready";
+    shell.foot.hidden = moreButton.hidden;
     moreButton.disabled = state.loadingMore;
     moreButton.textContent = state.loadingMore ? S.evLoadingMore : S.evLoadMore;
     if (state.status === "nocase") {
@@ -345,7 +357,6 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid }) {
   nameInput.addEventListener("change", () => flow.setFilters({ name: nameInput.value }));
   queryInput.addEventListener("change", () => flow.setFilters({ q: queryInput.value }));
   moreButton.addEventListener("click", () => flow.loadMore());
-  refreshButton.addEventListener("click", () => flow.refresh());
 
   return {
     refresh: () => {

@@ -34,13 +34,6 @@
   color: inherit;
 }
 
-.al-panel {
-  padding: 8px 10px;
-  overflow: auto;
-  max-height: 50vh;
-}
-
-.al-head,
 .al-history-head {
   display: flex;
   align-items: center;
@@ -48,9 +41,9 @@
   gap: 8px;
 }
 
-.al-title,
-.al-panel h4 {
+.al-panel h3 {
   margin: 4px 0;
+  font-size: var(--text-md);
 }
 
 .al-list {
@@ -106,14 +99,9 @@
   margin: 8px 0;
 }
 
-.al-form h4,
-.al-form-message,
-.al-create {
+.al-form h3,
+.al-form-message {
   grid-column: 1 / -1;
-}
-
-.al-create {
-  justify-self: start;
 }
 
 .al-field {

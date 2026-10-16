@@ -1,31 +1,21 @@
 /* "Distinct values" panel and "Group by template" view. Colours come from the tokens of app.css. */
+/* Field and "top" controls: one row in the panel tools. */
 .dst-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 6px;
-}
-
-.dst-title {
-  margin: 0 8px 0 0;
-  font-size: 1em;
 }
 
 .dst-top {
   width: 5em;
 }
 
-.dst-status,
 .dst-others,
 .dst-empty {
   color: var(--muted);
   font-size: 0.9em;
   margin: 4px 0;
-}
-
-.dst-status.is-error {
-  color: var(--error-text);
 }
 
 .dst-warning {
@@ -34,41 +24,12 @@
   font-style: italic;
 }
 
-.dst-table-host,
-.grp-list {
-  max-height: 45vh;
-  overflow: auto;
-}
-
-.dst-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.dst-table th,
-.dst-table td {
-  text-align: left;
-  padding: 3px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.dst-table th {
-  position: sticky;
-  top: 0;
-  background: var(--panel);
+.dst-value {
+  font-family: ui-monospace, monospace;
 }
 
 .dst-table .dst-num {
   text-align: right;
-  white-space: nowrap;
-}
-
-.dst-value {
-  font-family: ui-monospace, monospace;
-  max-width: 40em;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

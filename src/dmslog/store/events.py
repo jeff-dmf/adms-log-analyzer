@@ -73,6 +73,7 @@ BUCKET_MS = {"minute": 60_000, "hour": 3_600_000}
 STATUSES = ("ok", "business_error", "fail", "timeout", "open", "truncated")
 PERCENTILES = (("p50_ms", 50), ("p90_ms", 90), ("p99_ms", 99))
 
+_INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 _EPOCH = datetime(1970, 1, 1)
 _TIME = re.compile(r"\s*(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,3}))?)?)?\s*\Z")
 
@@ -111,13 +112,15 @@ class Cursor:
 
     @classmethod
     def parse(cls, text: str) -> Cursor | None:
-        """``"<ts_start>:<id>"`` or None when malformed."""
+        """``"<ts_start>:<id>"`` or None when malformed or outside the int64 range of SQLite."""
         ts_text, sep, id_text = text.partition(":")
         if not sep or len(text) > 64:
             return None
         try:
             ts, id_ = int(ts_text), int(id_text)
         except ValueError:
+            return None
+        if not (_INT64_MIN <= ts <= _INT64_MAX and _INT64_MIN <= id_ <= _INT64_MAX):
             return None
         return cls(ts, id_)
 

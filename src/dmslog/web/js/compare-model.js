@@ -85,16 +85,30 @@ export function buildDiffRows(ops, hideEqual) {
   return rows;
 }
 
-// Header facts of one record of the answer.
+// Last segment of a path of the ERS ("Log/adapter.log" -> "adapter.log"); "" when there is none.
+export function baseName(path) {
+  const parts = String(path === undefined || path === null ? "" : path).split(/[\\/]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
+// Header facts of one record of the answer: what a person recognizes (time, source file, message type) and not the
+// internal record number, the full path or the template code. `title` is the one-line form.
 export function buildSideHeader(record) {
   const tid = record.tid === null || record.tid === undefined ? "-" : "0x" + Number(record.tid).toString(16);
+  const time = formatTs(record.ts) || "-"; // null, undefined and NaN have no time
+  const source = baseName(record.file_name) || baseName(record.member) || "-";
+  const type = record.tpl_title ? String(record.tpl_title) : record.tpl ? String(record.tpl) : "-";
   return {
-    title: format(S.cmpRecord, { id: record.id }),
+    time,
+    source,
+    type,
+    tid,
+    title: [time, source, type].join(" \u00b7 "),
     items: [
-      { label: S.cmpMetaTime, text: formatTs(record.ts) },
-      { label: S.cmpMetaSource, text: record.member ? String(record.member) : "-" },
+      { label: S.cmpMetaTime, text: time },
+      { label: S.cmpMetaSource, text: source },
       { label: S.cmpMetaTid, text: tid },
-      { label: S.cmpMetaTemplate, text: record.tpl ? String(record.tpl) : "-" },
+      { label: S.cmpMetaTemplate, text: type },
     ],
   };
 }

@@ -1,42 +1,19 @@
 /* Unknown-templates panel. Colours come from the tokens of app.css. */
+/* Filter, sort and direction: one row in the panel tools. */
 .unk-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 8px;
-}
-
-.unk-title {
-  font-weight: 600;
-  margin-right: 8px;
 }
 
 .unk-filter {
   min-width: 14em;
 }
 
-.unk-summary,
-.unk-status {
+.unk-summary {
   color: var(--muted);
   font-size: 0.9em;
-}
-
-.unk-status.is-error {
-  color: var(--sev-2);
-}
-
-.unk-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.unk-table th,
-.unk-table td {
-  text-align: left;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
 }
 
 .unk-table .unk-num {

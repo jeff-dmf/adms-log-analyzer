@@ -4,7 +4,10 @@
 // `.value`, labels through textContent.
 import { api } from "./api.js";
 import { createRedactionFlow, formToProfile, profileToForm } from "./export-model.js";
+import { createDialogShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S } from "./strings.js";
+
+let redactUid = 0;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -27,20 +30,18 @@ function textArea(labelText, rows) {
   return { row, area };
 }
 
-// host: empty element to fill (hidden until opened). Returns { refresh() }.
-export function initRedactionPanel(host) {
-  host.textContent = "";
-  const head = element("div", "export-head");
-  head.appendChild(element("h3", "export-title", S.redactTitle));
-  const closeButton = element("button", "redact-close", S.redactClose);
-  closeButton.type = "button";
-  head.appendChild(closeButton);
-  const status = element("div", "export-status");
-  status.setAttribute("role", "status");
+// A modal dialog (UI-23) with Save and Reset fixed in the foot. host: the element the dialog is added to.
+// Options: onClose() (after the dialog closed, for any reason). Returns { open(opener), close(), isOpen(), refresh() }.
+export function initRedactionPanel(host, { onClose = null } = {}) {
+  const doc = host.ownerDocument || document;
+  const shell = createDialogShell(doc, { title: S.redactTitle, className: "redact-dialog", onClose });
+  host.appendChild(shell.dialog);
+  const status = statusLine(doc, "export-status");
   const invalid = element("div", "export-warning");
   invalid.hidden = true;
 
   const form = element("form", "redact-form");
+  form.id = "redact-form-" + (redactUid += 1);
   const modeBox = element("fieldset", "redact-categories");
   modeBox.appendChild(element("legend", "", S.redactMode));
   const modeRadios = new Map();
@@ -61,14 +62,14 @@ export function initRedactionPanel(host) {
   const exceptions = textArea(S.redactExceptions, 3);
   const names = textArea(S.redactPayloadNames, 5);
   const hint = element("div", "export-hint", S.redactHint);
-  const saveButton = element("button", "redact-save", S.redactSave);
+  const saveButton = element("button", "ui-button is-primary redact-save", S.redactSave);
   saveButton.type = "submit";
-  const resetButton = element("button", "redact-reset", S.redactReset);
+  saveButton.setAttribute("form", form.id);
+  const resetButton = element("button", "ui-button redact-reset", S.redactReset);
   resetButton.type = "button";
-  const buttons = element("div", "export-actions");
-  buttons.append(saveButton, resetButton);
-  form.append(modeBox, categoryBox, word.row, literal.row, exceptions.row, names.row, hint, buttons);
-  host.append(head, status, invalid, form);
+  form.append(modeBox, categoryBox, word.row, literal.row, exceptions.row, names.row, hint);
+  shell.body.append(status, invalid, form);
+  shell.foot.append(resetButton, saveButton);
 
   const checkboxes = new Map();
   let profileName = "default";
@@ -113,15 +114,14 @@ export function initRedactionPanel(host) {
     resetButton.disabled = busy;
     invalid.hidden = !state.invalid;
     invalid.textContent = state.invalid ? S.redactInvalidTitle + ": " + state.message : "";
-    status.classList.toggle("is-error", state.status === "error");
     if (state.status === "loading") {
-      status.textContent = S.redactLoading;
+      setStatusLine(status, S.redactLoading, false);
     } else if (state.status === "error") {
-      status.textContent = S.redactError + (state.error ? ": " + state.error : "");
+      setStatusLine(status, S.redactError + (state.error ? ": " + state.error : ""), true);
     } else if (state.saved) {
-      status.textContent = S.redactSaved;
+      setStatusLine(status, S.redactSaved, false);
     } else {
-      status.textContent = "";
+      setStatusLine(status, "", false);
     }
     if (state.status === "ready" && state.profile && state.profile !== filled) {
       if (checkboxes.size === 0) {
@@ -149,14 +149,18 @@ export function initRedactionPanel(host) {
       fill(flow.state.defaults);
     }
   });
-  closeButton.addEventListener("click", () => {
-    host.hidden = true;
-  });
 
+  const refresh = () => {
+    filled = null;
+    return flow.load();
+  };
   return {
-    refresh: () => {
-      filled = null;
-      return flow.load();
+    open(opener) {
+      shell.open(opener);
+      return refresh();
     },
+    close: shell.close,
+    isOpen: shell.isOpen,
+    refresh,
   };
 }

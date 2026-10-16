@@ -2,6 +2,7 @@
 // (computed by the server). Texts come from the ERS (untrusted): textContent only.
 import { api } from "./api.js";
 import { buildDiffRows, buildSideHeader, createCompareFlow, statsText } from "./compare-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 const MARKS = { change: "~", remove: "-", add: "+", equal: "", skip: "" };
@@ -17,28 +18,28 @@ function element(tag, className, text) {
   return node;
 }
 
-// host: empty element to fill (hidden until opened). Options: getCase().
-// Returns { open(a, b), close(), reset() }.
-export function initCompare(host, { getCase }) {
-  host.textContent = "";
-  const head = element("div", "cmp-head");
-  head.appendChild(element("h3", "cmp-title", S.cmpTitle));
-  const closeButton = element("button", "cmp-close", S.cmpClose);
-  closeButton.type = "button";
-  head.appendChild(closeButton);
-  const status = element("div", "bm-muted");
-  status.setAttribute("role", "status");
+// host: empty element to fill. Options: getCase(), onRequestClose() (the dock closes the tab; the default hides the
+// host). Returns { open(a, b), close(), reset() }. The panel never shows or hides its host: opening is the dock's.
+export function initCompare(host, { getCase, onRequestClose = null }) {
+  const shell = createPanelShell(host, {
+    title: S.cmpTitle,
+    onRequestClose: onRequestClose || (() => {
+      flow.close();
+      host.hidden = true;
+    }),
+  });
+  const status = statusLine(document, "bm-muted");
   const heads = element("div", "cmp-sides");
-  const tools = element("div", "cmp-tools");
   const hideLabel = element("label", "cmp-hide");
   const hideBox = element("input");
   hideBox.type = "checkbox";
   hideBox.checked = true;
   hideLabel.append(hideBox, document.createTextNode(" "), element("span", "", S.cmpHideEqual));
   const stats = element("span", "bm-muted");
-  tools.append(hideLabel, stats);
+  shell.addTools(hideLabel, stats);
+  shell.tools.hidden = true; // only while a comparison is shown
   const wrap = element("div", "cmp-wrap");
-  const table = element("table", "cmp-table");
+  const table = element("table", "ui-table is-wrap cmp-table");
   table.appendChild(element("caption", "visually-hidden", S.cmpTableCaption));
   const headRow = element("tr");
   for (const label of ["", S.cmpSideA, "", S.cmpSideB]) {
@@ -50,20 +51,17 @@ export function initCompare(host, { getCase }) {
   const tbody = element("tbody");
   table.appendChild(tbody);
   wrap.appendChild(table);
-  const note = element("div", "bm-muted");
-  host.append(head, status, heads, tools, wrap, note);
+  const note = element("div", "ui-status");
+  // The difference comes first; the A/B identification is one compact line each, right above it.
+  shell.body.append(status, heads, wrap, note);
 
+  // One line per side: "A  time, source file, message type" (the tooltip adds the TID).
   function sideBox(label, record) {
     const header = buildSideHeader(record);
-    const box = element("section", "cmp-side");
+    const box = element("div", "cmp-side");
+    box.title = header.items.map((item) => item.label + ": " + item.text).join("; ");
     box.setAttribute("aria-label", label + ": " + header.title);
-    box.appendChild(element("h4", "cmp-side-title", label + ": " + header.title));
-    const dl = element("dl", "cmp-meta");
-    for (const item of header.items) {
-      dl.appendChild(element("dt", "", item.label));
-      dl.appendChild(element("dd", "bm-mono", item.text));
-    }
-    box.appendChild(dl);
+    box.append(element("strong", "cmp-side-title", label), element("span", "cmp-side-text bm-mono", header.title));
     return box;
   }
 
@@ -96,25 +94,22 @@ export function initCompare(host, { getCase }) {
     stats.textContent = "";
     tbody.textContent = "";
     lastData = null;
-    status.classList.remove("bm-error");
+    setStatusLine(status, "", false);
+    wrap.hidden = state.status !== "ready";
+    shell.tools.hidden = state.status !== "ready";
     if (state.status === "idle") {
-      host.hidden = true;
       return;
     }
-    host.hidden = false;
-    wrap.hidden = state.status !== "ready";
-    tools.hidden = state.status !== "ready";
     if (state.status === "nocase") {
-      status.textContent = S.cmpNoCase;
+      setStatusLine(status, S.cmpNoCase, false);
     } else if (state.status === "loading") {
-      status.textContent = S.cmpLoading;
+      setStatusLine(status, S.cmpLoading, false);
     } else if (state.status === "error") {
-      status.classList.add("bm-error");
-      status.textContent = S.cmpError + (state.error ? ": " + state.error : "");
+      setStatusLine(status, S.cmpError + (state.error ? ": " + state.error : ""), true);
     } else {
       const data = state.data;
       lastData = data;
-      status.textContent = data.diff.identical ? S.cmpIdentical : "";
+      setStatusLine(status, data.diff.identical ? S.cmpIdentical : "", false);
       heads.append(sideBox(S.cmpSideA, data.a), sideBox(S.cmpSideB, data.b));
       stats.textContent = statsText(data.diff.stats);
       renderRows(data);
@@ -125,7 +120,6 @@ export function initCompare(host, { getCase }) {
   }
 
   const flow = createCompareFlow({ api, getCase, onState: render });
-  closeButton.addEventListener("click", () => flow.close());
   hideBox.addEventListener("change", () => {
     if (lastData) {
       renderRows(lastData);
