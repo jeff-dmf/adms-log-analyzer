@@ -46,7 +46,7 @@ from itertools import chain
 from dmslog.ingest.discover import SourceInfo
 from dmslog.ingest.fingerprint import HASH_SPAN, sha1_hex, span_for
 from dmslog.ingest.reader import SourceReader
-from dmslog.parse.envelope import PLAIN, Envelope, detect_envelope, get_envelope
+from dmslog.parse.envelope import PLAIN, Envelope, detect_envelope, envelope_or_plain
 from dmslog.store.writer import PARTIAL_PREFIX, PARTIAL_SCOPE_PREFIX
 
 DETECT_BYTES = 64 * 1024  # bytes examined to pick the envelope of a new source ...
@@ -253,7 +253,7 @@ def detect_from_chunks(chunks: Iterator[bytes], fallback: str) -> tuple[Envelope
             data = b"".join(pending)
             return detect_envelope(data), data, chunks
     data = b"".join(pending)
-    return (detect_envelope(data) if data else get_envelope(fallback)), data, chunks
+    return (detect_envelope(data) if data else envelope_or_plain(fallback)), data, chunks
 
 
 def _last_timed_header(envelope: Envelope, buf: bytes, end: int) -> int | None:

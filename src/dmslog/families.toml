@@ -7,7 +7,8 @@
 #
 # Rule fields:
 #   family    family code stored in stream.family (open text; a new family is a new rule)
-#   envelope  expected line envelope: adms | oaserr | plain (a hint; detection by majority decides)
+#   envelope  expected line envelope: adms | oaserr | plain or a name from [[envelope]]
+#             (a hint for empty files; detection by majority decides)
 #   scope     default  -> in the default scope
 #             service  -> in the default scope only when its service hosts an anchor adapter
 #                         (falls back to default when the source has no anchor at all)
@@ -278,6 +279,71 @@ family = "REPORT"
 pattern = '\.txt$'
 envelope = "plain"
 scope = "optional"
+
+# ---------------------------------------------------------------------------
+# Generic envelopes (format detection for logs outside the 1.0 scope).
+#
+# A file whose first lines match neither built-in envelope (adms, oaserr) would be
+# read as `plain` (one record per line, no time). Each [[envelope]] below is tried
+# then, and only then: built-in detections never change. The one with most header
+# lines in the sample (first 50 lines / 64 KiB) wins, ties in file order, provided
+# it reaches both thresholds; otherwise the file stays `plain`.
+#
+# Fields:
+#   name         stored in source.envelope; lowercase snake_case, not adms/oaserr/plain.
+#                Treat it as stable: a case indexed with it resumes through this name.
+#   header       regex (ASCII, must start with ^) matched against the start of the
+#                line, BOM and end of line excluded, at most 512 bytes. Required named
+#                groups: year (4 digits), month, day, hour, minute, second; optional:
+#                ms (fraction, first 3 digits used), pid, tid, level, process.
+#                Restricted grammar (bytes semantics, at most 1000 characters):
+#                literals (\t, \xHH, escaped punctuation; '{' only as \{); classes of
+#                literals, ranges and \d only (no negation, no \s \w \S \W \D, no '.');
+#                a greedy repeat {m,n}/{n}/{,n}/? (1 <= n <= 64) applies to ONE literal or
+#                class; groups (?P<name>...) and (?:...) at most 2 deep, the only repeat
+#                of a group being '?' (at most 4, not nested, never empty); no
+#                alternation, no anchor but the leading ^, no look-arounds, comments or
+#                flags. Checked on the text as written, before compiling.
+#                Every choice is decided by the next byte: a variable repeat or an
+#                optional group may not start like what follows it nor end the header.
+#                Put a separator at the END of an optional group: '(?:\[TID=n\] )?LEVEL'.
+#                The time is the local log time, as for the built-in envelopes.
+#   tid_base     10 (default) or 16
+#   levels       table {TOKEN = "ADMS level"} added to the defaults (DEBUG = DEBUGLOG,
+#                WARN = WARNING, TRACE = VERBOSE, ...); tokens compare case-insensitively
+#   min_lines    header lines needed in the sample (default 2; fewer when the sample is shorter)
+#   min_ratio    share of the non-blank sampled lines that must be headers (default 0.2)
+#   examples     header lines (synthetic) the loader checks, including that appending
+#                text to them never changes the parsed header
+# ---------------------------------------------------------------------------
+
+# .NET tool and installer logs: `DD.MM.YYYY HH:MM:SS.mmm [TID=n] [LEVEL] - msg`.
+[[envelope]]
+name = "dmy_tid_level"
+description = "DD.MM.YYYY time [TID=n] [LEVEL] - message"
+header = '^(?P<day>\d\d)\.(?P<month>\d\d)\.(?P<year>\d{4}) (?P<hour>\d\d):(?P<minute>\d\d):(?P<second>\d\d)\.(?P<ms>\d{3}) \[TID=(?P<tid>\d{1,10})\] \[(?P<level>[A-Za-z]{1,11}) {0,8}\] - '
+examples = [
+    "15.10.2026 13:04:05.123 [TID=12] [DEBUG] - Starting step",
+    "01.02.2026 00:00:00.000 [TID=1] [INFO ] - x",
+    "31.12.2025 23:59:59.999 [TID=4096] [WARN ] - ",
+]
+
+# ERS collection tool: `YYYY.MM.DD HH:MM:SS.mmm      LEVEL: msg` (level right-aligned).
+[[envelope]]
+name = "ymd_level_colon"
+description = "YYYY.MM.DD time LEVEL: message"
+header = '^(?P<year>\d{4})\.(?P<month>\d\d)\.(?P<day>\d\d) (?P<hour>\d\d):(?P<minute>\d\d):(?P<second>\d\d)\.(?P<ms>\d{3}) {1,16}(?P<level>[A-Za-z]{1,11}): '
+examples = [
+    "2026.10.15 13:04:05.123          INFO: Collecting files",
+    "2026.10.15 13:04:05.124         ERROR: Access denied",
+]
+
+# Shutdown reason logs: `YYYY-MM-DD HH:MM:SS.mmm: msg`.
+[[envelope]]
+name = "ymd_colon"
+description = "YYYY-MM-DD time: message"
+header = '^(?P<year>\d{4})-(?P<month>\d\d)-(?P<day>\d\d) (?P<hour>\d\d):(?P<minute>\d\d):(?P<second>\d\d)\.(?P<ms>\d{3}): '
+examples = ["2026-10-15 13:04:05.123: Service stopped by request"]
 
 # ---------------------------------------------------------------------------
 # Fallback: anything that matched no rule above.
