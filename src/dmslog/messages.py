@@ -542,3 +542,37 @@ COMPARE_ERRORS = {
     "event_not_found": "event {id} does not exist in this case",
     "stream_not_found": "process (stream) {id} does not exist in this case",
 }
+# Ad hoc extraction by regex (store/extract.py, parse/extractor.py, /api/extract/check and
+# /api/entries/extract*; ROADMAP 9.8).
+EXTRACT_ERRORS = {
+    "bad_regex": "invalid regex: {detail}",
+    "regex_too_costly": "the regex is too costly: {detail}",
+    "bad_target": "target must be 'msg' (first line) or 'text' (whole record)",
+    "bad_types": "invalid types: {detail}",
+    "bad_type": "expected {expected}",
+    "bad_limit": "limit must be an integer from 1 to {limit}",
+    "bad_top": "top must be an integer from 1 to {limit}",
+    "bad_ids": "ids must be a list of 1 to {limit} record ids",
+    "unknown_member": "unknown member {name!r}",
+    "bad_family": "family must be a family code such as AWFM",
+    "bad_code": "code must look like ABC-001 (A-Z, 0-9, '-')",
+    "promote_needs_msg": "only a regex on the first line (target 'msg') can become a template",
+    "promote_no_match": (
+        "the regex matches none of the given records (records longer than its window are skipped)"
+    ),
+    "mixed_families": "the records come from several families (or none); give the family",
+    "result_too_large": (
+        "the captured values pass {limit} characters; capture shorter parts or lower the number of records"
+    ),
+}
+API_EXTRACT_TIMEOUT = (
+    "The extraction did not finish in time; narrow the filter (sources or time) or lower the number of"
+    " records"
+)
+PROMOTE_WARNINGS = {
+    "lead_varies": "The text before the match differs between the examples; the template starts with '.*?'",
+    "code_exists": "The code is already used by a packaged template; choose another one",
+    "already_classified": "Some examples already have a template; the new one only applies to records no"
+    " earlier template matches",
+    "cut_skipped": "Records longer than the regex window were not used as examples",
+}
