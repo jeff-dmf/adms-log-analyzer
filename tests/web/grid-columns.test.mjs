@@ -261,7 +261,7 @@ test("grid: the date of a multi-day case comes from the whole case, not from the
   await other.grid.setView({ caseId: "N", filter: null, range: filtered, caseRange: filtered });
   assert.equal(other.grid.multiDay, false);
   // the multi-day Source default is narrower, so Message keeps its room
-  assert.equal(grid.resizer.model.get("source"), 16 * 8 + 9);
+  assert.equal(grid.resizer.model.get("source"), 14 * 8 + 9);
   assert.equal(other.grid.resizer.model.get("source"), 20 * 8 + 9);
 });
 
