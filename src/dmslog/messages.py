@@ -526,6 +526,22 @@ AGGREGATE_CSV_LOOKUPS = {
     "error.reason": "Error reason (pack)", "error.severity": "Error severity (pack)",
     "operation.direction": "Operation direction (pack)", "operation.service": "Operation service (pack)",
 }  # fmt: skip
+# Comparison of views by message type (store/viewcompare.py, POST /api/entries/compare; ARQUITETURA 10.10).
+COMPARE_ERRORS = {
+    "bad_type": "expected {expected}",
+    "bad_mode": "mode must be one of {modes}",
+    "bad_side": "a side is an object with the keys of the mode {mode!r}",
+    "bad_side_key": "unknown key for the mode {mode!r} (expected {keys})",
+    "missing_side_key": "the mode {mode!r} needs {key!r} on each side",
+    "bad_window": "from and to are integers (ms of the log clock) with from < to",
+    "bad_id": "expected a positive integer id",
+    "bad_max_side": "max_side must be an integer from {lo} to {hi}",
+    "bad_offset": "offset must be an integer from {lo} to {hi}",
+    "bad_limit": "limit must be an integer from {lo} to {hi}",
+    "bad_only_diff": "only_diff must be true or false",
+    "event_not_found": "event {id} does not exist in this case",
+    "stream_not_found": "process (stream) {id} does not exist in this case",
+}
 # Ad hoc extraction by regex (store/extract.py, parse/extractor.py, /api/extract/check and
 # /api/entries/extract*; ROADMAP 9.8).
 EXTRACT_ERRORS = {
