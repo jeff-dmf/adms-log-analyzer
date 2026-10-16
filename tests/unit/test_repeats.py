@@ -397,3 +397,59 @@ def test_field_types_and_null(tmp_path):
     ]
     conn = _case(tmp_path, rows)
     assert _hits(conn, {"fields": ["v"]}) == [5]
+
+
+def _guid_rows(n: int, *, step_ms: int, nested: bool = True, same_ts: bool = False):
+    import uuid
+
+    rows = []
+    for i in range(n):
+        fields = {"request_id": str(uuid.UUID(int=i * 7919 + 1)), "op": "Changed crews"}
+        if nested:
+            fields["kv"] = {"Identifier": "CREW0001", "Availability": "Available"}
+        rows.append((3, 0 if same_ts else i * step_ms, 1, fields, "m", None, 7))
+    return rows
+
+
+@pytest.mark.parametrize("same_ts", [False, True])
+def test_each_distinct_field_text_is_parsed_once_however_many_pairs(tmp_path, same_ts):
+    """Review of PR #200: distinct GUIDs have the same length, so every pair reached the canonical form,
+    parsed twice per pair (QueryTimeout with a one hour window). Counted, not timed."""
+    from dmslog.store.filters import CANON_CACHE
+
+    n = 300
+    conn = _case(tmp_path, _guid_rows(n, step_ms=1000, same_ts=same_ts))
+    CANON_CACHE.reset()
+    flt = {"and": [{"source": 3}, {"repeat": {"window_ms": 3_600_000}}]}
+    assert query.count(conn, flt).n == 0
+    assert query.page(conn, flt, None).rows == []
+    assert CANON_CACHE.parses <= n  # once per distinct text, not per pair
+    assert CANON_CACHE.calls >= n * (n - 1) // 2  # every pair was compared (the case the review found)
+    CANON_CACHE.reset()
+    assert _hits(conn, {"fields": ["kv"], "window_ms": 3_600_000}) == list(range(2, n + 1))
+    assert CANON_CACHE.parses == 0  # equal texts never reach the function
+    marks = repeat_marks(conn, list(range(1, n + 1)), RepeatSpec(window_ms=3_600_000))
+    assert marks == {} and CANON_CACHE.parses <= n
+
+
+def test_the_cache_bound_keeps_the_answers(tmp_path, monkeypatch):
+    from dmslog.store import filters
+
+    rows = _guid_rows(40, step_ms=10)
+    rows.append(
+        (
+            3,
+            400,
+            1,
+            {**rows[0][3], "kv": {"Availability": "Available", "Identifier": "CREW0001"}},
+            "x",
+            None,
+            7,
+        )
+    )
+    conn = _case(tmp_path, rows)
+    filters.CANON_CACHE.reset()
+    monkeypatch.setattr(filters, "CANON_CACHE_CHARS", 300)  # a couple of texts: emptied all the time
+    assert _hits(conn) == [41]
+    assert repeat_marks(conn, [41], RepeatSpec()) == {41: {"prev": 1, "dt_ms": 400, "earlier": 1}}
+    assert filters.CANON_CACHE.chars <= 300

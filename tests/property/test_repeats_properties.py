@@ -95,6 +95,14 @@ UNITS = {
     "retry_open": ("retry_seq", "outcome", "end_of_log", False),
 }
 STARTUP_EOF = ("startup", "hot", "end_of_log", False)
+# The expected steps of each life cycle (ARQUITETURA 10.9), written here independently of the code.
+STEPS = {
+    "operation": ["start", "end"],
+    "startup": ["start", "hot"],
+    "map_reload": ["closed", "open"],
+    "retry_seq": ["attempt", "outcome"],
+}
+MISSING = {"operation": "end", "startup": "hot", "map_reload": "open", "retry_seq": "outcome"}
 
 record = st.tuples(
     st.one_of(st.just(0), st.integers(-800, 1500)),  # time step in ms (0: a tie; negative: back in time)
@@ -317,8 +325,9 @@ def check_oracle(conn, units, startup_eof) -> None:
     items = list_missing(conn, flt, limit=1000)[0]
     got = sorted((i["event"]["kind"], i["missing"][0], i["cause"], i["proven"]) for i in items)
     assert got == expected
-    for i in items:
-        assert i["steps"][-1] == i["missing"][0] and len(i["steps"]) == 2
+    for i in items:  # the whole expected sequence, literally, and the step that is missing
+        assert i["steps"] == STEPS[i["event"]["kind"]]
+        assert i["missing"] == [MISSING[i["event"]["kind"]]]
     counts: dict = {}
     for kind, step, cause, _ in expected:
         group = counts.setdefault((kind, step), {})

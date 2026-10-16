@@ -98,9 +98,13 @@ REGEX_WINDOW = 512
 MAX_REGEX_CHARS = 256
 MAX_REGEX_SEARCH_STEPS = 1 << 22
 REGEX_FUNCTION = "dmslog_regexp"
-# Canonical JSON (object keys sorted at every depth, arrays in order), registered by db.connect: the
-# repeat leaf compares field values with it (ROADMAP 9.12, store/repeats.py).
-CANON_FUNCTION = "dmslog_json_canon"
+# Same JSON value (canonical forms equal: object keys sorted at every depth, arrays in order), registered
+# by db.connect: the repeat leaf compares field values with it (ROADMAP 9.12, store/repeats.py).
+SAME_JSON_FUNCTION = "dmslog_json_same"
+# Canonical forms kept by the text they come from, so each distinct text is parsed once and a pair costs a
+# dictionary lookup (the repeat leaf compares every record with all the candidates of its window). The
+# cache is bounded by the characters it holds and emptied when full.
+CANON_CACHE_CHARS = 8 * 1024 * 1024
 
 SEV_NAMES = {"critical": 1, "error": 2, "warning": 3, "info": 4, "noise": 5}
 LEVEL_NAMES = {name.decode("ascii").lower(): value for name, value in LEVELS.items()}
@@ -291,6 +295,55 @@ def json_canon(text: Any) -> str | None:
         return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     except (ValueError, TypeError, RecursionError):
         return None
+
+
+def _cache_limit() -> int:
+    return CANON_CACHE_CHARS  # read at each insertion (a test can lower it)
+
+
+class _CanonCache:
+    """Canonical form by text, bounded by :data:`CANON_CACHE_CHARS`; counts calls and parses (tests)."""
+
+    def __init__(self) -> None:
+        self.forms: dict[str, str | None] = {}
+        self.chars = 0
+        self.calls = 0
+        self.parses = 0
+
+    def reset(self) -> None:
+        """Empty the cache and the counters (tests)."""
+        self.forms, self.chars, self.calls, self.parses = {}, 0, 0, 0
+
+    def form(self, text: str) -> str | None:
+        try:
+            return self.forms[text]
+        except KeyError:
+            pass
+        self.parses += 1
+        value = json_canon(text)
+        size = 2 * len(text)
+        if self.chars + size > _cache_limit():
+            self.forms, self.chars = (
+                {},
+                0,
+            )  # dict ops are atomic under the GIL: readers never see a half state
+        self.forms[text] = value
+        self.chars += size
+        return value
+
+    def same(self, a: Any, b: Any) -> int:
+        """1 when ``a`` and ``b`` are JSON texts of the same value, else 0 (the SQL function)."""
+        self.calls += 1
+        if not isinstance(a, str) or not isinstance(b, str):
+            return 0
+        if a == b:
+            return 1 if self.form(a) is not None else 0
+        x = self.form(a)
+        return 1 if x is not None and x == self.form(b) else 0
+
+
+CANON_CACHE = _CanonCache()
+json_same = CANON_CACHE.same
 
 
 # --- validation helpers -----------------------------------------------------------

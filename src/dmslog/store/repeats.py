@@ -42,8 +42,11 @@ second pass can repeat one of the first pass when both fall within the window (t
 event marks that hour).
 
 Cost: one range of ``ix_entry_tpl_ts`` (template, ``ts`` in the window) per record tested, plus
-two source lookups per candidate. Used as a filter leaf (``{"repeat": {...}}``, :mod:`filters`) it
-scans like ``text.substr``: pair it with a source or time scope.
+two source lookups per candidate; every candidate pair costs C comparisons and, when the field texts
+differ with the same length, one cached lookup of their canonical forms (each distinct text is parsed
+once, ``filters.CANON_CACHE``). Continuations are compared only after the first line, the number of
+lines and (SQLite 3.43+) their size in bytes agree. Used as a filter leaf (``{"repeat": {...}}``,
+:mod:`filters`) it scans like ``text.substr``: pair it with a source or time scope.
 """
 
 from __future__ import annotations
@@ -52,7 +55,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from .filters import _FIELD_NAME, CANON_FUNCTION, INT64_MIN, FilterError, _int, _str
+from .filters import _FIELD_NAME, INT64_MIN, SAME_JSON_FUNCTION, FilterError, _int, _str
 from .query import PAGE_TIMEOUT_S, read_guard
 
 DEFAULT_WINDOW_MS = 1_000
@@ -110,29 +113,41 @@ def parse_spec(arg: Any, path: str = "$") -> RepeatSpec:
     return RepeatSpec(window, tuple(names), tid)
 
 
-# The whole text of the record: first line and continuation lines (a payload or a stack trace).
+# The whole text of the record: first line and continuation lines (a payload or a stack trace). Cheap
+# tests first, all implied by equal texts: the first line, the number of physical lines (``nlines`` counts
+# the line feeds of the record, and the continuation keeps them, CRLF turned LF) and, where SQLite has it
+# (3.43+), the size in bytes of the continuation, read from the record header without loading the text:
+# a payload of 100 KB is only read when another one of the same size is in the window.
+_BODY = "(SELECT {fn}(b.cont) FROM entry_body b WHERE b.entry_id = {alias}.id)"
+_SIZE_TEST = (
+    f" AND {_BODY.format(fn='octet_length', alias='rp')} IS {_BODY.format(fn='octet_length', alias='e')}"
+    if sqlite3.sqlite_version_info >= (3, 43, 0)
+    else ""
+)
 _SAME_TEXT = (
-    "(rp.msg = e.msg AND (rp.flags & 2) = (e.flags & 2)"
-    " AND (SELECT b.cont FROM entry_body b WHERE b.entry_id = rp.id)"
-    " IS (SELECT b.cont FROM entry_body b WHERE b.entry_id = e.id))"
+    "(rp.msg = e.msg AND rp.nlines = e.nlines AND (rp.flags & 2) = (e.flags & 2)"
+    + _SIZE_TEST
+    + f" AND {_BODY.format(fn='', alias='rp')} IS {_BODY.format(fn='', alias='e')})"
 )
 
 
 # Same values of ``entry.fields``: the same text, or the same canonical JSON. The canonical form only
 # reorders object keys, so it keeps the length of the compact text every case was written with since
-# the M2 (``separators=(",", ":")``, ``ensure_ascii=False``): the length test keeps the Python function
-# off almost every pair.
+# the M2 (``separators=(",", ":")``, ``ensure_ascii=False``): only pairs of the same length reach the
+# Python function, and it parses each distinct text once (``filters.CANON_CACHE``): a pair then costs a
+# lookup, never a parse (review of PR #200: two parses per pair timed out with a one hour window).
 _SAME_FIELDS = (
     "(rp.fields IS e.fields OR (length(rp.fields) = length(e.fields)"
-    f" AND {CANON_FUNCTION}(rp.fields) = {CANON_FUNCTION}(e.fields)))"
+    f" AND {SAME_JSON_FUNCTION}(rp.fields, e.fields)))"
 )
 # One field: the same JSON type (a JSON null counts as missing) and the same value; an object or array
 # by its canonical text (``json_extract`` gives the JSON text of both a string and an object).
+# The value test comes first: most pairs differ there, after two JSON reads.
 _SAME_FIELD = (
-    "(nullif(json_type(rp.fields, ?), 'null') IS nullif(json_type(e.fields, ?), 'null')"
-    " AND (json_extract(rp.fields, ?) IS json_extract(e.fields, ?)"
-    "  OR (json_type(rp.fields, ?) IN ('object', 'array')"
-    f"   AND {CANON_FUNCTION}(json_extract(rp.fields, ?)) = {CANON_FUNCTION}(json_extract(e.fields, ?)))))"
+    "((json_extract(rp.fields, ?) IS json_extract(e.fields, ?)"
+    "  AND nullif(json_type(rp.fields, ?), 'null') IS nullif(json_type(e.fields, ?), 'null'))"
+    " OR (json_type(rp.fields, ?) IN ('object', 'array') AND json_type(e.fields, ?) = json_type(rp.fields, ?)"
+    f"  AND {SAME_JSON_FUNCTION}(json_extract(rp.fields, ?), json_extract(e.fields, ?))))"
 )
 # Stable identity of the origin of a source (alias ``s``): its ERS half and collection path.
 _ORIGIN = (
@@ -153,7 +168,7 @@ def _match(spec: RepeatSpec) -> tuple[str, list[Any]]:
     if spec.fields:
         for name in spec.fields:
             key.append(_SAME_FIELD)
-            params.extend(["$." + name] * 7)
+            params.extend(["$." + name] * 9)
         key.append(f"(e.tpl_id <> 0 OR {_SAME_TEXT})")
     else:
         key.append(f"{_SAME_FIELDS} AND (e.fields IS NOT NULL OR {_SAME_TEXT})")
@@ -211,14 +226,17 @@ def repeat_marks(
     if not ids:
         return {}
     match, params = _match(spec)
+    # One statement (one snapshot). The closest earlier record is looked up once per record (it drives the
+    # join) and the earlier ones are counted only for the repeats: a record that repeats nothing costs one
+    # scan of its window, not three.
     sql = (
-        f"SELECT e.id, e.ts, (SELECT rp.id {match}{_CLOSEST}),"  # noqa: S608 (constants only)
-        f" (SELECT rp.ts {match}{_CLOSEST}), (SELECT count(*) {match})"
-        " FROM entry e WHERE e.ts IS NOT NULL AND e.id IN (SELECT value FROM json_each(?))"
+        f"SELECT e.id, e.ts, x.id, x.ts, CASE WHEN x.id IS NULL THEN 0 ELSE (SELECT count(*) {match}) END"  # noqa: S608
+        f" FROM entry e LEFT JOIN entry x ON x.id = (SELECT rp.id {match}{_CLOSEST})"
+        " WHERE e.ts IS NOT NULL AND e.id IN (SELECT value FROM json_each(?))"
     )
     out: dict[int, dict[str, int]] = {}
     with read_guard(conn, timeout_s):
-        rows = conn.execute(sql, (*params, *params, *params, _json_ids(ids))).fetchall()
+        rows = conn.execute(sql, (*params, *params, _json_ids(ids))).fetchall()
     for entry_id, ts, prev, prev_ts, earlier in rows:
         if prev is None:
             continue
