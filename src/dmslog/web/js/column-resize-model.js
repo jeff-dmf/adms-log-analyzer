@@ -22,7 +22,7 @@ export const LAYOUT_PX = { side: 248, detail: 380, panelChrome: 17, viewportBord
 // side by side with the grid; rail = the sources panel shrinks to a rail and opens as a drawer (the detail gives 20 px so Message keeps 50 characters at 1280 with the Collection column and a multi-day case); narrow = the detail is a
 // drawer too. The widths are those of the columns that stay in the flow.
 export const WIDE_MIN_WIDTH = 1600; // px: from here on, 248 | grid | 380
-export const RAIL_MIN_WIDTH = 1280; // px: from here on, rail 44 | grid | 360; below it the detail is a drawer
+export const RAIL_MIN_WIDTH = 1280; // px: from here on, rail 44 | grid | 340; below it the detail is a drawer
 export const LAYOUT_BY_MODE = {
   wide: { side: 248, detail: 380 },
   rail: { side: 44, detail: 340 },

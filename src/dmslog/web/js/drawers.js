@@ -35,7 +35,7 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
   let prefs = loadPrefs(store);
   let counts = { selected: 0, total: NaN };
   let openers = { side: null, detail: null };
-  let focusIn = null; // which guarded node ("sources", "detail", "rail", "detailToggle", ...) holds the focus, or null
+  let focusEl = null; // the element of the drawers (a panel, a control inside it, the rail, the Detail button) that holds the focus
   let snapshot = "";
   const listeners = new Set();
   const cleanups = [];
@@ -108,14 +108,13 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
   };
   // The focus was inside a guarded node that is no longer displayed (a resize, a collapse): move it somewhere visible.
   function settleFocus() {
-    if (focusIn === null) {
+    if (focusEl === null || visible(focusEl)) {
       return;
     }
-    const guard = guards().find((g) => g.id === focusIn);
-    if (guard && !visible(guard.node)) {
-      focusIn = null;
-      focusFirstVisible(guard.fallback);
-    }
+    const guard = guardOf(focusEl);
+    focusEl = null;
+    // A control inside a panel that is still displayed (the collapse and keep-open buttons) goes to the panel itself.
+    focusFirstVisible(guard ? [guard.node, ...guard.fallback] : []);
   }
 
   const setHidden = (node, hidden) => {
@@ -315,13 +314,12 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
   });
   // Where the focus is, so a layout change that hides it can move it (the browser reports nothing when CSS hides a node).
   const onFocusIn = (event) => {
-    const guard = guardOf(event && event.target);
-    focusIn = guard ? guard.id : null;
+    focusEl = guardOf(event && event.target) ? event.target : null;
   };
   on(doc, "focusin", onFocusIn);
   on(doc, "pointerdown", (event) => {
     if (guardOf(event && event.target) === null) {
-      focusIn = null; // a click elsewhere took the focus away from the drawers
+      focusEl = null; // a click elsewhere took the focus away from the drawers
     }
   });
   on(win, "resize", () => paint()); // paint() closes a drawer whose panel went back to the flow and rescues the focus

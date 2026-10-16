@@ -237,6 +237,44 @@ test("resize hides the rail or the Detail button that holds the focus: it goes t
   assert.equal(u.doc.activeElement, u.detail);
 });
 
+test("every control that paint() hides hands the focus on, whatever the transition (collapse, keep-open, rail, Detail)", () => {
+  // side-collapse in the flow: a resize forces the rail, the panel and the button go
+  let t = setup({ width: 1700 });
+  t.sideCollapse.focus();
+  t.resize(1599);
+  assert.equal(t.doc.activeElement, t.rail, "side-collapse");
+  assert.ok(t.effective(t.doc.activeElement));
+  // side keep-open (pin) inside a drawer that stays displayed: the button goes, the panel stays
+  t = setup({ width: 1700, stored: { sideCollapsed: true } });
+  t.rail.click();
+  t.sideCollapse.focus();
+  assert.equal(t.sideCollapse.getAttribute("aria-label"), S.sidePin);
+  t.resize(1599);
+  assert.equal(t.effective(t.sideCollapse), false);
+  assert.equal(t.effective(t.sources), true, "the drawer is still open");
+  assert.equal(t.doc.activeElement, t.sources, "side-pin: the focus goes to the visible panel");
+  // detail-collapse in the flow
+  t = setup({ width: 1400 });
+  t.detailCollapse.focus();
+  t.resize(1279);
+  assert.equal(t.doc.activeElement, t.detailToggle, "detail-collapse");
+  // detail keep-open inside the detail drawer
+  t = setup({ width: 1400, stored: { detailCollapsed: true } });
+  t.detailToggle.click();
+  t.detailCollapse.focus();
+  assert.equal(t.detailCollapse.getAttribute("aria-label"), S.detailPin);
+  t.resize(1279);
+  assert.equal(t.effective(t.detailCollapse), false);
+  assert.equal(t.doc.activeElement, t.detail, "detail-pin");
+  // the rail (collapsed by choice) and the Detail button when the layout takes them away
+  t = setup({ width: 1700, stored: { sideCollapsed: true, detailCollapsed: true } });
+  t.rail.focus();
+  t.resize(1700);
+  assert.equal(t.doc.activeElement, t.rail);
+  t.detailToggle.focus();
+  assert.equal(t.doc.activeElement, t.detailToggle);
+});
+
 test("a click elsewhere forgets where the focus was: a later resize does not steal it", () => {
   const t = setup({ width: 1600 });
   t.sourceInput.focus();
