@@ -1,5 +1,6 @@
 """Generic envelopes declared in families.toml and the fallback detection (ROADMAP 9.14)."""
 
+import dataclasses
 import tomllib
 from datetime import UTC, datetime
 from importlib import resources
@@ -323,6 +324,44 @@ def test_fixture_logs_keep_their_detection():
         # valid as a str regex, invalid as a bytes regex
         ({"header": TS_GROUPS + r" \u0041(?P<level>[A-Z]{1,8}) \| "}, "does not compile"),
         ({"header": TS_GROUPS + r" \N{LATIN CAPITAL LETTER A}(?P<level>[A-Z]{1,8}) \| "}, "does not compile"),
+        # 3rd review of PR #196: the only anchor is the leading '^' of the header; one inside a group
+        # matched only at the real start of the buffer, so ``scan`` and ``match`` disagreed
+        (
+            {"header": "^(?:^X)?" + TS_GROUPS[1:] + " ", "examples": ["2026-10-15 01:02:03 msg"]},
+            r"only a leading '\^' anchor",
+        ),
+        ({"header": TS_GROUPS + r"(?:^)? (?P<level>[A-Z]{1,8}) \| "}, r"only a leading '\^' anchor"),
+        ({"header": TS_GROUPS + r" (?:x^)? (?P<level>[A-Z]{1,8}) \| "}, r"only a leading '\^' anchor"),
+        ({"header": TS_GROUPS + r" ^? (?P<level>[A-Z]{1,8}) \| "}, r"only a leading '\^' anchor"),
+        ({"header": TS_GROUPS + r" \A(?P<level>[A-Z]{1,8}) \| "}, r"only a leading '\^' anchor"),
+        ({"header": TS_GROUPS + r" \b(?P<level>[A-Z]{1,8}) \| "}, r"only a leading '\^' anchor"),
+        # 3rd review: huge repeat bounds raised OverflowError out of the loader; bounds are read first
+        ({"header": TS_GROUPS + r" x{4294967295}(?P<level>[A-Z]{1,8}) \| "}, "repeat bound"),
+        ({"header": TS_GROUPS + r" x{1,99999999999999999999}(?P<level>[A-Z]{1,8}) \| "}, "repeat bound"),
+        ({"header": TS_GROUPS + r" x{65}(?P<level>[A-Z]{1,8}) \| "}, "repeat bound"),
+        # 3rd review: constructs that the ``re`` parser folds or drops are checked as written
+        (
+            {"header": TS_GROUPS + r" (?P<level>A|B) \| ", "examples": ["2026-10-15 01:02:03 A | x"]},
+            "alternation",
+        ),
+        ({"header": TS_GROUPS + r" (?:(?:(?:(?:(?:(?:I))))))(?P<level>[A-Z]{1,8}) \| "}, "nested deeper"),
+        ({"header": TS_GROUPS + r" (?#note)(?P<level>[A-Z]{1,8}) \| "}, "comments"),
+        ({"header": TS_GROUPS + r" (?:I|I)(?P<level>[A-Z]{1,8}) \| "}, "alternation"),
+        ({"header": TS_GROUPS + r" (?:I){0,1}(?P<level>[A-Z]{1,8}) \| "}, "the only repeat of a group"),
+        ({"header": TS_GROUPS + r" (?>I)(?P<level>[A-Z]{1,8}) \| "}, "atomic"),
+        ({"header": TS_GROUPS + r" (?i:I)(?P<level>[A-Z]{1,8}) \| "}, "inline flags"),
+        ({"header": TS_GROUPS + r" I{1,2}?(?P<level>[A-Z]{1,8}) \| "}, "lazy, possessive"),
+        ({"header": TS_GROUPS + r" I?+(?P<level>[A-Z]{1,8}) \| "}, "lazy, possessive"),
+        ({"header": TS_GROUPS + r" I{ (?P<level>[A-Z]{1,8}) \| "}, "literal '{'"),
+        ({"header": TS_GROUPS + r" \101(?P<level>[A-Z]{1,8}) \| "}, "octal"),
+        ({"header": TS_GROUPS + r" (?P=year)(?P<level>[A-Z]{1,8}) \| "}, "back-references"),
+        ({"header": TS_GROUPS + r" [[:alpha:]](?P<level>[A-Z]{1,8}) \| "}, "nested sets"),
+        ({"header": TS_GROUPS + r" [A-Z--B](?P<level>[A-Z]{1,8}) \| "}, "set operations"),
+        ({"header": TS_GROUPS + r" \n(?P<level>[A-Z]{1,8}) \| "}, r"escape \\n"),
+        ({"header": TS_GROUPS + r" (?:)(?P<level>[A-Z]{1,8}) \| "}, "empty group"),
+        ({"header": TS_GROUPS + r" [z-a](?P<level>[A-Z]{1,8}) \| "}, "low to high"),
+        ({"header": TS_GROUPS + r" (?P<level>[A-Z]{1,8} \| "}, "missing"),
+        ({"header": TS_GROUPS + r" (?P<level>[A-Z]{1,8})) \| "}, "unbalanced"),
     ],
 )
 def test_invalid_envelope_tables_are_rejected(over, message):
@@ -331,6 +370,43 @@ def test_invalid_envelope_tables_are_rejected(over, message):
         return
     with pytest.raises(EnvelopeConfigError, match=message):
         compile_envelopes({"envelope": [_table(**over)]})
+
+
+def test_huge_repeat_bound_is_a_families_config_error():
+    """3rd review of PR #196: ``x{4294967295}`` raised OverflowError through ``RuleSet.from_dict``."""
+    data = _packaged_data()
+    data["envelope"][0]["header"] = TS_GROUPS + r" x{4294967295} "
+    with pytest.raises(FamiliesConfigError, match="repeat bound"):
+        RuleSet.from_dict(data)
+
+
+def test_accepted_grammar_keeps_scan_match_and_bom_in_agreement():
+    """Every accepted form (classes, escapes, {,n}, optional groups) gives the same header via
+    ``match``, ``scan`` over several lines and a BOM-prefixed line (3rd review of PR #196)."""
+    env = _one(
+        header=TS_GROUPS
+        + r"(?:\.(?P<ms>\d{1,6}))?\t[]a\-]{,2}\x7b(?:(?P<pid>[0-9]{1,6})\} )?(?P<level>[A-Z]{1,8}) \| ",
+        examples=["2026-10-15 01:02:03\t{INFO | x", "2026-10-15 01:02:03.5\ta]{12} WARN | y"],
+    )
+    lines = [
+        b"2026-10-15 01:02:03\t{INFO | x",
+        b"2026-10-15 01:02:03.5\ta]{12} WARN | y",
+        b"2026-10-15 01:02:03\t-{7} ERROR | z",
+        b"continuation",
+    ]
+    buf = b"\r\n".join(lines) + b"\n"
+    scanned = dict(env.scan(buf, 0, len(buf)))
+    offset = 0
+    for line in lines:
+        header = env.match(line)
+        assert scanned.get(offset) == header
+        with_bom = env.match(BOM + line)
+        assert (with_bom is None) == (header is None)
+        if header is not None:
+            assert with_bom.msg_start == header.msg_start + len(BOM)
+            assert dataclasses.replace(with_bom, msg_start=header.msg_start) == header
+        offset += len(line) + 2
+    assert env.match(lines[1]).pid == 12 and env.match(lines[0]).pid is None
 
 
 def test_tid_absent_from_the_examples_still_parses_later_headers():

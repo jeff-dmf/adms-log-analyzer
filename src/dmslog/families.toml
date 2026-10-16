@@ -297,11 +297,13 @@ scope = "optional"
 #                groups: year (4 digits), month, day, hour, minute, second; optional:
 #                ms (fraction, first 3 digits used), pid, tid, level, process.
 #                Restricted grammar (bytes semantics, at most 1000 characters):
-#                literals; classes of literals, ranges and \d only (no negation, no
-#                \s \w \S \W \D, no '.'); a repeat {m,n}/? (n <= 64) applies to ONE
-#                literal or class; groups (?P<name>...) and (?:...) at most 2 deep, the
-#                only repeat of a group being '?' (at most 4, not nested, never empty);
-#                no alternation, anchors other than the leading ^, look-arounds.
+#                literals (\t, \xHH, escaped punctuation; '{' only as \{); classes of
+#                literals, ranges and \d only (no negation, no \s \w \S \W \D, no '.');
+#                a greedy repeat {m,n}/{n}/{,n}/? (1 <= n <= 64) applies to ONE literal or
+#                class; groups (?P<name>...) and (?:...) at most 2 deep, the only repeat
+#                of a group being '?' (at most 4, not nested, never empty); no
+#                alternation, no anchor but the leading ^, no look-arounds, comments or
+#                flags. Checked on the text as written, before compiling.
 #                Every choice is decided by the next byte: a variable repeat or an
 #                optional group may not start like what follows it nor end the header.
 #                Put a separator at the END of an optional group: '(?:\[TID=n\] )?LEVEL'.

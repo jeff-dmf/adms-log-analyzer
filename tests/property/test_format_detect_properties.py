@@ -27,7 +27,7 @@ MAIN = settings(
     max_examples=400,
     deadline=timedelta(seconds=2),
     database=None,
-    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large, HealthCheck.filter_too_much],
 )
 
 ensure_registered()
@@ -232,3 +232,74 @@ def test_high_bytes_after_an_explicit_high_separator_do_not_move_the_header(name
     header = env.match(line)
     assert header is not None and header.msg_start == len(line)
     assert env.match(line + suffix) == header
+
+
+# Random headers composed from grammar pieces, each with sample texts it matches (3rd review of PR #196:
+# a '^' inside an optional group passed the loader and ``scan`` disagreed with ``match``). Whatever the
+# loader accepts must keep the contract: prefix stability, ``scan`` == ``match`` per line, BOM skipped.
+PIECES = [
+    (" ", [b" "]),
+    (r"\|", [b"|"]),
+    (":", [b":"]),
+    ("-", [b"-"]),
+    (r"\t?", [b"", b"\t"]),
+    (r"[A-Z]{1,8}", [b"INFO", b"W"]),
+    (r"\d{1,4}", [b"7", b"1234"]),
+    (r"[a-z]?", [b"", b"q"]),
+    (r"x{,3}", [b"", b"xx"]),
+    (r"\x80{1,2}", [b"\x80"]),
+    (r"[\x80-\xff]{2}", [b"\xc2\xa0"]),
+    (r"(?:\[(?P<tid>\d{1,6})\] )?", [b"", b"[12] "]),
+    (r"(?P<level>[A-Z]{1,8})", [b"INFO", b"E"]),
+    (r"(?:^X)?", [b"", b"X"]),
+    (r"(?:X^)?", [b"", b"X"]),
+    (r"(?:#\d{1,3})?", [b"", b"#5"]),
+    (r"(?:(?P<pid>\d{1,6})_)?", [b"", b"42_"]),
+]
+piece_choices = st.lists(
+    st.tuples(st.integers(0, len(PIECES) - 1), st.integers(0, 1)), min_size=1, max_size=6
+)
+line_suffix = st.binary(max_size=30).map(lambda b: b.replace(b"\n", b"").replace(b"\r", b""))
+
+
+@MAIN
+@given(piece_choices, piece_choices, line_suffix)
+def test_any_accepted_header_keeps_the_prefix_scan_and_bom_contract(parts, other, suffix):
+    from hypothesis import assume
+
+    from dmslog.parse.envelope import BOM
+    from dmslog.parse.formats import EnvelopeConfigError
+
+    source = _TS + "".join(PIECES[i][0] for i, _ in parts)
+
+    def sample(chosen):
+        return b"2026-10-15 01:02:03" + b"".join(
+            PIECES[i][1][min(k, len(PIECES[i][1]) - 1)] for i, k in chosen
+        )
+
+    line = sample(parts)
+    try:
+        (env,) = compile_envelopes(
+            {"envelope": [{"name": "h", "header": source, "examples": [line.decode("utf-8", "replace")]}]}
+        )
+    except EnvelopeConfigError:
+        assume(False)
+        return
+    assert "^" not in source[1:]  # the only anchor is the leading one
+    header = env.match(line)
+    lines = [line, sample(other), b"plain text", line + suffix]
+    for one in lines:
+        h = env.match(one)
+        if header is not None and one.startswith(line):
+            assert h == header
+        with_bom = env.match(BOM + one)
+        assert (with_bom is None) == (h is None)
+        if h is not None:
+            assert with_bom.msg_start == h.msg_start + len(BOM)
+    for eol in (b"\n", b"\r\n"):
+        buf = eol.join(lines) + eol
+        scanned = dict(env.scan(buf, 0, len(buf)))
+        offset = 0
+        for one in lines:
+            assert scanned.get(offset) == env.match(one)
+            offset += len(one) + len(eol)
