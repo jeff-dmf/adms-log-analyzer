@@ -35,13 +35,52 @@
 .collections-panel {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 6px 0;
+  gap: 2px;
+  margin: 0 0 var(--space-2);
+}
+
+.col-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .col-title {
   margin: 0;
   font-size: 13px;
+}
+
+.panel .col-title {
+  margin: 0;
+}
+
+.col-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.col-fold::before {
+  content: "\25B8"; /* collapsed */
+  display: inline-block;
+  width: 1em;
+}
+
+.col-fold[aria-expanded="true"]::before {
+  content: "\25BE"; /* open */
+}
+
+.col-unreadable {
+  color: var(--status-error-ink);
+  font-size: 12px;
 }
 
 .col-list {
@@ -50,13 +89,17 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 320px;
+  gap: 2px;
+  max-height: 9.5rem; /* about six rows; the list scrolls beyond that */
   overflow-y: auto;
 }
 
+.col-list[hidden] {
+  display: none;
+}
+
 .col-item {
-  padding: 4px 6px;
+  padding: 0 6px;
   background: var(--panel-alt);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -64,15 +107,16 @@
 
 .col-row {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
 }
 
 .col-pick {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   cursor: pointer;
 }
@@ -81,20 +125,32 @@
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .col-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 600;
-  overflow-wrap: anywhere;
+}
+
+.col-counts {
+  flex: none;
 }
 
 .col-missing {
+  flex: none;
   color: var(--info-text);
   font-size: 12px;
 }
 
 .col-state {
+  flex: none;
   font-size: 12px;
 }
 
@@ -106,14 +162,27 @@
   color: var(--info-text);
 }
 
-.col-expand {
+.col-expand,
+.col-menu {
+  flex: none;
   min-width: 24px;
+  height: 22px;
   padding: 0 6px;
+}
+
+.col-menu::before {
+  content: "\22EF"; /* ⋯ */
+  line-height: 1;
+}
+
+/* The one item of a row menu removes data: the danger color (the menu has no class hook of its own). */
+.ui-menu-item[data-id="col-remove"] {
+  color: var(--status-error-ink);
 }
 
 .col-members {
   list-style: none;
-  margin: 4px 0 0 18px;
+  margin: 0 0 4px 18px;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -130,7 +199,7 @@
 }
 
 .col-actions {
-  margin-top: 4px;
+  margin: 0 0 4px;
 }
 
 .col-confirm {

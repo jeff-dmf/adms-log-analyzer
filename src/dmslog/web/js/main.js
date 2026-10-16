@@ -428,6 +428,12 @@ function start() {
     pathInput: byId("path-input"),
     scopeSelect: byId("scope-select"),
     sourceList: byId("source-list"),
+    caseHeader: byId("case-header"),
+    caseHeaderName: byId("case-header-name"),
+    caseRow: byId("case-row"),
+    caseAddFiles: byId("case-add-files"),
+    caseMenu: byId("case-header-menu"),
+    addFilesHost: byId("add-files-host"),
   }, {
     onCase: (id) => {
       caseId = id;
@@ -470,6 +476,9 @@ function start() {
     },
     onSources: (list, quiet) => {
       sources = list;
+      if (collectionsPanel) {
+        collectionsPanel.setSources(list);
+      }
       sourceNames = new Map(list.map((s) => [s.id, s.name]));
       sourceFamilies = new Map(list.map((s) => [s.id, s.family || ""]));
       grid.setSourceNames(sourceNames);
@@ -1132,11 +1141,8 @@ function start() {
       return panel.selectCase(id);
     },
     closeCase: () => deps.selectCase(null),
-    focusNewCase: () => byId("new-case-name").focus(),
-    focusAddFiles: () => {
-      const target = byId("add-files-host").querySelector("button, input");
-      (target || byId("path-input")).focus();
-    },
+    focusNewCase: () => panel.revealNewCase(),
+    focusAddFiles: () => panel.revealAddFiles(),
     openColumns,
     copyExportOpen: () => copyExport && copyExport.open(),
     followTailOn: () => byId("follow-tail").checked,
