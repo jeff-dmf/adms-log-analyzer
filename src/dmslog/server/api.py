@@ -82,7 +82,10 @@ def decode_body(path: str, raw: bytes) -> Any:
     if path in _STRICT_JSON_PATHS:
         try:
             return preferences.parse_json_bytes(
-                raw, limit=body_limit(path), max_depth=preferences.MAX_DEPTH + 1
+                raw,
+                limit=body_limit(path),
+                max_depth=preferences.MAX_DEPTH + 1,
+                max_string=preferences.MAX_PACKAGE_BYTES,  # the envelope may carry the package as text
             )
         except preferences.PreferencesError as exc:
             status = 413 if exc.code == "package_too_large" else 400

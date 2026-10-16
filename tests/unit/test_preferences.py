@@ -812,3 +812,127 @@ def test_failed_restore_marks_the_state_unknown(tmp_path, monkeypatch):
     other = rep["sections"]["alert_rules"]
     assert "state" not in other and other["items"][0]["outcome"] == "not_applied"
     assert rep["summary"]["added"] == 0
+
+
+# -- review round 2: linear scanner, one definition of the limits, top-level fields ----------------------
+
+
+def steps_for(text):
+    return preferences.prescan(text)
+
+
+HOSTILE = {
+    "escaped quotes": lambda n: '"' + '\\"' * n,
+    "escaped backslashes": lambda n: '"' + "\\\\" * n,
+    "unicode escapes": lambda n: '"' + "\\u00e9" * n,
+    "open quotes": lambda n: '"a' * n,
+    "quote then escape": lambda n: ('"' + "\\\\" + '"') * n,
+    "brackets": lambda n: "[" * n,
+    "keys": lambda n: '{"a":' * n,
+    "truncated": lambda n: '["' + "x\\" * n,
+}
+
+
+@pytest.mark.parametrize("name", sorted(HOSTILE))
+def test_prescan_steps_grow_linearly_even_for_invalid_text(name):
+    make = HOSTILE[name]
+    counts = []
+    for n in (500, 1000, 2000, 4000):
+        text = make(n)
+        try:
+            counts.append(steps_for(text))
+        except preferences.PreferencesError:
+            counts.append(None)  # refused early by a limit: also fine
+    for small, big in zip(counts, counts[1:], strict=False):
+        if small is not None and big is not None:
+            assert big <= 2 * small + 10, (name, counts)
+    if name not in ("brackets", "keys"):  # those are refused early by the depth limit
+        assert None not in counts and counts[-1] <= 8 * 4000, (name, counts)
+
+
+def test_prescan_is_fast_on_a_large_hostile_text():
+    text = '"' + '\\"' * 1_000_000  # 2 MB, unterminated
+    preferences.prescan(text, 5, 10**9)  # returns; a quadratic scanner would not finish
+
+
+def test_one_definition_of_the_string_limit(monkeypatch):
+    import json
+
+    for text_value in ("\u65e5" * 20_000, "\u00e9" * 20_000, "\U0001f600" * 20_000):
+        for ascii_only in (True, False):
+            text = json.dumps({"x": text_value}, ensure_ascii=ascii_only)
+            preferences.prescan(text)
+            preferences.check_limits({"x": text_value})
+    monkeypatch.setattr(preferences, "MAX_STRING_CHARS", 20_000)
+    for ascii_only in (True, False):
+        for n, ok in ((20_000, True), (20_001, False)):
+            value = {"x": "\u65e5" * n}
+            text = json.dumps(value, ensure_ascii=ascii_only)
+            for check in (
+                lambda text=text: preferences.prescan(text),
+                lambda value=value: preferences.check_limits(value),
+            ):
+                if ok:
+                    check()
+                else:
+                    with pytest.raises(preferences.PreferencesError):
+                        check()
+
+
+def test_one_definition_of_the_node_limit(monkeypatch):
+    import json
+
+    monkeypatch.setattr(preferences, "MAX_NODES", 10)
+    exactly = [[] for _ in range(9)]  # 1 + 9 values
+    over = [[] for _ in range(10)]
+    for value, ok in ((exactly, True), (over, False), ({"a": [], "b": {}, "c": 1}, True)):
+        text = json.dumps(value)
+        for check in (
+            lambda text=text: preferences.prescan(text),
+            lambda value=value: preferences.check_limits(value),
+        ):
+            if ok:
+                check()
+            else:
+                with pytest.raises(preferences.PreferencesError):
+                    check()
+
+
+def big_items():
+    codes = [f"GEN-EXC-{k:02d}" for k in range(30)]
+    return [
+        {"name": f"{i:03d}" + "n" * 70, "description": "d" * 190, "filter": {"tpl": codes}}
+        for i in range(200)
+    ]
+
+
+def test_package_as_json_text_is_not_limited_by_the_inner_string_limit(tmp_path):
+    items = big_items()
+    text = json.dumps(package(presets=items))
+    assert len(text) > preferences.MAX_STRING_CHARS
+    as_object = preferences.import_package(tmp_path / "o", package(presets=items))
+    as_text = preferences.import_package(tmp_path / "t", text)
+    assert as_object["outcome"] == as_text["outcome"] == "applied"
+    # inside the package the limit still applies
+    huge = json.dumps(package(presets=[{"name": "n", "description": "x" * 200_000, "filter": ERRORS}]))
+    assert preferences.import_package(tmp_path / "h", huge)["errors"][0]["code"] == "bad_value"
+
+
+def test_replace_drops_top_level_fields_of_the_old_file(tmp_path):
+    (tmp_path / "presets.toml").write_text(
+        'schema = 1\ncustom = "keep?"\n\n[[preset]]\nname = "a"\nfilter = {sev = {le = 2}}\n',
+        encoding="utf-8",
+    )
+    pkg = package(presets=[{"name": "a", "filter": ERRORS}])
+    merged = preferences.import_package(tmp_path, pkg)  # merge: nothing changes, the field stays
+    assert merged["outcome"] == "unchanged" and "custom" in (tmp_path / "presets.toml").read_text(
+        encoding="utf-8"
+    )
+    rep = preferences.import_package(tmp_path, pkg, mode="replace")
+    assert rep["outcome"] == "applied"
+    assert rep["sections"]["presets"]["warnings"][0]["code"] == "top_level_fields_dropped"
+    assert "custom" not in (tmp_path / "presets.toml").read_text(encoding="utf-8")
+    clean = tmp_path / "clean"
+    presets.create(clean, {"name": "a", "filter": ERRORS})
+    assert (clean / "presets.toml").read_bytes() == (tmp_path / "presets.toml").read_bytes()
+    assert preferences.import_package(tmp_path, pkg, mode="replace")["outcome"] == "unchanged"

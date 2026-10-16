@@ -60,3 +60,20 @@ def test_strict_body_over_http(client, server):
         status, err, _ = client.request("POST", "/api/preferences/import", raw=raw)
         assert status == 400 and err["error"] in ("bad_json", "package_too_complex"), raw[:30]
     assert not (server.data_dir / "presets.toml").exists()
+
+
+def test_package_as_text_over_http(client, server):
+    import json
+
+    codes = [f"GEN-EXC-{k:02d}" for k in range(30)]
+    items = [
+        {"name": f"{i:03d}" + "n" * 70, "description": "d" * 190, "filter": {"tpl": codes}}
+        for i in range(200)
+    ]
+    package = {"schema": 1, "kind": "dmslog-preferences", "presets": items}
+    text = json.dumps(package)
+    assert len(text) > 128 * 1024
+    status, rep, _ = client.post("/api/preferences/import", {"package": text, "dry_run": True})
+    assert status == 200 and rep["summary"]["added"] == 200
+    status, rep, _ = client.post("/api/preferences/import", {"package": package, "dry_run": True})
+    assert status == 200 and rep["summary"]["added"] == 200

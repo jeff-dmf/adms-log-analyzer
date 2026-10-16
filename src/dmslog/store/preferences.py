@@ -201,34 +201,106 @@ def _check_text(text: str, limit: int, what: str) -> None:
         raise PreferencesError("bad_value", detail=what + " that is not valid Unicode") from None
 
 
-_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{},]', re.DOTALL)
+_PLAIN = re.compile(r'[^"\[\]{},:]*')  # a plain character class: matches in one forward pass, no backtracking
+_HEX4 = re.compile(r"[0-9A-Fa-f]{4}\Z")
 
 
-def prescan(text: str, max_depth: int = MAX_DEPTH) -> None:
+def _unit(text: str) -> int | None:
+    return int(text, 16) if _HEX4.match(text) else None
+
+
+def prescan(text: str, max_depth: int = MAX_DEPTH, max_string: int | None = None) -> int:
     """Bound a JSON text before it is parsed: nesting, number of values and length of each string.
 
-    One lazy pass of the tokenizer, so a hostile text is refused without building any tree. For valid
-    JSON the count is exact; an invalid text may be tokenized differently, but ``json.loads`` then
-    refuses it anyway.
+    One forward pass with an advancing index (``str.find`` positions are cached and only searched again
+    once passed), so the cost is linear in the text even for invalid or truncated JSON, and no tree is
+    built. The definitions are the ones of :func:`check_limits`: every value counts once (keys do not),
+    a value sits one level below its container, strings are measured in decoded characters (an escape
+    counts as one, a surrogate pair as one). For invalid JSON the counts are only approximate, and
+    ``json.loads`` then refuses the text anyway. Returns the number of loop steps (for the tests).
     """
-    depth = 0
-    nodes = 1
-    for match in _TOKEN.finditer(text):
-        token = match.group()
-        if token[0] == '"':  # a string
-            if len(token) > MAX_STRING_CHARS + 2:
+    max_string = MAX_STRING_CHARS if max_string is None else max_string
+    n = len(text)
+    i = 0
+    steps = 0
+    nodes = 0
+    stack: list[bool] = []  # True = object
+    key_pos = False
+    q = b = -1  # cached position of the next quote / backslash (n = none left)
+    while i < n:
+        steps += 1
+        j = _PLAIN.match(text, i).end()  # type: ignore[union-attr]
+        if j > i:
+            if text[i:j].strip():
+                nodes += 1
+                if len(stack) + 1 > max_depth or nodes > MAX_NODES:
+                    raise PreferencesError("package_too_complex")
+            i = j
+            if i >= n:
+                break
+        c = text[i]
+        if c == '"':
+            is_key = key_pos and bool(stack) and stack[-1]
+            limit = MAX_KEY_CHARS if is_key else max_string
+            pos = i + 1
+            chars = 0
+            end = n
+            while True:
+                steps += 1
+                if q < pos:
+                    q = text.find('"', pos)
+                    q = n if q < 0 else q
+                if b < pos:
+                    b = text.find("\\", pos)
+                    b = n if b < 0 else b
+                if q < b:
+                    chars += q - pos
+                    end = q
+                    break
+                if b >= n:  # unterminated
+                    chars += n - pos
+                    break
+                chars += b - pos + 1
+                if text.startswith("u", b + 1):
+                    pos = b + 6
+                    high = _unit(text[b + 2 : b + 6])
+                    if high is not None and 0xD800 <= high <= 0xDBFF and text.startswith("\\u", pos):
+                        low = _unit(text[pos + 2 : pos + 6])
+                        if low is not None and 0xDC00 <= low <= 0xDFFF:
+                            pos += 6
+                else:
+                    pos = b + 2
+                pos = min(pos, n)
+                if chars > limit:
+                    break
+            if chars > limit:
                 raise PreferencesError("bad_value", detail="text too long")
-        elif token in "[{":
-            depth += 1
-            nodes += 1
-            if depth > max_depth:
+            if not is_key:
+                nodes += 1
+                if len(stack) + 1 > max_depth or nodes > MAX_NODES:
+                    raise PreferencesError("package_too_complex")
+            i = end + 1
+        elif c in "[{":
+            if len(stack) + 1 > max_depth:
                 raise PreferencesError("package_too_complex")
-        elif token in "]}":
-            depth -= 1
-        else:  # a comma
             nodes += 1
-        if nodes > MAX_NODES:
-            raise PreferencesError("package_too_complex")
+            if nodes > MAX_NODES:
+                raise PreferencesError("package_too_complex")
+            stack.append(c == "{")
+            key_pos = c == "{"
+            i += 1
+        elif c in "]}":
+            if stack:
+                stack.pop()
+            key_pos = False
+            i += 1
+        elif c == ",":
+            key_pos = bool(stack) and stack[-1]
+            i += 1
+        else:  # ':'
+            key_pos = False
+            i += 1
+    return steps
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -244,7 +316,13 @@ def _reject_constant(_name: str) -> Any:
     raise ValueError("non-finite number")
 
 
-def parse_json_bytes(raw: bytes, *, limit: int = MAX_PACKAGE_BYTES, max_depth: int = MAX_DEPTH) -> Any:
+def parse_json_bytes(
+    raw: bytes,
+    *,
+    limit: int = MAX_PACKAGE_BYTES,
+    max_depth: int = MAX_DEPTH,
+    max_string: int | None = None,
+) -> Any:
     """Strict JSON from raw bytes: UTF-8 only (no BOM, no UTF-16), bounded before and while parsing, no
     duplicate keys, no NaN/Infinity. Raises PreferencesError."""
     if len(raw) > limit:
@@ -253,11 +331,11 @@ def parse_json_bytes(raw: bytes, *, limit: int = MAX_PACKAGE_BYTES, max_depth: i
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise PreferencesError("bad_json") from None
-    return parse_json_text(text, max_depth=max_depth)
+    return parse_json_text(text, max_depth=max_depth, max_string=max_string)
 
 
-def parse_json_text(text: str, *, max_depth: int = MAX_DEPTH) -> Any:
-    prescan(text, max_depth)
+def parse_json_text(text: str, *, max_depth: int = MAX_DEPTH, max_string: int | None = None) -> Any:
+    prescan(text, max_depth, max_string)
     try:
         return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_reject_constant)
     except (ValueError, RecursionError):
@@ -585,10 +663,12 @@ def _plan_list(kind: _ListKind, data_dir: Path, raw_items: Any, mode: str, polic
     warnings: list[dict[str, str]] = []
     path = kind.path(data_dir)
     plan = SectionPlan("unchanged", rows, counts, removed[:MAX_REMOVED_LISTED], warnings, None, path)
-    if [_canon(i) for i in result] == [_canon(i) for i in current]:
+    top_extra = {} if mode == "replace" else existing.top_extra  # replace keeps nothing of the old file
+    dropped_top = mode == "replace" and bool(existing.top_extra)
+    if [_canon(i) for i in result] == [_canon(i) for i in current] and not dropped_top:
         return plan
     result_view = result
-    text = kind.dump(result_view, existing.top_extra)
+    text = kind.dump(result_view, top_extra)
     try:
         data = text.encode("utf-8")
     except UnicodeEncodeError:
@@ -613,6 +693,13 @@ def _plan_list(kind: _ListKind, data_dir: Path, raw_items: Any, mode: str, polic
             {
                 "code": "existing_items_dropped",
                 "message": f"{len(existing.problems)} stored item(s) that were already invalid are not kept",
+            }
+        )
+    if dropped_top:
+        warnings.append(
+            {
+                "code": "top_level_fields_dropped",
+                "message": "unknown top-level fields of the stored file are dropped",
             }
         )
     plan.status = "changed"

@@ -407,6 +407,8 @@ def model(existing, incoming, mode, policy):
     any_refused = "rejected" in outcomes
     if any_refused and (policy == "reject_section" or mode == "replace"):
         return True, list(existing), outcomes
+    if mode == "replace" and len(valid) > LIMIT:  # the whole result must fit
+        return True, list(existing), outcomes
     ex = {ident(i[0], i[1]): i for i in existing}
     result = [] if mode == "replace" else list(existing)
     over = False
@@ -444,14 +446,7 @@ def stored(folder: Path):
     return out
 
 
-@SETTINGS
-@given(
-    existing_items,
-    incoming_items,
-    st.sampled_from(["merge", "replace"]),
-    st.sampled_from(["reject_section", "skip_item"]),
-)
-def test_merge_and_replace_follow_an_independent_model(existing, incoming, mode, policy):
+def check_model_case(existing, incoming, mode, policy):
     from unittest import mock
 
     small = preferences.PRESETS.__class__(**{**preferences.PRESETS.__dict__, "limit": LIMIT})
@@ -475,3 +470,58 @@ def test_merge_and_replace_follow_an_independent_model(existing, incoming, mode,
             assert [r["outcome"] for r in sec["items"]] == outcomes
             again = preferences.import_package(folder, pkg, mode=mode, on_item_error=policy)
             assert again["applied"] is False and stored(folder) == got
+
+
+@SETTINGS
+@given(
+    existing_items,
+    incoming_items,
+    st.sampled_from(["merge", "replace"]),
+    st.sampled_from(["reject_section", "skip_item"]),
+)
+def test_merge_and_replace_follow_an_independent_model(existing, incoming, mode, policy):
+    check_model_case(existing, incoming, mode, policy)
+
+
+def test_replace_whose_result_is_over_the_limit_is_rejected():
+    a = ("a", None, "", 0, None)
+    incoming = [(n, None, "", 0, None) for n in ("b", "c", "d", "e")] + [a]
+    assert model([a], incoming, "replace", "skip_item")[0] is True
+    assert model([a], incoming, "replace", "reject_section")[0] is True
+    check_model_case([a], incoming, "replace", "skip_item")
+    check_model_case([a], incoming, "replace", "reject_section")
+    check_model_case([a], incoming[:3] + [a], "replace", "skip_item")  # exactly LIMIT items: accepted
+
+
+# -- the prescan and check_limits share one definition (no tree is built by the first) ---------------------
+
+scalars = st.one_of(
+    st.none(), st.booleans(), st.integers(-5, 5), st.floats(-2, 2, allow_nan=False),
+    st.text(max_size=9), st.sampled_from(["\u65e5" * 4, "\U0001f600" * 3, 'q"\\', "\n\t"]),
+)  # fmt: skip
+shapes = st.recursive(
+    scalars,
+    lambda c: st.one_of(st.lists(c, max_size=5), st.dictionaries(st.text(max_size=6), c, max_size=4)),
+    max_leaves=14,
+)
+
+
+@SETTINGS
+@given(shapes, st.booleans(), st.sampled_from([None, 1, 2]))
+def test_prescan_and_check_limits_agree(value, ascii_only, indent):
+    import json
+    from unittest import mock
+
+    with mock.patch.multiple(preferences, MAX_NODES=12, MAX_STRING_CHARS=8, MAX_KEY_CHARS=3, MAX_DEPTH=4):
+        text = json.dumps(value, ensure_ascii=ascii_only, indent=indent)
+        try:
+            preferences.prescan(text, 4)
+            scan_ok = True
+        except preferences.PreferencesError:
+            scan_ok = False
+        try:
+            preferences.check_limits(value)
+            tree_ok = True
+        except preferences.PreferencesError:
+            tree_ok = False
+        assert scan_ok == tree_ok, text
