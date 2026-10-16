@@ -1,64 +1,23 @@
 /* "Same key" panel: records that carry one correlation key. */
-.key-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.key-title {
-  margin: 0;
-  font-size: 1em;
-}
-
 .key-heading {
   font-family: ui-monospace, monospace;
   overflow-wrap: anywhere;
 }
 
 .key-status {
-  color: var(--muted);
-  font-size: 0.9em;
-  margin-bottom: 6px;
-}
-
-.key-status.is-error {
-  color: var(--error-text);
-}
-
-.key-list {
-  max-height: 50vh;
-  overflow: auto;
+  margin-bottom: 0;
 }
 
 .key-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 8px;
-}
-
-.key-table th,
-.key-table td {
-  text-align: left;
-  padding: 3px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-
-.key-table th {
-  position: sticky;
-  top: 0;
-  background: var(--panel);
+  margin-bottom: var(--space-3);
 }
 
 .key-mono {
   font-family: ui-monospace, monospace;
-  overflow-wrap: anywhere;
 }
 
 .key-text {
-  max-width: 40em;
+  overflow-wrap: anywhere;
 }
 
 .key-tag {

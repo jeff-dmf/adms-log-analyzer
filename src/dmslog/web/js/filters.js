@@ -251,7 +251,18 @@ export function isInMenu(target) {
 // True when a global one-key shortcut must stay quiet: typing in a field, keys of an open menu, or an event
 // somebody already handled.
 export function ignoresShortcut(event) {
-  return Boolean(event.defaultPrevented) || isTypingTarget(event.target) || isInMenu(event.target);
+  return Boolean(event.defaultPrevented) || isTypingTarget(event.target) || isInMenu(event.target) || isInDialog(event.target);
+}
+
+// True when the target sits inside a dialog (UI-23): the keys there belong to the dialog, so the viewer's one-key
+// shortcuts (b, c, n, ...) stay quiet while focus is on its title, Close or action buttons.
+export function isInDialog(target) {
+  for (let node = target; node; node = node.parentElement || node.parentNode || node.parent) {
+    if (String(node.tagName || "").toUpperCase() === "DIALOG") {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ---- template leaf for the filter tree ({tpl: [id | code, ...]}) -----------------------------

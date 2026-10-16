@@ -14,7 +14,7 @@ function catalogue() {
 
 test("the panels are registered in the visual order of the old hosts, then the four that sat before the filter bar", () => {
   assert.deepEqual(catalogue().map((d) => d.id), [
-    "filterTree", "unknownTypes", "config", "operations", "payloads", "dashboard", "sideBySide", "sameKey", "export",
+    "filterTree", "unknownTypes", "config", "operations", "payloads", "dashboard", "sideBySide", "sameKey",
     "bookmarks", "compare", "alerts", "highlights", "distinct", "groupByType", "aggregate",
   ]);
 });
@@ -37,7 +37,6 @@ test("listens and closeOnCase follow the contract table", () => {
   assert.deepEqual(listens("unknownTypes"), ["case", "indexed"]);
   assert.deepEqual(listens("config"), ["case", "indexed"]);
   assert.deepEqual(listens("bookmarks"), ["case", "indexed"]);
-  assert.deepEqual(listens("export"), ["case"]);
   for (const id of ["filterTree", "payloads", "sideBySide", "sameKey", "compare", "alerts", "highlights"]) {
     assert.deepEqual(listens(id), [], id);
   }

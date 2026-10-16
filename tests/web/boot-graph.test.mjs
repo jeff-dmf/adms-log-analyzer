@@ -62,7 +62,7 @@ test("the panels and sections left out of the opening are all loaded by import()
   const actions = read("js/app-actions.js");
   const main = read("js/main.js");
   for (const name of ["filter-tree", "distinct-panel", "aggregate-panel", "events-panel", "dashboard", "payload-list",
-    "export-panel", "alerts-panel", "bookmarks-panel", "highlight-panel", "tpl-leaf"]) {
+    "export-dialogs", "alerts-panel", "bookmarks-panel", "highlight-panel", "tpl-leaf"]) {
     assert.match(actions, new RegExp(`import\\("\\./${name}\\.js"\\)`), name + " (app-actions.js)");
   }
   for (const name of ["links", "payload", "highlight-panel", "bookmarks-panel", "copy-export", "follow-tail",

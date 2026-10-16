@@ -3,6 +3,7 @@
 // (untrusted): textContent only; the table body has ONE delegated listener.
 import { api } from "./api.js";
 import { buildKeyRow, createKeyFlow, keyHeading } from "./key-panel-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
@@ -16,22 +17,24 @@ function element(tag, className, text) {
   return node;
 }
 
-// host: empty element to fill (hidden until opened). Options:
+// host: empty element to fill. Options:
 //   getCase()          current case id or null
 //   onSelect({id, ts}) select the record in the grid
-// Returns { open(type, value), close(), reset() }.
-export function initKeyPanel(host, { getCase, onSelect }) {
-  host.textContent = "";
-  const head = element("div", "key-head");
-  head.appendChild(element("h3", "key-title", S.keyTitle));
+//   onRequestClose()   the dock closes the tab (the default hides the host)
+// Returns { open(type, value), close(), reset() }. The panel never shows or hides its host: opening is the dock's.
+export function initKeyPanel(host, { getCase, onSelect, onRequestClose = null }) {
+  const shell = createPanelShell(host, {
+    title: S.keyTitle,
+    onRequestClose: onRequestClose || (() => {
+      flow.close();
+      host.hidden = true;
+    }),
+  });
   const heading = element("span", "key-heading");
-  const closeButton = element("button", "key-close", S.keyClose);
-  closeButton.type = "button";
-  head.append(heading, closeButton);
-  const status = element("div", "key-status");
-  status.setAttribute("role", "status");
+  shell.summary.appendChild(heading);
+  const status = statusLine(document, "key-status");
   const wrap = element("div", "key-list");
-  const table = element("table", "key-table");
+  const table = element("table", "ui-table is-wrap key-table");
   table.appendChild(element("caption", "visually-hidden", S.keyTableCaption));
   const tr = element("tr");
   for (const label of [S.keyColTime, S.keyColSource, S.keyColTid, S.keyColTemplate, S.keyColText]) {
@@ -42,10 +45,12 @@ export function initKeyPanel(host, { getCase, onSelect }) {
   table.appendChild(element("thead")).appendChild(tr);
   const tbody = element("tbody");
   table.appendChild(tbody);
-  const moreButton = element("button", "key-more", S.keyLoadMore);
+  const moreButton = element("button", "ui-button key-more", S.keyLoadMore);
   moreButton.type = "button";
-  wrap.append(table, moreButton);
-  host.append(head, status, wrap);
+  wrap.append(table);
+  shell.body.append(status, wrap);
+  shell.addFoot(moreButton); // "Load more" is the main action of a long list: always in sight
+  shell.foot.hidden = true;
 
   let rendered = 0;
   let firstId = null;
@@ -90,27 +95,30 @@ export function initKeyPanel(host, { getCase, onSelect }) {
 
   function onState(state) {
     if (state.status === "idle") {
-      host.hidden = true;
       renderRows([]);
+      heading.textContent = "";
+      moreButton.hidden = true;
+      shell.foot.hidden = true;
+      setStatusLine(status, "", false);
       return;
     }
-    host.hidden = false;
     heading.textContent = state.type === null ? "" : keyHeading(state.type, state.value);
     renderRows(state.records);
     moreButton.hidden = state.next === null || state.status !== "ready";
+    shell.foot.hidden = moreButton.hidden;
     moreButton.disabled = state.loadingMore;
     moreButton.textContent = state.loadingMore ? S.keyLoadingMore : S.keyLoadMore;
-    status.classList.toggle("is-error", state.status === "error");
+    const failed = state.status === "error";
     if (state.status === "nocase") {
-      status.textContent = S.keyNoCase;
+      setStatusLine(status, S.keyNoCase, false);
     } else if (state.status === "loading") {
-      status.textContent = S.keyLoading;
-    } else if (state.status === "error") {
-      status.textContent = S.keyError + (state.error ? ": " + state.error : "");
+      setStatusLine(status, S.keyLoading, false);
+    } else if (failed) {
+      setStatusLine(status, S.keyError + (state.error ? ": " + state.error : ""), true);
     } else if (state.records.length === 0) {
-      status.textContent = S.keyEmpty;
+      setStatusLine(status, S.keyEmpty, false);
     } else {
-      status.textContent = format(S[pluralKey(state.next === null ? "keyCount" : "keyCountMore", state.records.length)], { count: state.records.length });
+      setStatusLine(status, format(S[pluralKey(state.next === null ? "keyCount" : "keyCountMore", state.records.length)], { count: state.records.length }), false);
     }
   }
 
@@ -123,7 +131,6 @@ export function initKeyPanel(host, { getCase, onSelect }) {
     }
   });
   moreButton.addEventListener("click", () => flow.loadMore());
-  closeButton.addEventListener("click", () => flow.close());
 
   return {
     open: (type, value) => flow.open(type, value),

@@ -184,6 +184,7 @@ function start() {
   let payloadSection = null;
   let copyExport = null;
   let menubar = null;
+  let appActions = null;
   let sourceFamilies = new Map();
   // API for the panels fed by derived events: their queries carry the chosen collection.
   const derivedApi = scopeApi(api, () => (collectionsPanel ? collectionsPanel.selectedGroups() : []));
@@ -470,6 +471,9 @@ function start() {
       knowledge.reset();
       if (copyExport) {
         copyExport.reset();
+      }
+      if (appActions) {
+        appActions.onCase(); // the export dialog forgets the old case, open or closed
       }
       dock.notify("case");
       refreshDerived();
@@ -1184,7 +1188,7 @@ function start() {
     shortcutsText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp].join(" "),
   };
   registerAppPanels(dock, deps);
-  registerAppActions(actions, deps);
+  appActions = registerAppActions(actions, deps);
   const toggleButtons = Array.from(document.querySelectorAll("#toolbar [data-action]"));
   menubar = mountMenubar({
     actions,

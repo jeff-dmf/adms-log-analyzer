@@ -1,51 +1,30 @@
 /* Effective configuration panel. Colours come from the tokens of app.css (light and dark). */
+/* Product, filter and toggle: one row in the panel tools. */
 .cfg-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 8px;
-}
-
-.cfg-title {
-  font-weight: 600;
-  margin-right: 8px;
 }
 
 .cfg-filter {
   min-width: 14em;
 }
 
-.cfg-status,
 .cfg-summary,
 .cfg-muted {
   color: var(--muted);
   font-size: 0.9em;
 }
 
-.cfg-status.is-error {
-  color: var(--sev-2);
-}
-
-.cfg-body {
-  overflow-x: auto;
-}
-
 .cfg-table,
 .cfg-layers {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-4);
 }
 
-.cfg-table th,
-.cfg-table td,
-.cfg-layers th,
-.cfg-layers td {
-  text-align: left;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
+/* A table nested in the layers row keeps its header in place (the outer one sticks). */
+.cfg-layers th {
+  position: static;
 }
 
 .cfg-caption,

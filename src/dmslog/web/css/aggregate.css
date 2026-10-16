@@ -36,18 +36,12 @@
 }
 
 .agg-head,
-.agg-line,
-.agg-actions {
+.agg-line {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   margin-bottom: 6px;
-}
-
-.agg-title {
-  margin: 0 8px 0 0;
-  font-size: 1em;
 }
 
 .agg-field {
@@ -74,16 +68,11 @@
   width: 14em;
 }
 
-.agg-status,
 .agg-empty,
 .agg-note {
   color: var(--muted);
   font-size: 0.9em;
   margin: 4px 0;
-}
-
-.agg-status.is-error {
-  color: var(--error-text);
 }
 
 .agg-notice {
@@ -132,30 +121,6 @@
 .agg-c6 { background: var(--agg-c6); }
 .agg-c7 { background: var(--agg-c7); }
 
-.agg-table-host {
-  max-height: 45vh;
-  overflow: auto;
-}
-
-.agg-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.agg-table th,
-.agg-table td {
-  text-align: left;
-  padding: 3px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.agg-table th {
-  position: sticky;
-  top: 0;
-  background: var(--panel);
-}
-
 .agg-table .agg-num {
   text-align: right;
   white-space: nowrap;
@@ -163,10 +128,7 @@
 }
 
 .agg-text {
-  max-width: 32em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .agg-actions-cell {

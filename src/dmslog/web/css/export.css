@@ -1,15 +1,18 @@
 /* Export panel and redaction settings. */
-.export-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 6px;
+/* Export and redaction dialogs (UI-23): the body scrolls, the foot keeps the actions in sight. */
+.export-dialog,
+.redact-dialog {
+  width: min(820px, 94vw);
 }
 
-.export-title {
-  margin: 0;
-  font-size: 1em;
+.export-dialog .ui-dialog-foot,
+.redact-dialog .ui-dialog-foot {
+  flex-wrap: wrap;
+}
+
+.export-settings {
+  align-self: flex-start;
+  margin-bottom: var(--space-3);
 }
 
 .export-form,
@@ -54,22 +57,8 @@
   border-radius: 3px;
 }
 
-.export-status {
-  color: var(--muted);
-  font-size: 0.9em;
-  margin: 6px 0;
-}
-
-.export-status.is-error {
-  color: var(--error-text);
-}
-
-.export-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin: 6px 0;
+.export-copy-status {
+  margin-right: auto;
 }
 
 .export-copy-status,

@@ -3,6 +3,7 @@
 // Texts come from the ERS (untrusted): textContent only.
 import { api } from "./api.js";
 import { SIDE_BY_SIDE_LINES, buildSideView, createSideBySideFlow } from "./links-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
@@ -16,20 +17,21 @@ function element(tag, className, text) {
   return node;
 }
 
-// host: empty element to fill (hidden until opened). Options: getCase().
-// Returns { open(entryId), close(), reset() }.
-export function initSideBySide(host, { getCase }) {
-  host.textContent = "";
-  const head = element("div", "sbs-head");
-  head.appendChild(element("h3", "sbs-title", S.sbsTitle));
+// host: empty element to fill. Options: getCase(), onRequestClose() (the dock closes the tab; the default hides the
+// host). Returns { open(entryId), close(), reset() }. The panel never shows or hides its host: opening is the dock's.
+export function initSideBySide(host, { getCase, onRequestClose = null }) {
+  const shell = createPanelShell(host, {
+    title: S.sbsTitle,
+    onRequestClose: onRequestClose || (() => {
+      flow.close();
+      host.hidden = true;
+    }),
+  });
   const kind = element("span", "lnk-muted");
-  const closeButton = element("button", "sbs-close", S.sbsClose);
-  closeButton.type = "button";
-  head.append(kind, closeButton);
-  const status = element("div", "lnk-muted");
-  status.setAttribute("role", "status");
+  shell.summary.appendChild(kind);
+  const status = statusLine(document, "lnk-muted");
   const panes = element("div", "sbs-panes");
-  host.append(head, status, panes);
+  shell.body.append(status, panes);
   const texts = [];
 
   function paneNode(pane, index) {
@@ -62,26 +64,22 @@ export function initSideBySide(host, { getCase }) {
     panes.textContent = "";
     texts.length = 0;
     kind.textContent = "";
+    setStatusLine(status, "", false);
     if (state.status === "idle") {
-      host.hidden = true;
       return;
     }
-    host.hidden = false;
-    status.classList.remove("lnk-error");
     if (state.status === "nocase") {
-      status.textContent = S.sbsNoCase;
+      setStatusLine(status, S.sbsNoCase, false);
     } else if (state.status === "loading") {
-      status.textContent = S.sbsLoading;
+      setStatusLine(status, S.sbsLoading, false);
     } else if (state.status === "none") {
-      status.textContent = S.sbsNone;
+      setStatusLine(status, S.sbsNone, false);
     } else if (state.status === "error") {
-      status.classList.add("lnk-error");
-      status.textContent = S.sbsError + (state.error ? ": " + state.error : "");
+      setStatusLine(status, S.sbsError + (state.error ? ": " + state.error : ""), true);
     } else {
       const view = buildSideView(state.data);
-      status.textContent = "";
       if (view === null) {
-        status.textContent = S.sbsNone;
+        setStatusLine(status, S.sbsNone, false);
         return;
       }
       kind.textContent = view.kindText;
@@ -93,7 +91,6 @@ export function initSideBySide(host, { getCase }) {
   }
 
   const flow = createSideBySideFlow({ api, getCase, onState: render });
-  closeButton.addEventListener("click", () => flow.close());
   panes.addEventListener("click", async (event) => {
     const button = event.target instanceof Element ? event.target.closest("button[data-pane]") : null;
     if (!button || !navigator.clipboard) {

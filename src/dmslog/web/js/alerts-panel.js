@@ -5,6 +5,7 @@ import { api as defaultApi } from "./api.js";
 import {
   DEFAULT_MIN_INTERVAL, KINDS, SEVERITIES, connectAlertStream, createAlertsFlow, createNotifier, validateDraft,
 } from "./alerts-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 const CONFIRM_MS = 4000;
@@ -191,8 +192,10 @@ export function startAlerts({ slot, onAnnounce, api = defaultApi, getCase, onSho
 
 // The "Alerts" panel (rules, history, notification switch) rendered into the host the dock gives it.
 // alerts: what startAlerts returned. options: api, getCase(), getFilter() (current filter or null), onError(err),
-// onClose() (after Escape). Returns { open, close, isOpen, refresh, closed }.
-export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getFilter, onError, onClose }) {
+// onRequestClose() (the dock closes the tab; the default hides the host). Returns { open, close, isOpen, refresh,
+// closed }. The panel never shows or hides its host and has no Escape handler: opening, Escape and the focus on
+// closing belong to the dock.
+export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getFilter, onError, onRequestClose = null }) {
   const { flow, notes, showRecords } = alerts;
   let opened = false;
   let confirming = null;
@@ -202,21 +205,23 @@ export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getF
 
   // ---- panel
   host.classList.add("al-panel");
-  host.setAttribute("role", "region");
-  host.setAttribute("aria-label", S.alTitle);
-  const head = el("div", "al-head");
-  head.append(el("h3", "al-title", S.alTitle), button(S.alClose, "al-close", () => close()));
+  const shell = createPanelShell(host, {
+    title: S.alTitle,
+    onRequestClose: onRequestClose || (() => {
+      close();
+      host.hidden = true;
+    }),
+  });
   const intro = el("p", "al-muted", S.alIntro);
-  const message = el("div", "al-message");
-  message.setAttribute("role", "status");
-  message.setAttribute("aria-live", "polite");
+  const message = statusLine(document, "al-message");
   const notifyBox = el("div", "al-notify");
-  const rulesTitle = el("h4", "", S.alRules);
+  const rulesTitle = el("h3", "ui-section-title", S.alRules);
   const rulesList = el("ul", "al-list");
   const formBox = el("form", "al-form");
+  formBox.id = "al-form-" + (uid += 1);
   const historyHead = el("div", "al-history-head");
   const historyList = el("ul", "al-list");
-  host.append(head, intro, message, notifyBox, rulesTitle, rulesList, formBox, historyHead, historyList);
+  shell.body.append(intro, message, notifyBox, rulesTitle, rulesList, formBox, historyHead, historyList);
 
   // New-rule form.
   const nameField = input("text");
@@ -252,16 +257,16 @@ export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getF
   const formMessageBox = el("div", "al-form-message");
   formMessageBox.setAttribute("role", "alert");
   formBox.append(
-    el("h4", "", S.alNewRule),
+    el("h3", "ui-section-title", S.alNewRule),
     labelled(S.alName, nameField), labelled(S.alKind, kindField), labelled(S.alSeverity, severityField),
     groups.filter, groups.match, groups.threshold, groups.window, groups.mode, groups.param, groups.seconds,
     groups.operation, labelled(S.alMinInterval, minInterval), formMessageBox,
-    (() => {
-      const submit = el("button", "al-create", S.alCreate);
-      submit.type = "submit";
-      return submit;
-    })(),
   );
+  // The main action stays in the foot, always in sight: a button outside the form that submits it.
+  const createButton = el("button", "ui-button is-primary al-create", S.alCreate);
+  createButton.type = "submit";
+  createButton.setAttribute("form", formBox.id);
+  shell.addFoot(createButton);
 
   function paintForm() {
     const kind = kindField.value;
@@ -315,7 +320,7 @@ export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getF
 
   function paintNotify() {
     notifyBox.textContent = "";
-    notifyBox.appendChild(el("h4", "", S.alNotifyTitle));
+    notifyBox.appendChild(el("h3", "ui-section-title", S.alNotifyTitle));
     const permission = notes.permission();
     if (permission === "unsupported") {
       notifyBox.appendChild(el("p", "al-muted", S.alNotifyUnsupported));
@@ -387,7 +392,7 @@ export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getF
 
   function paint() {
     const { rules, history, problems, invalid, error } = flow.state;
-    message.textContent = invalid ? S.alFileInvalid : error ? error : message.textContent;
+    setStatusLine(message, invalid ? S.alFileInvalid : error ? error : message.textContent, Boolean(invalid || error));
     paintNotify();
     rulesList.textContent = "";
     if (rules.length === 0) {
@@ -400,7 +405,7 @@ export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getF
       rulesList.appendChild(el("li", "al-muted", format(S[pluralKey("alProblems", problems.length)], { count: problems.length })));
     }
     historyHead.textContent = "";
-    historyHead.append(el("h4", "", S.alHistory), button(S.alClearHistory, "al-clear", () => flow.clearHistory()));
+    historyHead.append(el("h3", "ui-section-title", S.alHistory), button(S.alClearHistory, "al-clear", () => flow.clearHistory()));
     historyList.textContent = "";
     if (history.length === 0) {
       historyList.appendChild(el("li", "al-muted", S.alNoHistory));
@@ -433,7 +438,6 @@ export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getF
 
   function open() {
     opened = true;
-    host.hidden = false;
     alerts.clearUnseen();
     message.textContent = "";
     paint();
@@ -442,17 +446,9 @@ export function mountAlertsPanel(host, { alerts, api = defaultApi, getCase, getF
   }
   function close() {
     opened = false;
-    host.hidden = true;
+    clearTimeout(confirmTimer);
+    confirming = null;
   }
-  host.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      close();
-      if (onClose) {
-        onClose();
-      }
-    }
-  });
-  host.hidden = true;
 
   alerts.on("change", () => {
     if (opened) {

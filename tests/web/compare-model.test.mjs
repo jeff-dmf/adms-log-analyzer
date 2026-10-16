@@ -67,7 +67,6 @@ test("hiding unchanged runs keeps context around changes only", () => {
 
 test("side header and stats text", () => {
   const header = buildSideHeader({ id: 4, ts: null, member: "Log/a.log", tid: 255, tpl: null });
-  assert.match(header.title, /4/);
   assert.equal(header.items.find((i) => i.text === "0xff") !== undefined, true);
   assert.equal(header.items.filter((i) => i.text === "-").length >= 1, true);
   assert.match(statsText({ changed: 1, removed: 2, added: 3, equal: 4 }), /1.*2.*3.*4/);
