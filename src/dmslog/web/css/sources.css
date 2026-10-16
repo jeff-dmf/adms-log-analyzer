@@ -1,0 +1,160 @@
+/* Side column (UI-21): the fixed case header, the collections, the source filter and the scrolling list of sources.
+   One line per source, so the list keeps most of the column. Theme tokens only. */
+:root {
+  --source-row: 22px;
+}
+
+#sources-panel [hidden] {
+  display: none !important; /* the rules below set `display`, which would override [hidden] */
+}
+
+/* The column scrolls as a whole only when an open form outgrows it; the list itself always keeps >= 240px. */
+#sources-panel {
+  position: relative; /* hidden labels scroll with the panel instead of extending the page */
+  overflow: auto;
+}
+
+#sources-panel > * {
+  flex: none;
+}
+
+#sources-panel > #source-list {
+  flex: 1 0 240px;
+  min-height: 240px;
+}
+
+/* Case header: name, Add files…, the ⋯ menu. It stays at the top while a form below it is open. */
+.case-header {
+  position: sticky;
+  top: calc(-1 * var(--space-3));
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 calc(-1 * var(--space-3)) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.case-header-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-strong);
+}
+
+.case-header .ui-button {
+  flex: none;
+}
+
+.case-header-menu {
+  min-width: var(--control-height);
+  padding: 0;
+}
+
+.case-header-menu::before {
+  content: "\22EF"; /* ⋯ */
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+
+.case-header-menu[aria-expanded="true"] {
+  background: var(--surface-raised);
+}
+
+/* The list: one line per source. */
+.source-list {
+  position: relative; /* the visually hidden meta of each row is placed inside the scrolling list, not the whole column */
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+}
+
+.source-list li {
+  border-bottom: 1px solid var(--line);
+}
+
+.source-list label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--source-row);
+  padding: 0 var(--space-1);
+  cursor: pointer;
+}
+
+.source-list input[type="checkbox"] {
+  flex: none;
+  margin: 0;
+}
+
+.source-text {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.source-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-strong);
+}
+
+.source-meta {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+/* Beside the name only the record count shows; the family and pid are in the tooltip and read by screen readers. */
+.source-count {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  flex: none;
+  padding: 0 var(--space-2);
+  line-height: 16px; /* the badge never makes its row taller than the others */
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  color: var(--ink-muted);
+  padding: var(--space-3) var(--space-1);
+}
+
+/* A source that could not be read: "!" before the name, in the error colors. */
+.source-unreadable {
+  flex: none;
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--status-error-bg);
+  color: var(--status-error-ink);
+  font-weight: var(--weight-strong);
+  text-align: center;
+  cursor: help;
+}
+
+@media (forced-colors: active) {
+  .source-unreadable {
+    border: 1px solid CanvasText;
+  }
+}

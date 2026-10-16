@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/css/dock.css">
   <link rel="stylesheet" href="/css/column-resize.css">
   <link rel="stylesheet" href="/css/source-filter.css">
+  <link rel="stylesheet" href="/css/sources.css">
   <link rel="stylesheet" href="/css/filter-tree.css">
   <link rel="stylesheet" href="/css/bookmarks.css">
   <link rel="stylesheet" href="/css/case-files.css">
@@ -120,16 +121,21 @@
     <main id="panels">
       <aside id="sources-panel" class="panel" aria-labelledby="sources-title">
         <h2 id="sources-title" data-i18n="panelSources"></h2>
-        <div class="field-row">
+        <div id="case-header" class="case-header" hidden>
+          <span id="case-header-name" class="case-header-name"></span>
+          <button type="button" id="case-add-files" class="ui-button" aria-controls="open-form" data-i18n="caseHeaderAddFiles"></button>
+          <button type="button" id="case-header-menu" class="ui-button is-ghost case-header-menu" data-i18n-aria-label="caseMenuLabel" data-i18n-title="caseMenuLabel"></button>
+        </div>
+        <div id="case-row" class="field-row">
           <label for="case-select" data-i18n="caseLabel"></label>
           <select id="case-select"></select>
         </div>
-        <form id="new-case-form" class="stack-form">
+        <form id="new-case-form" class="stack-form" hidden>
           <label for="new-case-name" class="visually-hidden" data-i18n="newCaseLabel"></label>
           <input id="new-case-name" type="text" autocomplete="off" data-i18n-placeholder="newCaseLabel">
           <div id="case-files-host"></div>
         </form>
-        <form id="open-form" class="stack-form">
+        <form id="open-form" class="stack-form" hidden>
           <label for="path-input" class="visually-hidden" data-i18n="pathLabel"></label>
           <input id="path-input" type="text" autocomplete="off" data-i18n-placeholder="pathPlaceholder">
           <div class="inline-form">

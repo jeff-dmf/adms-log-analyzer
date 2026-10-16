@@ -1,10 +1,12 @@
 // "Collections" panel of the left column: one row per collection of the case (an ERS capture, a
-// folder or a file), a checkbox filter per row, the approximate-order warning and a two-step
-// "Remove collection". Everything from the API reaches the page through textContent only.
+// folder or a file) on one line, a checkbox filter per row, the approximate-order warning and, from the row's
+// "..." menu, a two-step "Remove". The list folds away (open when the case has more than one collection).
+// Everything from the API reaches the page through textContent only.
 import { ApiError } from "./api.js";
 import {
   describe, pruneSelection, removeConfirmText, removeErrorMessage, removedMessage, selectionLine,
 } from "./collections-model.js";
+import { unreadableCount, unreadableLine } from "./sources.js";
 import { S, format } from "./strings.js";
 
 function el(tag, className, text) {
@@ -30,7 +32,8 @@ export class CollectionsPanel {
   // api: {collections(caseId, signal), removeCollection(caseId, group)}; getCase() -> case id | null.
   // onSelection(groups): the chosen groups changed; onList(collections, ordering): a new list arrived;
   // onRemoved(summary): a removal finished (lists of sources, grid and panels reload); onMessage(text, isError).
-  constructor({ host, note, api, getCase, onSelection, onList, onRemoved, onMessage }) {
+  // loadMenu() -> Promise of the ui-menu.js module (loaded on the first click of a row's menu; tests replace it).
+  constructor({ host, note, api, getCase, onSelection, onList, onRemoved, onMessage, loadMenu }) {
     this.host = host;
     this.note = note;
     this.api = api;
@@ -43,6 +46,16 @@ export class CollectionsPanel {
     this.ordering = "exact";
     this.selected = new Set();
     this.expanded = new Set();
+    this.open = null; // the user's choice for the folding list; null = open when there is more than one collection
+    this.sourceList = []; // the sources of the case (setSources), for the unreadable counts
+    this.unreadable = { total: 0, byGroup: new Map() }; // what the rows last said about them
+    this.loadMenu = loadMenu || (() => import("./ui-menu.js"));
+    this.menus = new WeakMap(); // row menu button -> its menu (promise)
+    this.activeMenu = null; // the menu that may be open
+    this.activeMenuGroup = null; // the collection whose row it belongs to
+    this.menuToken = 0; // the latest click that asked for a row menu: an older request that arrives later is dropped
+    this.renderGen = 0; // counts the drawings of the rows: a menu that finished loading for an older drawing is dropped
+    this.signature = null; // what the rows were last drawn from: an identical list is not drawn again
     this.confirming = null; // group waiting for the second step
     this.removing = null; // group being removed
     this.gen = 0; // case generation: answers of an older case never touch the current state
@@ -57,12 +70,19 @@ export class CollectionsPanel {
     const host = this.host;
     host.textContent = "";
     host.className = "collections-panel";
-    this.heading = el("h3", "col-title", S.colTitle);
+    this.heading = el("h3", "col-title");
     this.heading.id = "collections-title";
-    this.heading.setAttribute("tabindex", "-1");
     host.setAttribute("aria-labelledby", this.heading.id);
     this.list = el("ul", "col-list");
+    this.list.id = "collections-list";
     this.list.setAttribute("aria-label", S.colListLabel);
+    this.fold = button("", () => this.setOpen(!this.isOpen()), "col-fold");
+    this.fold.setAttribute("aria-controls", this.list.id);
+    this.fold.dataset.act = "fold";
+    this.heading.appendChild(this.fold);
+    this.unreadableText = el("span", "col-unreadable");
+    const head = el("div", "col-head");
+    head.append(this.heading, this.unreadableText);
     this.status = el("div", "source-meta col-status");
     this.status.setAttribute("role", "status");
     this.status.setAttribute("aria-live", "polite");
@@ -70,7 +90,7 @@ export class CollectionsPanel {
     this.orderText = el("p", "col-order-more", S.colApproxOrderMore);
     const foot = el("div", "col-foot");
     foot.append(this.allButton, this.status);
-    host.append(this.heading, this.list, foot, this.orderText);
+    host.append(head, this.list, foot, this.orderText);
     this.note.className = "col-order-note";
     this.note.setAttribute("role", "status");
     this.note.setAttribute("aria-live", "polite");
@@ -98,10 +118,47 @@ export class CollectionsPanel {
     this.ordering = "exact";
     this.selected = new Set();
     this.expanded = new Set();
+    this.open = null;
+    this.signature = null;
     this.confirming = null;
     this.removing = null;
+    this.sourceList = [];
+    this.unreadable = { total: 0, byGroup: new Map() };
     this.render();
     this.onList(this.collections, this.ordering);
+  }
+
+  // Sources that could not be read: in total and per collection (their `collection` is the group id).
+  countUnreadable() {
+    const byGroup = new Map();
+    for (const item of this.collections) {
+      const n = unreadableCount(this.sourceList, item.group);
+      if (n > 0) {
+        byGroup.set(item.group, n);
+      }
+    }
+    return { total: unreadableCount(this.sourceList), byGroup };
+  }
+
+  // The sources of the open case (called before the list of collections is reloaded, so it keeps them).
+  setSources(sources) {
+    this.sourceList = Array.isArray(sources) ? sources : [];
+    const next = this.countUnreadable();
+    const same = next.total === this.unreadable.total && next.byGroup.size === this.unreadable.byGroup.size
+      && [...next.byGroup].every(([group, n]) => this.unreadable.byGroup.get(group) === n);
+    if (!same) {
+      this.render();
+    }
+  }
+
+  isOpen() {
+    return this.open === null ? this.collections.length > 1 : this.open;
+  }
+
+  setOpen(on) {
+    this.open = Boolean(on);
+    this.wanted = { group: null, act: "fold" };
+    this.render();
   }
 
   // Reloads the list. Resolves to true when the chosen collections changed (a chosen one vanished).
@@ -138,7 +195,11 @@ export class CollectionsPanel {
     if (this.confirming !== null && !this.collections.some((c) => c.group === this.confirming)) {
       this.confirming = null;
     }
-    this.render();
+    const signature = JSON.stringify([this.ordering, this.collections]);
+    if (signature !== this.signature || changed) {
+      this.signature = signature;
+      this.render();
+    }
     this.onList(this.collections, this.ordering);
     if (changed) {
       this.onSelection(this.selectedGroups());
@@ -178,7 +239,7 @@ export class CollectionsPanel {
 
   cancelRemove(group) {
     this.confirming = null;
-    this.wanted = { group, act: "remove" };
+    this.wanted = { group, act: "menu" };
     this.render();
   }
 
@@ -192,7 +253,7 @@ export class CollectionsPanel {
     const index = this.collections.findIndex((c) => c.group === item.group);
     this.removing = item.group;
     this.confirming = null;
-    this.wanted = { group: item.group, act: "remove" };
+    this.wanted = { group: item.group, act: "menu" };
     this.render();
     this.onMessage(format(S.colRemoving, { tag }), false);
     try {
@@ -207,7 +268,7 @@ export class CollectionsPanel {
       // The removed row is gone: the focus goes to the next collection (or the previous, or the heading).
       const rest = this.collections.filter((c) => c.group !== item.group);
       const next = rest[Math.min(Math.max(index, 0), rest.length - 1)];
-      this.wanted = next ? { group: next.group, act: "remove" } : { group: null, act: "heading" };
+      this.wanted = next ? { group: next.group, act: "menu" } : { group: null, act: "heading" };
       await this.refresh();
       await this.onRemoved(summary); // reloads sources, grid and panels (the grid reads selectedGroups())
     } catch (err) {
@@ -217,7 +278,7 @@ export class CollectionsPanel {
       this.removing = null;
       const notFound = err instanceof ApiError && err.code === "collection_not_found";
       this.onMessage(removeErrorMessage(err, tag), true);
-      this.wanted = { group: item.group, act: "remove" };
+      this.wanted = { group: item.group, act: "menu" };
       this.render();
       if (notFound) {
         await this.refresh();
@@ -234,6 +295,9 @@ export class CollectionsPanel {
 
   // The focused control of the list as {group, act}, so a re-render can give the focus back.
   captureFocus() {
+    if (this.activeMenu && this.activeMenuGroup !== null && this.activeMenu.isOpen()) {
+      return { group: this.activeMenuGroup, act: "menu" }; // the focus is on an item of the open menu, which is about to go
+    }
     const active = typeof document !== "undefined" ? document.activeElement : null;
     if (!active || !active.dataset || active.dataset.act === undefined) {
       return null;
@@ -243,14 +307,19 @@ export class CollectionsPanel {
 
   applyFocus(want) {
     let target = null;
-    if (want.act !== "heading" && want.group !== null) {
+    if (want.act === "fold") {
+      target = this.fold;
+    } else if (want.act !== "heading" && want.group !== null && !this.list.hidden) {
       target = this.list.querySelector('[data-group="' + want.group + '"][data-act="' + want.act + '"]');
       if (!target && want.act === "cancel") {
-        target = this.list.querySelector('[data-group="' + want.group + '"][data-act="remove"]');
+        target = this.list.querySelector('[data-group="' + want.group + '"][data-act="menu"]');
+      }
+      if (!target && want.act === "menu") {
+        target = this.list.querySelector('[data-group="' + want.group + '"][data-act="pick"]');
       }
     }
-    if (!target && want.act !== "pick") {
-      target = this.heading;
+    if (!target && (want.act !== "pick" || this.list.hidden)) {
+      target = this.fold; // the folding header is the panel's way in (a row control cannot be focused in a folded list)
     }
     if (target && !target.disabled) {
       target.focus();
@@ -268,7 +337,21 @@ export class CollectionsPanel {
 
   renderList() {
     const multi = this.collections.length > 1;
+    if (this.activeMenu && this.activeMenu.isOpen()) {
+      this.activeMenu.close(false); // its row is about to be replaced
+    }
+    this.activeMenu = null;
+    this.activeMenuGroup = null;
+    this.renderGen += 1;
     this.host.hidden = this.collections.length === 0;
+    this.unreadable = this.countUnreadable();
+    const open = this.isOpen();
+    this.list.hidden = !open;
+    this.fold.setAttribute("aria-expanded", open ? "true" : "false");
+    this.fold.textContent = format(S.colTitleCount, { count: this.collections.length });
+    this.fold.title = open ? S.colFoldHide : S.colFoldShow;
+    this.unreadableText.textContent = unreadableLine(this.unreadable.total);
+    this.unreadableText.hidden = this.unreadable.total === 0;
     this.note.hidden = !(this.ordering === "approximate" && multi);
     this.orderText.hidden = this.note.hidden;
     this.allButton.hidden = !multi;
@@ -284,6 +367,8 @@ export class CollectionsPanel {
     this.status.textContent = this.collections.length > 1 ? selectionLine(this.selected, this.collections) : "";
   }
 
+  // One line per collection: tag, identity, count and the warnings. The rest (GUID, time window, members) opens
+  // with "+"; removing is in the row's menu.
   renderItem(item) {
     const d = describe(item);
     const li = el("li", "col-item");
@@ -300,23 +385,16 @@ export class CollectionsPanel {
     const chip = el("span", "col-tag col-tag-" + d.color, d.tag);
     const text = el("span", "col-text");
     const name = el("span", "col-name", d.title);
-    name.title = d.title;
     text.appendChild(name);
-    if (d.guid !== "") {
-      const guid = el("span", "source-meta col-guid", format(S.colGuidLine, { guid: d.guid }));
-      guid.title = d.guidFull;
-      text.appendChild(guid);
+    text.appendChild(el("span", "source-meta col-counts", d.counts));
+    const unreadable = unreadableLine(this.unreadable.byGroup.get(item.group) || 0);
+    for (const [cls, value] of [["col-missing", d.missing], ["col-state col-state-" + d.statusCode, d.status],
+      ["col-state col-state-error", unreadable]]) {
+      if (value !== "") {
+        text.appendChild(el("span", cls, value));
+      }
     }
-    text.appendChild(el("span", "source-meta", d.counts));
-    if (d.window !== "") {
-      text.appendChild(el("span", "source-meta", d.window));
-    }
-    if (d.missing !== "") {
-      text.appendChild(el("span", "col-missing", d.missing));
-    }
-    if (d.status !== "") {
-      text.appendChild(el("span", "col-state col-state-" + d.statusCode, d.status));
-    }
+    label.title = [d.title, d.counts, d.window, d.guidFull].filter((x) => x !== "").join("\n");
     label.append(box, chip, text);
     row.appendChild(label);
 
@@ -335,10 +413,30 @@ export class CollectionsPanel {
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
     toggle.setAttribute("aria-label", format(open ? S.colCollapseLabel : S.colExpandLabel, { tag: d.tag }));
     row.appendChild(toggle);
+    const menu = button("", (event) => this.openRowMenu(item, d.tag, menu, event), "col-menu");
+    menu.dataset.group = String(item.group);
+    menu.dataset.act = "menu";
+    const menuLabel = format(S.colRowMenuLabel, { tag: d.tag });
+    menu.setAttribute("aria-label", menuLabel);
+    menu.title = menuLabel;
+    menu.disabled = this.removing !== null;
+    row.appendChild(menu);
     li.appendChild(row);
 
     if (open) {
       const members = el("ul", "col-members");
+      if (d.window !== "") {
+        const m = el("li", "col-member");
+        m.appendChild(el("span", "source-meta", d.window));
+        members.appendChild(m);
+      }
+      if (d.guid !== "") {
+        const m = el("li", "col-member");
+        const guid = el("span", "source-meta col-guid", format(S.colGuidLine, { guid: d.guid }));
+        guid.title = d.guidFull;
+        m.appendChild(guid);
+        members.appendChild(m);
+      }
       for (const member of d.members) {
         const m = el("li", "col-member");
         m.appendChild(el("span", "col-member-name", member.name));
@@ -349,8 +447,8 @@ export class CollectionsPanel {
       li.appendChild(members);
     }
 
-    const actions = el("div", "col-actions");
     if (this.confirming === item.group) {
+      const actions = el("div", "col-actions");
       const confirm = el("div", "col-confirm");
       confirm.setAttribute("role", "alertdialog");
       confirm.setAttribute("aria-label", format(S.colRemoveLabel, { tag: d.tag }));
@@ -369,15 +467,55 @@ export class CollectionsPanel {
       });
       confirm.append(yes, cancel);
       actions.appendChild(confirm);
-    } else {
-      const remove = button(S.colRemove, () => this.askRemove(item.group), "col-remove");
-      remove.setAttribute("aria-label", format(S.colRemoveLabel, { tag: d.tag }));
-      remove.dataset.group = String(item.group);
-      remove.dataset.act = "remove";
-      remove.disabled = this.removing !== null;
-      actions.appendChild(remove);
+      li.appendChild(actions);
     }
-    li.appendChild(actions);
     return li;
+  }
+
+  // The single point of exclusivity: every opening of a row menu (a new instance, one built before, by keyboard or by
+  // pointer) asks for its items first, and that call lands here. The menu that was open closes, this one is the active one.
+  claimMenu(menu, group) {
+    if (this.activeMenu && this.activeMenu !== menu && this.activeMenu.isOpen()) {
+      this.activeMenu.close(false);
+    }
+    this.activeMenu = menu;
+    this.activeMenuGroup = group;
+  }
+
+  // The row's "..." menu: loaded on the first click, then it toggles itself. Its one item starts the two-step removal.
+  openRowMenu(item, tag, trigger, event) {
+    if (this.menus.has(trigger)) {
+      return; // built already: the menu handles this click
+    }
+    const where = event && event.detail === 0 ? "first" : null;
+    const gen = this.renderGen;
+    this.menuToken += 1;
+    const token = this.menuToken;
+    const ready = this.loadMenu().then((mod) => {
+      if (token !== this.menuToken || gen !== this.renderGen || trigger.isConnected === false) {
+        this.menus.delete(trigger); // a later click, a new drawing or a removed row: nothing to open (a click tries again)
+        return null;
+      }
+      const menu = mod.createMenu({
+        trigger,
+        label: format(S.colRowMenuLabel, { tag }),
+        getItems: () => {
+          this.claimMenu(menu, item.group); // asked at every opening: first, built, keyboard or pointer
+          return [{
+            id: "col-remove",
+            label: format(S.colRemoveItem, { tag }),
+            disabled: this.removing !== null,
+            run: () => this.askRemove(item.group),
+          }];
+        },
+      });
+      menu.open(where);
+      return menu;
+    });
+    this.menus.set(trigger, ready);
+    ready.catch((err) => {
+      this.menus.delete(trigger); // tried again on the next click
+      this.onMessage(err && err.message ? err.message : String(err), true);
+    });
   }
 }

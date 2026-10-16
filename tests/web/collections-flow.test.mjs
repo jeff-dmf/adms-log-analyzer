@@ -30,12 +30,14 @@ class FakeNode {
   }
 
   appendChild(child) {
+    child.parent = this;
     this.children.push(child);
     return child;
   }
 
   append(...nodes) {
     for (const node of nodes) {
+      node.parent = this;
       this.children.push(node);
     }
   }
@@ -49,7 +51,15 @@ class FakeNode {
     return found.length > 0 ? found[0] : null;
   }
 
-  focus() { document.activeElement = this; }
+  // Like a browser: a node that is hidden, or inside a hidden one, cannot take the focus.
+  focus() {
+    for (let n = this; n; n = n.parent) {
+      if (n.hidden) {
+        return;
+      }
+    }
+    document.activeElement = this;
+  }
   get classList() {
     return { toggle() {}, add() {} };
   }
@@ -86,6 +96,23 @@ const { api, ApiError } = await import("../../src/dmslog/web/js/api.js");
 const byClass = (root, cls) => root.find((n) => n.className.split(" ").includes(cls));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+// The row menus load ui-menu.js on demand; the tests give the panel a stand-in that records what it was given.
+const menus = [];
+const fakeMenuLoader = () => Promise.resolve({
+  createMenu: (opts) => {
+    const menu = { opts, opened: 0, where: undefined, open(where) { this.opened += 1; this.where = where; opts.getItems(); }, isOpen() { return false; }, close() {} };
+    menus.push(menu);
+    return menu;
+  },
+});
+
+// Opens the "..." menu of row `index` and picks its one item ("Remove C<n>...").
+async function removeVia(host, index) {
+  byClass(host, "col-menu")[index].fire("click");
+  await tick();
+  menus.at(-1).opts.getItems()[0].run();
+}
+
 function group(id, number, extra = {}) {
   return {
     id, group: id, number, tag: "C" + number, kind: "ers", guid: "0A1B2C3D-0000-1111-2222-333344445555",
@@ -114,7 +141,7 @@ function setup(lists) {
   const host = new FakeNode("section");
   const note = new FakeNode("div");
   const panel = new CollectionsPanel({
-    host, note, api: fakeApi, getCase: () => "case1",
+    host, note, api: fakeApi, getCase: () => "case1", loadMenu: fakeMenuLoader,
     onSelection: (g) => calls.selections.push(g),
     onList: (list, ordering) => calls.lists.push([list.length, ordering]),
     onRemoved: async () => { calls.removedCb += 1; },
@@ -175,7 +202,7 @@ test("checking collections filters, All collections clears, a vanished one is dr
 test("Remove takes two steps, names the collection, and reloads through onRemoved", async () => {
   const { host, panel, calls } = setup([group(4, 1), group(9, 2)]);
   await panel.refresh();
-  byClass(host, "col-remove")[1].fire("click");
+  await removeVia(host, 1);
   assert.equal(calls.removed.length, 0); // first step only asks
   const confirm = byClass(host, "col-confirm")[0];
   assert.equal(confirm.attrs.role, "alertdialog");
@@ -185,7 +212,7 @@ test("Remove takes two steps, names the collection, and reloads through onRemove
   byClass(host, "col-cancel")[0].fire("click");
   assert.equal(byClass(host, "col-confirm").length, 0);
   assert.equal(calls.removed.length, 0);
-  byClass(host, "col-remove")[1].fire("click");
+  await removeVia(host, 1);
   byClass(host, "col-yes")[0].fire("click");
   await tick();
   await tick();
@@ -200,7 +227,7 @@ test("a removal refused with 409 explains why and changes nothing", async () => 
   await panel.refresh();
   for (const [code, pattern] of [["job_running", /while the case is indexing/], ["collection_followed", /following this folder/]]) {
     setFailure(Object.assign(new ApiError(409, code, "server text"), {}));
-    byClass(host, "col-remove")[0].fire("click");
+    await removeVia(host, 0);
     byClass(host, "col-yes")[0].fire("click");
     await tick();
     await tick();
@@ -331,7 +358,7 @@ test("add mode with nothing chosen asks for a file", async () => {
 test("SourcesPanel.addFilesToCase opens every file in the open case and unblocks afterwards", async () => {
   const refs = {
     caseSelect: new FakeNode("select"), newCaseForm: new FakeNode("form"), openForm: new FakeNode("form"),
-    progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), scopeSelect: new FakeNode("select"),
+    sourceList: new FakeNode("ul"), progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), scopeSelect: new FakeNode("select"),
   };
   const messages = [];
   const panel = new SourcesPanel(refs, { onMessage: (t, e) => messages.push([t, e]), onSources() {}, onDone() {} });
@@ -416,17 +443,17 @@ test("an old removal answer does not free the removal lock of the new case", asy
   };
   const host = new FakeNode("section");
   const panel = new CollectionsPanel({
-    host, note: new FakeNode("div"), api: fakeApi, getCase: () => caseId,
+    host, note: new FakeNode("div"), api: fakeApi, getCase: () => caseId, loadMenu: fakeMenuLoader,
     onMessage: (t, e) => calls.messages.push([t, e]), onRemoved: async () => { calls.removedCb += 1; },
   });
   await panel.refresh();
-  byClass(host, "col-remove")[0].fire("click");
+  await removeVia(host, 0);
   byClass(host, "col-yes")[0].fire("click"); // DELETE in case A starts
   assert.equal(calls.removed, 1);
   caseId = "B";
   panel.setCase();
   await panel.refresh();
-  byClass(host, "col-remove")[0].fire("click");
+  await removeVia(host, 0);
   byClass(host, "col-yes")[0].fire("click"); // DELETE in case B starts
   assert.equal(calls.removed, 2);
   pending[0].resolve({ sources: 1, records: 1, bookmarks: 0 }); // the old answer arrives
@@ -435,7 +462,7 @@ test("an old removal answer does not free the removal lock of the new case", asy
   assert.notEqual(panel.removing, null); // still locked by B's removal
   assert.equal(calls.removedCb, 0);
   assert.equal(calls.messages.some(([t]) => /Removed/.test(t)), false);
-  byClass(host, "col-remove")[0].fire("click"); // disabled while B's removal runs
+  await removeVia(host, 0); // disabled while B's removal runs
   assert.equal(byClass(host, "col-confirm").length, 0);
   pending[1].resolve({ sources: 1, records: 1, bookmarks: 0 });
   await tick();
@@ -447,7 +474,7 @@ test("an old removal answer does not free the removal lock of the new case", asy
 test("a refresh keeps the focus on the same control; removal moves it to the next row", async () => {
   const { host, panel } = setup([group(4, 1), group(9, 2), group(12, 3)]);
   await panel.refresh();
-  byClass(host, "col-remove")[1].fire("click"); // asks: focus goes to Cancel of C2
+  await removeVia(host, 1); // asks: focus goes to Cancel of C2
   assert.equal(document.activeElement.dataset.act, "cancel");
   assert.equal(document.activeElement.dataset.group, "9");
   await panel.refresh(); // an update during indexing re-renders the list
@@ -455,15 +482,274 @@ test("a refresh keeps the focus on the same control; removal moves it to the nex
   assert.equal(document.activeElement.dataset.group, "9");
   byClass(host, "col-confirm")[0].fire("keydown", { key: "Escape" }); // Esc still cancels after the refresh
   assert.equal(byClass(host, "col-confirm").length, 0);
-  assert.equal(document.activeElement.dataset.act, "remove");
+  assert.equal(document.activeElement.dataset.act, "menu");
   assert.equal(document.activeElement.dataset.group, "9");
   byClass(host, "col-expand")[0].fire("click");
   assert.equal(document.activeElement.dataset.act, "expand");
   assert.equal(document.activeElement.dataset.group, "4");
-  byClass(host, "col-remove")[1].fire("click");
+  await removeVia(host, 1);
   byClass(host, "col-yes")[0].fire("click");
   await tick();
   await tick();
-  assert.equal(document.activeElement.dataset.act, "remove"); // C2 is gone: the next row (C3) gets it
+  assert.equal(document.activeElement.dataset.act, "menu"); // C2 is gone: the next row (C3) gets it
   assert.equal(document.activeElement.dataset.group, "12");
+});
+
+// -- UI-21: compact rows, folding list, unreadable warning, row menu ---------------------------------------
+
+// Microtasks only: the stand-in menu loader and the fake api answer with resolved promises.
+const flush = async () => { for (let i = 0; i < 10; i += 1) await Promise.resolve(); };
+
+const unreadableSource = (id, g) => ({ id, collection: g, status: "error", error: "ZIP entry is truncated" });
+
+test("UI-21: a row is one line (tag, identity, count); GUID, window and members open with +", async () => {
+  const { host, panel } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  const row = byClass(host, "col-item")[0];
+  assert.match(row.textContent, /C1/);
+  assert.match(row.textContent, /ERS 2026-01-01 12:00:00 \(zone1\)/);
+  assert.equal(byClass(row, "col-guid").length, 0);
+  assert.equal(byClass(row, "col-members").length, 0);
+  assert.equal(byClass(row, "col-counts")[0].textContent, "100 records in 3 sources");
+  byClass(row, "col-expand")[0].fire("click");
+  const opened = byClass(host, "col-item")[0];
+  assert.equal(byClass(opened, "col-guid").length, 1);
+  assert.equal(byClass(opened, "col-members").length, 1);
+  assert.match(byClass(opened, "col-members")[0].textContent, /a\.zip/);
+  assert.equal(byClass(host, "col-remove").length, 0); // removal lives in the row menu now
+});
+
+test("UI-21: the list is open with several collections, folded with one, and the user's choice wins", async () => {
+  const { host, panel, setList } = setup([group(4, 1)]);
+  await panel.refresh();
+  const list = () => byClass(host, "col-list")[0];
+  const fold = () => byClass(host, "col-fold")[0];
+  assert.equal(list().hidden, true);
+  assert.equal(fold().attrs["aria-expanded"], "false");
+  assert.equal(fold().textContent, "Collections (1)");
+  assert.equal(fold().attrs["aria-controls"], list().id);
+  setList([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  assert.equal(list().hidden, false);
+  assert.equal(fold().attrs["aria-expanded"], "true");
+  assert.equal(fold().textContent, "Collections (2)");
+  fold().fire("click"); // the user folds it
+  assert.equal(list().hidden, true);
+  assert.equal(document.activeElement, fold()); // the focus stays on the control that was used
+  await panel.refresh();
+  assert.equal(list().hidden, true); // a reload does not undo the choice
+  fold().fire("click");
+  assert.equal(list().hidden, false);
+  fold().fire("click");
+  panel.setCase(); // another case: back to the default
+  setList([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  assert.equal(list().hidden, false);
+});
+
+test("UI-21: unreadable sources: '1 file unreadable' in the header and on the row of their collection", async () => {
+  const { host, panel } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  const header = () => byClass(host, "col-unreadable")[0];
+  assert.equal(header().hidden, true);
+  panel.setSources([unreadableSource(1, 9), { id: 2, collection: 4, status: "ok" }]);
+  assert.equal(header().hidden, false);
+  assert.equal(header().textContent, "1 file unreadable");
+  const rows = byClass(host, "col-item");
+  assert.doesNotMatch(rows[0].textContent, /unreadable/);
+  assert.match(rows[1].textContent, /1 file unreadable/);
+  panel.setSources([unreadableSource(1, 9), unreadableSource(3, 9), unreadableSource(4, 4)]);
+  assert.equal(header().textContent, "3 files unreadable");
+  panel.setSources([]);
+  assert.equal(header().hidden, true);
+  assert.doesNotMatch(host.textContent, /unreadable/);
+});
+
+test("UI-21: the sources arrive before the collections of a new case and are counted once the list is there", async () => {
+  const { host, panel } = setup([group(4, 1)]);
+  panel.setSources([unreadableSource(1, 4)]); // main.js calls this before refresh()
+  await panel.refresh();
+  assert.equal(byClass(host, "col-unreadable")[0].textContent, "1 file unreadable");
+  panel.setCase(); // another case: nothing of the old one stays
+  assert.equal(byClass(host, "col-unreadable")[0].hidden, true);
+});
+
+test("UI-21: the row menu loads once, offers 'Remove C2…', and Remove still takes two steps with the focus on Cancel", async () => {
+  menus.length = 0;
+  const { host, panel, calls } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  const trigger = byClass(host, "col-menu")[1];
+  assert.equal(trigger.attrs["aria-label"], "Actions for C2");
+  trigger.fire("click", { detail: 0 });
+  trigger.fire("click", { detail: 0 }); // second click before the load ends: the menu handles clicks once built
+  await flush();
+  assert.equal(menus.length, 1);
+  assert.equal(menus[0].where, "first");
+  assert.equal(menus[0].opts.trigger, trigger);
+  const [item] = menus[0].opts.getItems();
+  assert.deepEqual([item.id, item.label, item.disabled], ["col-remove", "Remove C2…", false]);
+  item.run();
+  assert.equal(calls.removed.length, 0); // the menu only asks
+  assert.equal(document.activeElement.dataset.act, "cancel");
+  assert.equal(document.activeElement.dataset.group, "9");
+  byClass(host, "col-cancel")[0].fire("click");
+  assert.equal(document.activeElement.dataset.act, "menu"); // the focus returns to the row's menu button
+  assert.equal(document.activeElement.dataset.group, "9");
+});
+
+test("UI-21: a pointer click opens the menu without moving the focus; while a removal runs the item is disabled", async () => {
+  menus.length = 0;
+  const { host, panel } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  byClass(host, "col-menu")[0].fire("click", { detail: 1 });
+  await flush();
+  assert.equal(menus[0].where, null);
+  panel.removing = 4;
+  assert.equal(menus[0].opts.getItems()[0].disabled, true);
+  panel.removing = null;
+});
+
+test("UI-21: a menu that fails to load is reported and tried again on the next click", async () => {
+  const messages = [];
+  let loads = 0;
+  const host = new FakeNode("section");
+  const panel = new CollectionsPanel({
+    host, note: new FakeNode("div"), api: { collections: async () => ({ ordering: "exact", collections: [group(4, 1)] }) },
+    getCase: () => "case1", onMessage: (t, e) => messages.push([t, e]),
+    loadMenu: () => { loads += 1; return loads === 1 ? Promise.reject(new Error("no module")) : fakeMenuLoader(); },
+  });
+  await panel.refresh();
+  const trigger = byClass(host, "col-menu")[0];
+  trigger.fire("click");
+  await flush();
+  assert.deepEqual(messages.at(-1), ["no module", true]);
+  menus.length = 0;
+  trigger.fire("click");
+  await flush();
+  assert.equal(menus.length, 1);
+});
+
+test("UI-21: an identical reload draws nothing again; a changed list closes an open row menu", async () => {
+  menus.length = 0;
+  const { host, panel, setList } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  byClass(host, "col-menu")[0].fire("click");
+  await flush();
+  let closed = 0;
+  menus[0].isOpen = () => true;
+  menus[0].close = () => { closed += 1; };
+  const rows = byClass(host, "col-item");
+  await panel.refresh(); // same data (as during an indexing)
+  assert.deepEqual(byClass(host, "col-item"), rows);
+  assert.equal(closed, 0);
+  setList([group(4, 1), group(9, 2, { records: 999 })]);
+  await panel.refresh();
+  assert.equal(closed, 1);
+  assert.notEqual(byClass(host, "col-item")[0], rows[0]);
+});
+
+test("UI-21: a reload that drops the collection awaiting confirmation cancels the confirmation", async () => {
+  const { host, panel, setList } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  panel.askRemove(9);
+  assert.equal(byClass(host, "col-confirm").length, 1);
+  setList([group(4, 1)]);
+  await panel.refresh();
+  assert.equal(byClass(host, "col-confirm").length, 0);
+  assert.equal(panel.confirming, null);
+});
+
+// -- review fixes: focus never lands on a hidden node, pending menus, open menu while the list reloads ----------------
+
+const visibleNode = (node) => {
+  for (let n = node; n; n = n.parent) {
+    if (n.hidden) {
+      return false;
+    }
+  }
+  return true;
+};
+
+test("UI-21 review: removing one of two collections folds the list and the focus goes to the fold button, visibly", async () => {
+  const { host, panel } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  await removeVia(host, 1);
+  byClass(host, "col-yes")[0].fire("click");
+  await flush();
+  await flush();
+  assert.equal(byClass(host, "col-list")[0].hidden, true); // one collection left: the list folds by itself
+  assert.equal(document.activeElement, byClass(host, "col-fold")[0]);
+  assert.equal(visibleNode(document.activeElement), true);
+});
+
+test("UI-21 review: reloading the list while an item of a row menu has the focus gives the focus to the new menu button", async () => {
+  menus.length = 0;
+  const { host, panel, setList } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  byClass(host, "col-menu")[1].fire("click", { detail: 0 });
+  await flush();
+  const item = new FakeNode("div"); // an item of the ui-menu, outside the list and without data-act
+  document.activeElement = item;
+  menus[0].isOpen = () => true;
+  menus[0].close = () => {};
+  setList([group(4, 1), group(9, 2, { records: 5 })]);
+  await panel.refresh();
+  const trigger = byClass(host, "col-menu")[1];
+  assert.equal(document.activeElement, trigger);
+  assert.equal(visibleNode(trigger), true);
+});
+
+test("UI-21 review: a menu that finishes loading after its row was replaced or removed is not opened", async () => {
+  menus.length = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const host = new FakeNode("section");
+  let list = [group(4, 1), group(9, 2)];
+  const panel = new CollectionsPanel({
+    host, note: new FakeNode("div"), api: { collections: async () => ({ ordering: "approximate", collections: list }) },
+    getCase: () => "case1", loadMenu: () => gate.then(() => fakeMenuLoader()),
+  });
+  await panel.refresh();
+  byClass(host, "col-menu")[0].fire("click", { detail: 0 });
+  list = [group(9, 2)]; // C1 goes away
+  await panel.refresh();
+  release();
+  await flush();
+  assert.equal(menus.length, 0);
+  // the same when the node is no longer in the page
+  byClass(host, "col-menu")[0].fire("click", { detail: 0 });
+  byClass(host, "col-menu")[0].isConnected = false;
+  await flush();
+  assert.equal(menus.length, 0);
+});
+
+test("UI-21 review: a wanted focus on a row of a folded list goes to the fold button (the node it found is hidden)", async () => {
+  const { host, panel } = setup([group(4, 1)]); // one collection: folded
+  await panel.refresh();
+  assert.equal(byClass(host, "col-list")[0].hidden, true);
+  document.activeElement = null; // what a browser has after the focused node is replaced
+  panel.wanted = { group: 4, act: "menu" };
+  panel.render();
+  assert.equal(document.activeElement, byClass(host, "col-fold")[0]);
+});
+
+test("UI-21 review: in a folded list every row control that was focused hands the focus to the fold button", async () => {
+  for (const act of ["pick", "expand", "menu", "remove", "yes", "cancel"]) {
+    const { host, panel } = setup([group(4, 1)]); // one collection: the list is folded
+    await panel.refresh();
+    document.activeElement = null;
+    panel.wanted = { group: 4, act };
+    panel.render();
+    assert.equal(document.activeElement, byClass(host, "col-fold")[0], act);
+  }
+});
+
+test("UI-21 review: a refresh that folds the list while the checkbox has the focus moves it to the fold button", async () => {
+  const { host, panel, setList } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  const box = host.find((n) => n.tag === "input" && n.dataset.act === "pick")[1];
+  box.focus();
+  setList([group(4, 1)]);
+  await panel.refresh();
+  assert.equal(document.activeElement, byClass(host, "col-fold")[0]);
 });
