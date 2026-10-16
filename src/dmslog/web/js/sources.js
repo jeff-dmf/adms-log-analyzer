@@ -229,6 +229,8 @@ export class SourcesPanel {
         return;
       }
       let boundCase = null;
+      this.showNewCase = true; // the form holds the progress, the per-file results and Retry: it stays in view
+      this.applyLayout();
       this.setQueueBusy(true);
       try {
         await this.caseFiles.submit({
@@ -492,7 +494,10 @@ export class SourcesPanel {
       row.mark.remove();
       row.mark = null;
     }
-    row.li.className = unreadable ? "is-unreadable" : "";
+    const rowClass = unreadable ? "is-unreadable" : "";
+    if (row.li.className !== rowClass) {
+      row.li.className = rowClass;
+    }
     if (source.sensitive && !row.badge) {
       row.badge = document.createElement("span");
       row.badge.className = "badge";

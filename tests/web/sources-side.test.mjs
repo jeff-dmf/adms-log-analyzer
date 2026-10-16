@@ -504,3 +504,44 @@ test("the case menu loads ui-menu.js once, opens it, and a failed load is report
   items[1].run();
   assert.equal(doc.activeElement, refs.pathInput);
 });
+
+test("UI-21 review: creating the first case keeps its form in view while the queue runs and after", async () => {
+  const { refs, panel } = setup({ header: true });
+  api.cases = async () => ({ cases: [{ id: "N", name: "new" }] });
+  api.sources = async () => ({ sources: [] });
+  await panel.selectCase(null); // no case yet
+  const seen = [];
+  panel.caseFiles = {
+    submit: async (deps) => {
+      await deps.selectCase("N"); // the new case is selected while its files are still being opened
+      seen.push(refs.newCaseForm.hidden);
+    },
+  };
+  await panel.createCase();
+  assert.deepEqual(seen, [false]);
+  assert.equal(panel.caseId, "N");
+  assert.equal(refs.newCaseForm.hidden, false); // results and Retry stay readable afterwards
+});
+
+test("UI-21 review: a refresh with nothing changed writes nothing to any row", () => {
+  const { refs, panel } = setup();
+  const list = [src(1, { status: "error", error: "x" }), src(2, { sensitive: true }), src(3)];
+  show(panel, list);
+  let writes = 0;
+  for (const li of rowsOf(refs)) {
+    for (const node of li.all()) {
+      for (const key of ["className", "title", "checked"]) {
+        let value = node[key];
+        Object.defineProperty(node, key, { get: () => value, set: (v) => { writes += 1; value = v; }, configurable: true });
+      }
+      const set = node.setAttribute.bind(node);
+      node.setAttribute = (k, v) => { writes += 1; set(k, v); };
+      const text = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "textContent");
+      Object.defineProperty(node, "textContent", { get() { return text.get.call(this); }, set(v) { writes += 1; text.set.call(this, v); }, configurable: true });
+    }
+  }
+  show(panel, list.map((s) => ({ ...s })));
+  assert.equal(writes, 0);
+  show(panel, [src(1, { status: "error", error: "x" }), src(2, { sensitive: true }), src(3, { records: 1 })]);
+  assert.ok(writes > 0); // the guard is not blind: a real change is written
+});

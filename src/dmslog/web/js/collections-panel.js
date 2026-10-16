@@ -52,6 +52,8 @@ export class CollectionsPanel {
     this.loadMenu = loadMenu || (() => import("./ui-menu.js"));
     this.menus = new WeakMap(); // row menu button -> its menu (promise)
     this.activeMenu = null; // the menu that may be open
+    this.activeMenuGroup = null; // the collection whose row it belongs to
+    this.renderGen = 0; // counts the drawings of the rows: a menu that finished loading for an older drawing is dropped
     this.signature = null; // what the rows were last drawn from: an identical list is not drawn again
     this.confirming = null; // group waiting for the second step
     this.removing = null; // group being removed
@@ -292,6 +294,9 @@ export class CollectionsPanel {
 
   // The focused control of the list as {group, act}, so a re-render can give the focus back.
   captureFocus() {
+    if (this.activeMenu && this.activeMenuGroup !== null && this.activeMenu.isOpen()) {
+      return { group: this.activeMenuGroup, act: "menu" }; // the focus is on an item of the open menu, which is about to go
+    }
     const active = typeof document !== "undefined" ? document.activeElement : null;
     if (!active || !active.dataset || active.dataset.act === undefined) {
       return null;
@@ -303,7 +308,7 @@ export class CollectionsPanel {
     let target = null;
     if (want.act === "fold") {
       target = this.fold;
-    } else if (want.act !== "heading" && want.group !== null) {
+    } else if (want.act !== "heading" && want.group !== null && !this.list.hidden) {
       target = this.list.querySelector('[data-group="' + want.group + '"][data-act="' + want.act + '"]');
       if (!target && want.act === "cancel") {
         target = this.list.querySelector('[data-group="' + want.group + '"][data-act="menu"]');
@@ -335,6 +340,8 @@ export class CollectionsPanel {
       this.activeMenu.close(false); // its row is about to be replaced
     }
     this.activeMenu = null;
+    this.activeMenuGroup = null;
+    this.renderGen += 1;
     this.host.hidden = this.collections.length === 0;
     this.unreadable = this.countUnreadable();
     const open = this.isOpen();
@@ -470,18 +477,26 @@ export class CollectionsPanel {
       return; // built already: the menu handles this click
     }
     const where = event && event.detail === 0 ? "first" : null;
+    const gen = this.renderGen;
     const ready = this.loadMenu().then((mod) => {
+      if (gen !== this.renderGen || trigger.isConnected === false) {
+        this.menus.delete(trigger); // its row was replaced or removed while the module loaded: nothing to open
+        return null;
+      }
       const menu = mod.createMenu({
         trigger,
         label: format(S.colRowMenuLabel, { tag }),
-        getItems: () => [{
-          id: "col-remove",
-          label: format(S.colRemoveItem, { tag }),
-          disabled: this.removing !== null,
-          run: () => this.askRemove(item.group),
-        }],
+        getItems: () => {
+          this.activeMenu = menu; // asked at every opening, so a later opening of this menu is the active one
+          this.activeMenuGroup = item.group;
+          return [{
+            id: "col-remove",
+            label: format(S.colRemoveItem, { tag }),
+            disabled: this.removing !== null,
+            run: () => this.askRemove(item.group),
+          }];
+        },
       });
-      this.activeMenu = menu;
       menu.open(where);
       return menu;
     });

@@ -30,12 +30,14 @@ class FakeNode {
   }
 
   appendChild(child) {
+    child.parent = this;
     this.children.push(child);
     return child;
   }
 
   append(...nodes) {
     for (const node of nodes) {
+      node.parent = this;
       this.children.push(node);
     }
   }
@@ -49,7 +51,15 @@ class FakeNode {
     return found.length > 0 ? found[0] : null;
   }
 
-  focus() { document.activeElement = this; }
+  // Like a browser: a node that is hidden, or inside a hidden one, cannot take the focus.
+  focus() {
+    for (let n = this; n; n = n.parent) {
+      if (n.hidden) {
+        return;
+      }
+    }
+    document.activeElement = this;
+  }
   get classList() {
     return { toggle() {}, add() {} };
   }
@@ -90,7 +100,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const menus = [];
 const fakeMenuLoader = () => Promise.resolve({
   createMenu: (opts) => {
-    const menu = { opts, opened: 0, where: undefined, open(where) { this.opened += 1; this.where = where; }, isOpen() { return false; }, close() {} };
+    const menu = { opts, opened: 0, where: undefined, open(where) { this.opened += 1; this.where = where; opts.getItems(); }, isOpen() { return false; }, close() {} };
     menus.push(menu);
     return menu;
   },
@@ -647,4 +657,78 @@ test("UI-21: a reload that drops the collection awaiting confirmation cancels th
   await panel.refresh();
   assert.equal(byClass(host, "col-confirm").length, 0);
   assert.equal(panel.confirming, null);
+});
+
+// -- review fixes: focus never lands on a hidden node, pending menus, open menu while the list reloads ----------------
+
+const visibleNode = (node) => {
+  for (let n = node; n; n = n.parent) {
+    if (n.hidden) {
+      return false;
+    }
+  }
+  return true;
+};
+
+test("UI-21 review: removing one of two collections folds the list and the focus goes to the fold button, visibly", async () => {
+  const { host, panel } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  await removeVia(host, 1);
+  byClass(host, "col-yes")[0].fire("click");
+  await flush();
+  await flush();
+  assert.equal(byClass(host, "col-list")[0].hidden, true); // one collection left: the list folds by itself
+  assert.equal(document.activeElement, byClass(host, "col-fold")[0]);
+  assert.equal(visibleNode(document.activeElement), true);
+});
+
+test("UI-21 review: reloading the list while an item of a row menu has the focus gives the focus to the new menu button", async () => {
+  menus.length = 0;
+  const { host, panel, setList } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  byClass(host, "col-menu")[1].fire("click", { detail: 0 });
+  await flush();
+  const item = new FakeNode("div"); // an item of the ui-menu, outside the list and without data-act
+  document.activeElement = item;
+  menus[0].isOpen = () => true;
+  menus[0].close = () => {};
+  setList([group(4, 1), group(9, 2, { records: 5 })]);
+  await panel.refresh();
+  const trigger = byClass(host, "col-menu")[1];
+  assert.equal(document.activeElement, trigger);
+  assert.equal(visibleNode(trigger), true);
+});
+
+test("UI-21 review: a menu that finishes loading after its row was replaced or removed is not opened", async () => {
+  menus.length = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const host = new FakeNode("section");
+  let list = [group(4, 1), group(9, 2)];
+  const panel = new CollectionsPanel({
+    host, note: new FakeNode("div"), api: { collections: async () => ({ ordering: "approximate", collections: list }) },
+    getCase: () => "case1", loadMenu: () => gate.then(() => fakeMenuLoader()),
+  });
+  await panel.refresh();
+  byClass(host, "col-menu")[0].fire("click", { detail: 0 });
+  list = [group(9, 2)]; // C1 goes away
+  await panel.refresh();
+  release();
+  await flush();
+  assert.equal(menus.length, 0);
+  // the same when the node is no longer in the page
+  byClass(host, "col-menu")[0].fire("click", { detail: 0 });
+  byClass(host, "col-menu")[0].isConnected = false;
+  await flush();
+  assert.equal(menus.length, 0);
+});
+
+test("UI-21 review: a wanted focus on a row of a folded list goes to the fold button (the node it found is hidden)", async () => {
+  const { host, panel } = setup([group(4, 1)]); // one collection: folded
+  await panel.refresh();
+  assert.equal(byClass(host, "col-list")[0].hidden, true);
+  document.activeElement = null; // what a browser has after the focused node is replaced
+  panel.wanted = { group: 4, act: "menu" };
+  panel.render();
+  assert.equal(document.activeElement, byClass(host, "col-fold")[0]);
 });
