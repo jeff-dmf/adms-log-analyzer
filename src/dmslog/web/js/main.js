@@ -155,7 +155,16 @@ function start() {
     promise.catch(() => {}); // the registry reports the failure; this only avoids an unhandled rejection
     return promise;
   };
-  const ready = { alerts: null, followTail: null };
+  const ready = { alerts: null, followTail: null, drawers: null };
+  // Sources rail and drawers (UI-17): the layout is CSS (css/responsive.css); drawers.js adds the open state, the focus,
+  // Escape and the "selected/total" count on the rail. It loads at once (not after the first view): below 1500 px it is
+  // the only way to the sources panel.
+  let drawers = null;
+  const updateRail = () => {
+    if (drawers) {
+      drawers.setSources(panel.selectedIds().length, sources.length);
+    }
+  };
 
   fillSelect(byId("scope-select"), [["default", S.scopeDefault], ["all", S.scopeAll]]);
   fillSelect(byId("sev-select"), [["", S.filterAny]].concat(
@@ -409,6 +418,7 @@ function start() {
 
   const applyView = () => {
     const ids = panel.selectedIds();
+    updateRail();
     const groups = collectionsPanel ? collectionsPanel.selectedGroups() : [];
     const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
     // The effective view: the ancestors' filters AND the active view's own.
@@ -495,6 +505,7 @@ function start() {
     },
     onSources: (list, quiet) => {
       sources = list;
+      updateRail();
       if (collectionsPanel) {
         collectionsPanel.setSources(list);
       }
@@ -975,6 +986,14 @@ function start() {
       detail.show(row.id).then(() => compareCurrent());
     }
   });
+
+  ready.drawers = settled(import("./drawers.js").then((module) => {
+    drawers = module.createDrawers({});
+    updateRail();
+  }).catch((err) => {
+    showError(err);
+    throw err;
+  }));
 
   ready.followTail = settled(mountLate({
     wait: afterFirstView,
