@@ -30,8 +30,8 @@ def test_listing_contract(client, two):  # noqa: F811
     first, second = body["collections"]
     assert set(first) == {
         "id", "group", "number", "tag", "kind", "guid", "capture", "server", "machine", "system", "label",
-        "variants", "missing", "clock_offset_ms", "status", "sources", "listed", "records", "first_ts",
-        "last_ts", "added_at", "members",
+        "variants", "missing", "clock_offset_ms", "clock_source", "status", "sources", "listed", "records",
+        "first_ts", "last_ts", "added_at", "members",
     }  # fmt: skip
     assert (first["tag"], first["guid"], first["capture"], first["server"]) == (
         "C1",

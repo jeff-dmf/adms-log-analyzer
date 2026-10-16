@@ -59,6 +59,7 @@ from ..store import (
     sequences,
     views,
 )
+from ..store import clock as clock_store
 from ..store import collections as collections_store
 from ..store import config as config_store
 from ..store.filters import INT64_MAX, QueryInputError, compile_filter
@@ -1027,6 +1028,10 @@ class Api:
             ("GET", re.compile(r"/api/cases/(?P<case>[^/]+)/collections\Z"), self.list_collections),
             ("DELETE", re.compile(r"/api/cases/(?P<case>[^/]+)/collections/(?P<group>[^/]+)\Z"),
              self.remove_collection),
+            ("PUT", re.compile(r"/api/cases/(?P<case>[^/]+)/collections/(?P<group>[^/]+)/clock\Z"),
+             self.set_clock),
+            ("DELETE", re.compile(r"/api/cases/(?P<case>[^/]+)/collections/(?P<group>[^/]+)/clock\Z"),
+             self.reset_clock),
         ]  # fmt: skip
         self._routes += [
             ("GET", re.compile(r"/api/alerts/rules\Z"), self.list_alert_rules),
@@ -1404,22 +1409,23 @@ class Api:
         args = _page_args(body)
         _check_scan_filter(args["filter"])
         with self.store.reader(cid) as conn:
-            page = query.page(
-                conn, args["filter"], args["cursor"], args["dir"], args["limit"], args["columns"]
+            clock = clock_store.load(conn)
+            page = clock_store.page(
+                conn, args["filter"], args["cursor"], args["dir"], args["limit"], args["columns"], clock=clock
             )
         has_rows = bool(page.rows)
         forward = args["dir"] == "fwd"
         has_cursor = args["cursor"] not in (None, "")
         nxt = has_rows and ((forward and page.has_more) or (not forward and has_cursor))
         prev = has_rows and ((not forward and page.has_more) or (forward and has_cursor))
-        return Response(
-            200,
-            {
-                "rows": page.rows,
-                "next": str(page.last) if nxt else None,
-                "prev": str(page.first) if prev else None,
-            },
-        )
+        out = {
+            "rows": page.rows,
+            "next": str(page.last) if nxt else None,
+            "prev": str(page.first) if prev else None,
+        }
+        if clock.active:  # 9.15: order, cursors and time filters on adjusted time; rows carry ts_adjusted
+            out["clock"] = "adjusted"
+        return Response(200, out)
 
     def entries_count(self, request: Request) -> Response:
         body = request.read_body()
@@ -1429,7 +1435,7 @@ class Api:
             raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
         _check_scan_filter(flt)
         with self.store.reader(cid) as conn:
-            result = query.count(conn, flt)
+            result = clock_store.count(conn, flt, clock=clock_store.load(conn))
         return Response(200, {"count": result.n, "exact": result.exact})
 
     def histogram(self, request: Request) -> Response:
@@ -1440,20 +1446,23 @@ class Api:
             raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
         _check_scan_filter(flt)
         with self.store.reader(cid) as conn:
-            result = query.histogram(conn, flt, body.get("bucket_ms"), body.get("split", "sev"))
-        return Response(
-            200,
-            {
-                "bucket_ms": result.bucket_ms,
-                "start": result.start,
-                "n_buckets": result.n_buckets,
-                "split": result.split,
-                "series": result.series,
-                "total": result.total,
-                "exact": result.exact,
-                "method": result.method,
-            },
-        )
+            clock = clock_store.load(conn)
+            result = clock_store.histogram(
+                conn, flt, body.get("bucket_ms"), body.get("split", "sev"), clock=clock
+            )
+        out = {
+            "bucket_ms": result.bucket_ms,
+            "start": result.start,
+            "n_buckets": result.n_buckets,
+            "split": result.split,
+            "series": result.series,
+            "total": result.total,
+            "exact": result.exact,
+            "method": result.method,
+        }
+        if clock.active:  # 9.15: buckets on adjusted time
+            out["clock"] = "adjusted"
+        return Response(200, out)
 
     @staticmethod
     def _entry_id(request: Request) -> int:
@@ -1469,11 +1478,16 @@ class Api:
         with self.store.reader(cid) as conn:
             entry = query.get_entry(conn, entry_id, max_cont_lines=max_lines)
             n_payloads = payloads.payload_count(conn, entry_id) if entry is not None else 0
+            if entry is not None:
+                clock_store.decorate_entry(conn, entry, clock_store.load(conn))
         if entry is None:
             raise ApiError(
                 404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
             )
         out = _entry_json(entry)
+        for name in ("ts_adjusted", "clock_offset_ms"):  # 9.15, only with clock offsets in the case
+            if name in entry:
+                out[name] = entry[name]
         out["payload_count"] = n_payloads
         if max_lines is not None:
             out["cont_truncated"] = bool(entry.get("cont_truncated"))
@@ -1486,7 +1500,7 @@ class Api:
         after = _query_int(request, "after", 50)
         same = request.query.get("same", "source")
         with self.store.reader(cid) as conn:
-            ctx = query.context(conn, entry_id, before, after, same)
+            ctx = clock_store.context(conn, entry_id, before, after, same, clock=clock_store.load(conn))
         if ctx is None:
             raise ApiError(
                 404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
@@ -2132,7 +2146,13 @@ class Api:
         with self.store.reader(cid) as conn:
             groups = collections_store.list_collections(conn)
         return Response(
-            200, {"case": cid, "ordering": collections_store.ordering(groups), "collections": groups}
+            200,
+            {
+                "case": cid,
+                "ordering": collections_store.ordering(groups),
+                "clocks": collections_store.clock_state(groups),
+                "collections": groups,
+            },
         )
 
     def remove_collection(self, request: Request) -> Response:
@@ -2186,6 +2206,42 @@ class Api:
         finally:
             hub.finish(done)
         return Response(200, body)
+
+    # -- clock offset of a collection (9.15; store/clock.py has the contract)
+
+    def _clock_call(self, request: Request, body: dict[str, Any]) -> Response:
+        cid = self.store.require(request.match["case"])
+        raw = request.match["group"]
+        if not _ENTRY_ID.match(raw):
+            raise ApiError(400, "invalid_field", messages.API_BAD_INT.format(field="collection"))
+        group = int(raw)
+        try:
+            with self._writer(cid) as conn:
+                result = clock_store.set_offset(conn, group, body)
+        except clock_store.ClockError as exc:
+            if exc.code == "collection_not_found":
+                raise ApiError(
+                    404, "collection_not_found", messages.API_COLLECTION_NOT_FOUND.format(group=group)
+                ) from None
+            if exc.code == "entry_not_found":
+                entry_id = exc.params["entry_id"]
+                raise ApiError(
+                    404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
+                ) from None
+            raise
+        return Response(200, result)
+
+    def set_clock(self, request: Request) -> Response:
+        """``PUT .../collections/<group>/clock``: ``{"anchor": id, "target": id}`` or ``{"offset_ms": n}``,
+        optional ``"dry_run": true``. The target is in ``<group>``; the anchor in another collection."""
+        body = request.read_body()
+        if not isinstance(body, dict):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="body"))
+        return self._clock_call(request, {k: v for k, v in body.items() if k != "case"})
+
+    def reset_clock(self, request: Request) -> Response:
+        """``DELETE .../collections/<group>/clock``: the collection's offset back to 0."""
+        return self._clock_call(request, {"offset_ms": 0})
 
     # -- file picker and folder browser (9.16, ARQUITETURA 10.4)
 
@@ -2314,7 +2370,9 @@ class Api:
             raise query.ColumnError("bad_direction", "$.dir")
         try:
             with self._highlight_errors(), self.store.reader(cid) as conn:
-                found = highlights.next_match(conn, flt, body.get("rules"), cursor, direction)
+                found = highlights.next_match(
+                    conn, flt, body.get("rules"), cursor, direction, clock=clock_store.load(conn)
+                )
         except query.QueryTimeout:
             raise ApiError(408, "query_timeout", messages.API_HIGHLIGHT_NEXT_TIMEOUT) from None
         return Response(200, {"row": found.row, "rule": found.rule})
