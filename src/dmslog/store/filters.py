@@ -20,6 +20,7 @@ Grammar (each node is an object with exactly one key)::
                | {"payload": {"role"|"roles"|"direction"|"peer"|"operation"|"fmt"|"msg_id"|"corr_id"
                               |"root": strs, "orphan": bool}}
                | {"collection": ids}        (collection GROUP ids: one ERS capture, folder or file; U21)
+               | {"repeat": {"window_ms": int, "fields": [field_name, ...], "tid": bool}}   (keys optional)
     ids       := int | [int, ...]
     strs      := str | [str, ...]
     tpls      := (str code | int id) | [...]
@@ -52,6 +53,11 @@ line), through the SQL function :data:`REGEX_FUNCTION` that :func:`dmslog.store.
 The pattern is checked by the catalog's regex validator (whitelist, construction limits and a work
 budget for a search, ``parse.templates.compile_search_regex``); no flags, groups are ``(?:...)``. Like
 ``substr`` it scans rows; the function also stops at the deadline of :func:`query.read_guard`.
+
+``repeat`` keeps the records that repeat an earlier record of the same stream, template and key within
+``window_ms`` (default 1000) looking back (ROADMAP 9.12; definition and limits in :mod:`repeats`). It is a
+correlated lookup per row (``ix_entry_tpl_ts``), so like ``text.substr`` it should be paired with a
+source or time scope; ``{"not": {"repeat": {}}}`` hides the repeats.
 
 ``compile_filter(tree, rowwise=True)`` writes the set conditions (``text.fts``, ``key``, ``payload``,
 ``event_status``) as correlated ``EXISTS`` lookups of the current row instead of ``e.id IN (set)``:
@@ -92,6 +98,13 @@ REGEX_WINDOW = 512
 MAX_REGEX_CHARS = 256
 MAX_REGEX_SEARCH_STEPS = 1 << 22
 REGEX_FUNCTION = "dmslog_regexp"
+# Same JSON value (canonical forms equal: object keys sorted at every depth, arrays in order), registered
+# by db.connect: the repeat leaf compares field values with it (ROADMAP 9.12, store/repeats.py).
+SAME_JSON_FUNCTION = "dmslog_json_same"
+# Canonical forms kept by the text they come from, so each distinct text is parsed once and a pair costs a
+# dictionary lookup (the repeat leaf compares every record with all the candidates of its window). The
+# cache is bounded by the characters it holds and emptied when full.
+CANON_CACHE_CHARS = 8 * 1024 * 1024
 
 SEV_NAMES = {"critical": 1, "error": 2, "warning": 3, "info": 4, "noise": 5}
 LEVEL_NAMES = {name.decode("ascii").lower(): value for name, value in LEVELS.items()}
@@ -272,6 +285,90 @@ def regexp(pattern: str, text: str | None) -> int:
     if text is None or not isinstance(pattern, str):
         return 0
     return 1 if _search_regex(pattern).search(text, 0, REGEX_WINDOW) is not None else 0
+
+
+def json_canon(text: Any) -> str | None:
+    """Canonical text of a JSON value (sorted object keys, compact), or None when ``text`` is not JSON."""
+    if not isinstance(text, str):
+        return None
+    try:
+        return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except (ValueError, TypeError, RecursionError):
+        return None
+
+
+CANON_ENTRY_OVERHEAD = 64
+
+
+def _entry_size(text: str) -> int:
+    return 2 * len(text) + CANON_ENTRY_OVERHEAD
+
+
+def _cache_limit() -> int:
+    return CANON_CACHE_CHARS  # read at each insertion (a test can lower it)
+
+
+_MISSING = object()
+
+
+class _CanonCache:
+    """Canonical form by text, bounded by :data:`CANON_CACHE_CHARS`; counts calls and parses (tests).
+
+    Shared by every connection (the server reads from several threads). Lookups read the current dict
+    without a lock (one ``dict.get``; the dict is only ever replaced whole). A miss parses OUTSIDE the lock
+    (nothing here calls back into SQLite), then inserts under the lock after checking again that the text
+    is still missing: check, empty when full, insert and count are one atomic step, so ``chars`` never
+    passes the limit. A text whose entry alone would pass the limit is compared without being kept.
+    ``chars`` counts each entry as twice the length of its text (the text and its canonical form) plus
+    :data:`CANON_ENTRY_OVERHEAD` for the dictionary slot and the two string objects, so many tiny texts
+    cannot hold much more memory than the limit says.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.forms: dict[str, str | None] = {}
+        self.chars = 0
+        self.calls = 0
+        self.parses = 0
+
+    def reset(self) -> None:
+        """Empty the cache and the counters (tests)."""
+        with self._lock:
+            self.forms, self.chars, self.calls, self.parses = {}, 0, 0, 0
+
+    def form(self, text: str) -> str | None:
+        value = self.forms.get(text, _MISSING)
+        if value is not _MISSING:
+            return value  # type: ignore[return-value]
+        value = json_canon(text)
+        size = _entry_size(text)
+        limit = _cache_limit()
+        with self._lock:
+            self.parses += 1
+            if size > limit:
+                return value  # larger than the whole budget: compared, never kept
+            kept = self.forms.get(text, _MISSING)
+            if kept is not _MISSING:
+                return kept  # type: ignore[return-value]  # another thread inserted it meanwhile
+            if self.chars + size > limit:
+                self.forms, self.chars = {}, 0
+            self.forms[text] = value
+            self.chars += size
+        return value
+
+    def same(self, a: Any, b: Any) -> int:
+        """1 when ``a`` and ``b`` are JSON texts of the same value, else 0 (the SQL function)."""
+        self.calls += 1  # diagnostic counter (tests read it single-threaded): not under the lock
+        if not isinstance(a, str) or not isinstance(b, str):
+            return 0
+        if a == b:
+            return 1 if self.form(a) is not None else 0
+        x = self.form(a)
+        return 1 if x is not None and x == self.form(b) else 0
+
+
+CANON_CACHE = _CanonCache()
+json_same = CANON_CACHE.same
 
 
 # --- validation helpers -----------------------------------------------------------
@@ -581,6 +678,14 @@ class _Compiler:
         self.bind("$." + name, value)
         return "(json_extract(e.fields, ?) IS ?)"
 
+    def repeat(self, arg: Any, path: str) -> str:
+        """Records that repeat an earlier one (ROADMAP 9.12, :mod:`repeats`); already a per-row lookup."""
+        from .repeats import parse_spec, predicate_sql  # repeats imports this module
+
+        sql, params = predicate_sql(parse_spec(arg, path))
+        self.bind(*params)
+        return sql
+
     def payload(self, arg: Any, path: str) -> str:
         if not isinstance(arg, dict):
             raise FilterError("bad_type", path, expected="an object of payload attributes")
@@ -692,6 +797,7 @@ _LEAVES = {
     "payload": _Compiler.payload,
     "collection": _Compiler.collection,
     "field": _Compiler.field,
+    "repeat": _Compiler.repeat,
     "event_name": lambda compiler, arg, path: compiler.event_attr("name", arg, path),
     "event_kind": lambda compiler, arg, path: compiler.event_attr("kind", arg, path),
 }
