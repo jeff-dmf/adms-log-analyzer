@@ -13,6 +13,7 @@ import {
   kindAvailability,
   sourceChoices,
 } from "./copy-export-model.js";
+import { createDialogShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S } from "./strings.js";
 
 const KIND_LABELS = {
@@ -54,12 +55,13 @@ function checkRow(labelText, box) {
   return wrap;
 }
 
-function legacyCopy(text) {
+// The textarea goes INSIDE the open dialog: a modal dialog makes everything outside it inert (no selection there).
+function legacyCopy(text, parent) {
   const area = document.createElement("textarea");
   area.value = text;
   area.className = "cx-offscreen";
   area.setAttribute("aria-hidden", "true");
-  document.body.appendChild(area);
+  parent.appendChild(area);
   area.select();
   let ok = false;
   try {
@@ -87,16 +89,19 @@ function isWindows() {
   return /win/i.test(text);
 }
 
-// anchor: the Export menu trigger of the top bar (UI-12): the popover opens under it and focus returns to it. This
-// module adds no button of its own; the "Copy as…" action of the Export menu calls open().
+// anchor: the Export menu trigger of the top bar (UI-12): focus returns to it when the dialog closes. This module adds
+// no button of its own; the "Copy as..." action of the Export menu calls open(). The dialog (UI-23) is a modal
+// <dialog> with Copy and Download fixed in the foot.
 // getContext(): { caseId, filter, columns, fieldColumns, entry, recordId } of the viewer right now.
 // Returns { open(), close(), isOpen(), reset() }.
 export function initCopyExport(anchor, { getContext }) {
-  const panel = element("form", "menu cx-panel");
+  const doc = anchor.ownerDocument || document;
+  const shell = createDialogShell(doc, { title: S.cxTitle, className: "cx-dialog" });
+  const panel = element("form", "cx-panel");
   panel.setAttribute("role", "group");
   panel.setAttribute("aria-label", S.cxTitle);
-  panel.hidden = true;
-  anchor.insertAdjacentElement("afterend", panel);
+  shell.body.appendChild(panel);
+  anchor.insertAdjacentElement("afterend", shell.dialog);
 
   const kindSelect = select(CX_KINDS.map((kind) => [kind, S[KIND_LABELS[kind]]]));
   const sourceSelect = select([]);
@@ -121,16 +126,12 @@ export function initCopyExport(anchor, { getContext }) {
   maxInput.max = String(CX_LIMITS.maxRowsMax);
   maxInput.step = "1";
   maxInput.value = String(CX_DEFAULTS.maxRows);
-  const copyButton = element("button", "cx-copy", S.cxCopy);
+  const copyButton = element("button", "ui-button is-primary cx-copy", S.cxCopy);
   copyButton.type = "button";
-  const downloadButton = element("button", "cx-download", S.cxDownload);
+  const downloadButton = element("button", "ui-button cx-download", S.cxDownload);
   downloadButton.type = "button";
-  const closeButton = element("button", "", S.cxClose);
-  closeButton.type = "button";
   const note = element("p", "cx-note", S.cxFormulaNote);
-  const status = element("div", "cx-status");
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
+  const status = statusLine(doc, "cx-status");
 
   const groups = {
     source: row(S.cxSource, sourceSelect),
@@ -143,18 +144,17 @@ export function initCopyExport(anchor, { getContext }) {
     bom: checkRow(S.cxBom, bomBox),
     max: row(S.cxMaxRows, maxInput),
   };
-  const actions = element("div", "cx-actions");
-  actions.append(copyButton, downloadButton, closeButton);
-  panel.append(row(S.cxWhat, kindSelect), ...Object.values(groups), note, actions, status);
+  panel.append(row(S.cxWhat, kindSelect), ...Object.values(groups), note);
+  shell.foot.append(status, downloadButton, copyButton); // the status sits beside the actions it reports on
 
   const flow = createCopyExportFlow({
     api,
     getContext,
     clipboard: navigator.clipboard,
-    sink: { copy: legacyCopy, save: saveBlob },
+    sink: { copy: (text) => legacyCopy(text, shell.dialog), save: saveBlob },
     onState: (state) => {
-      status.textContent = state.message;
-      status.classList.toggle("cx-warn", state.status === "error" || state.truncated);
+      setStatusLine(status, state.message, state.status === "error");
+      status.classList.toggle("cx-warn", state.status === "error" || Boolean(state.truncated));
       const busy = state.status === "working";
       copyButton.disabled = busy;
       downloadButton.disabled = busy;
@@ -241,52 +241,28 @@ export function initCopyExport(anchor, { getContext }) {
     paintSources();
   }
 
-  function place() {
-    if (typeof anchor.getBoundingClientRect !== "function") {
-      return;
-    }
-    const box = anchor.getBoundingClientRect();
-    panel.style.top = Math.round(box.bottom) + "px";
-    const room = (window.innerWidth || 0) - panel.offsetWidth - 8;
-    panel.style.left = Math.max(0, Math.min(Math.round(box.left), room)) + "px";
-  }
-
   function open() {
-    panel.hidden = false;
-    place();
+    shell.open(anchor);
     paintSources();
     paint();
     loadKeyTypes();
     kindSelect.focus();
   }
 
-  function close(focus) {
-    panel.hidden = true;
-    if (focus) {
-      anchor.focus();
-    }
-  }
-
-  closeButton.addEventListener("click", () => close(true));
   kindSelect.addEventListener("change", paint);
   copyButton.addEventListener("click", () => flow.run(form(), "copy"));
   downloadButton.addEventListener("click", () => flow.run(form(), "download"));
   panel.addEventListener("submit", (event) => event.preventDefault());
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !panel.hidden) {
-      close(true);
-    }
-  });
 
   return {
     open,
-    close: () => close(false),
-    isOpen: () => !panel.hidden,
+    close: shell.close,
+    isOpen: shell.isOpen,
     reset() {
       flow.reset();
       keyCase = null;
       keyTypes = [];
-      if (!panel.hidden) {
+      if (shell.isOpen()) {
         paintSources();
         paint();
         loadKeyTypes();

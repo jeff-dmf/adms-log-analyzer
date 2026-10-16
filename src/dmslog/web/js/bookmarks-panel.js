@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import {
   BOOKMARK_COLORS, MAX_NOTE, buildBookmarkRow, checkNote, colorLabel, createBookmarksFlow,
 } from "./bookmarks-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 function element(tag, className, text) {
@@ -104,6 +105,7 @@ export function initDetailBookmark(container, { store, onError }) {
   function refresh() {
     if (!entry) {
       container.hidden = true;
+      container.setAttribute("data-marked", "false");
       return;
     }
     container.hidden = false;
@@ -111,6 +113,7 @@ export function initDetailBookmark(container, { store, onError }) {
     toggle.textContent = (mark ? "★ " : "☆ ") + (mark ? S.bmToggleOff : S.bmToggleOn);
     toggle.setAttribute("aria-pressed", mark ? "true" : "false");
     editor.hidden = !mark;
+    container.setAttribute("data-marked", mark ? "true" : "false"); // the stylesheet hides an unmarked note section
     if (mark) {
       fill(mark);
     } else {
@@ -157,24 +160,28 @@ export function initDetailBookmark(container, { store, onError }) {
 }
 
 // ---- the panel ------------------------------------------------------------------------------
-// host: empty element (hidden until opened). Options: getCase(), store, onReveal({id, ts}),
-// onError(err). Returns { open(), close(), refresh(), reset(), isOpen() }.
-export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) {
-  host.textContent = "";
-  const head = element("div", "bm-head");
-  head.appendChild(element("h3", "bm-title", S.bmTitle));
-  const exportButton = element("button", "bm-export", S.bmExport);
+// host: empty element to fill. Options: getCase(), store, onReveal({id, ts}), onError(err), onRequestClose() (the dock
+// closes the tab; the default hides the host). Returns { open(), close(), refresh(), reset(), isOpen() }. The panel
+// never shows or hides its host: opening is the dock's, and an answer that arrives after a close shows nothing.
+export function initBookmarksPanel(host, { getCase, store, onReveal, onError, onRequestClose = null }) {
+  let opened = false;
+  const shell = createPanelShell(host, {
+    title: S.bmTitle,
+    onRequestClose: onRequestClose || (() => {
+      close();
+      host.hidden = true;
+    }),
+  });
+  const exportButton = element("button", "ui-button bm-export", S.bmExport);
   exportButton.type = "button";
-  const importButton = element("button", "bm-import", S.bmImport);
+  const importButton = element("button", "ui-button bm-import", S.bmImport);
   importButton.type = "button";
   const fileInput = element("input", "visually-hidden");
   fileInput.type = "file";
   fileInput.accept = "application/json,.json";
   fileInput.setAttribute("aria-label", S.bmImportLabel);
   fileInput.tabIndex = -1;
-  const closeButton = element("button", "bm-close", S.bmClose);
-  closeButton.type = "button";
-  head.append(exportButton, importButton, fileInput, closeButton);
+  shell.addActions(exportButton, importButton, fileInput);
 
   const filters = element("form", "bm-filters");
   const filterColor = colorSelect("", true);
@@ -183,14 +190,16 @@ export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) 
   filterText.autocomplete = "off";
   filterText.placeholder = S.bmFilterPlaceholder;
   filters.append(labelled(S.bmColor, filterColor), labelled(S.bmFilterText, filterText));
+  shell.addTools(filters);
 
-  const status = element("div", "bm-muted");
-  status.setAttribute("role", "status");
+  const status = statusLine(document, "bm-muted");
   const list = element("ul", "bm-list");
   list.setAttribute("aria-label", S.bmTableCaption);
-  const moreButton = element("button", "bm-more", S.bmLoadMore);
+  const moreButton = element("button", "ui-button bm-more", S.bmLoadMore);
   moreButton.type = "button";
-  host.append(head, filters, status, list, moreButton);
+  shell.body.append(status, list);
+  shell.addFoot(moreButton); // "Load more" is the main action of a long list: always in sight
+  shell.foot.hidden = true;
 
   let editing = null; // bookmark id being edited
   let confirming = null;
@@ -270,33 +279,37 @@ export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) 
   }
 
   function onState(state) {
-    if (state.status === "idle") {
-      host.hidden = true;
-      list.textContent = "";
-      return;
-    }
-    host.hidden = false;
     list.textContent = "";
     rows.clear();
+    if (state.status === "idle") {
+      moreButton.hidden = true;
+      shell.foot.hidden = true;
+      setStatusLine(status, "", false);
+      return;
+    }
     for (const item of state.items) {
       list.appendChild(itemNode(item));
     }
     moreButton.hidden = state.next === null || state.status !== "ready";
+    shell.foot.hidden = moreButton.hidden;
     moreButton.disabled = state.loadingMore;
-    status.classList.toggle("bm-error", state.status === "error" || messageError);
+    const failed = state.status === "error" || messageError;
+    let text;
     if (state.status === "nocase") {
-      status.textContent = S.bmNoCase;
+      text = S.bmNoCase;
     } else if (state.status === "loading") {
-      status.textContent = S.bmLoading;
+      text = S.bmLoading;
     } else if (state.status === "error") {
-      status.textContent = S.bmError + (state.error ? ": " + state.error : "");
+      text = S.bmError + (state.error ? ": " + state.error : "");
     } else if (message) {
-      status.textContent = message;
+      text = message;
     } else if (state.items.length === 0) {
-      status.textContent = state.color || state.text ? S.bmNoMatch : S.bmEmpty;
+      text = state.color || state.text ? S.bmNoMatch : S.bmEmpty;
     } else {
-      status.textContent = format(S[pluralKey(state.next === null ? "bmCount" : "bmCountMore", state.items.length)], { count: state.items.length });
+      text = format(S[pluralKey(state.next === null ? "bmCount" : "bmCountMore", state.items.length)], { count: state.items.length });
     }
+    setStatusLine(status, text, failed);
+    status.classList.toggle("bm-error", failed);
   }
 
   const flow = createBookmarksFlow({ api, getCase, onState });
@@ -308,7 +321,7 @@ export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) 
     try {
       await action();
     } catch (error) {
-      if (host.hidden || getCase() !== forCase) {
+      if (!opened || getCase() !== forCase) {
         return;
       }
       setMessage(error && error.message ? error.message : S.bmActionFailed, true);
@@ -392,8 +405,6 @@ export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) 
   });
 
   moreButton.addEventListener("click", () => flow.loadMore());
-  closeButton.addEventListener("click", () => close());
-
   exportButton.addEventListener("click", () => {
     const forCase = getCase();
     if (!forCase) {
@@ -433,6 +444,7 @@ export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) 
   });
 
   function close() {
+    opened = false;
     cancelConfirm();
     editing = null;
     setMessage("", false);
@@ -441,12 +453,13 @@ export function initBookmarksPanel(host, { getCase, store, onReveal, onError }) 
 
   return {
     open() {
+      opened = true;
       setMessage("", false);
       return flow.open();
     },
     close,
     refresh: () => flow.refresh(),
     reset: close,
-    isOpen: () => !host.hidden,
+    isOpen: () => opened,
   };
 }

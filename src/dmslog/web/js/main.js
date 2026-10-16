@@ -3,13 +3,13 @@
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
 import { api, onForbidden, onNetworkError } from "./api.js";
-import { loadSections, mountLate, retryable } from "./late-init.js";
+import { createButtonGate, loadSections, mountLate, retryable } from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
 import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
-import { Detail } from "./detail.js";
+import { Detail, adoptHeading } from "./detail.js";
 import {
   NAV_ERROR_FILTER, andFilters, bookmarkKey, composeFilter, createLatestRequest, ignoresShortcut, navKey, navRequest, stateFromForm,
   timeSpan, withTemplate, withTsRange,
@@ -184,6 +184,7 @@ function start() {
   let payloadSection = null;
   let copyExport = null;
   let menubar = null;
+  let appActions = null;
   let sourceFamilies = new Map();
   // API for the panels fed by derived events: their queries carry the chosen collection.
   const derivedApi = scopeApi(api, () => (collectionsPanel ? collectionsPanel.selectedGroups() : []));
@@ -204,7 +205,7 @@ function start() {
   const compareSelection = createCompareSelection();
   const compareButton = byId("compare-button");
   function paintCompareButton(entry) {
-    compareButton.textContent = compareButtonLabel(compareSelection.first, entry ? entry.id : null);
+    detail.paintCompare(); // the detail asks getCompareLabel for the record it shows
   }
 
   // Bookmark markers shared by the grid, the detail pane and the panel.
@@ -213,6 +214,7 @@ function start() {
     getCase: () => caseId,
     onChange: (kind) => {
       grid.render();
+      detail.refreshBookmark();
       if (detailBookmark) {
         detailBookmark.refresh();
       }
@@ -294,6 +296,7 @@ function start() {
     onView: () => followTail && followTail.viewChanged(),
   });
   const detail = new Detail({
+    empty: byId("detail-empty"),
     meta: byId("detail-meta"),
     text: byId("detail-text"),
     actions: byId("detail-actions"),
@@ -303,6 +306,9 @@ function start() {
     contextBox: byId("context-box"),
     contextList: byId("context-list"),
     copyButton: byId("copy-button"),
+    compareButton: byId("compare-button"),
+    bookmarkButton: byId("bookmark-button"),
+    highlightButton: byId("highlight-button"),
     copyStatus: byId("copy-status"),
     template: byId("detail-template"),
     fields: byId("detail-fields"),
@@ -326,8 +332,8 @@ function start() {
       if (highlightUi) {
         highlightUi.showEntry(entry);
       }
-      paintCompareButton(entry);
     },
+    getCompareLabel: (entry) => compareButtonLabel(compareSelection.first, entry ? entry.id : null),
     getTemplateCode: (id) => templateLabels.get(id) || "",
     onTemplate: (tplId) => addTemplateFilter(tplId),
     onFields: (names) => {
@@ -345,6 +351,15 @@ function start() {
     },
     getCase: () => caseId,
     getSourceName: (id) => sourceNames.get(id) || String(id),
+    runAction: (id, args) => actions.invoke(id, ctx, args), // the record actions (app-actions.js); ctx exists by the first click
+    getSourceInfo: (id) => {
+      const source = sources.find((item) => item.id === id);
+      const tags = isMulti(collections) ? gridTags(collections) : null; // the collection is said only when there are several
+      const tag = source && tags && tags.get(source.collection);
+      return { name: sourceNames.get(id) || String(id), sensitive: Boolean(source && source.sensitive), tag: tag ? tag.tag : "" };
+    },
+    isBookmarked: (id) => Boolean(bookmarkStore.get(id)),
+    onBookmarkToggle: (id) => bookmarkStore.toggle(id).catch(showError),
     onError: showError,
   });
 
@@ -456,6 +471,9 @@ function start() {
       knowledge.reset();
       if (copyExport) {
         copyExport.reset();
+      }
+      if (appActions) {
+        appActions.onCase(); // the export dialog forgets the old case, open or closed
       }
       dock.notify("case");
       refreshDerived();
@@ -762,6 +780,23 @@ function start() {
   // not at the opening (UI-14). Each one that loads shows the record that is already on screen.
   // Each section loads on its own and a failure is forgotten, so the next record tries again (retryable).
   let detailFailureShown = false;
+  // Highlight rules (detail section, ]/[ navigation); the store is above, the panel is a dock panel.
+  const highlightGate = createButtonGate(byId("highlight-button"), { loadingTitle: S.detailHighlightLoading, failedTitle: S.actionUnavailable });
+  const loadHighlights = retryable(() => import("./highlight-panel.js").then((module) => {
+    highlightUi = module.mountHighlights({
+      detailAnchor: byId("detail-actions"),
+      detailTrigger: byId("highlight-button"),
+      runHighlightType: () => actions.invoke("record.highlightType", ctx),
+      store: highlightStore,
+      getCase: () => caseId,
+      getFilter: () => currentFilter,
+      getSelectedRow: () => grid.selectedRow(),
+      getTemplateCode: (id) => templateLabels.get(id) || "",
+      reveal: (row) => grid.revealRow(row),
+      showMessage,
+    });
+    highlightUi.showEntry(detail.entry);
+  }));
   const detailLoaders = [
     retryable(() => import("./links.js").then((links) => {
       linksSection = new links.LinksSection(byId("detail-links"), {
@@ -769,6 +804,7 @@ function start() {
         onReveal: revealEntry,
         onSideBySide: (id) => dock.open("sideBySide", { entryId: id }),
         onSameKey: (type, value) => dock.open("sameKey", { type, value }),
+        keysHost: byId("detail-keys"),
         onError: showError,
       });
       if (detail.entry) {
@@ -787,23 +823,12 @@ function start() {
         payloadSection.show(detail.entry);
       }
     })),
-    // Highlight rules (detail section, ]/[ navigation); the store is above, the panel is a dock panel.
-    retryable(() => import("./highlight-panel.js").then((module) => {
-      highlightUi = module.mountHighlights({
-        detailAnchor: byId("detail-bookmark"),
-        store: highlightStore,
-        getCase: () => caseId,
-        getFilter: () => currentFilter,
-        getSelectedRow: () => grid.selectedRow(),
-        getTemplateCode: (id) => templateLabels.get(id) || "",
-        reveal: (row) => grid.revealRow(row),
-        showMessage,
-      });
-      highlightUi.showEntry(detail.entry);
-    })),
+    // Highlight rules: the button stays disabled (with its reason) while the module loads or after it failed.
+    () => highlightGate.track(loadHighlights()),
     // Bookmarks (detail section; the shortcuts use the store and the panel is a dock panel).
     retryable(() => import("./bookmarks-panel.js").then((module) => {
       detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
+      adoptHeading(byId("detail-bookmark"), "bookmark");
       if (detail.entry) {
         detailBookmark.show(detail.entry);
       }
@@ -1148,10 +1173,22 @@ function start() {
     },
     theme: themePreference,
     setTheme: (choice) => setThemePreference(choice),
+    recordShown: () => detail.entry !== null,
+    hasType: () => detail.entry !== null && detail.entry.tpl_id > 0,
+    copyRecord: () => detail.copyText(),
+    loadContext: (same) => detail.loadContext(same),
+    filterType: () => detail.filterType(),
+    highlightReady: () => highlightUi !== null,
+    highlightType: () => {
+      if (highlightUi === null) {
+        throw new Error(S.actionUnavailable);
+      }
+      return highlightUi.highlightType();
+    },
     shortcutsText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp].join(" "),
   };
   registerAppPanels(dock, deps);
-  registerAppActions(actions, deps);
+  appActions = registerAppActions(actions, deps);
   const toggleButtons = Array.from(document.querySelectorAll("#toolbar [data-action]"));
   menubar = mountMenubar({
     actions,

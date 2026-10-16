@@ -164,6 +164,7 @@ API_BAD_EVENT_STATUS = "status must be a comma-separated list of lowercase names
 API_BAD_EVENT_QUERY = "q must be 1 to 128 printable characters"
 API_BAD_TIME = "{field} must be a log time like 'YYYY-MM-DD HH:MM:SS.mmm' (time part optional)"
 API_BAD_CURSOR = "after is not a valid cursor"
+API_REPEAT_BAD_IDS = "ids must be a list of at most {limit} record ids"
 API_BAD_STREAM_ID = "{field} must be a non-negative integer"
 API_BAD_STAT_SIDE = "side must be 'client' or 'service'"
 API_BAD_STAT_METHOD = "method must be 1 to 256 printable characters"

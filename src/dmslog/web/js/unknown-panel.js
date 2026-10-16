@@ -1,5 +1,6 @@
 // Unknown-templates panel: signatures of records no template matched (GET /api/unknown).
 // Signatures come from untrusted logs: only textContent and class names are written to the DOM.
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 import { buildRows, buildTomlSketch, filterRows, formatShare, sortRows } from "./unknown-panel-model.js";
 
@@ -43,8 +44,9 @@ async function copyText(text, fallbackHost) {
 //   api              needs unknown(caseId, family, limit, signal)
 //   getCase()        current case id or null; getFamily() family code or "" for all
 //   onOpenEntry(id)  open the example entry in the grid/detail
+//   onRequestClose() the dock closes the tab (the default hides the container)
 // Returns { refresh() }; call it when the case or the family changed.
-export function initUnknownPanel(container, { api, getCase, getFamily, onOpenEntry }) {
+export function initUnknownPanel(container, { api, getCase, getFamily, onOpenEntry, onRequestClose = null }) {
   let rows = [];
   let totalRecords = 0;
   let sortKey = "count";
@@ -52,9 +54,13 @@ export function initUnknownPanel(container, { api, getCase, getFamily, onOpenEnt
   let filterText = "";
   let controller = null;
 
-  container.textContent = "";
+  const shell = createPanelShell(container, {
+    title: S.unkTitle,
+    onRequestClose,
+    onRefresh: () => refresh(),
+    refreshLabel: S.unkRefresh,
+  });
   const toolbar = element("div", "unk-toolbar");
-  toolbar.appendChild(element("span", "unk-title", S.unkTitle));
   const filterInput = element("input", "unk-filter");
   filterInput.type = "search";
   filterInput.placeholder = S.unkFilterPlaceholder;
@@ -68,18 +74,17 @@ export function initUnknownPanel(container, { api, getCase, getFamily, onOpenEnt
   }
   const dirButton = element("button", "unk-dir", "↓");
   dirButton.type = "button";
-  const refreshButton = element("button", "unk-refresh", S.unkRefresh);
-  refreshButton.type = "button";
-  const summary = element("span", "unk-summary");
-  toolbar.append(filterInput, sortSelect, dirButton, refreshButton, summary);
-  const status = element("div", "unk-status");
+  shell.addTools(toolbar);
+  toolbar.append(filterInput, sortSelect, dirButton);
+  const summary = shell.summary;
+  summary.className += " unk-summary";
+  const status = statusLine(document, "unk-status");
   const tableHost = element("div", "unk-table-host");
   const fallbackHost = element("div", "unk-fallback-host");
-  container.append(toolbar, status, tableHost, fallbackHost);
+  shell.body.append(status, tableHost, fallbackHost);
 
   function setStatus(text, isError) {
-    status.textContent = text;
-    status.classList.toggle("is-error", Boolean(isError));
+    setStatusLine(status, text, isError);
   }
 
   function render() {
@@ -96,7 +101,7 @@ export function initUnknownPanel(container, { api, getCase, getFamily, onOpenEnt
       return;
     }
     setStatus("", false);
-    const table = element("table", "unk-table");
+    const table = element("table", "ui-table is-wrap unk-table");
     const head = element("tr");
     for (const [label, num] of [[S.unkColSignature, false], [S.unkColCount, true], [S.unkColShare, true], ["", false]]) {
       head.appendChild(element("th", num ? "unk-num" : "", label));
@@ -174,7 +179,6 @@ export function initUnknownPanel(container, { api, getCase, getFamily, onOpenEnt
     sortDesc = !sortDesc;
     render();
   });
-  refreshButton.addEventListener("click", refresh);
 
   return { refresh };
 }

@@ -7,9 +7,11 @@ import {
   nextColor,
 } from "./highlight-model.js";
 import { ignoresShortcut } from "./filters.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 const MAX_KEY_CHIPS = 8;
+let hlFormUid = 0;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -61,26 +63,22 @@ function errorText(error) {
 }
 
 // Renders the "Highlights" panel into the host the dock gives it (UI-12). options: store (createHighlightStore),
-// getCase, getFilter (the view filter). Returns { refresh, reset, storeChanged }: refresh = the panel was opened,
+// getCase, getFilter (the view filter), onRequestClose (the dock closes the tab; default hides the host). Returns { refresh, reset, storeChanged }: refresh = the panel was opened,
 // reset = forget the old case's rules and status, storeChanged = the store changed (repaint the list).
 export function mountHighlightPanel(host, options) {
-  const { store, getCase, getFilter } = options;
+  const { store, getCase, getFilter, onRequestClose = null } = options;
 
+  const shell = createPanelShell(host, { title: S.hlTitle, onRequestClose });
   const panel = element("div", "hl-panel");
-  host.textContent = "";
-  host.appendChild(panel);
-  const head = element("div", "hl-head");
-  const title = element("h3", "hl-title", S.hlTitle);
-  title.id = "hl-title";
-  host.setAttribute("aria-labelledby", title.id);
-  const count = element("span", "hl-empty");
-  head.append(title, count);
+  shell.body.appendChild(panel);
+  const count = shell.summary;
+  count.className += " hl-empty";
   const list = element("ul", "hl-list");
-  const status = element("div", "hl-status");
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
+  const status = statusLine(document, "hl-status");
 
   const form = element("form", "hl-form");
+  hlFormUid += 1;
+  form.id = "hl-form-" + hlFormUid;
   const kindSelect = element("select", "hl-kind");
   kindSelect.id = "hl-kind";
   for (const kind of QUICK_KINDS) {
@@ -117,15 +115,17 @@ export function mountHighlightPanel(host, options) {
   const newColor = colorSelect("hl-new-color", PALETTE[0]);
   const colorLabelEl = labeled(S.hlColor, newColor);
   const kindLabel = labeled(S.hlKind, kindSelect);
-  const addButton = element("button", "hl-add", S.hlAdd);
+  // The main actions stay in the foot, always in sight; "Add" submits the form.
+  const addButton = element("button", "ui-button is-primary hl-add", S.hlAdd);
   addButton.type = "submit";
-  const addFilterButton = button("hl-add-filter", S.hlAddFilter);
-  form.append(kindLabel, extraLabel, valueLabel, sevLabel, nameLabel, colorLabelEl, addButton, addFilterButton);
-  panel.append(head, list, form, status);
+  addButton.setAttribute("form", form.id);
+  const addFilterButton = button("ui-button hl-add-filter", S.hlAddFilter);
+  form.append(kindLabel, extraLabel, valueLabel, sevLabel, nameLabel, colorLabelEl);
+  panel.append(status, list, form);
+  shell.addFoot(addButton, addFilterButton);
 
   function setStatus(text, isError) {
-    status.textContent = text;
-    status.classList.toggle("is-error", Boolean(isError));
+    setStatusLine(status, text, isError);
   }
 
   function syncForm() {
@@ -257,7 +257,8 @@ export function mountHighlightPanel(host, options) {
 }
 
 // options: detailAnchor (element after which the detail section
-// goes), store (createHighlightStore), getCase, getFilter (the view filter), getSelectedRow, reveal(row),
+// goes), detailTrigger (optional "Highlight" action button of the detail: the section opens under it and stays closed
+// until it is pressed; without it the section is always shown), store (createHighlightStore), getCase, getFilter (the view filter), getSelectedRow, reveal(row),
 // getTemplateCode, showMessage(text, isError). The "Highlights" panel itself is mountHighlightPanel (dock).
 export function mountHighlights(options) {
   const { store, getCase, getFilter, getSelectedRow, reveal, showMessage } = options;
@@ -270,10 +271,22 @@ export function mountHighlights(options) {
     options.detailAnchor.parentNode.insertBefore(detail, options.detailAnchor.nextSibling);
   }
   let entry = null;
+  const trigger = options.detailTrigger || null;
+  let expanded = false;
+  if (trigger) {
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.addEventListener("click", () => {
+      expanded = !expanded;
+      renderDetail();
+    });
+  }
 
   function renderDetail() {
     detail.textContent = "";
-    if (!entry || !getCase()) {
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", expanded && entry ? "true" : "false");
+    }
+    if (!entry || !getCase() || (trigger && !expanded)) {
       detail.hidden = true;
       return;
     }
@@ -309,14 +322,22 @@ export function mountHighlights(options) {
     }
     if (entry.tpl_id > 0) {
       const chip = button("hl-chip", S.hlTemplateChip);
-      chip.addEventListener("click", () => {
-        const code = options.getTemplateCode ? options.getTemplateCode(entry.tpl_id) : "";
-        store.create({
-          name: code || String(entry.tpl_id), color: nextColor(store.rules()), cond: { tpl: [entry.tpl_id] }, enabled: true,
-        }).then(() => showMessage("", false), (error) => showMessage(errorText(error), true));
-      });
+      // record.highlightType: through the action registry when main.js hands in runHighlightType.
+      chip.addEventListener("click", () => (options.runHighlightType ? options.runHighlightType() : highlightType()));
       detail.appendChild(chip);
     }
+  }
+
+  // Highlight rule for the message type of the shown record (the action record.highlightType).
+  function highlightType() {
+    if (!entry || !(entry.tpl_id > 0)) {
+      return Promise.resolve();
+    }
+    const tplId = entry.tpl_id;
+    const code = options.getTemplateCode ? options.getTemplateCode(tplId) : "";
+    return store.create({
+      name: code || String(tplId), color: nextColor(store.rules()), cond: { tpl: [tplId] }, enabled: true,
+    }).then(() => showMessage("", false), (error) => showMessage(errorText(error), true));
   }
 
   // -- ]/[ navigation: next/previous record of the view that any enabled rule highlights
@@ -366,5 +387,6 @@ export function mountHighlights(options) {
       entry = next || null;
       renderDetail();
     },
+    highlightType,
   };
 }

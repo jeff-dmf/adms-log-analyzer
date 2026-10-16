@@ -55,11 +55,13 @@ from ..store import (
     payloads,
     presets,
     query,
+    repeats,
+    sequences,
     views,
 )
 from ..store import collections as collections_store
 from ..store import config as config_store
-from ..store.filters import QueryInputError, compile_filter
+from ..store.filters import INT64_MAX, QueryInputError, compile_filter
 from ..store.writer import CollectionRow, IndexWriter
 from . import filepick
 from .sse import ProgressHub
@@ -804,6 +806,23 @@ def _int_field(body: dict[str, Any], name: str) -> int:
     return value
 
 
+def _event_page(request: Request) -> tuple[int, events.Cursor | None]:
+    """``limit`` (1..events.MAX_LIMIT) and ``after`` (keyset cursor) of an event list route."""
+    raw_limit = request.query.get("limit")
+    limit = events.DEFAULT_LIMIT
+    if raw_limit is not None:
+        if not _SMALL_INT.match(raw_limit) or not 1 <= int(raw_limit) <= events.MAX_LIMIT:
+            raise _bad(messages.API_BAD_EVENT_LIMIT.format(limit=events.MAX_LIMIT))
+        limit = int(raw_limit)
+    after = None
+    raw_after = request.query.get("after")
+    if raw_after:
+        after = events.Cursor.parse(raw_after)
+        if after is None:
+            raise _bad(messages.API_BAD_CURSOR)
+    return limit, after
+
+
 def _case_from_body(store: CaseStore, body: dict[str, Any]) -> str:
     return store.require(body.get("case"))
 
@@ -962,6 +981,9 @@ class Api:
             ("GET", re.compile(r"/api/events\Z"), self.list_events),
             ("GET", re.compile(r"/api/events/stats\Z"), self.events_stats),
             ("GET", re.compile(r"/api/events/histogram\Z"), self.events_histogram),
+            # before the event id route: "missing" is not an event id
+            ("GET", re.compile(r"/api/events/missing\Z"), self.events_missing),
+            ("GET", re.compile(r"/api/events/missing/summary\Z"), self.events_missing_summary),
             ("GET", re.compile(r"/api/events/(?P<id>[^/]+)\Z"), self.get_event),
             ("GET", re.compile(r"/api/stats/series\Z"), self.stats_series),
             ("GET", re.compile(r"/api/stats/methods\Z"), self.stats_methods),
@@ -983,6 +1005,7 @@ class Api:
             ("POST", re.compile(r"/api/fs/pick\Z"), self.fs_pick),
             ("DELETE", re.compile(r"/api/fs/pick\Z"), self.fs_pick_cancel),
             ("POST", re.compile(r"/api/entries/distinct\Z"), self.entries_distinct),
+            ("POST", re.compile(r"/api/entries/repeats\Z"), self.entries_repeats),
             ("GET", re.compile(r"/api/highlights\Z"), self.list_highlights),
             ("POST", re.compile(r"/api/highlights\Z"), self.create_highlight),
             ("PUT", re.compile(r"/api/highlights/order\Z"), self.order_highlights),
@@ -1469,21 +1492,26 @@ class Api:
     def list_events(self, request: Request) -> Response:
         cid = _case_from_query(self.store, request)
         flt = _event_filter(request)
-        raw_limit = request.query.get("limit")
-        limit = events.DEFAULT_LIMIT
-        if raw_limit is not None:
-            if not _SMALL_INT.match(raw_limit) or not 1 <= int(raw_limit) <= events.MAX_LIMIT:
-                raise _bad(messages.API_BAD_EVENT_LIMIT.format(limit=events.MAX_LIMIT))
-            limit = int(raw_limit)
-        after = None
-        raw_after = request.query.get("after")
-        if raw_after:
-            after = events.Cursor.parse(raw_after)
-            if after is None:
-                raise _bad(messages.API_BAD_CURSOR)
+        limit, after = _event_page(request)
         with self.store.reader(cid) as conn:
             rows, nxt = events.list_events(conn, flt, limit, after)
         return Response(200, {"events": rows, "next": nxt})
+
+    def events_missing(self, request: Request) -> Response:
+        """Events whose expected sequence misses a step (store/sequences.py; ROADMAP 9.12)."""
+        cid = _case_from_query(self.store, request)
+        flt = _event_filter(request)
+        limit, after = _event_page(request)
+        with self.store.reader(cid) as conn:
+            items, nxt = sequences.list_missing(conn, flt, limit, after)
+        return Response(200, {"items": items, "next": nxt})
+
+    def events_missing_summary(self, request: Request) -> Response:
+        """Missing steps counted per (kind, family, name) and cause (store/sequences.py)."""
+        cid = _case_from_query(self.store, request)
+        flt = _event_filter(request)
+        with self.store.reader(cid) as conn:
+            return Response(200, sequences.missing_summary(conn, flt))
 
     def get_event(self, request: Request) -> Response:
         raw = request.match["id"]
@@ -1788,6 +1816,27 @@ class Api:
                 conn, flt, spec, top, span=body.get("span", False), exact=body.get("exact", False)
             )
         return Response(200, distinct.as_json(result))
+
+    def entries_repeats(self, request: Request) -> Response:
+        """Which records repeat an earlier one (store/repeats.py; ROADMAP 9.12).
+
+        ``{"case", "ids": [int, ...] (at most repeats.MAX_MARK_IDS), "repeat": {window_ms, fields, tid}}`` ->
+        ``{"marks": {"<id>": {"prev", "dt_ms", "earlier"}}}``; only the repeats are listed."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        ids = body.get("ids")
+        if (
+            not isinstance(ids, list)
+            or len(ids) > repeats.MAX_MARK_IDS
+            or any(isinstance(i, bool) or not isinstance(i, int) or not 0 <= i <= INT64_MAX for i in ids)
+        ):
+            raise ApiError(
+                400, "invalid_field", messages.API_REPEAT_BAD_IDS.format(limit=repeats.MAX_MARK_IDS)
+            )
+        spec = repeats.parse_spec(body.get("repeat"), "$.repeat")  # FilterError: 400 like the filters
+        with self.store.reader(cid) as conn:
+            marks = repeats.repeat_marks(conn, ids, spec)
+        return Response(200, {"marks": {str(k): v for k, v in marks.items()}})
 
     # -- saved filters (per case, table saved_view)
 
