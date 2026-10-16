@@ -1,10 +1,16 @@
 /* Payload list panel. */
+/* One row that never wraps: in the smallest dock the foot (Load more) must stay in sight, so the row scrolls sideways. */
 .pg-filters {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px 10px;
   align-items: center;
-  margin-bottom: 6px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.pg-filters > * {
+  flex: none;
 }
 
 .pg-table {

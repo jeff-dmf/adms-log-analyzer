@@ -55,12 +55,13 @@ function checkRow(labelText, box) {
   return wrap;
 }
 
-function legacyCopy(text) {
+// The textarea goes INSIDE the open dialog: a modal dialog makes everything outside it inert (no selection there).
+function legacyCopy(text, parent) {
   const area = document.createElement("textarea");
   area.value = text;
   area.className = "cx-offscreen";
   area.setAttribute("aria-hidden", "true");
-  document.body.appendChild(area);
+  parent.appendChild(area);
   area.select();
   let ok = false;
   try {
@@ -150,7 +151,7 @@ export function initCopyExport(anchor, { getContext }) {
     api,
     getContext,
     clipboard: navigator.clipboard,
-    sink: { copy: legacyCopy, save: saveBlob },
+    sink: { copy: (text) => legacyCopy(text, shell.dialog), save: saveBlob },
     onState: (state) => {
       setStatusLine(status, state.message, state.status === "error");
       status.classList.toggle("cx-warn", state.status === "error" || Boolean(state.truncated));

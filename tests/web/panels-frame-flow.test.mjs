@@ -369,11 +369,24 @@ test("Aggregate: Run submits the form it sits outside of, once per click", async
   const run = find(w.host("aggregate"), "agg-run");
   assert.equal(run.getAttribute("type") ?? run.type, "submit");
   assert.equal(run.getAttribute("form"), find(w.host("aggregate"), "agg-form").id);
-  const before = held.length;
-  const event = run.click();
-  assert.equal(event.prevented, true, "the click does not also submit the form (that would run twice)");
+  const form = find(w.host("aggregate"), "agg-form");
+  // A browser submits the form of a submit button unless the click was prevented: simulate exactly that.
+  const browserClick = () => {
+    const event = run.click();
+    if (!event.prevented) {
+      form.dispatch("submit");
+    }
+  };
+  held = [];
+  browserClick();
   await tick();
-  assert.ok(held.length > before, "the run asked the server");
+  assert.equal(held.length, 1, "one click asks the server exactly once");
+  failAll();
+  await tick();
+  held = [];
+  form.dispatch("submit"); // Enter in a field
+  await tick();
+  assert.equal(held.length, 1, "Enter asks the server exactly once");
   failAll();
 });
 
@@ -439,4 +452,126 @@ test("CSS: the frame keeps head and foot in place, the body scrolls, filters sta
   for (const file of ["distinct", "aggregate", "key-panel", "payload-list", "events", "config-panel", "unknown-panel"]) {
     assert.doesNotMatch(read("css/" + file + ".css"), /max-height:\s*(45|50)vh/, file + " still caps its own height");
   }
+});
+
+// ---- native <dialog> path, stale close events, fallback copy, shortcuts, geometry ------------------------------------
+
+// A <dialog> as a browser has it: showModal() opens, close() closes and queues the "close" event for later.
+function nativeDialog(shell) {
+  const queue = [];
+  const calls = { showModal: 0 };
+  shell.dialog.showModal = () => { calls.showModal += 1; shell.dialog.open = true; };
+  shell.dialog.close = () => {
+    if (shell.dialog.open) {
+      shell.dialog.open = false;
+      queue.push(() => shell.dialog.dispatch("close"));
+    }
+  };
+  return { calls, flush: () => { while (queue.length) queue.shift()(); } };
+}
+
+test("native dialog: showModal() is used, the cancel event (Esc) closes it, and the focus goes back", () => {
+  const opener = doc.createElement("button");
+  doc.body.appendChild(opener);
+  opener.focus();
+  let closed = 0;
+  const shell = createDialogShell(doc, { title: "Dlg", onClose: () => { closed += 1; } });
+  doc.body.appendChild(shell.dialog);
+  const native = nativeDialog(shell);
+  shell.open(opener);
+  assert.equal(native.calls.showModal, 1);
+  assert.equal(shell.dialog.getAttribute("open"), null, "the browser owns the open attribute");
+  const cancel = shell.dialog.dispatch("cancel");
+  assert.equal(cancel.prevented, true, "the dialog closes through our path, not by itself");
+  assert.equal(shell.isOpen(), false);
+  assert.equal(shell.dialog.open, false);
+  assert.equal(doc.activeElement, opener);
+  native.flush();
+  assert.equal(closed, 1, "the echo of the native close event does not close twice");
+});
+
+test("native dialog: a late close event of the previous opening does not close the new one", () => {
+  let closed = 0;
+  const shell = createDialogShell(doc, { title: "Dlg", onClose: () => { closed += 1; } });
+  doc.body.appendChild(shell.dialog);
+  const native = nativeDialog(shell);
+  shell.open(null);
+  shell.close(); // queues the native event
+  shell.open(null); // opened again before the event arrives
+  native.flush();
+  assert.equal(shell.isOpen(), true, "the new opening survived the old event");
+  assert.equal(shell.dialog.open, true);
+  assert.equal(closed, 1);
+  shell.close();
+  native.flush();
+  assert.equal(shell.isOpen(), false);
+  assert.equal(closed, 2);
+});
+
+test("native dialog: a close that did not come from us (form method=dialog) still finishes the dialog", () => {
+  const shell = createDialogShell(doc, { title: "Dlg" });
+  doc.body.appendChild(shell.dialog);
+  nativeDialog(shell);
+  shell.open(null);
+  shell.dialog.open = false;
+  shell.dialog.dispatch("close");
+  assert.equal(shell.isOpen(), false);
+});
+
+test("Export dialog: the fallback copy puts its textarea INSIDE the dialog (outside it is inert while modal)", async () => {
+  held = [];
+  const { initExportPanel } = await import("../../src/dmslog/web/js/export-panel.js");
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const exporting = initExportPanel(host, { getContext: () => ({ caseId: "A", filter: null, recordId: 1, eventId: null }), onOpenRedaction() {} });
+  exporting.open(null);
+  const dialog = find(host, "export-dialog");
+  find(dialog, "export-form").dispatch("submit");
+  await tick();
+  const request = held.find((r) => /export/.test(r.url));
+  assert.ok(request, "the report was requested");
+  answer(request, 200, { parts: [{ name: "r.txt", text: "hello" }], legend: [], warnings: [], counts: { records: 1, events: 0, payloads: 0 } });
+  held = [];
+  await tick();
+  let where = null;
+  doc.execCommand = () => {
+    const area = doc.body.all().find((n) => n.tagName === "TEXTAREA" && n.value === "hello");
+    where = area ? dialog.contains(area) : "missing";
+    return true;
+  };
+  find(dialog, "export-copy").click();
+  await tick();
+  assert.equal(where, true, "the legacy textarea lives in the dialog");
+  assert.equal(doc.body.all().some((n) => n.tagName === "TEXTAREA" && n.value === "hello"), false, "and is removed afterwards");
+  exporting.close();
+});
+
+test("Copy as: the fallback textarea is created inside the dialog, not in document.body", () => {
+  const source = read("js/copy-export.js");
+  assert.doesNotMatch(source, /document\.body\.appendChild\(area\)/);
+  assert.match(source, /parent\.appendChild\(area\)/);
+  assert.match(source, /legacyCopy\(text, shell\.dialog\)/);
+});
+
+test("one-key shortcuts stay quiet while the focus is inside a dialog", async () => {
+  const { ignoresShortcut } = await import("../../src/dmslog/web/js/filters.js");
+  const shell = createDialogShell(doc, { title: "Dlg" });
+  doc.body.appendChild(shell.dialog);
+  const outside = doc.createElement("button");
+  doc.body.appendChild(outside);
+  for (const target of [shell.titleNode, find(shell.dialog, "dialog-close"), shell.foot, shell.body]) {
+    assert.equal(ignoresShortcut({ key: "b", target, defaultPrevented: false }), true);
+  }
+  assert.equal(ignoresShortcut({ key: "b", target: outside, defaultPrevented: false }), false, "elsewhere they still work");
+});
+
+test("Payloads: the filters are one row that never wraps and scrolls sideways, so the foot stays in sight", () => {
+  const css = read("css/payload-list.css");
+  const rule = css.match(/\.pg-filters\s*\{([^}]*)\}/)[1];
+  assert.match(rule, /flex-wrap:\s*nowrap/);
+  assert.match(rule, /overflow-x:\s*auto/);
+  assert.match(css, /\.pg-filters > \*\s*\{[^}]*flex:\s*none/);
+  assert.doesNotMatch(rule, /flex-wrap:\s*wrap/);
+  // the row sits in the tools row, which is itself a single scrolling line in the dock
+  assert.match(read("css/dock.css"), /\.dock-panel \.ui-panel-tools\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/);
 });

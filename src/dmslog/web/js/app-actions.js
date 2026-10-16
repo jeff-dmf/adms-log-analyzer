@@ -334,10 +334,9 @@ export function registerAppActions(actions, deps) {
   analyze("analyze.config", "actConfig", "config", "./config-panel.js");
 
   // ---- Export
-  // "Export report..." is a modal dialog (UI-23), not a dock tab: export-dialogs.js loads on the first use, and a case
-  // change since the last time clears the previous report before the dialog shows again.
+  // "Export report..." is a modal dialog (UI-23), not a dock tab: export-dialogs.js loads on the first use. main.js
+  // calls the returned onCase() on every case change, so a closed dialog forgets the old case's report too.
   let exportDialogs = null;
-  let exportCase = null;
   actions.register({
     id: "export.report",
     labelKey: "actExportReport",
@@ -347,10 +346,6 @@ export function registerAppActions(actions, deps) {
       const module = await import("./export-dialogs.js");
       if (exportDialogs === null) {
         exportDialogs = module.mountExportDialogs(document.body, { getContext: () => deps.exportContext() });
-      }
-      if (exportCase !== ctx.caseId()) {
-        exportCase = ctx.caseId();
-        exportDialogs.reset();
       }
       exportDialogs.open(document.activeElement);
     },
@@ -421,4 +416,13 @@ export function registerAppActions(actions, deps) {
     enabled: always,
     run: (ctx) => (ctx.status.help ? ctx.status.help() : ctx.status.message(deps.shortcutsText(), { kind: "info" })),
   });
+
+  return {
+    // A case change (also back to a case seen before): the export dialog forgets its report, open or not.
+    onCase() {
+      if (exportDialogs !== null) {
+        exportDialogs.reset();
+      }
+    },
+  };
 }

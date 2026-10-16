@@ -123,6 +123,7 @@ export function createDialogShell(doc, { title, onClose = null, className = "" }
   dialog.append(head, body, foot);
   let opener = null;
   let shown = false;
+  let nativeCloses = 0; // "close" events still to arrive for closes this code already handled
 
   function finish() {
     if (!shown) {
@@ -145,8 +146,9 @@ export function createDialogShell(doc, { title, onClose = null, className = "" }
     if (!shown) {
       return;
     }
-    if (typeof dialog.close === "function") {
-      dialog.close(); // fires "close" -> finish()
+    if (typeof dialog.close === "function" && dialog.open === true) {
+      nativeCloses += 1; // the native "close" event comes later; it must not close a dialog opened again meanwhile
+      dialog.close();
     }
     finish();
   }
@@ -169,7 +171,13 @@ export function createDialogShell(doc, { title, onClose = null, className = "" }
   }
 
   closeButton.addEventListener("click", close);
-  dialog.addEventListener("close", finish);
+  dialog.addEventListener("close", () => {
+    if (nativeCloses > 0) {
+      nativeCloses -= 1; // the echo of a close() already handled
+      return;
+    }
+    finish(); // closed from outside (for example form method=dialog)
+  });
   dialog.addEventListener("cancel", (event) => {
     event.preventDefault(); // close() runs the same path as the button
     close();

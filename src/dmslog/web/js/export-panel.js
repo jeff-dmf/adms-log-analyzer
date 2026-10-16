@@ -35,13 +35,14 @@ function labelled(labelText, control, className) {
   return row;
 }
 
-// Legacy copy through a temporary textarea (when navigator.clipboard is not available).
-function legacyCopy(text) {
+// Legacy copy through a temporary textarea (when navigator.clipboard is not available). The textarea goes INSIDE the
+// open dialog: a modal dialog makes everything outside it inert, and an inert field cannot be selected.
+function legacyCopy(text, parent) {
   const area = document.createElement("textarea");
   area.value = text;
   area.className = "export-offscreen";
   area.setAttribute("aria-hidden", "true");
-  document.body.appendChild(area);
+  parent.appendChild(area);
   area.select();
   let ok = false;
   try {
@@ -259,7 +260,7 @@ export function initExportPanel(host, { getContext, onOpenRedaction, onClose = n
     if (!part) {
       return;
     }
-    const how = await copyText(part.text, { clipboard: navigator.clipboard, fallback: legacyCopy });
+    const how = await copyText(part.text, { clipboard: navigator.clipboard, fallback: (text) => legacyCopy(text, shell.dialog) });
     copyStatus.textContent =
       how === "clipboard" ? S.exportCopied : how === "fallback" ? S.exportCopyFallback : S.exportCopyFailed;
   });
