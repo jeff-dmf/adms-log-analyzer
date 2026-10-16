@@ -104,7 +104,7 @@ const hostText = (w, id) => w.root.all().find((c) => c.id === id + "-host")?.tex
 
 // Each panel: how it is opened, what extra the user does to produce content, and the text that shows it.
 const PANELS = [
-  { id: "export", after: (host) => host.all().find((n) => n.tagName === "FORM")?.dispatch("submit") }, { id: "compare", args: { a: 1, b: 2 } }, { id: "payloads" }, { id: "sideBySide", args: { entryId: 1 } },
+  { id: "compare", args: { a: 1, b: 2 } }, { id: "payloads" }, { id: "sideBySide", args: { entryId: 1 } },
   { id: "sameKey", args: { type: "msgid", value: "v" } }, { id: "distinct" }, { id: "aggregate", after: (host) => host.all().find((n) => n.className.split(" ").includes("agg-run"))?.click() },
   { id: "highlights" }, { id: "bookmarks" }, { id: "operations" }, { id: "dashboard" }, { id: "unknownTypes" }, { id: "config" },
 ];
@@ -175,11 +175,6 @@ for (const panel of PANELS) {
 
 // Mutation: without the real reset() of a panel the scenarios must notice. If these stop failing, the scenarios
 // above have stopped looking at what they are meant to look at.
-test("mutation: export without reset() keeps case A's preview after close and reopen", async () => {
-  const result = await scenario(PANELS.find((p) => p.id === "export"), { stripReset: "export" });
-  assert.equal(result.leftHidden && result.leftReopened, false);
-});
-
 for (const id of ["distinct", "aggregate", "highlights", "operations", "dashboard"]) {
   test(`mutation: ${id} without reset() keeps case A's content while open`, async () => {
     assert.equal(await stayingOpen(PANELS.find((p) => p.id === id), { stripReset: id }), false);

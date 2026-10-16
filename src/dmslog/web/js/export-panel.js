@@ -11,7 +11,10 @@ import {
   defaultSelectionKind,
   selectionAvailability,
 } from "./export-model.js";
+import { createDialogShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
+
+let exportUid = 0;
 
 const SELECTION_LABELS = { filter: "exportSelFilter", record: "exportSelRecord", event: "exportSelEvent" };
 
@@ -62,19 +65,21 @@ function download(part) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// host: empty element to fill (hidden until opened). Options:
+// A modal dialog (UI-23): the form in the body, the main action (Build) and the result actions fixed in the foot.
+// host: the element the dialog is added to. Options:
 //   getContext()        { caseId, filter, recordId, eventId } of the viewer right now
-//   onOpenRedaction()   open the redaction settings panel
-// Returns { refresh(), reset() }.
-export function initExportPanel(host, { getContext, onOpenRedaction }) {
-  host.textContent = "";
-  const head = element("div", "export-head");
-  head.appendChild(element("h3", "export-title", S.exportTitle));
-  const settingsButton = element("button", "export-settings", S.exportRedactionSettings);
+//   onOpenRedaction()   open the redaction settings dialog
+//   onClose()           after the dialog closed, for any reason
+// Returns { open(opener), close(), isOpen(), refresh(), reset() }.
+export function initExportPanel(host, { getContext, onOpenRedaction, onClose = null }) {
+  const doc = host.ownerDocument || document;
+  const shell = createDialogShell(doc, { title: S.exportTitle, className: "export-dialog", onClose });
+  host.appendChild(shell.dialog);
+  const settingsButton = element("button", "ui-button export-settings", S.exportRedactionSettings);
   settingsButton.type = "button";
-  head.appendChild(settingsButton);
 
   const form = element("form", "export-form");
+  form.id = "export-form-" + (exportUid += 1);
   const fieldset = element("fieldset", "export-selection");
   fieldset.appendChild(element("legend", "", S.exportSelectionLegend));
   const radios = new Map();
@@ -114,8 +119,9 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
   sizeInput.max = String(EXPORT_LIMITS.maxBytesMax);
   sizeInput.step = "1000";
   sizeInput.value = String(EXPORT_DEFAULTS.maxBytes);
-  const buildButton = element("button", "export-build", S.exportBuild);
+  const buildButton = element("button", "ui-button is-primary export-build", S.exportBuild);
   buildButton.type = "submit";
+  buildButton.setAttribute("form", form.id);
   form.append(
     fieldset,
     labelled(S.exportContext, contextInput),
@@ -123,34 +129,39 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
     anonWarning,
     payloadRow,
     labelled(S.exportMaxBytes, sizeInput),
-    buildButton,
   );
 
-  const status = element("div", "export-status");
-  status.setAttribute("role", "status");
+  const status = statusLine(doc, "export-status");
   const result = element("div", "export-result");
   result.hidden = true;
   const partSelect = document.createElement("select");
   partSelect.className = "export-part";
   partSelect.setAttribute("aria-label", S.exportPartLabel);
-  const copyButton = element("button", "export-copy", S.exportCopy);
+  const copyButton = element("button", "ui-button export-copy", S.exportCopy);
   copyButton.type = "button";
-  const downloadButton = element("button", "export-download", S.exportDownload);
+  const downloadButton = element("button", "ui-button export-download", S.exportDownload);
   downloadButton.type = "button";
-  const downloadAllButton = element("button", "export-download-all", S.exportDownloadAll);
+  const downloadAllButton = element("button", "ui-button export-download-all", S.exportDownloadAll);
   downloadAllButton.type = "button";
   const copyStatus = element("span", "export-copy-status");
   copyStatus.setAttribute("role", "status");
-  const actions = element("div", "export-actions");
-  actions.append(partSelect, copyButton, downloadButton, downloadAllButton, copyStatus);
+  // Everything the person does with the report stays in the foot, next to the Build button.
+  const resultActions = [copyStatus, partSelect, downloadAllButton, downloadButton, copyButton];
   const summary = element("div", "export-summary");
   const preview = element("pre", "export-preview");
   preview.setAttribute("aria-label", S.exportPreviewLabel);
   preview.tabIndex = 0;
   const notes = element("div", "export-notes");
   const legend = element("ul", "export-legend");
-  result.append(summary, actions, preview, notes, legend);
-  host.append(head, form, status, result);
+  result.append(summary, preview, notes, legend);
+  shell.body.append(settingsButton, form, status, result);
+  shell.foot.append(...resultActions, buildButton);
+  const paintResultActions = (visible) => {
+    for (const item of resultActions) {
+      item.hidden = !visible;
+    }
+  };
+  paintResultActions(false);
 
   function selectedKind() {
     for (const [kind, radio] of radios) {
@@ -172,14 +183,14 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
 
   function showState(state) {
     result.hidden = state.status !== "ready";
+    paintResultActions(state.status === "ready");
     buildButton.disabled = state.status === "loading";
-    status.classList.toggle("is-error", state.status === "error");
     if (state.status === "loading") {
-      status.textContent = S.exportBuilding;
+      setStatusLine(status, S.exportBuilding, false);
     } else if (state.status === "error") {
-      status.textContent = state.errorKey ? S[state.errorKey] : S.exportError + (state.error ? ": " + state.error : "");
+      setStatusLine(status, state.errorKey ? S[state.errorKey] : S.exportError + (state.error ? ": " + state.error : ""), true);
     } else {
-      status.textContent = "";
+      setStatusLine(status, "", false);
     }
     if (state.status !== "ready") {
       return;
@@ -266,8 +277,15 @@ export function initExportPanel(host, { getContext, onOpenRedaction }) {
   settingsButton.addEventListener("click", () => onOpenRedaction());
 
   return {
+    open(opener) {
+      refresh();
+      shell.open(opener);
+    },
+    close: shell.close,
+    isOpen: shell.isOpen,
     refresh,
     reset: () => {
+      shell.close();
       flow.reset();
       refresh();
     },

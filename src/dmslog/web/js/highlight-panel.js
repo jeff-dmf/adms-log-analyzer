@@ -7,9 +7,11 @@ import {
   nextColor,
 } from "./highlight-model.js";
 import { ignoresShortcut } from "./filters.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 const MAX_KEY_CHIPS = 8;
+let hlFormUid = 0;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -61,26 +63,22 @@ function errorText(error) {
 }
 
 // Renders the "Highlights" panel into the host the dock gives it (UI-12). options: store (createHighlightStore),
-// getCase, getFilter (the view filter). Returns { refresh, reset, storeChanged }: refresh = the panel was opened,
+// getCase, getFilter (the view filter), onRequestClose (the dock closes the tab; default hides the host). Returns { refresh, reset, storeChanged }: refresh = the panel was opened,
 // reset = forget the old case's rules and status, storeChanged = the store changed (repaint the list).
 export function mountHighlightPanel(host, options) {
-  const { store, getCase, getFilter } = options;
+  const { store, getCase, getFilter, onRequestClose = null } = options;
 
+  const shell = createPanelShell(host, { title: S.hlTitle, onRequestClose });
   const panel = element("div", "hl-panel");
-  host.textContent = "";
-  host.appendChild(panel);
-  const head = element("div", "hl-head");
-  const title = element("h3", "hl-title", S.hlTitle);
-  title.id = "hl-title";
-  host.setAttribute("aria-labelledby", title.id);
-  const count = element("span", "hl-empty");
-  head.append(title, count);
+  shell.body.appendChild(panel);
+  const count = shell.summary;
+  count.className += " hl-empty";
   const list = element("ul", "hl-list");
-  const status = element("div", "hl-status");
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
+  const status = statusLine(document, "hl-status");
 
   const form = element("form", "hl-form");
+  hlFormUid += 1;
+  form.id = "hl-form-" + hlFormUid;
   const kindSelect = element("select", "hl-kind");
   kindSelect.id = "hl-kind";
   for (const kind of QUICK_KINDS) {
@@ -117,15 +115,17 @@ export function mountHighlightPanel(host, options) {
   const newColor = colorSelect("hl-new-color", PALETTE[0]);
   const colorLabelEl = labeled(S.hlColor, newColor);
   const kindLabel = labeled(S.hlKind, kindSelect);
-  const addButton = element("button", "hl-add", S.hlAdd);
+  // The main actions stay in the foot, always in sight; "Add" submits the form.
+  const addButton = element("button", "ui-button is-primary hl-add", S.hlAdd);
   addButton.type = "submit";
-  const addFilterButton = button("hl-add-filter", S.hlAddFilter);
-  form.append(kindLabel, extraLabel, valueLabel, sevLabel, nameLabel, colorLabelEl, addButton, addFilterButton);
-  panel.append(head, list, form, status);
+  addButton.setAttribute("form", form.id);
+  const addFilterButton = button("ui-button hl-add-filter", S.hlAddFilter);
+  form.append(kindLabel, extraLabel, valueLabel, sevLabel, nameLabel, colorLabelEl);
+  panel.append(status, list, form);
+  shell.addFoot(addButton, addFilterButton);
 
   function setStatus(text, isError) {
-    status.textContent = text;
-    status.classList.toggle("is-error", Boolean(isError));
+    setStatusLine(status, text, isError);
   }
 
   function syncForm() {

@@ -43,6 +43,7 @@ function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
   }
   registerAppActions(actions, {
     ready: { alerts: Promise.resolve(), followTail: Promise.resolve(), ...ready },
+    exportContext: () => ({ caseId: state.caseId, filter: null, recordId: 1, eventId: null }),
     loadCopyExport: async () => { calls.copyLoaded = (calls.copyLoaded || 0) + 1; },
     cases: () => state.cases,
     selectCase: (id) => calls.select.push(id),
@@ -136,15 +137,20 @@ test("the Analyze menu lists the eight analyses in order and each one opens its 
   await until(() => !dock.isOpen("distinct"), "distinct closed");
 });
 
-test("the Export menu opens the report panel and the Copy as popover", async () => {
+test("the Export menu opens the report dialog (not a dock tab) and the Copy as dialog", async () => {
   const { doc, refs, dock, calls } = setup();
+  // The dialog modules build their DOM through the global document: this page's fake is that document here.
+  doc.createTextNode = (text) => Object.assign(doc.createElement("#text"), { textContent: String(text) });
+  globalThis.document = doc;
+  Object.defineProperty(globalThis, "navigator", { value: { clipboard: null, platform: "Linux" }, configurable: true });
   const menu = open(doc, refs.menus.export);
   assert.deepEqual(labels(menu), [S.actExportReport, S.actCopyAs]);
   itemByLabel(menu, S.actCopyAs).dispatch("click");
   await until(() => calls.copy === 1, "copy");
   const again = open(doc, refs.menus.export);
   itemByLabel(again, S.actExportReport).dispatch("click");
-  await until(() => dock.isOpen("export"), "export");
+  await until(() => doc.body.all().some((n) => n.className.split(" ").includes("export-dialog") && n.getAttribute("open") !== null), "export dialog");
+  assert.equal(dock.isOpen("export"), false);
 });
 
 test("the toggles open and close their panel and carry aria-pressed", async () => {
@@ -303,4 +309,42 @@ test("UI-14: Copy as loads its module on the first use of the item (hover or cli
   itemByLabel(menu, S.actCopyAs).dispatch("click");
   await until(() => calls.copy === 1, "copy");
   assert.equal(calls.copyLoaded, 1);
+});
+
+// export.report: the dialog opens from the element that had the focus, and a case change since the last opening clears
+// the previous report (reset) while the same case does not.
+test("export.report resets the dialog only when the case changed, and opens it from the active element", async () => {
+  const { doc, refs, state, dock } = setup();
+  doc.createTextNode = (text) => Object.assign(doc.createElement("#text"), { textContent: String(text) });
+  globalThis.document = doc;
+  Object.defineProperty(globalThis, "navigator", { value: { clipboard: null, platform: "Linux" }, configurable: true });
+  const exportItem = () => itemByLabel(open(doc, refs.menus.export), S.actExportReport);
+  const dialog = () => doc.body.all().find((n) => n.className.split(" ").includes("export-dialog"));
+  const isOpen = () => dialog() && dialog().getAttribute("open") !== null;
+  let closings = 0;
+
+  exportItem().dispatch("click"); // first opening: the trigger of the Export menu has the focus
+  await until(isOpen, "dialog open");
+  const real = dialog().removeAttribute.bind(dialog());
+  dialog().removeAttribute = (name) => { if (name === "open") closings += 1; return real(name); };
+  assert.equal(dock.isOpen("export"), false);
+
+  exportItem().dispatch("click"); // same case, dialog still open: nothing is reset
+  await tick();
+  assert.equal(closings, 0, "the same case does not reset");
+
+  state.caseId = 2;
+  exportItem().dispatch("click"); // another case: reset closes the old dialog, then it opens again
+  await until(() => closings === 1 && isOpen(), "reset on a new case");
+
+  const trigger = refs.menus.export;
+  trigger.focus();
+  dialog().dispatch("keydown", { key: "Escape" });
+  assert.equal(isOpen(), false);
+  state.caseId = 2;
+  exportItem().dispatch("click"); // closed and the same case: no reset
+  await until(isOpen, "reopened");
+  assert.equal(closings, 2, "closing counts once more, but no extra reset");
+  dialog().dispatch("keydown", { key: "Escape" });
+  assert.equal(doc.activeElement, refs.menus.export, "the focus returned to the element that opened it");
 });

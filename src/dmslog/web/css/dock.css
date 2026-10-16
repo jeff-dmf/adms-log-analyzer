@@ -157,6 +157,120 @@
   display: none;
 }
 
+/* ---- Panels in the common frame (UI-23) -----------------------------------------------------------------------
+   A panel that uses createPanelShell (js/panel-shell.js) fills the tab: the head, the tools row and the foot keep their
+   height, the body takes the rest and scrolls. At the smallest dock (160 px) the head and the foot (the main action)
+   stay in sight. */
+.dock-panel.is-active:has(> .ui-panel) {
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+
+.dock-panel > .ui-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The host also carries .panel, whose h2 is a small muted label; the panel title is a real title. */
+.dock-panel .ui-panel-title {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.ui-panel-head {
+  flex-wrap: nowrap;
+}
+
+.ui-panel-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-panel-actions {
+  flex: none;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+/* Filters stay on one row: the row scrolls sideways instead of wrapping into more height. */
+.dock-panel .ui-panel-tools {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.ui-panel-foot {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ui-section-title {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+}
+
+/* A table whose cells may wrap (long text, two-line cells); the default .ui-table truncates. */
+.ui-table.is-wrap th,
+.ui-table.is-wrap td {
+  max-width: none;
+  height: auto;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  vertical-align: top;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.ui-table.is-wrap th {
+  white-space: nowrap;
+}
+
+/* Compare (UI-23): the difference first, the A and B identification as one line each above it. */
+.panel-shell .cmp-sides {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+
+.cmp-side {
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cmp-side-title {
+  flex: none;
+}
+
+.cmp-side-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-table.is-wrap .cmp-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Dialogs (UI-23): title and Close in the head. */
+.ui-dialog-head .ui-dialog-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
 @media (forced-colors: active) {
   .dock-tab.is-active {
     border-bottom-color: Highlight;

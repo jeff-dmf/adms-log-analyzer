@@ -1510,6 +1510,10 @@ export const S = {
   dockRestore: "Restore",
   dockCloseAll: "Close all",
   panelLoadFailed: "{panel} could not be loaded.",
+  // Panels in the common frame (UI-23).
+  panelClose: "Close",
+  panelCloseLabel: "Close {title}",
+  panelRefresh: "Refresh",
   // Status bar (UI-13): count, position, message, connection errors and the help button.
   statusLabel: "Status",
   statusRecordsOne: "{count} record",

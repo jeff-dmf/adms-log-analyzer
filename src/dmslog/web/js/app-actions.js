@@ -68,6 +68,7 @@ export function registerAppPanels(dock, deps) {
       const guard = withoutCase(ctx.caseId);
       const panel = module.initUnknownPanel(host, {
         api, getCase: guard.getCase, getFamily: () => null, onOpenEntry: (id) => deps.showEntry(id),
+        onRequestClose: () => ctx.dock.close("unknownTypes"),
       });
       return { refresh: () => panel.refresh(), reset: () => guard.clear(() => panel.refresh()) };
     },
@@ -82,6 +83,7 @@ export function registerAppPanels(dock, deps) {
       const guard = withoutCase(ctx.caseId);
       const panel = module.initConfigPanel(host, {
         api, getCase: guard.getCase, onOpenEntry: (id) => deps.showEntry(id),
+        onRequestClose: () => ctx.dock.close("config"),
       });
       return { refresh: () => panel.refresh(), reset: () => guard.clear(() => panel.refresh()) };
     },
@@ -96,6 +98,7 @@ export function registerAppPanels(dock, deps) {
       const guard = withoutCase(ctx.caseId);
       const panel = module.initEventsPanel(host, {
         api: derivedApi, getCase: guard.getCase, onShowInGrid: deps.showEventInGrid,
+        onRequestClose: () => ctx.dock.close("operations"),
       });
       let stale = true; // a closed panel loads its list again when it is shown
       return {
@@ -125,7 +128,9 @@ export function registerAppPanels(dock, deps) {
     closeOnCase: true,
     mount: async (host, ctx) => {
       const module = await import("./payload-list.js");
-      const panel = module.initPayloadList(host, { api, getCase: ctx.caseId, onOpen: ctx.reveal });
+      const panel = module.initPayloadList(host, {
+        api, getCase: ctx.caseId, onOpen: ctx.reveal, onRequestClose: () => ctx.dock.close("payloads"),
+      });
       return { refresh: () => panel.refresh(), closed: () => panel.close(), reset: () => panel.close() };
     },
   });
@@ -139,6 +144,7 @@ export function registerAppPanels(dock, deps) {
       const guard = withoutCase(ctx.caseId);
       const panel = module.initDashboard(host, {
         api: derivedApi, getCase: guard.getCase, onShowInGrid: deps.showEventInGrid,
+        onRequestClose: () => ctx.dock.close("dashboard"),
       });
       return { refresh: () => panel.refresh(), reset: () => guard.clear(() => panel.refresh()) };
     },
@@ -150,7 +156,7 @@ export function registerAppPanels(dock, deps) {
     closeOnCase: true,
     mount: async (host, ctx) => {
       const module = await import("./side-by-side.js");
-      const panel = module.initSideBySide(host, { getCase: ctx.caseId });
+      const panel = module.initSideBySide(host, { getCase: ctx.caseId, onRequestClose: () => ctx.dock.close("sideBySide") });
       return { show: ({ entryId }) => panel.open(entryId), closed: () => panel.close(), reset: () => panel.reset() };
     },
   });
@@ -161,42 +167,10 @@ export function registerAppPanels(dock, deps) {
     closeOnCase: true,
     mount: async (host, ctx) => {
       const module = await import("./key-panel.js");
-      const panel = module.initKeyPanel(host, { getCase: ctx.caseId, onSelect: ctx.reveal });
-      return { show: ({ type, value }) => panel.open(type, value), closed: () => panel.close(), reset: () => panel.reset() };
-    },
-  });
-
-  dock.register({
-    id: "export",
-    titleKey: "actExportReport",
-    listens: ["case"],
-    mount: async (host, ctx) => {
-      const [exporting, redacting] = await Promise.all([import("./export-panel.js"), import("./redaction-panel.js")]);
-      host.textContent = "";
-      const exportBox = document.createElement("div");
-      const redactionBox = document.createElement("section");
-      redactionBox.className = "host-panel";
-      redactionBox.hidden = true;
-      host.append(exportBox, redactionBox);
-      let redactionPanel = null;
-      const openRedaction = () => {
-        redactionBox.hidden = false;
-        if (!redactionPanel) {
-          redactionPanel = redacting.initRedactionPanel(redactionBox);
-        }
-        redactionPanel.refresh();
-      };
-      const panel = exporting.initExportPanel(exportBox, {
-        getContext: () => deps.exportContext(),
-        onOpenRedaction: openRedaction,
+      const panel = module.initKeyPanel(host, {
+        getCase: ctx.caseId, onSelect: ctx.reveal, onRequestClose: () => ctx.dock.close("sameKey"),
       });
-      return {
-        refresh: () => panel.refresh(),
-        reset: () => panel.reset(),
-        closed() {
-          redactionBox.hidden = true;
-        },
-      };
+      return { show: ({ type, value }) => panel.open(type, value), closed: () => panel.close(), reset: () => panel.reset() };
     },
   });
 
@@ -208,6 +182,7 @@ export function registerAppPanels(dock, deps) {
       const module = await import("./bookmarks-panel.js");
       const panel = module.initBookmarksPanel(host, {
         getCase: ctx.caseId, store: deps.bookmarkStore, onReveal: ctx.reveal, onError: deps.onError,
+        onRequestClose: () => ctx.dock.close("bookmarks"),
       });
       deps.onBookmarksPanel(panel);
       return { refresh: () => panel.open(), update: () => panel.refresh(), closed: () => panel.close(), reset: () => panel.reset() };
@@ -220,7 +195,9 @@ export function registerAppPanels(dock, deps) {
     closeOnCase: true,
     mount: async (host, ctx) => {
       const module = await import("./compare.js");
-      const panel = module.initCompare(host, { getCase: ctx.caseId });
+      const panel = module.initCompare(host, {
+        getCase: ctx.caseId, onRequestClose: () => ctx.dock.close("compare"),
+      });
       return { show: ({ a, b }) => panel.open(a, b), closed: () => panel.close(), reset: () => panel.reset() };
     },
   });
@@ -236,6 +213,7 @@ export function registerAppPanels(dock, deps) {
       }
       const panel = module.mountAlertsPanel(host, {
         alerts, getCase: ctx.caseId, getFilter: () => ctx.userFilter(), onError: deps.onError,
+        onRequestClose: () => ctx.dock.close("alerts"),
       });
       return { refresh: () => panel.open(), closed: () => panel.close() };
     },
@@ -248,6 +226,7 @@ export function registerAppPanels(dock, deps) {
       const module = await import("./highlight-panel.js");
       const panel = module.mountHighlightPanel(host, {
         store: deps.highlightStore, getCase: ctx.caseId, getFilter: () => ctx.filter(),
+        onRequestClose: () => ctx.dock.close("highlights"),
       });
       deps.onHighlightPanel(panel);
       return { refresh: () => panel.refresh(), reset: () => panel.reset() };
@@ -267,6 +246,7 @@ export function registerAppPanels(dock, deps) {
         getFieldNames: deps.fieldNames,
         hasCollections: deps.hasCollections,
         onDrill: (leaf, exclude) => ctx.setUserFilter(model.drillFilter(ctx.userFilter(), leaf, exclude)),
+        onRequestClose: () => ctx.dock.close("distinct"),
       });
       return { refresh: () => panel.refresh(), closed: () => panel.reset(), reset: () => panel.reset() };
     },
@@ -284,6 +264,7 @@ export function registerAppPanels(dock, deps) {
         getFilter: () => ctx.filter(),
         getSourceName: deps.sourceName,
         onReveal: ctx.reveal,
+        onRequestClose: () => ctx.dock.close("groupByType"),
       });
       return { refresh: () => panel.refresh(), closed: () => panel.reset(), reset: () => panel.reset() };
     },
@@ -301,6 +282,7 @@ export function registerAppPanels(dock, deps) {
         getFilter: () => ctx.filter(),
         getFieldNames: deps.fieldNames,
         onDrill: (drill) => ctx.setUserFilter(model.drillFilter(ctx.userFilter(), drill)),
+        onRequestClose: () => ctx.dock.close("aggregate"),
       });
     },
   });
@@ -351,13 +333,26 @@ export function registerAppActions(actions, deps) {
   analyze("analyze.config", "actConfig", "config", "./config-panel.js");
 
   // ---- Export
+  // "Export report..." is a modal dialog (UI-23), not a dock tab: export-dialogs.js loads on the first use, and a case
+  // change since the last time clears the previous report before the dialog shows again.
+  let exportDialogs = null;
+  let exportCase = null;
   actions.register({
     id: "export.report",
     labelKey: "actExportReport",
     group: "export",
-    pressed: panelOpen("export"),
-    run: togglePanel("export"),
-    load: () => import("./export-panel.js"),
+    load: () => import("./export-dialogs.js"),
+    run: async (ctx) => {
+      const module = await import("./export-dialogs.js");
+      if (exportDialogs === null) {
+        exportDialogs = module.mountExportDialogs(document.body, { getContext: () => deps.exportContext() });
+      }
+      if (exportCase !== ctx.caseId()) {
+        exportCase = ctx.caseId();
+        exportDialogs.reset();
+      }
+      exportDialogs.open(document.activeElement);
+    },
   });
   actions.register({
     id: "export.copyAs",

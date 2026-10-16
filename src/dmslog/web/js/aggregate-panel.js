@@ -7,6 +7,7 @@ import {
   createAggregateFlow, csvFileName, dimLabel, dimOptions, emptyForm, exampleForm, measureLabel, measureOptions,
   tableText,
 } from "./aggregate-model.js";
+import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format } from "./strings.js";
 
 const CHART_HEIGHT = 220;
@@ -86,18 +87,16 @@ async function copyText(text) {
   throw new Error(S.aggCopyFailed);
 }
 
-function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
-  host.textContent = "";
+let formUid = 0;
+
+function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill, onRequestClose = null }) {
+  const shell = createPanelShell(host, { title: S.aggTitle, onRequestClose });
   let form = emptyForm();
   let keyTypes = [];
   let keyTypesCase = null;
   let extra = null; // condition the form added to the view ("Only errors"), part of every drill-down
   let chart = null;
   let lookupBoxes = [];
-
-  const title = element("h3", "agg-title", S.aggTitle);
-  title.id = "agg-title";
-  host.setAttribute("aria-labelledby", title.id);
 
   const examples = element("select", "agg-examples");
   const blank = element("option", "", S.aggExamplesNone);
@@ -109,7 +108,8 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
     examples.appendChild(node);
   }
   const head = element("div", "agg-head");
-  head.append(title, labelled("agg-examples", S.aggExamples, examples));
+  head.append(labelled("agg-examples", S.aggExamples, examples));
+  shell.addTools(head);
 
   const rowsSelect = element("select", "agg-rows");
   for (const [value, text] of [["entries", S.aggRowsEntries], ["events", S.aggRowsEvents]]) {
@@ -166,26 +166,27 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
     labelled("agg-limit", S.aggLimit, limitInput), lookupHost,
   );
 
-  const runButton = button("agg-run", S.aggRun);
-  const csvButton = button("agg-csv", S.aggCsv);
-  const copyButton = button("agg-copy", S.aggCopy);
-  const actions = element("div", "agg-actions");
-  actions.append(runButton, csvButton, copyButton);
+  // The actions sit in the foot, always in sight; Run submits the form (Enter in a field does the same).
+  const runButton = button("ui-button is-primary agg-run", S.aggRun);
+  runButton.type = "submit";
+  const csvButton = button("ui-button agg-csv", S.aggCsv);
+  const copyButton = button("ui-button agg-copy", S.aggCopy);
 
-  const status = element("div", "agg-status");
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
+  const status = statusLine(document, "agg-status");
   const notices = element("div", "agg-notices");
   const chartHost = element("div", "agg-chart");
   chartHost.hidden = true;
   const tableHost = element("div", "agg-table-host");
   const formBox = element("form", "agg-form");
-  formBox.append(line1, line2, line3, eventLine, line4, actions);
-  host.append(head, formBox, status, notices, chartHost, tableHost);
+  formUid += 1;
+  formBox.id = "agg-form-" + formUid;
+  runButton.setAttribute("form", formBox.id);
+  formBox.append(line1, line2, line3, eventLine, line4);
+  shell.body.append(formBox, status, notices, chartHost, tableHost);
+  shell.addFoot(runButton, csvButton, copyButton);
 
   function setStatus(text, isError) {
-    status.textContent = text;
-    status.classList.toggle("is-error", Boolean(isError));
+    setStatusLine(status, text, isError);
   }
 
   // -- form <-> controls
@@ -389,10 +390,10 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
   function renderTable(view, live) {
     tableHost.textContent = "";
     if (view.rows.length === 0) {
-      tableHost.appendChild(element("div", "agg-empty", S.aggEmpty));
+      tableHost.appendChild(element("div", "ui-empty agg-empty", S.aggEmpty));
       return;
     }
-    const table = element("table", "agg-table");
+    const table = element("table", "ui-table is-wrap agg-table");
     table.appendChild(element("caption", "visually-hidden", S.aggTitle));
     const headRow = element("tr");
     view.headers.forEach((text, i) => {
@@ -488,7 +489,10 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
     return flow.run(built.request);
   }
 
-  runButton.addEventListener("click", () => run());
+  runButton.addEventListener("click", (event) => {
+    event.preventDefault(); // run() is the one path; a real click would also fire "submit"
+    run();
+  });
   csvButton.addEventListener("click", async () => {
     try {
       const text = await flow.csv();
@@ -554,6 +558,7 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill }) {
 //   api, getCase(), getFilter()   the current case and the ONE composed filter of the grid
 //   getFieldNames()          parsed-field names seen so far
 //   onDrill(filter)          AND a row's filter into the user filter
+//   onRequestClose()         the dock closes the tab (the default hides the host)
 // Returns { refresh(), update(), reset(), run, flow }: refresh = the panel was opened, update = the view changed
 // (a result already shown becomes stale), reset = cancel and clear (case change, close).
 export function mountAggregatePanel(host, options) {

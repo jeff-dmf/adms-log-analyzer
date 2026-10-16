@@ -141,22 +141,7 @@
 
 /* Panel */
 .hl-panel {
-  border: 1px solid var(--border);
-  background: var(--panel);
-  padding: 6px 8px;
-  margin: 4px 0;
-}
-
-.hl-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.hl-title {
-  font-size: 1em;
-  margin: 0;
+  padding: var(--space-3) var(--space-4);
 }
 
 .hl-list {
@@ -219,13 +204,7 @@
 }
 
 .hl-status {
-  min-height: 1.2em;
-  font-size: 0.9em;
-  color: var(--muted);
-}
-
-.hl-status.is-error {
-  color: var(--error-text);
+  min-height: 0;
 }
 
 .hl-empty {

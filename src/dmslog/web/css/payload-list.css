@@ -1,16 +1,4 @@
 /* Payload list panel. */
-.pg-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.pg-title {
-  margin: 0;
-  font-size: 1em;
-}
-
 .pg-filters {
   display: flex;
   flex-wrap: wrap;
@@ -19,32 +7,8 @@
   margin-bottom: 6px;
 }
 
-.pg-status {
-  color: var(--muted);
-  font-size: 0.9em;
-  margin-bottom: 6px;
-}
-
-.pg-status.is-error {
-  color: var(--error-text);
-}
-
-.pg-list {
-  max-height: 50vh;
-  overflow: auto;
-}
-
 .pg-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 8px;
-}
-
-.pg-table th,
-.pg-table td {
-  text-align: left;
-  padding: 2px 6px;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-3);
 }
 
 .pg-mono {
