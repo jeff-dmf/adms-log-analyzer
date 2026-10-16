@@ -45,6 +45,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -69,6 +70,36 @@ MAX_KEY_CHARS = 256
 INT_MIN, INT_MAX = -(2**63), 2**63 - 1
 MAX_LABEL_CHARS = 80
 MAX_REMOVED_LISTED = 100
+
+ITEM_MESSAGES = {
+    "bad_item": "the item is not valid",
+    "unknown_field": "the item has a field this version does not know",
+    "bad_name": "the name must be a non-empty text of at most 80 characters",
+    "bad_description": "the description is not valid",
+    "bad_family": "the family must be a short code (letters, digits, underscore)",
+    "bad_filter": "the filter must be a non-empty JSON object",
+    "filter_invalid": "the filter is not valid",
+    "filter_too_large": "the filter is too large",
+    "case_specific": "the filter points at one case; it must work in any case",
+    "bad_preset": "a preset must be an object with name, filter and optionally description and family",
+    "bad_rule": "an alert rule must be an object with name, kind and the fields of its kind",
+    "bad_kind": "the kind is not one of the known kinds",
+    "bad_severity": "the severity is not one of the known severities",
+    "bad_enabled": "enabled must be true or false",
+    "bad_interval": "min_interval_s is not an allowed integer",
+    "bad_count": "the count is not an allowed integer",
+    "bad_window": "window_s is not an allowed integer",
+    "bad_timeout": "timeout_s is not an allowed integer",
+    "bad_timeout_source": "give exactly one of timeout_s and timeout_param",
+    "bad_timeout_param": "timeout_param is not a valid Registry parameter name",
+    "bad_operation": "operation is not valid",
+    "extra_too_large": "the item has unknown fields that are too large",
+    "duplicate_name": "another item of the package has the same name",
+    "reserved_name": "the name belongs to a curated preset",
+    "not_representable": "the item cannot be stored faithfully",
+    "too_many_presets": "the result would have more presets than can be kept",
+    "too_many_rules": "the result would have more alert rules than can be kept",
+}
 
 ERROR_MESSAGES = {
     "package_too_large": "the package is larger than {limit} bytes",
@@ -96,6 +127,8 @@ ERROR_MESSAGES = {
     "invalid_profile": "the redaction profile is not valid ({problem}: {field})",
     "section_rejected": "not applied: another item of the section was refused",
     "save_failed": "a file could not be written; the files already written were restored",
+    "rolled_back": "not applied: a file could not be written and the files already written were restored",
+    "state_unknown": "the file could not be restored after a failed write: its state is unknown",
     "rollback_failed": "a file could not be restored after a failed write: {files}",
 }
 
@@ -121,13 +154,15 @@ def _problem(code: str, **params: Any) -> dict[str, str]:
 
 
 def check_limits(value: Any) -> None:
-    """Raise PreferencesError unless ``value`` is plain JSON data inside the limits (iterative)."""
-    nodes = 0
+    """Raise PreferencesError unless ``value`` is plain JSON data inside the limits (iterative).
+
+    Children are counted when they are pushed, so a huge list is refused before it is stacked.
+    """
+    nodes = 1
     stack: list[tuple[Any, int]] = [(value, 1)]
     while stack:
         node, depth = stack.pop()
-        nodes += 1
-        if nodes > MAX_NODES or depth > MAX_DEPTH:
+        if depth > MAX_DEPTH:
             raise PreferencesError("package_too_complex")
         if node is None or isinstance(node, bool):
             continue
@@ -138,25 +173,62 @@ def check_limits(value: Any) -> None:
             if not math.isfinite(node):
                 raise PreferencesError("bad_value", detail="non-finite number")
         elif isinstance(node, str):
-            if len(node) > MAX_STRING_CHARS:
-                raise PreferencesError("bad_value", detail="text too long")
-            try:
-                node.encode("utf-8")
-            except UnicodeEncodeError:
-                raise PreferencesError("bad_value", detail="text that is not valid Unicode") from None
+            _check_text(node, MAX_STRING_CHARS, "text")
         elif isinstance(node, list):
+            nodes += len(node)
+            if nodes > MAX_NODES:
+                raise PreferencesError("package_too_complex")
             stack.extend((item, depth + 1) for item in node)
         elif isinstance(node, dict):
+            nodes += len(node)
+            if nodes > MAX_NODES:
+                raise PreferencesError("package_too_complex")
             for key, item in node.items():
-                if not isinstance(key, str) or len(key) > MAX_KEY_CHARS:
+                if not isinstance(key, str):
                     raise PreferencesError("bad_value", detail="object key")
-                try:
-                    key.encode("utf-8")
-                except UnicodeEncodeError:
-                    raise PreferencesError("bad_value", detail="object key") from None
+                _check_text(key, MAX_KEY_CHARS, "object key")
                 stack.append((item, depth + 1))
         else:
             raise PreferencesError("bad_value", detail="type " + type(node).__name__)
+
+
+def _check_text(text: str, limit: int, what: str) -> None:
+    if len(text) > limit:
+        raise PreferencesError("bad_value", detail=what + " too long")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise PreferencesError("bad_value", detail=what + " that is not valid Unicode") from None
+
+
+_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{},]', re.DOTALL)
+
+
+def prescan(text: str, max_depth: int = MAX_DEPTH) -> None:
+    """Bound a JSON text before it is parsed: nesting, number of values and length of each string.
+
+    One lazy pass of the tokenizer, so a hostile text is refused without building any tree. For valid
+    JSON the count is exact; an invalid text may be tokenized differently, but ``json.loads`` then
+    refuses it anyway.
+    """
+    depth = 0
+    nodes = 1
+    for match in _TOKEN.finditer(text):
+        token = match.group()
+        if token[0] == '"':  # a string
+            if len(token) > MAX_STRING_CHARS + 2:
+                raise PreferencesError("bad_value", detail="text too long")
+        elif token in "[{":
+            depth += 1
+            nodes += 1
+            if depth > max_depth:
+                raise PreferencesError("package_too_complex")
+        elif token in "]}":
+            depth -= 1
+        else:  # a comma
+            nodes += 1
+        if nodes > MAX_NODES:
+            raise PreferencesError("package_too_complex")
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -172,24 +244,38 @@ def _reject_constant(_name: str) -> Any:
     raise ValueError("non-finite number")
 
 
+def parse_json_bytes(raw: bytes, *, limit: int = MAX_PACKAGE_BYTES, max_depth: int = MAX_DEPTH) -> Any:
+    """Strict JSON from raw bytes: UTF-8 only (no BOM, no UTF-16), bounded before and while parsing, no
+    duplicate keys, no NaN/Infinity. Raises PreferencesError."""
+    if len(raw) > limit:
+        raise PreferencesError("package_too_large", limit=limit)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise PreferencesError("bad_json") from None
+    return parse_json_text(text, max_depth=max_depth)
+
+
+def parse_json_text(text: str, *, max_depth: int = MAX_DEPTH) -> Any:
+    prescan(text, max_depth)
+    try:
+        return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_reject_constant)
+    except (ValueError, RecursionError):
+        raise PreferencesError("bad_json") from None
+
+
 def decode(package: Any) -> dict[str, Any]:
     """The package as a dict: JSON text/bytes are decoded strictly, a dict is checked as it is."""
     if isinstance(package, bytes | bytearray):
+        package = parse_json_bytes(bytes(package))
+    elif isinstance(package, str):
         if len(package) > MAX_PACKAGE_BYTES:
             raise PreferencesError("package_too_large", limit=MAX_PACKAGE_BYTES)
         try:
-            package = bytes(package).decode("utf-8-sig")
-        except UnicodeDecodeError:
+            raw = package.encode("utf-8")
+        except UnicodeEncodeError:
             raise PreferencesError("bad_json") from None
-    if isinstance(package, str):
-        if len(package) > MAX_PACKAGE_BYTES or len(package.encode("utf-8", "replace")) > MAX_PACKAGE_BYTES:
-            raise PreferencesError("package_too_large", limit=MAX_PACKAGE_BYTES)
-        try:
-            package = json.loads(
-                package.lstrip("﻿"), object_pairs_hook=_no_duplicates, parse_constant=_reject_constant
-            )
-        except (ValueError, RecursionError):
-            raise PreferencesError("bad_json") from None
+        package = parse_json_bytes(raw)
     check_limits(package)
     if not isinstance(package, dict):
         raise PreferencesError("not_object")
@@ -337,7 +423,7 @@ _KINDS = {"presets": PRESETS, "alert_rules": ALERT_RULES}
 
 def _sort_key(kind: _ListKind, item: Mapping[str, Any]) -> tuple[str, str, str]:
     name = str(item["name"])
-    family = str(item.get("family") or "") if kind is PRESETS else ""
+    family = str(item.get("family") or "") if kind.section == "presets" else ""
     return (family, name.casefold(), name)
 
 
@@ -390,7 +476,9 @@ def _check_item(kind: _ListKind, index: int, raw: Any) -> tuple[dict[str, Any] |
         kind.dump([clean], {})  # a value the TOML file cannot hold is refused here, not at write time
         clean.pop("extra", None)
     except kind.error_type as exc:
-        return None, _item_error(index, raw, getattr(exc, "code", "bad_item"), str(exc))
+        code = getattr(exc, "code", "bad_item")
+        # static text per code: the validators' own messages quote values of the package
+        return None, _item_error(index, raw, code, ITEM_MESSAGES.get(code, ITEM_MESSAGES["bad_item"]))
     except (presets.PresetError, RecursionError, UnicodeEncodeError, ValueError, TypeError):
         return None, _item_error(index, raw, "not_representable", ERROR_MESSAGES["not_representable"])
     return clean, None
@@ -437,14 +525,23 @@ def _plan_list(kind: _ListKind, data_dir: Path, raw_items: Any, mode: str, polic
     result = [] if mode == "replace" else list(current)
     incoming_keys = {kind.identity(c) for _, c in valid}
     over_limit = False
+    if mode == "replace" and len(valid) > kind.limit:  # nothing may be dropped to make room
+        for row in rows:
+            row["outcome"] = "not_applied"
+            row["code"] = "section_rejected"
+            row["message"] = ERROR_MESSAGES["section_rejected"]
+        return _rejected(_problem("too_many_items_total", limit=kind.limit), rows)
     for index, clean in valid:
         key = kind.identity(clean)
         row = rows[index]
         old = current[by_key[key]] if key in by_key else None
-        if old is not None and "extra" in old:
-            clean = {**clean, "extra": old["extra"]}
+        if old is not None and "extra" in old and mode == "merge":
+            clean = {**clean, "extra": old["extra"]}  # merge keeps the unknown keys; replace drops them
         if old is not None:
-            row["outcome"] = "unchanged" if _canon(kind.view(old)) == _canon(kind.view(clean)) else "updated"
+            same = _canon(kind.view(old)) == _canon(kind.view(clean)) and _canon(old.get("extra")) == _canon(
+                clean.get("extra")
+            )
+            row["outcome"] = "unchanged" if same else "updated"
             if mode == "replace":
                 result.append(clean)
             else:
@@ -453,7 +550,7 @@ def _plan_list(kind: _ListKind, data_dir: Path, raw_items: Any, mode: str, polic
             if len(result) >= kind.limit:
                 row["outcome"] = "rejected"
                 row["code"] = kind.too_many_code
-                row["message"] = str(kind.error_type(kind.too_many_code, limit=kind.limit))
+                row["message"] = ITEM_MESSAGES[kind.too_many_code]
                 over_limit = True
                 continue
             row["outcome"] = "added"
@@ -465,6 +562,14 @@ def _plan_list(kind: _ListKind, data_dir: Path, raw_items: Any, mode: str, polic
     )
     if over_limit and policy == "reject_section":
         for row in rows:
+            if row["outcome"] in ("added", "updated", "unchanged"):
+                row["outcome"] = "not_applied"
+                row["code"] = "section_rejected"
+                row["message"] = ERROR_MESSAGES["section_rejected"]
+        return _rejected(_problem("too_many_items_total", limit=kind.limit), rows)
+
+    if len(result) > kind.limit and [_canon(i) for i in result] != [_canon(i) for i in current]:
+        for row in rows:  # the whole result is checked before anything is written
             if row["outcome"] in ("added", "updated", "unchanged"):
                 row["outcome"] = "not_applied"
                 row["code"] = "section_rejected"
@@ -699,25 +804,49 @@ def import_package(
         report["outcome"] = _outcome(plans)
         writes = [(n, p) for n, p in plans.items() if p.status == "changed" and p.data is not None]
         if not dry_run and writes:
-            failure = _apply(writes)
+            failure, stuck = _apply(writes)
             if failure is not None:
                 report["outcome"] = "failed"
                 report["errors"].append(failure)
-                for n, _ in writes:
-                    report["sections"][n]["status"] = "rejected"
-                    report["sections"][n]["error"] = failure
+                for n, plan in writes:
+                    _mark_reverted(
+                        report["sections"][n], failure, plan.path is not None and plan.path.name in stuck
+                    )
             else:
                 report["applied"] = True
     report["ok"] = report["outcome"] in ("applied", "unchanged")
     report["summary"] = {
-        key: sum(p.counts[key] for p in plans.values())
+        key: sum(sec["counts"][key] for sec in report["sections"].values())
         for key in ("added", "updated", "unchanged", "rejected", "removed")
     }
     return report
 
 
-def _apply(writes: list[tuple[str, SectionPlan]]) -> dict[str, str] | None:
-    """Write the planned files in order; on a failure restore the ones already written."""
+def _mark_reverted(section: dict[str, Any], failure: dict[str, str], unknown: bool) -> None:
+    """After a failed write nothing was applied: items that were to be added or updated say so.
+
+    If the file could not be restored its state is unknown, and the section says that instead.
+    """
+    code = "state_unknown" if unknown else "rolled_back"
+    for row in section["items"]:
+        if row["outcome"] in ("added", "updated"):
+            row["outcome"] = "unknown" if unknown else "not_applied"
+            row["code"] = code
+            row["message"] = ERROR_MESSAGES[code]
+    counts = section["counts"]
+    counts["added"] = counts["updated"] = counts["removed"] = 0
+    section["removed"] = []
+    section["status"] = "rejected"
+    section["error"] = failure
+    if unknown:
+        section["state"] = "unknown"
+
+
+def _apply(writes: list[tuple[str, SectionPlan]]) -> tuple[dict[str, str] | None, set[str]]:
+    """Write the planned files in order; on a failure restore the ones already written.
+
+    Returns (failure, names of the files that could not be restored).
+    """
     done: list[tuple[Path, bytes | None]] = []
     try:
         for _name, plan in writes:
@@ -733,6 +862,6 @@ def _apply(writes: list[tuple[str, SectionPlan]]) -> dict[str, str] | None:
             except OSError:
                 stuck.append(path.name)
         if stuck:
-            return _problem("rollback_failed", files=", ".join(stuck))
-        return _problem("save_failed")
-    return None
+            return _problem("rollback_failed", files=", ".join(stuck)), set(stuck)
+        return _problem("save_failed"), set()
+    return None, set()

@@ -593,7 +593,9 @@ def test_concurrent_imports_leave_a_valid_state(tmp_path):
 
 def test_import_text_with_bom_and_unicode(tmp_path):
     item = {"name": "Caf\u00e9 \u00f1 \u65e5\u672c", "description": "a\u00e7a\u00ed", "filter": ERRORS}
-    text = "\ufeff" + json.dumps(package(presets=[item]), ensure_ascii=True)
+    text = json.dumps(package(presets=[item]), ensure_ascii=True)
+    rep = preferences.import_package(tmp_path, ("\ufeff" + text).encode("utf-8"))  # a BOM is refused
+    assert rep["outcome"] == "rejected" and rep["errors"][0]["code"] == "bad_json"
     rep = preferences.import_package(tmp_path, text.encode("utf-8"))
     assert rep["outcome"] == "applied"
     assert presets.load_user(tmp_path).presets[0]["name"] == "Caf\u00e9 \u00f1 \u65e5\u672c"
@@ -605,3 +607,208 @@ def test_report_never_echoes_untrusted_values_beyond_a_clean_label(tmp_path):
     rep = preferences.import_package(tmp_path, pkg)
     row = rep["sections"]["presets"]["items"][0]
     assert len(row["name"]) <= preferences.MAX_LABEL_CHARS and "\n" not in row["name"]
+
+
+# -- review round 1: replace/limits, strict decoding, static messages, extras, reconciliation -----------
+
+
+def many(n, prefix="n"):
+    return [{"name": f"{prefix}{i}", "filter": ERRORS} for i in range(n)]
+
+
+def test_replace_with_skip_item_never_deletes_when_an_item_is_refused_for_the_limit(tmp_path):
+    presets.create(tmp_path, {"name": "keep", "filter": ERRORS})
+    before = snapshot(tmp_path)
+    pkg = package(presets=many(presets.MAX_PRESETS + 1))
+    for policy in ("skip_item", "reject_section"):
+        rep = preferences.import_package(tmp_path, pkg, mode="replace", on_item_error=policy)
+        assert rep["sections"]["presets"]["status"] == "rejected"
+        assert rep["sections"]["presets"]["error"]["code"] == "too_many_items_total"
+        assert rep["summary"]["added"] == 0 and snapshot(tmp_path) == before
+
+
+def test_replace_result_is_checked_when_a_stored_name_comes_last(tmp_path):
+    presets.create(tmp_path, {"name": "zz", "filter": ERRORS})
+    before = snapshot(tmp_path)
+    items = many(presets.MAX_PRESETS) + [{"name": "ZZ", "filter": TREE}]  # 201 in the end
+    for policy in ("skip_item", "reject_section"):
+        rep = preferences.import_package(
+            tmp_path, package(presets=items), mode="replace", on_item_error=policy
+        )
+        assert rep["sections"]["presets"]["status"] == "rejected" and snapshot(tmp_path) == before
+    assert len(presets.load_user(tmp_path).presets) == 1
+
+
+def test_replace_at_exactly_the_limit_is_accepted(tmp_path):
+    presets.create(tmp_path, {"name": "zz", "filter": ERRORS})
+    items = many(presets.MAX_PRESETS - 1) + [{"name": "ZZ", "filter": TREE}]
+    rep = preferences.import_package(tmp_path, package(presets=items), mode="replace")
+    assert rep["outcome"] == "applied" and len(presets.load_user(tmp_path).presets) == presets.MAX_PRESETS
+
+
+def test_merge_never_exceeds_the_limit(tmp_path):
+    for item in many(presets.MAX_PRESETS - 1, "e"):
+        presets.create(tmp_path, item)
+    rep = preferences.import_package(tmp_path, package(presets=many(3)), on_item_error="skip_item")
+    assert [i["outcome"] for i in rep["sections"]["presets"]["items"]] == ["added", "rejected", "rejected"]
+    assert len(presets.load_user(tmp_path).presets) == presets.MAX_PRESETS
+
+
+def raw_body(text: str) -> bytes:
+    return text.encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"package": {"schema": 1, "schema": 1, "kind": "dmslog-preferences"}}',
+        b'{"package": {"schema": NaN, "schema": 1, "kind": "dmslog-preferences"}}',
+        b'{"package": {"schema": Infinity, "kind": "dmslog-preferences"}}',
+        '{"package": {"schema": 1, "kind": "dmslog-preferences"}}'.encode("utf-16"),
+        '{"package": {"schema": 1, "kind": "dmslog-preferences"}}'.encode("utf-16-le"),
+        b"\xef\xbb\xbf" + b'{"package": {"schema": 1, "kind": "dmslog-preferences"}}',
+    ],
+)
+def test_strict_body_decoder_refuses(body):
+    with pytest.raises(preferences.PreferencesError):
+        preferences.parse_json_bytes(body)
+
+
+def test_strict_decoder_accepts_plain_utf8():
+    out = preferences.parse_json_bytes('{"a": ["\u00e9", 1.5, true, null]}'.encode())
+    assert out == {"a": ["\u00e9", 1.5, True, None]}
+
+
+def test_limits_apply_before_the_tree_is_built(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("json.loads must not be reached")
+
+    monkeypatch.setattr(preferences.json, "loads", boom)
+    hostile = {
+        "deep": b"[" * 100_000,
+        "wide": b"[" + b"0," * (preferences.MAX_NODES + 10) + b"0]",
+        "long string": b'["' + b"x" * (preferences.MAX_STRING_CHARS + 10) + b'"]',
+        "deep objects": b'{"a":' * 5000 + b"1" + b"}" * 5000,
+    }
+    for name, raw in hostile.items():
+        with pytest.raises(preferences.PreferencesError) as err:
+            preferences.parse_json_bytes(raw)
+        assert err.value.code in ("package_too_complex", "bad_value"), name
+    rep = preferences.import_package(tmp_path, hostile["wide"])
+    assert rep["outcome"] == "rejected" and rep["errors"][0]["code"] == "package_too_complex"
+
+
+def test_check_limits_counts_children_before_stacking_them():
+    with pytest.raises(preferences.PreferencesError) as err:
+        preferences.check_limits([0] * (preferences.MAX_NODES + 1))
+    assert err.value.code == "package_too_complex"
+    with pytest.raises(preferences.PreferencesError):
+        preferences.check_limits({str(i): 0 for i in range(preferences.MAX_NODES + 1)})
+    with pytest.raises(preferences.PreferencesError):
+        preferences.check_limits({"k" * (preferences.MAX_KEY_CHARS + 1): 0})
+    preferences.check_limits([0] * 1000)
+
+
+SECRET = "SECRET_CUSTOMER_TERM"
+
+
+def test_report_never_echoes_values_of_the_package(tmp_path):
+    bad_filters = [
+        {SECRET: 1},
+        {"sev": {"le": SECRET}},
+        {"tpl": [SECRET, {SECRET: 1}]},
+        {"and": [{SECRET: 2}]},
+    ]
+    pkg = package(
+        presets=[{"name": f"p{i}", "filter": f} for i, f in enumerate(bad_filters)]
+        + [{"name": "q", "filter": ERRORS, "description": SECRET * 100}, {"name": "r", SECRET: 1}],
+        alert_rules=[
+            {"name": "a", "kind": "match", "filter": {SECRET: 1}},
+            {"name": "b", "kind": SECRET},
+            {"name": "c", "kind": "match", "filter": ERRORS, "severity": SECRET},
+            {"name": "d", "kind": "open_operation", "timeout_param": SECRET + " x"},
+            {"name": "e", "kind": "open_operation", "timeout_s": 5, "operation": SECRET * 100},
+        ],
+        redaction={"name": "x", "mode": SECRET},
+    )
+    for mode in ("merge", "replace"):
+        for policy in ("reject_section", "skip_item"):
+            rep = preferences.import_package(tmp_path, pkg, mode=mode, on_item_error=policy, dry_run=True)
+            assert SECRET not in json.dumps(rep), (mode, policy)
+    rep = preferences.import_package(tmp_path, package(redaction={SECRET: 1}))
+    assert SECRET not in json.dumps(rep)
+    rep = preferences.import_package(tmp_path, package(redaction={"name": "x", "categories": {SECRET: True}}))
+    assert SECRET not in json.dumps(rep)
+    rep = preferences.import_package(tmp_path, {"schema": SECRET, "kind": "x"})
+    assert SECRET not in json.dumps(rep)
+    rep = preferences.import_package(tmp_path, package(**{SECRET: []}))
+    assert SECRET not in json.dumps(rep)
+
+
+def write_presets_with_extras(folder):
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "presets.toml").write_text(
+        'schema = 1\n\n[[preset]]\nname = "a"\nfilter = {sev = {le = 2}}\nnote = "keep me"\n',
+        encoding="utf-8",
+    )
+
+
+def test_replace_drops_extras_so_two_folders_end_equal(tmp_path):
+    with_extra, without = tmp_path / "x", tmp_path / "y"
+    write_presets_with_extras(with_extra)
+    presets.create(without, {"name": "a", "filter": ERRORS})
+    pkg = package(presets=[{"name": "a", "filter": ERRORS}])
+    r1 = preferences.import_package(with_extra, pkg, mode="replace")
+    r2 = preferences.import_package(without, pkg, mode="replace")
+    assert r1["sections"]["presets"]["items"][0]["outcome"] == "updated"  # the extra is dropped
+    assert r2["sections"]["presets"]["items"][0]["outcome"] == "unchanged"
+    assert (with_extra / "presets.toml").read_bytes() == (without / "presets.toml").read_bytes()
+    assert preferences.import_package(with_extra, pkg, mode="replace")["outcome"] == "unchanged"
+
+
+def test_merge_keeps_extras(tmp_path):
+    write_presets_with_extras(tmp_path)
+    preferences.import_package(tmp_path, package(presets=[{"name": "A", "filter": TREE}]))
+    (item,) = presets.load_user(tmp_path).presets
+    assert item["extra"] == {"note": "keep me"} and item["filter"] == TREE
+
+
+def test_failed_write_reconciles_the_report(tmp_path, monkeypatch):
+    real = paths.atomic_write_bytes
+
+    def flaky(path, data):
+        if path.name == "redaction.toml":
+            raise OSError("disk full")
+        real(path, data)
+
+    monkeypatch.setattr(preferences, "atomic_write_bytes", flaky)
+    pkg = package(presets=[PRESET_A, PRESET_B], alert_rules=[RULE_A], redaction=PROFILE)
+    rep = preferences.import_package(tmp_path, pkg)
+    assert rep["outcome"] == "failed" and snapshot(tmp_path) == {}
+    assert rep["summary"] == {"added": 0, "updated": 0, "unchanged": 0, "rejected": 0, "removed": 0}
+    for name in ("presets", "alert_rules", "redaction"):
+        sec = rep["sections"][name]
+        assert sec["status"] == "rejected" and sec["error"]["code"] == "save_failed"
+        assert all(i["outcome"] == "not_applied" and i["code"] == "rolled_back" for i in sec["items"])
+
+
+def test_failed_restore_marks_the_state_unknown(tmp_path, monkeypatch):
+    real = paths.atomic_write_bytes
+    state = {"n": 0}
+
+    def flaky(path, data):
+        state["n"] += 1
+        if state["n"] == 1:
+            real(path, data)
+        else:
+            raise OSError("boom")
+
+    presets.create(tmp_path, PRESET_A)
+    monkeypatch.setattr(preferences, "atomic_write_bytes", flaky)
+    rep = preferences.import_package(tmp_path, package(presets=[PRESET_B], alert_rules=[RULE_A]))
+    sec = rep["sections"]["presets"]
+    assert rep["errors"][0]["code"] == "rollback_failed" and sec["state"] == "unknown"
+    assert [i["outcome"] for i in sec["items"]] == ["unknown"] and sec["items"][0]["code"] == "state_unknown"
+    other = rep["sections"]["alert_rules"]
+    assert "state" not in other and other["items"][0]["outcome"] == "not_applied"
+    assert rep["summary"]["added"] == 0

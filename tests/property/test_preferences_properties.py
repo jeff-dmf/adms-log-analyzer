@@ -328,3 +328,150 @@ def test_chained_migration_equals_stepwise_and_split_anywhere(data, mid, end):
     assert rest == whole and rest_steps == list(range(mid, end))
     # idempotent at the target
     assert preferences.migrate(whole, end, TOY) == (whole, [])
+
+
+# -- independent model of merge / replace over an existing state, extras and the item limit ----------------
+
+LIMIT = 4
+NAMES = ["a", "B", "b", "c", "d", "e", "f"]  # "B" and "b" are the same identity
+FAMILIES = [None, "WFM"]
+TREES = [
+    ({"sev": {"le": 2}}, "{sev = {le = 2}}"),
+    ({"tpl": ["A-1"]}, '{tpl = ["A-1"]}'),
+    ({"text": {"substr": "x"}}, '{text = {substr = "x"}}'),
+]
+DESCS = ["", "x", "y"]
+BAD = {"name": "zz", "filter": {"nope_op": 1}}  # a refused item
+
+
+def ident(name, family):
+    return (name.casefold(), family or "")
+
+
+# item = (name, family, desc, tree index, extra or None); a bad item is the string "bad"
+existing_items = st.lists(
+    st.tuples(
+        st.sampled_from(NAMES), st.sampled_from(FAMILIES), st.sampled_from(DESCS),
+        st.integers(0, 2), st.sampled_from([None, "n1", "n2"]),
+    ),
+    max_size=LIMIT,
+    unique_by=lambda t: ident(t[0], t[1]),
+)  # fmt: skip
+incoming_items = st.lists(
+    st.one_of(
+        st.tuples(
+            st.sampled_from(NAMES), st.sampled_from(FAMILIES), st.sampled_from(DESCS),
+            st.integers(0, 2), st.none(),
+        ),
+        st.just("bad"),
+    ),
+    max_size=LIMIT * 2,
+)  # fmt: skip
+
+
+def write_existing(folder: Path, items):
+    lines = ["schema = 1", ""]
+    for name, family, desc, tree, extra in items:
+        lines += ["[[preset]]", f'name = "{name}"']
+        if desc:
+            lines.append(f'description = "{desc}"')
+        if family:
+            lines.append(f'family = "{family}"')
+        lines.append(f"filter = {TREES[tree][1]}")
+        if extra:
+            lines.append(f'note = "{extra}"')
+        lines.append("")
+    (folder / "presets.toml").write_text("\n".join(lines), encoding="utf-8")
+
+
+def to_package_item(item):
+    if item == "bad":
+        return dict(BAD)
+    name, family, desc, tree, _ = item
+    return {"name": name, "description": desc, "family": family, "filter": TREES[tree][0]}
+
+
+def model(existing, incoming, mode, policy):
+    """Reference merge/replace: returns (rejected_section, final list of (name, family, desc, tree, extra),
+    outcomes per incoming item)."""
+    outcomes: list[str] = []
+    seen = set()
+    valid = []
+    for item in incoming:
+        if item == "bad" or ident(item[0], item[1]) in seen:
+            outcomes.append("rejected")
+            continue
+        seen.add(ident(item[0], item[1]))
+        outcomes.append("pending")
+        valid.append(item)
+    any_refused = "rejected" in outcomes
+    if any_refused and (policy == "reject_section" or mode == "replace"):
+        return True, list(existing), outcomes
+    ex = {ident(i[0], i[1]): i for i in existing}
+    result = [] if mode == "replace" else list(existing)
+    over = False
+    for pos, out in enumerate(outcomes):
+        if out != "pending":
+            continue
+        item = incoming[pos]
+        old = ex.get(ident(item[0], item[1]))
+        if old is not None:
+            keep = old[4] if mode == "merge" else None
+            new = (item[0], item[1], item[2], item[3], keep)
+            same = new == old
+            outcomes[pos] = "unchanged" if same else "updated"
+            if mode == "merge":
+                result[result.index(old)] = new
+            else:
+                result.append(new)
+        elif len(result) >= LIMIT:
+            outcomes[pos] = "rejected"
+            over = True
+        else:
+            outcomes[pos] = "added"
+            result.append(item)
+    if over and (policy == "reject_section" or mode == "replace"):
+        return True, list(existing), outcomes
+    return False, result, outcomes
+
+
+def stored(folder: Path):
+    out = []
+    for p in presets.load_user(folder).presets:
+        out.append(
+            (p["name"], p["family"], p["description"], p["filter"], (p.get("extra") or {}).get("note"))
+        )
+    return out
+
+
+@SETTINGS
+@given(
+    existing_items,
+    incoming_items,
+    st.sampled_from(["merge", "replace"]),
+    st.sampled_from(["reject_section", "skip_item"]),
+)
+def test_merge_and_replace_follow_an_independent_model(existing, incoming, mode, policy):
+    from unittest import mock
+
+    small = preferences.PRESETS.__class__(**{**preferences.PRESETS.__dict__, "limit": LIMIT})
+    with fresh() as name, mock.patch.dict(preferences._KINDS, {"presets": small}):
+        folder = Path(name)
+        write_existing(folder, existing)
+        pkg = {"schema": 1, "kind": preferences.KIND, "presets": [to_package_item(i) for i in incoming]}
+        rejected, final, outcomes = model(existing, incoming, mode, policy)
+        before = snap(folder)
+        rep = preferences.import_package(folder, pkg, mode=mode, on_item_error=policy)
+        sec = rep["sections"]["presets"]
+        assert (sec["status"] == "rejected") == rejected
+        got = stored(folder)
+        want = [(n, f, d, TREES[t][0], e) for n, f, d, t, e in final]
+        assert len(got) == len(want) and all(exact(list(g), list(w)) for g, w in zip(got, want, strict=True))
+        assert len(got) <= max(LIMIT, len(existing))
+        if rejected:
+            assert snap(folder) == before  # nothing written, nothing deleted
+            assert all(r["outcome"] in ("rejected", "not_applied") for r in sec["items"])
+        else:
+            assert [r["outcome"] for r in sec["items"]] == outcomes
+            again = preferences.import_package(folder, pkg, mode=mode, on_item_error=policy)
+            assert again["applied"] is False and stored(folder) == got

@@ -42,3 +42,21 @@ def test_sections_and_errors(client):
     assert status == 200 and rep["outcome"] == "rejected" and rep["errors"][0]["code"] == "schema_too_new"
     assert client.request("PUT", "/api/preferences/import")[0] == 405
     assert client.request("POST", "/api/preferences/import", raw=b"x" * (9 * 1024 * 1024))[0] == 413
+
+
+def test_strict_body_over_http(client, server):
+    good = b'{"package": {"schema": 1, "kind": "dmslog-preferences", "presets": []}}'
+    status, rep, _ = client.request("POST", "/api/preferences/import", raw=good)
+    assert status == 200 and rep["outcome"] == "unchanged"
+    bad = [
+        b'{"package": {"schema": 1, "schema": 1, "kind": "dmslog-preferences"}}',
+        b'{"package": {"schema": NaN, "schema": 1, "kind": "dmslog-preferences"}}',
+        b'{"package": {"schema": Infinity, "kind": "dmslog-preferences"}}',
+        good.decode().encode("utf-16"),
+        b"\xef\xbb\xbf" + good,
+        b'{"package": ' + b"[" * 50_000 + b"}",
+    ]
+    for raw in bad:
+        status, err, _ = client.request("POST", "/api/preferences/import", raw=raw)
+        assert status == 400 and err["error"] in ("bad_json", "package_too_complex"), raw[:30]
+    assert not (server.data_dir / "presets.toml").exists()

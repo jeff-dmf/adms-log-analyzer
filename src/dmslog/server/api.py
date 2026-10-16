@@ -73,6 +73,26 @@ MAX_IMPORT_BODY_BYTES = bookmarks.MAX_EXPORT_BYTES + 4 * 1024 * 1024
 _BODY_LIMITS = {"/api/bookmarks/import": MAX_IMPORT_BODY_BYTES}
 
 
+_STRICT_JSON_PATHS = frozenset({"/api/preferences/import"})
+
+
+def decode_body(path: str, raw: bytes) -> Any:
+    """Decode a request body. The preferences import is untrusted data: raw UTF-8 bytes only (no BOM, no
+    UTF-16), limits applied before and while parsing, duplicate keys and NaN/Infinity refused."""
+    if path in _STRICT_JSON_PATHS:
+        try:
+            return preferences.parse_json_bytes(
+                raw, limit=body_limit(path), max_depth=preferences.MAX_DEPTH + 1
+            )
+        except preferences.PreferencesError as exc:
+            status = 413 if exc.code == "package_too_large" else 400
+            raise ApiError(status, exc.code, str(exc)) from None
+    try:
+        return json.loads(raw)
+    except (ValueError, RecursionError):
+        raise ApiError(400, "bad_json", messages.API_BAD_JSON) from None
+
+
 def body_limit(path: str) -> int:
     """Largest request body accepted by a route."""
     return _BODY_LIMITS.get(path, MAX_BODY_BYTES)
