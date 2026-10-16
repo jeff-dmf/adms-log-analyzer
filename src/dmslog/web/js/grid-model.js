@@ -162,3 +162,100 @@ export class RowWindow {
     return this.rows[this.top] || null;
   }
 }
+
+// -- Columns (UI-16) -------------------------------------------------------------------------------------
+
+const KEEP_TAIL = /(?:\.sensitive)?\.log(?:\.\d+)?$/i; // what the middle ellipsis never cuts: .sensitive, .log, .log.N
+export const ELLIPSIS = "…";
+export const BADGE_CHARS = 3;                          // characters of the source cell taken by the "S" badge
+
+// File name cut in the middle to at most `maxChars` characters, keeping the tail (".sensitive.log.0") and the start.
+// maxChars not finite (width not measured, or Infinity) = no cut; 0 or less = "".
+export function middleEllipsis(name, maxChars) {
+  const text = name === null || name === undefined ? "" : String(name);
+  if (typeof maxChars !== "number" || Number.isNaN(maxChars) || maxChars === Infinity) {
+    return text;
+  }
+  const max = Math.floor(maxChars);
+  if (max <= 0) {
+    return "";
+  }
+  if (text.length <= max) {
+    return text;
+  }
+  if (max === 1) {
+    return ELLIPSIS;
+  }
+  const room = max - 1; // characters left around the ellipsis; at least one stays at the start
+  const match = KEEP_TAIL.exec(text);
+  const wanted = match ? match[0].length : Math.floor(room / 3);
+  const tailLen = Math.min(wanted, room - 1);
+  const head = text.slice(0, room - tailLen);
+  const tail = tailLen > 0 ? text.slice(text.length - tailLen) : "";
+  return head + ELLIPSIS + tail;
+}
+
+// True for a source written by the sensitive adapter log (<Process>_<pid>.sensitive.log[.N]).
+export function isSensitiveName(name) {
+  return /\.sensitive\.log(?:\.\d+)?$/i.test(String(name === null || name === undefined ? "" : name));
+}
+
+// The case covers more than one calendar day (wall-clock text, so UTC getters). Missing or non-finite bounds: false.
+export function isMultiDay(range) {
+  if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max)) {
+    return false;
+  }
+  const day = 86400000;
+  return Math.floor(range.min / day) !== Math.floor(range.max / day);
+}
+
+// Time text of a grid cell from the full "YYYY-MM-DD HH:MM:SS.mmm": clock only, or "MM-DD HH:MM:SS.mmm" for a case of several days.
+export function shortTs(full, multiDay) {
+  if (typeof full !== "string" || full.length < 23) {
+    return full === null || full === undefined ? "" : String(full);
+  }
+  return full.slice(multiDay ? 5 : 11);
+}
+
+// Display label of a source for the current width in characters, memoized by source id: the text is cut once per
+// (source, width), never per rendered row. A new width, a new name list or reset() empties the memo.
+export class SourceLabels {
+  constructor() {
+    this.maxChars = Infinity;
+    this.names = new Map();
+    this.cache = new Map();
+    this.computed = 0; // how many labels were really computed (the cache guard of the tests)
+  }
+
+  setNames(names) {
+    this.names = names;
+    this.cache.clear();
+  }
+
+  setMaxChars(value) {
+    const next = typeof value === "number" && !Number.isNaN(value) ? value : Infinity;
+    if (next !== this.maxChars) {
+      this.maxChars = next;
+      this.cache.clear();
+    }
+  }
+
+  // {text, title, sensitive} of a source id; `name` is the base name, undefined when unknown.
+  get(id, baseName) {
+    let label = this.cache.get(id);
+    if (label === undefined) {
+      this.computed += 1;
+      const known = baseName !== undefined;
+      const full = known ? baseName : String(id);
+      const sensitive = known && isSensitiveName(full);
+      const reserved = sensitive ? BADGE_CHARS : 0;
+      const room = this.maxChars === Infinity ? Infinity : this.maxChars - reserved;
+      // The "S" badge already says "sensitive": the cell drops ".sensitive" so the name and pid stay readable in
+      // 20 characters; the title keeps the full name.
+      const shown = sensitive ? full.replace(/\.sensitive(?=\.log)/i, "") : full;
+      label = { text: middleEllipsis(shown, room), full, sensitive };
+      this.cache.set(id, label);
+    }
+    return label;
+  }
+}
