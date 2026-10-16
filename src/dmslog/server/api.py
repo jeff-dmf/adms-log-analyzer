@@ -53,6 +53,7 @@ from ..store import (
     highlights,
     keys,
     payloads,
+    preferences,
     presets,
     query,
     repeats,
@@ -1022,6 +1023,8 @@ class Api:
             ("DELETE", re.compile(r"/api/presets\Z"), self.delete_preset),
             ("GET", re.compile(r"/api/presets/export\Z"), self.export_presets),
             ("POST", re.compile(r"/api/presets/import\Z"), self.import_presets),
+            ("GET", re.compile(r"/api/preferences/export\Z"), self.export_preferences),
+            ("POST", re.compile(r"/api/preferences/import\Z"), self.import_preferences),
         ]
         self._routes += [
             ("GET", re.compile(r"/api/cases/(?P<case>[^/]+)/collections\Z"), self.list_collections),
@@ -2125,6 +2128,28 @@ class Api:
         )
         return Response(200, report)
 
+    # -- versioned preferences package (store/preferences.py, ROADMAP 9.10)
+
+    def export_preferences(self, request: Request) -> Response:
+        """``?sections=presets,alert_rules,redaction`` (default all): package, canonical text, warnings."""
+        raw = request.query.get("sections")
+        try:
+            out = preferences.export_package(self.data_dir, raw.split(",") if raw else None)
+        except preferences.PreferencesError as exc:
+            raise ApiError(400, exc.code, str(exc)) from None
+        return Response(200, out)
+
+    def import_preferences(self, request: Request) -> Response:
+        """Body: ``{"package": <object or JSON text>, "dry_run": bool, "mode": "merge"|"replace",
+        "on_item_error": "reject_section"|"skip_item"}``; the answer is the import report."""
+        body = request.read_body()
+        options = {k: body[k] for k in ("dry_run", "mode", "on_item_error") if k in body}
+        try:
+            report = preferences.import_package(self.data_dir, body.get("package"), **options)
+        except preferences.PreferencesError as exc:
+            raise ApiError(400, exc.code, str(exc)) from None
+        return Response(500 if report["outcome"] == "failed" else 200, report)
+
     # -- collections of a case (U21; store/collections.py has the contract)
 
     def list_collections(self, request: Request) -> Response:
@@ -2481,6 +2506,7 @@ _PRESET_STATUS = {
     "builtin": 403, "import_too_large": 413, "file_invalid": 409, "file_too_large": 409, "save_failed": 500,
 }  # fmt: skip
 _BODY_LIMITS["/api/presets/import"] = presets.MAX_IMPORT_BYTES
+_BODY_LIMITS["/api/preferences/import"] = preferences.MAX_PACKAGE_BYTES + 64 * 1024
 
 
 # --------------------------------------------------------------------------- local alerts (9.13)
