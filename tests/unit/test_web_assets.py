@@ -270,6 +270,9 @@ def _node_ok():
     return node
 
 
+NODE_TEST_TIMEOUT_S = 900
+
+
 @pytest.mark.parametrize("zone", ["UTC", "America/Sao_Paulo", "Asia/Kolkata"])
 def test_node_unit_tests_pass_in_any_time_zone(zone):
     node = _node_ok()
@@ -280,12 +283,13 @@ def test_node_unit_tests_pass_in_any_time_zone(zone):
     test_files = sorted(str(path) for path in (ROOT / "tests" / "web").glob("*.test.mjs"))
     assert test_files, "no Node test files found"
     result = subprocess.run(
-        [node, "--test", *test_files],
+        [node, "--test", "--test-concurrency=4", *test_files],  # 3 zones may run at once under xdist
         capture_output=True,
         text=True,
         encoding="utf-8",
         env=env,
         check=False,
+        timeout=NODE_TEST_TIMEOUT_S,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
