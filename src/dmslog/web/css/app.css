@@ -563,6 +563,11 @@ mark {
     color: HighlightText;
   }
 
+  /* The S badge keeps its author border under forced-color-adjust: none; draw it in the text color of the row. */
+  .grid-row.selected .col-source[data-badge]::before {
+    border-color: HighlightText;
+  }
+
   .grid-row.selected mark {
     background: HighlightText;
     color: Highlight;

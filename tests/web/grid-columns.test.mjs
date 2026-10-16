@@ -9,13 +9,15 @@ function fakeElement() {
     style: {}, dataset: {}, children: [], hidden: false, clientHeight: 66, scrollTop: 0, className: "", attrs, title: "",
     classList: { toggle() {}, add() {}, remove() {} },
     addEventListener() {}, appendChild(c) { this.children.push(c); return c; },
-    setAttribute(k, v) { attrs[k] = String(v); }, focus() {},
+    setAttribute(k, v) { attrs[k] = String(v); }, removeAttribute(k) { delete attrs[k]; }, focus() {},
     set textContent(v) { this.children = []; this._t = v; }, get textContent() { return this._t || ""; },
   };
   return el;
 }
 globalThis.document = { createElement: fakeElement, createTextNode: (text) => ({ textContent: String(text) }) };
 
+const { probeCharWidth } = await import("../../src/dmslog/web/js/column-resize.js");
+const colModel = await import("../../src/dmslog/web/js/column-resize-model.js");
 const model = await import("../../src/dmslog/web/js/grid-model.js");
 const { Grid } = await import("../../src/dmslog/web/js/grid.js");
 const { api } = await import("../../src/dmslog/web/js/api.js");
@@ -225,4 +227,103 @@ test("grid: fit on Source measures the whole names and then cuts them again", as
   const cut = rowsLayer.children[0].children.find((c) => c.className.includes("col-source")).textContent;
   assert.ok(cut.includes("\u2026"));
   assert.ok(rowsLayer.children.length > 0);
+});
+
+test("grid: a sensitive Source cell has an accessible name with the full name and the sensitive state, and loses it when reused", async () => {
+  const { grid, rowsLayer } = makeGrid(8);
+  const names = new Map([[1, "/x/AVLAdapter_1022.sensitive.log.0"], [2, "C:\\logs\\Short.log"]]);
+  await loaded(grid, null, names);
+  const cell = (row) => row.children.find((c) => c.className.includes("col-source"));
+  const [first, second] = rowsLayer.children;
+  assert.equal(cell(first).attrs["aria-label"], "AVLAdapter_1022.sensitive.log.0 (" + S.sourceSensitive + ")");
+  assert.equal(cell(second).attrs["aria-label"], undefined);
+  // the pooled cell is reused for a normal source: the label must not stay
+  grid.setSourceNames(new Map([[1, "/x/Other.log"], [2, "C:\\logs\\Short.log"]]));
+  grid.render();
+  assert.equal(cell(rowsLayer.children[0]).attrs["aria-label"], undefined);
+  assert.equal(cell(rowsLayer.children[0]).dataset.badge, undefined);
+});
+
+test("grid: the date of a multi-day case comes from the whole case, not from the filtered range", async () => {
+  const { grid } = makeGrid();
+  const filtered = { min: T, max: T + 1000 };
+  const whole = { min: T, max: T + 3 * 86400000 };
+  await loaded(grid, filtered, new Map());
+  await grid.setView({ caseId: "M", filter: null, range: filtered, caseRange: whole });
+  assert.equal(grid.multiDay, true);
+  assert.equal(grid.resizer.model.get("ts"), 18 * 8 + 9);
+  // widening the filter later changes nothing
+  await grid.setView({ caseId: "M", filter: null, range: whole, caseRange: whole });
+  assert.equal(grid.resizer.model.get("ts"), 18 * 8 + 9);
+  // a one-day case with a one-day filter stays one day
+  const other = makeGrid();
+  await loaded(other.grid, filtered, new Map());
+  await other.grid.setView({ caseId: "N", filter: null, range: filtered, caseRange: filtered });
+  assert.equal(other.grid.multiDay, false);
+  // the multi-day Source default is narrower, so Message keeps its room
+  assert.equal(grid.resizer.model.get("source"), 16 * 8 + 9);
+  assert.equal(other.grid.resizer.model.get("source"), 20 * 8 + 9);
+});
+
+test("Message keeps at least 60 characters at 1600 px with the Collection column, also for a multi-day case", () => {
+  const keys = ["ts", "pid", "tid", "level", "source", "collection", "msg"];
+  for (const multiDay of [false, true]) {
+    const chars = colModel.messageChars(1600, keys, { charPx: 7.2, multiDay });
+    assert.ok(chars >= 60, `multiDay=${multiDay}: ${chars}`);
+  }
+  assert.equal(colModel.messageChars(0, keys), 0);
+  assert.equal(colModel.messageChars(NaN, keys), 0);
+  assert.equal(colModel.messageChars(300, keys), 0);
+  // with the nominal character for a failed measurement (0, NaN)
+  assert.equal(colModel.messageChars(1600, keys, { charPx: 0, multiDay: true }), colModel.messageChars(1600, keys, { multiDay: true }));
+  // the multi-day source default is what pays for the date: without it the target is missed
+  const without = colModel.messageChars(1600, keys.filter((k) => k !== "source"), { multiDay: true });
+  assert.ok(without > 60);
+});
+
+function layoutNode() {
+  const node = { children: [], attrs: {}, className: "", _t: "", removed: false };
+  node.setAttribute = (k, v) => { node.attrs[k] = v; };
+  node.appendChild = (c) => { node.children.push(c); return c; };
+  node.remove = () => { node.removed = true; };
+  node.getBoundingClientRect = () => ({ width: node.width });
+  return node;
+}
+
+test("probeCharWidth: width of 40 characters divided by 40, null without layout, and the probe row is removed", () => {
+  const saved = globalThis.document;
+  try {
+    for (const [width, expected] of [[320, 8], [0, null], [NaN, null], [-5, null], [undefined, null]]) {
+      const made = [];
+      globalThis.document = { createElement: () => { const n = layoutNode(); n.width = width; made.push(n); return n; } };
+      const layer = layoutNode();
+      assert.equal(probeCharWidth(layer), expected, String(width));
+      assert.equal(made[0].removed, true, "the hidden row is taken out of the grid");
+      assert.equal(made[1].textContent, "0".repeat(40));
+    }
+    assert.equal(probeCharWidth(null), null);
+    assert.equal(probeCharWidth({}), null);
+    globalThis.document = { createElement: fakeElement }; // no layout engine (no getBoundingClientRect)
+    assert.equal(probeCharWidth(layoutNode()), null);
+  } finally {
+    globalThis.document = saved;
+  }
+});
+
+test("grid: a font that finishes loading measures the character again and re-applies the widths", () => {
+  const saved = globalThis.document.fonts;
+  const listeners = {};
+  globalThis.document.fonts = { addEventListener(type, fn) { listeners[type] = fn; } };
+  try {
+    const { grid } = makeGrid(8);
+    assert.equal(typeof listeners.loadingdone, "function", "the grid listens for loadingdone");
+    grid.resizer.measureProbe = () => 9;
+    listeners.loadingdone();
+    assert.equal(grid.resizer.model.get("pid"), 6 * 9 + 9);
+    grid.resizer.measureProbe = () => null; // a failed re-measure changes nothing
+    listeners.loadingdone();
+    assert.equal(grid.resizer.model.get("pid"), 6 * 9 + 9);
+  } finally {
+    globalThis.document.fonts = saved;
+  }
 });

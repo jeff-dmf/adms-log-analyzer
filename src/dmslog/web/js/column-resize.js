@@ -40,9 +40,11 @@ export class ColumnResizer {
   }
 
   // Default width in ch of one column (the time column of a multi-day case); re-applies the widths.
-  setDefaultCh(key, ch) {
+  setDefaultCh(key, ch, apply = true) {
     this.model.setDefaultCh(key, ch);
-    this.apply();
+    if (apply) {
+      this.apply();
+    }
   }
 
   // Called when the header is rebuilt.

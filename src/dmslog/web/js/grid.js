@@ -11,7 +11,7 @@ import { markerLabel } from "./bookmarks-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
-import { CELL_PAD_PX, TS_CH_MULTIDAY } from "./column-resize-model.js";
+import { CELL_PAD_PX, SOURCE_CH_MULTIDAY, TS_CH_MULTIDAY } from "./column-resize-model.js";
 
 export const COLUMNS = [
   { key: "ts", label: () => S.columnTs },
@@ -296,7 +296,8 @@ export class Grid {
       return;
     }
     this.multiDay = next;
-    this.resizer.setDefaultCh("ts", next ? TS_CH_MULTIDAY : null);
+    this.resizer.setDefaultCh("ts", next ? TS_CH_MULTIDAY : null, false);
+    this.resizer.setDefaultCh("source", next ? SOURCE_CH_MULTIDAY : null);
     this.render();
   }
 
@@ -327,8 +328,10 @@ export class Grid {
 
   // -- loading ------------------------------------------------------------------------------
 
-  async setView({ caseId, filter, range }) {
-    this.setMultiDay(isMultiDay(range) || (caseId === this.caseId && this.multiDay));
+  // `range`: time span of the filtered view; `caseRange`: span of the whole case, which decides the time column (the
+  // restored filter of one day must not hide the date of a multi-day case). Without it the view range is used.
+  async setView({ caseId, filter, range, caseRange }) {
+    this.setMultiDay(isMultiDay(caseRange === undefined ? range : caseRange) || (caseId === this.caseId && this.multiDay));
     this.caseId = caseId;
     this.filter = filter;
     this.range = range;
@@ -669,8 +672,11 @@ export class Grid {
       cells.source.title = label.sensitive ? label.full + " (" + S.sourceSensitive + ")" : label.full;
       if (label.sensitive) {
         cells.source.dataset.badge = S.gridSensitiveBadge;
+        // The visible text omits ".sensitive" (the S badge is a CSS pseudo-element): name the state for screen readers.
+        cells.source.setAttribute("aria-label", cells.source.title);
       } else {
         delete cells.source.dataset.badge;
+        cells.source.removeAttribute("aria-label");
       }
     }
     if (cells.collection) {

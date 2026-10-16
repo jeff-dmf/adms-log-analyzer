@@ -14,6 +14,10 @@ const MAX_STORED = 200;           // entries kept in storage (dynamic field colu
 // Windows and Linux, the text of the column does not. Widths the user dragged are stored in px and win over these.
 export const DEFAULT_CH = { ts: 12, pid: 6, tid: 6, level: 9, source: 20, collection: 5 };
 export const TS_CH_MULTIDAY = 18;  // "MM-DD HH:MM:SS.mmm", used when the case covers more than one day
+export const SOURCE_CH_MULTIDAY = 16; // the wider time column is paid by Source (its middle ellipsis keeps the tail)
+// Layout of the page at the acceptance size (css/tokens.css, css/app.css): sources panel, detail panel, grid panel
+// padding (2 x --space-3) and border, viewport border (2 px) and the vertical scrollbar.
+export const LAYOUT_PX = { side: 248, detail: 380, panelChrome: 17, viewportBorder: 2, scrollbar: 15 };
 export const NOMINAL_CHAR_PX = 7.2; // 12px mono; the real value is measured by the DOM layer
 export const CELL_PAD_PX = 8;       // 2 x --cell-pad
 const DEFAULT_PX = { msg: 300 };
@@ -29,6 +33,24 @@ export function defaultWidth(key, charPx = NOMINAL_CHAR_PX, chOverride = null) {
     return Math.ceil(ch * px) + CELL_PAD_PX + 1; // ceil + 1px: the text of `ch` characters must never be cut
   }
   return Object.prototype.hasOwnProperty.call(DEFAULT_PX, key) ? DEFAULT_PX[key] : FIELD_DEFAULT;
+}
+
+// Characters that fit in the Message column (the flexible one) for a page `viewportWidth` px wide with the default
+// widths of `keys` (all but "msg"). Not a positive finite number for the page or the character = 0.
+export function messageChars(viewportWidth, keys, { charPx = NOMINAL_CHAR_PX, multiDay = false } = {}) {
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
+    return 0;
+  }
+  const chOverride = new Map();
+  if (multiDay) {
+    chOverride.set("ts", TS_CH_MULTIDAY);
+    chOverride.set("source", SOURCE_CH_MULTIDAY);
+  }
+  const px = Number.isFinite(charPx) && charPx > 0 ? charPx : NOMINAL_CHAR_PX;
+  const { side, detail, panelChrome, viewportBorder, scrollbar } = LAYOUT_PX;
+  const room = viewportWidth - side - detail - panelChrome - viewportBorder - scrollbar;
+  const fixed = keys.filter((k) => k !== "msg").reduce((sum, k) => sum + defaultWidth(k, px, chOverride), 0);
+  return Math.max(0, Math.floor((room - fixed - CELL_PAD_PX) / px));
 }
 
 export function clampWidth(value, min = MIN_WIDTH, max = MAX_WIDTH) {
