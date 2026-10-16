@@ -1,4 +1,4 @@
-"""Comparison of two views of a case by their sequence of message types (ARQUITETURA 10.9, ROADMAP 9.7).
+"""Comparison of two views of a case by their sequence of message types (ARQUITETURA 10.10, ROADMAP 9.7).
 
 Two **sides**, A and B, are two sets of records of the same case. Each side is the common ``filter`` (the
 view's final filter, chained views already resolved by the client) ANDed with the side's own selector,

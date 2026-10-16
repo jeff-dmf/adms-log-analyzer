@@ -526,7 +526,7 @@ AGGREGATE_CSV_LOOKUPS = {
     "error.reason": "Error reason (pack)", "error.severity": "Error severity (pack)",
     "operation.direction": "Operation direction (pack)", "operation.service": "Operation service (pack)",
 }  # fmt: skip
-# Comparison of views by message type (store/viewcompare.py, POST /api/entries/compare; ARQUITETURA 10.9).
+# Comparison of views by message type (store/viewcompare.py, POST /api/entries/compare; ARQUITETURA 10.10).
 COMPARE_ERRORS = {
     "bad_type": "expected {expected}",
     "bad_mode": "mode must be one of {modes}",

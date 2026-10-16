@@ -2395,7 +2395,7 @@ class Api:
         }
         return Download("text/csv; charset=utf-8", iter([text.encode("utf-8")]), headers)
 
-    # -- comparison of views by message type (store/viewcompare.py; ARQUITETURA 10.9)
+    # -- comparison of views by message type (store/viewcompare.py; ARQUITETURA 10.10)
 
     def entries_compare(self, request: Request) -> Response:
         """``{case, mode, filter, a, b, max_side, offset, limit, only_diff}``: runs of the alignment of the

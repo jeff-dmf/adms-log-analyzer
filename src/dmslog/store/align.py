@@ -1,4 +1,4 @@
-"""Alignment of two token sequences for the comparison of views (ARQUITETURA 10.9, ROADMAP 9.7).
+"""Alignment of two token sequences for the comparison of views (ARQUITETURA 10.10, ROADMAP 9.7).
 
 :func:`align` returns the matched positions of a longest common subsequence (LCS) of two sequences of
 hashable tokens (template codes, in :mod:`store.viewcompare`). It is pure, deterministic and bounded:
@@ -34,7 +34,7 @@ from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
 from itertools import accumulate
 
-# Work budgets (deterministic counters; times measured in ARQUITETURA 10.9).
+# Work budgets (deterministic counters; times measured in ARQUITETURA 10.10).
 ALIGN_WORK = 300_000  # Myers steps (about 0.06 s of CPython): enough when the sides barely differ
 BIT_WORK = 20_000_000  # bit-parallel rows x 64-bit words: 20,000 x 20,000 tokens needs about 15 million
 FALLBACK_WORK = 2_000_000
