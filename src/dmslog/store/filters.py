@@ -21,6 +21,8 @@ Grammar (each node is an object with exactly one key)::
                               |"root": strs, "orphan": bool}}
                | {"collection": ids}        (collection GROUP ids: one ERS capture, folder or file; U21)
                | {"repeat": {"window_ms": int, "fields": [field_name, ...], "tid": bool}}   (keys optional)
+               | {"extract": {"regex": str, "group": name, "eq": str | int | float | null,
+                              "target": "msg" | "text", "type": str}}   (target and type optional)
     ids       := int | [int, ...]
     strs      := str | [str, ...]
     tpls      := (str code | int id) | [...]
@@ -58,6 +60,11 @@ budget for a search, ``parse.templates.compile_search_regex``); no flags, groups
 ``window_ms`` (default 1000) looking back (ROADMAP 9.12; definition and limits in :mod:`repeats`). It is a
 correlated lookup per row (``ix_entry_tpl_ts``), so like ``text.substr`` it should be paired with a
 source or time scope; ``{"not": {"repeat": {}}}`` hides the repeats.
+
+``extract`` keeps the records where a named group of an ad hoc extraction regex has the value ``eq``
+(``null``: no match, or the group took no part); the regex grammar, its window and the conversion
+``type`` are those of ``store/extract.py`` (ROADMAP 9.8). It runs the regex on every row through the SQL
+function ``dmslog_extract``, so like ``text.regex`` it counts as a regex scan (``uses_regex``).
 
 ``compile_filter(tree, rowwise=True)`` writes the set conditions (``text.fts``, ``key``, ``payload``,
 ``event_status``) as correlated ``EXISTS`` lookups of the current row instead of ``e.id IN (set)``:
@@ -686,6 +693,15 @@ class _Compiler:
         self.bind(*params)
         return sql
 
+    def extract(self, arg: Any, path: str) -> str:
+        """Ad hoc extraction value (ROADMAP 9.8, :mod:`extract`); a per-row function, like text.regex."""
+        from .extract import leaf_sql  # extract imports this module
+
+        sql, params = leaf_sql(arg, path)
+        self.uses_regex = True
+        self.bind(*params)
+        return sql
+
     def payload(self, arg: Any, path: str) -> str:
         if not isinstance(arg, dict):
             raise FilterError("bad_type", path, expected="an object of payload attributes")
@@ -798,6 +814,7 @@ _LEAVES = {
     "collection": _Compiler.collection,
     "field": _Compiler.field,
     "repeat": _Compiler.repeat,
+    "extract": _Compiler.extract,
     "event_name": lambda compiler, arg, path: compiler.event_attr("name", arg, path),
     "event_kind": lambda compiler, arg, path: compiler.event_attr("kind", arg, path),
 }
