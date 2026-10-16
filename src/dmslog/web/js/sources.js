@@ -4,7 +4,7 @@ import { takeCases, takeSources } from "./prefetch.js";
 import { filterSources, highlightParts, isFiltering } from "./source-filter-model.js";
 import { refusalResult } from "./case-files-model.js";
 import { setFieldError } from "./field-error.js";
-import { S, format, pluralKey } from "./strings.js";
+import { S, countNoun, format, pluralKey } from "./strings.js";
 
 export function conflictMessage(error) {
   const key = "conflict_" + error.code;
@@ -28,6 +28,18 @@ export class SourcesPanel {
     this.addFiles = null; // set by main.js: the "add files to this case" list (case-files.js, mode "add")
     this.queueBusy = false; // the files of a new case are being opened: case switch and Open form are blocked
     this.waiter = null; // {jobId, caseId, resolve, seen}: a runCollection() waiting for its job's done event
+    this.caseNames = new Map(); // case id -> name, for the fixed case header
+    this.rows = new Map(); // source id -> {li, box, label, text, name, meta, mark, badge, sig}: the rows on screen
+    this.order = []; // source ids in the order of the rows on screen
+    this.emptyNode = null; // the "no sources" / "no match" line, when shown
+    this.tabStop = null; // id of the row whose checkbox is the list's one tab stop (roving tabindex)
+    this.showNewCase = false; // the "new case" form is open although a case is
+    this.showAdd = false; // the "add files" / path form is open although a case is
+    this.settled = false; // the first selectCase() ran: until then the forms stay hidden, so the column does not jump
+    this.menuReady = null; // promise of the case menu (ui-menu.js loads on first use)
+    this.loadMenu = () => import("./ui-menu.js"); // replaced by tests
+    this.bindList();
+    this.bindHeader();
     refs.caseSelect.addEventListener("change", () => {
       if (this.queueBusy) {
         refs.caseSelect.value = this.caseId || "";
@@ -47,6 +59,95 @@ export class SourcesPanel {
       event.preventDefault();
       this.openCollection();
     });
+    this.applyLayout();
+  }
+
+  // -- case header and layout ----------------------------------------------------------------
+
+  bindHeader() {
+    const { caseAddFiles, caseMenu } = this.refs;
+    if (caseAddFiles) {
+      caseAddFiles.setAttribute("aria-expanded", "false");
+      caseAddFiles.addEventListener("click", () => (this.showAdd ? this.hideAdd() : this.revealAddFiles()));
+    }
+    if (caseMenu) {
+      caseMenu.addEventListener("click", (event) => this.openCaseMenu(event));
+    }
+  }
+
+  // With a case open the side column shows its fixed header and the sources; the forms to create a case or add
+  // files appear on demand (Add files…, the ⋯ menu). Without a case everything stays as it was.
+  applyLayout() {
+    const refs = this.refs;
+    const open = this.caseId !== null;
+    if (!refs.caseHeader) {
+      return;
+    }
+    refs.caseHeader.hidden = !open;
+    if (refs.caseHeaderName) {
+      refs.caseHeaderName.textContent = open ? this.caseNames.get(this.caseId) || "" : "";
+      refs.caseHeaderName.title = refs.caseHeaderName.textContent;
+    }
+    if (refs.caseRow) {
+      refs.caseRow.hidden = open;
+    }
+    refs.newCaseForm.hidden = !this.settled || (open && !this.showNewCase);
+    refs.openForm.hidden = !this.settled || (open && !this.showAdd);
+    if (refs.caseAddFiles) {
+      refs.caseAddFiles.setAttribute("aria-expanded", open && this.showAdd ? "true" : "false");
+    }
+  }
+
+  revealNewCase() {
+    this.showNewCase = true;
+    this.applyLayout();
+    if (this.refs.newCaseName && !this.refs.newCaseForm.hidden) {
+      this.refs.newCaseName.focus();
+    }
+  }
+
+  revealAddFiles(focusPath = false) {
+    this.showAdd = true;
+    this.applyLayout();
+    const host = this.refs.addFilesHost;
+    const inner = host && !host.hidden && typeof host.querySelector === "function" ? host.querySelector("button, input") : null;
+    const target = focusPath || !inner ? this.refs.pathInput : inner;
+    if (target) {
+      target.focus();
+    }
+  }
+
+  hideAdd() {
+    this.showAdd = false;
+    this.applyLayout();
+    if (this.refs.caseAddFiles) {
+      this.refs.caseAddFiles.focus(); // the form that held the focus is gone
+    }
+  }
+
+  caseMenuItems() {
+    return [
+      { id: "case-new", label: S.caseMenuNew, run: () => this.revealNewCase() },
+      { id: "case-open-path", label: S.caseMenuOpenPath, run: () => this.revealAddFiles(true) },
+    ];
+  }
+
+  // The first click loads ui-menu.js, builds the menu and opens it; once built, the menu toggles itself on click.
+  openCaseMenu(event) {
+    if (this.menuReady) {
+      return;
+    }
+    const where = event && event.detail === 0 ? "first" : null; // keyboard: first item; pointer: the menu itself
+    const trigger = this.refs.caseMenu;
+    this.menuReady = this.loadMenu().then((mod) => {
+      const menu = mod.createMenu({ trigger, getItems: () => this.caseMenuItems(), label: S.caseMenuLabel });
+      menu.open(where);
+      return menu;
+    });
+    this.menuReady.catch((err) => {
+      this.menuReady = null; // a failed load is tried again on the next click
+      this.handlers.onMessage(err && err.message ? err.message : String(err), true);
+    });
   }
 
   // -- cases --------------------------------------------------------------------------------
@@ -63,6 +164,7 @@ export class SourcesPanel {
     none.value = "";
     none.textContent = S.caseNone;
     select.appendChild(none);
+    this.caseNames = new Map(data.cases.map((item) => [item.id, item.name]));
     for (const item of data.cases) {
       const option = document.createElement("option");
       option.value = item.id;
@@ -101,10 +203,19 @@ export class SourcesPanel {
       this.cancelWaiter(S.cfCaseChanged);
     }
     this.closeEvents();
-    if (this.addFiles && caseId !== this.caseId) {
-      this.addFiles.state.resetResults(); // results belong to the case they were opened in
+    if (caseId !== this.caseId) {
+      if (this.addFiles) {
+        this.addFiles.state.resetResults(); // results belong to the case they were opened in
+      }
+      this.resetRows(); // source ids are per case: no row of the old case is reused
+      if (!this.queueBusy) {
+        this.showNewCase = false; // a case being created keeps its form (and its results) in view
+        this.showAdd = false;
+      }
     }
     this.caseId = caseId;
+    this.settled = true;
+    this.applyLayout();
     this.selected.clear();
     this.refs.caseSelect.value = caseId || "";
     this.handlers.onCase(caseId);
@@ -118,6 +229,8 @@ export class SourcesPanel {
         return;
       }
       let boundCase = null;
+      this.showNewCase = true; // the form holds the progress, the per-file results and Retry: it stays in view
+      this.applyLayout();
       this.setQueueBusy(true);
       try {
         await this.caseFiles.submit({
@@ -210,99 +323,278 @@ export class SourcesPanel {
     this.renderSources();
   }
 
-  // Keyboard: from the filter box into the list, and Enter in the box toggles the first match.
+  // Keyboard: from the filter box into the list (the list has one tab stop), and Enter in the box toggles the first match.
   focusList() {
-    const box = this.refs.sourceList.querySelector("input[type=checkbox]");
-    if (box) {
-      box.focus();
+    const row = this.rows.get(this.stopId());
+    if (row) {
+      row.box.focus();
     }
   }
 
   toggleFirst() {
-    const box = this.refs.sourceList.querySelector("input[type=checkbox]");
-    if (box) {
-      box.click();
+    const row = this.rows.get(this.order[0]);
+    if (row) {
+      row.box.click();
     }
   }
 
-  renderSources() {
+  // -- the list: rows reconciled by source id -----------------------------------------------
+
+  // The id of the row a node of the list belongs to (the checkbox carries it), or null.
+  idOf(node) {
+    if (!node || !node.dataset || node.dataset.sourceId === undefined) {
+      return null;
+    }
+    const id = Number(node.dataset.sourceId);
+    return Number.isFinite(id) && this.rows.has(id) ? id : null;
+  }
+
+  // One listener per kind on the <ul>, never one per row.
+  bindList() {
     const list = this.refs.sourceList;
-    list.textContent = "";
-    if (this.sources.length === 0) {
-      const empty = document.createElement("li");
-      empty.className = "empty";
-      empty.textContent = S.sourcesEmpty;
-      list.appendChild(empty);
-      this.notifyRendered(0, 0);
-      return;
-    }
-    const shown = filterSources(this.sources, this.query);
-    if (shown.length === 0) {
-      const empty = document.createElement("li");
-      empty.className = "empty";
-      empty.textContent = S.sourceFilterNone;
-      list.appendChild(empty);
-    }
-    this.notifyRendered(shown.length, this.sources.length);
-    for (const { source, name: fileName, range } of shown) {
-      const item = document.createElement("li");
-      const label = document.createElement("label");
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.checked = this.selected.has(source.id);
-      box.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
+    list.addEventListener("change", (event) => {
+      const id = this.idOf(event.target);
+      if (id === null) {
+        return;
+      }
+      if (event.target.checked) {
+        this.selected.add(id);
+      } else {
+        this.selected.delete(id);
+      }
+      this.handlers.onSelection(this.selectedIds());
+    });
+    list.addEventListener("keydown", (event) => {
+      const id = this.idOf(event.target);
+      if (id === null) {
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.target.click();
+      } else if (event.key === "Escape" && this.refs.filterInput) {
+        this.refs.filterInput.focus();
+      } else {
+        const next = listKeyTarget(this.order, id, event.key);
+        if (next !== null) {
           event.preventDefault();
-          box.click();
-        } else if (event.key === "Escape" && this.refs.filterInput) {
-          this.refs.filterInput.focus();
+          this.rows.get(next).box.focus();
         }
-      });
-      box.addEventListener("change", () => {
-        if (box.checked) {
-          this.selected.add(source.id);
-        } else {
-          this.selected.delete(source.id);
-        }
-        this.handlers.onSelection(this.selectedIds());
-      });
-      const text = document.createElement("span");
-      text.className = "source-text";
-      const name = document.createElement("span");
-      name.className = "source-name";
-      if (isFiltering(this.query)) {
+      }
+    });
+    list.addEventListener("focusin", (event) => {
+      const id = this.idOf(event.target);
+      if (id !== null && id !== this.tabStop) {
+        this.tabStop = id;
+        this.syncTabStops();
+      }
+    });
+  }
+
+  stopId() {
+    return this.rows.has(this.tabStop) ? this.tabStop : this.order.length > 0 ? this.order[0] : null;
+  }
+
+  // Roving tabindex: exactly one checkbox of the list is in the Tab order.
+  syncTabStops() {
+    const stop = this.stopId();
+    for (const [id, row] of this.rows) {
+      const want = id === stop ? "0" : "-1";
+      if (row.box.getAttribute("tabindex") !== want) {
+        row.box.setAttribute("tabindex", want);
+      }
+    }
+  }
+
+  resetRows() {
+    this.refs.sourceList.textContent = "";
+    this.rows = new Map();
+    this.order = [];
+    this.emptyNode = null;
+    this.tabStop = null;
+  }
+
+  makeRow(id) {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.dataset.sourceId = String(id);
+    const text = document.createElement("span");
+    text.className = "source-text";
+    const name = document.createElement("span");
+    name.className = "source-name";
+    const count = document.createElement("span");
+    count.className = "source-count";
+    count.setAttribute("aria-hidden", "true"); // the meta line below says it in full
+    const meta = document.createElement("span");
+    meta.className = "source-meta visually-hidden"; // screen readers and the tooltip: family, pid and records
+    text.appendChild(name);
+    text.appendChild(count);
+    text.appendChild(meta);
+    label.appendChild(box);
+    label.appendChild(text);
+    li.appendChild(label);
+    return { li, label, box, text, name, count, meta, mark: null, badge: null, sig: null };
+  }
+
+  // Writes what the row says now; a node is touched only when its text changed.
+  updateRow(row, entry) {
+    const { source, name: fileName, range } = entry;
+    const checked = this.selected.has(source.id);
+    if (row.box.checked !== checked) {
+      row.box.checked = checked;
+    }
+    const filtering = isFiltering(this.query);
+    const sig = fileName + "\u0000" + (filtering ? range.start + ":" + range.end : "");
+    if (row.sig !== sig) {
+      row.sig = sig;
+      row.name.textContent = "";
+      if (filtering) {
         for (const part of highlightParts(fileName, range)) {
           if (part.match) {
             const mark = document.createElement("mark");
             mark.textContent = part.text;
-            name.appendChild(mark);
+            row.name.appendChild(mark);
           } else {
-            name.appendChild(document.createTextNode(part.text));
+            row.name.appendChild(document.createTextNode(part.text));
           }
         }
       } else {
-        name.textContent = fileName;
+        row.name.textContent = fileName;
       }
-      name.title = source.name;
-      const meta = document.createElement("span");
-      meta.className = "source-meta";
-      meta.textContent = format(S[pluralKey("sourceMeta", source.records)], {
-        family: source.family === null || source.family === undefined ? "" : source.family,
-        pid: source.pid === null || source.pid === undefined ? "-" : source.pid,
-        records: Number(source.records).toLocaleString("en-US"),
-      });
-      text.appendChild(name);
-      text.appendChild(meta);
-      label.appendChild(box);
-      label.appendChild(text);
-      if (source.sensitive) {
-        const badge = document.createElement("span");
-        badge.className = "badge";
-        badge.textContent = S.sourceSensitive;
-        label.appendChild(badge);
+    }
+    if (row.name.title !== source.name) {
+      row.name.title = source.name;
+    }
+    const meta = sourceMeta(source);
+    if (row.meta.textContent !== meta) {
+      row.meta.textContent = meta;
+      row.label.title = meta; // the family and pid do not fit on the one line
+    }
+    const count = safeCount(source.records).toLocaleString("en-US");
+    if (row.count.textContent !== count) {
+      row.count.textContent = count;
+    }
+    const unreadable = isUnreadable(source);
+    if (unreadable) {
+      if (!row.mark) {
+        row.mark = document.createElement("span");
+        row.mark.className = "source-unreadable";
+        row.mark.textContent = "!";
+        row.mark.setAttribute("role", "img");
+        row.mark.setAttribute("aria-label", S.sourceUnreadable);
+        row.label.insertBefore(row.mark, row.text);
       }
-      item.appendChild(label);
-      list.appendChild(item);
+      const title = unreadableTitle(source);
+      if (row.mark.title !== title) {
+        row.mark.title = title;
+      }
+    } else if (row.mark) {
+      row.mark.remove();
+      row.mark = null;
+    }
+    const rowClass = unreadable ? "is-unreadable" : "";
+    if (row.li.className !== rowClass) {
+      row.li.className = rowClass;
+    }
+    if (source.sensitive && !row.badge) {
+      row.badge = document.createElement("span");
+      row.badge.className = "badge";
+      row.badge.textContent = S.sourceSensitive;
+      row.label.appendChild(row.badge);
+    } else if (!source.sensitive && row.badge) {
+      row.badge.remove();
+      row.badge = null;
+    }
+  }
+
+  syncEmpty(text) {
+    const list = this.refs.sourceList;
+    if (text === null) {
+      if (this.emptyNode) {
+        this.emptyNode.remove();
+        this.emptyNode = null;
+      }
+      return;
+    }
+    if (!this.emptyNode) {
+      this.emptyNode = document.createElement("li");
+      this.emptyNode.className = "empty";
+      list.appendChild(this.emptyNode);
+    }
+    if (this.emptyNode.textContent !== text) {
+      this.emptyNode.textContent = text;
+    }
+  }
+
+  // Same set of sources: only the texts that changed are written. A different set: only the rows that left are
+  // removed and only the new ones inserted, so the focus, the scroll and the checkboxes of the others stay.
+  renderSources() {
+    const list = this.refs.sourceList;
+    const shown = this.sources.length === 0 ? [] : filterSources(this.sources, this.query);
+    const entries = [];
+    const seen = new Set();
+    for (const entry of shown) {
+      if (!seen.has(entry.source.id)) { // an id twice would be one row
+        seen.add(entry.source.id);
+        entries.push(entry);
+      }
+    }
+    const nextIds = entries.map((entry) => entry.source.id);
+    this.notifyRendered(shown.length, this.sources.length);
+
+    const active = typeof document !== "undefined" ? document.activeElement : null;
+    const focusedId = this.idOf(active);
+    const plan = diffIds(this.order, nextIds);
+    const rescue = focusedId !== null && !seen.has(focusedId) ? neighborAfterRemoval(this.order, focusedId, seen) : null;
+
+    for (const id of plan.removed) {
+      this.rows.get(id).li.remove();
+      this.rows.delete(id);
+    }
+    for (const entry of entries) {
+      let row = this.rows.get(entry.source.id);
+      if (!row) {
+        row = this.makeRow(entry.source.id);
+        this.rows.set(entry.source.id, row);
+      }
+      this.updateRow(row, entry);
+    }
+    if (!plan.identical) {
+      const current = this.order.filter((id) => seen.has(id));
+      for (let i = 0; i < nextIds.length; i += 1) {
+        if (current[i] === nextIds[i]) {
+          continue;
+        }
+        const row = this.rows.get(nextIds[i]);
+        const ahead = current[i] === undefined ? null : this.rows.get(current[i]).li;
+        const old = current.indexOf(nextIds[i]);
+        if (old >= 0) {
+          current.splice(old, 1);
+        }
+        if (ahead && typeof list.insertBefore === "function") {
+          list.insertBefore(row.li, ahead);
+        } else {
+          list.appendChild(row.li);
+        }
+        current.splice(i, 0, nextIds[i]);
+      }
+    }
+    this.order = nextIds;
+    this.syncEmpty(this.sources.length === 0 ? S.sourcesEmpty : shown.length === 0 ? S.sourceFilterNone : null);
+    this.syncTabStops();
+
+    // A node that moved or left loses the focus: give it back to the same row, or to the nearest one.
+    if (focusedId !== null) {
+      const row = this.rows.get(seen.has(focusedId) ? focusedId : rescue);
+      if (row) {
+        if (document.activeElement !== row.box) {
+          row.box.focus();
+        }
+      } else if (this.refs.filterInput) {
+        this.refs.filterInput.focus();
+      }
     }
   }
 
@@ -361,8 +653,7 @@ export class SourcesPanel {
     if (data.status === "error") {
       this.handlers.onMessage(S.progressFailed + (data.message ? ": " + data.message : ""), true);
     } else {
-      this.handlers.onMessage(
-        format(S[pluralKey("progressDone", data.records || 0)], { records: Number(data.records || 0).toLocaleString("en-US") }), false);
+      this.handlers.onMessage(doneText(data.records), false);
     }
     await this.refreshSources();
     this.handlers.onDone();
@@ -420,13 +711,11 @@ export class SourcesPanel {
       if (!data) {
         return;
       }
+      const total = safeCount(data.bytes_total);
       this.reportProgress({
-        value: data.bytes_total > 0 ? data.bytes_done : null,
-        max: data.bytes_total > 0 ? data.bytes_total : null,
-        text: format(S[pluralKey("statusIndexing", data.records || 0)], {
-          source: data.source === null || data.source === undefined ? "" : data.source,
-          records: Number(data.records || 0).toLocaleString("en-US"),
-        }),
+        value: total > 0 ? Math.min(safeCount(data.bytes_done), total) : null,
+        max: total > 0 ? total : null,
+        text: indexingText(data),
       });
       this.refreshThrottled();
     });
@@ -486,4 +775,133 @@ function parseEvent(event) {
   } catch (err) {
     return null;
   }
+}
+
+// ---- pure helpers of the source list (no DOM; tested without a page) -----------------------------------------
+// Everything from the API is untrusted text: the DOM code writes it with textContent only.
+
+export const META_SEPARATOR = " - ";
+
+// A count from the API as a safe non-negative integer: null, undefined, NaN, negatives and text become 0.
+export function safeCount(value) {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function hasText(value) {
+  return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
+// "dms-core - pid 1234 - 1,200 records"; a missing family or pid leaves its segment out (never "-" or "pid -").
+// pid 0 is a real value and is shown; null, undefined and NaN are missing.
+export function sourceMeta(source) {
+  const parts = [];
+  if (hasText(source.family)) {
+    parts.push(String(source.family));
+  }
+  const pid = source.pid;
+  if (pid !== null && pid !== undefined && pid !== "" && !(typeof pid === "number" && !Number.isFinite(pid))) {
+    parts.push(format(S.sourcePid, { pid }));
+  }
+  parts.push(countNoun("nRecord", safeCount(source.records)));
+  return parts.join(META_SEPARATOR);
+}
+
+// A source the indexer could not read ends with status "error" and the reason in `error`.
+export function isUnreadable(source) {
+  return Boolean(source) && source.status === "error";
+}
+
+export function unreadableTitle(source) {
+  const reason = hasText(source.error) ? String(source.error) : S.sourceUnreadableNoReason;
+  return format(S.sourceUnreadableTitle, { reason });
+}
+
+// Unreadable sources overall, or only those of one collection group (sources carry `collection`).
+export function unreadableCount(sources, group) {
+  let n = 0;
+  for (const source of sources || []) {
+    if (isUnreadable(source) && (group === undefined || source.collection === group)) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+// "1 file unreadable" | "3 files unreadable" | "" (none).
+export function unreadableLine(count) {
+  const n = safeCount(count);
+  return n === 0 ? "" : format(S[pluralKey("colUnreadable", n)], { count: n.toLocaleString("en-US") });
+}
+
+// Progress text of the status bar: "Indexing core.log: 1,200 records"; without a source name the colon
+// follows "Indexing" (never a text that starts with ": ").
+export function indexingText(data) {
+  const records = safeCount(data && data.records).toLocaleString("en-US");
+  const source = data && hasText(data.source) ? String(data.source) : "";
+  const base = source === "" ? "statusIndexingBare" : "statusIndexing";
+  return format(S[pluralKey(base, safeCount(data && data.records))], { source, records });
+}
+
+// "Indexed 1,200 records."
+export function doneText(records) {
+  const n = safeCount(records);
+  return format(S[pluralKey("progressDone", n)], { records: n.toLocaleString("en-US") });
+}
+
+// ---- reconciliation ---------------------------------------------------------------------------
+
+// What changes between the ids on screen and the ids that should be on screen (both in display order).
+// {removed: ids gone, added: ids new, sameOrder: the common ids keep their relative order, identical: nothing to do}.
+export function diffIds(previous, next) {
+  const before = new Set(previous);
+  const after = new Set(next);
+  const removed = previous.filter((id) => !after.has(id));
+  const added = next.filter((id) => !before.has(id));
+  const kept = previous.filter((id) => after.has(id));
+  const keptNext = next.filter((id) => before.has(id));
+  const sameOrder = kept.length === keptNext.length && kept.every((id, i) => id === keptNext[i]);
+  const identical = removed.length === 0 && added.length === 0 && sameOrder;
+  return { removed, added, sameOrder, identical };
+}
+
+// The row that should take the focus when the focused one leaves the list: the next one that stays, else the
+// previous one that stays, else null (the caller falls back to the filter box).
+export function neighborAfterRemoval(previous, removedId, stays) {
+  const at = previous.indexOf(removedId);
+  if (at < 0) {
+    return null;
+  }
+  for (let i = at + 1; i < previous.length; i += 1) {
+    if (stays.has(previous[i])) {
+      return previous[i];
+    }
+  }
+  for (let i = at - 1; i >= 0; i -= 1) {
+    if (stays.has(previous[i])) {
+      return previous[i];
+    }
+  }
+  return null;
+}
+
+// Arrow keys inside the list: the id to focus from `current` (null when the key is not a list key).
+export function listKeyTarget(ids, current, key) {
+  if (ids.length === 0) {
+    return null;
+  }
+  const at = ids.indexOf(current);
+  if (key === "Home") {
+    return ids[0];
+  }
+  if (key === "End") {
+    return ids[ids.length - 1];
+  }
+  if (key === "ArrowDown") {
+    return ids[Math.min(at + 1, ids.length - 1)];
+  }
+  if (key === "ArrowUp") {
+    return ids[Math.max(at < 0 ? 0 : at - 1, 0)];
+  }
+  return null;
 }
