@@ -419,3 +419,29 @@ def test_the_deadline_covers_every_phase(conn, monkeypatch):
     monkeypatch.setattr(X, "time", _Clock(3))
     with pytest.raises(Q.QueryTimeout):
         promote(conn, {"ids": ids, "regex": r"GID: (?P<gid>\d+), Errors count: (?P<errors>\d+)"})
+
+
+def test_sums_and_means_are_exact_at_the_extremes(tmp_path):
+    big = 1.7976931348623157e308
+    cases = [
+        ([repr(big)] * 3, None, big),  # the true sum overflows; the mean is the value itself
+        (["5e-324"] * 2, 1e-323, 5e-324),  # the mean of two subnormals is not 0
+        (["-1e308", "-1e308", "1e308", "1e308"], 0.0, 0.0),  # a finite sum through an overflowing order
+        (["1e308", "1e308", "-1e308"], 1e308, 1e308 / 3),
+        (["0.1", "0.2", "0.3"], 0.6, 0.2),
+    ]
+    for k, (values, total, mean) in enumerate(cases):
+        c = build(tmp_path / f"m{k}.sqlite", [(0, j, v, None) for j, v in enumerate(values)])
+        numeric = extract(c, extractor(r"^(?P<n>.+)", types={"n": "float"}), None).columns[0]["numeric"]
+        assert (numeric["sum"], numeric["avg"]) == (total, mean), values
+        c.close()
+
+
+def test_a_deadline_passed_during_the_last_search_of_a_promotion_is_a_timeout(conn, monkeypatch):
+    from dmslog.store import extract as X
+
+    unrelated = [r[0] for r in conn.execute("SELECT id FROM entry WHERE msg = 'unrelated'")]
+    # readings: the start, the check before the only search, then the one right after it (expired)
+    monkeypatch.setattr(X, "time", _Clock(2))
+    with pytest.raises(Q.QueryTimeout):
+        promote(conn, {"ids": unrelated, "regex": r"GID: (?P<gid>\d+)"})

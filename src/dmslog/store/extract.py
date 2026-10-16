@@ -34,6 +34,7 @@ import sqlite3
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Any
 
 from .. import messages
@@ -470,24 +471,28 @@ def _numeric(kind: str, suggested: str, present: list[str]) -> dict[str, Any] | 
     cnt = len(nums)
     out: dict[str, Any] = {"type": numeric_kind, "count": cnt, "min": nums[0], "max": nums[-1]}
     if numeric_kind == "float":
-        # Every value is finite (the conversion keeps inf and nan as text), but a sum can leave the float
-        # range (two 1e308): then it is null, and the mean is the sum of value / count, which stays finite.
-        out["sum"] = _finite(lambda: math.fsum(nums))
-        out["avg"] = _finite(lambda: math.fsum(x / cnt for x in nums))
+        # Every value is finite (the conversion keeps inf and nan as text). The sum is exact (a float is a
+        # binary fraction, so Fraction adds without rounding; an intermediate overflow of fsum cannot
+        # happen) and rounded once: null only when the true sum is outside the float range (two 1e308).
+        # The mean is the exact sum / count rounded once, so it is always representable and correct at
+        # the extremes (three max floats, two 5e-324).
+        exact = sum((Fraction(x) for x in nums), Fraction(0))
+        out["sum"] = _to_float(exact)
+        out["avg"] = _to_float(exact / cnt)
     else:
         out["sum"] = sum(nums)  # integers: exact
-        out["avg"] = _finite(lambda: out["sum"] / cnt)
+        out["avg"] = _to_float(Fraction(out["sum"], cnt))
     for p in PERCENTILES:
         out[f"p{p}"] = nums[max(1, math.ceil(cnt * p / 100)) - 1]
     return out
 
 
-def _finite(compute: Any) -> float | None:
+def _to_float(value: Fraction) -> float | None:
+    """``value`` correctly rounded to a float, or None when it is outside the float range."""
     try:
-        value = compute()
+        return float(value)
     except OverflowError:
         return None
-    return value if math.isfinite(value) else None
 
 
 def as_json(result: ExtractResult) -> dict[str, Any]:

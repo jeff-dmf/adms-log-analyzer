@@ -117,6 +117,7 @@ def promote(
             skipped_cut += 1
             continue
         m = ex.regex.match(rec.subject) if ex.anchored else ex.regex.search(rec.subject)
+        tick()  # a deadline passed during the search is a timeout, never "no match"
         if m is not None and _surrogate_free(rec.subject):
             matched.append((rec, m))
     if not matched:
