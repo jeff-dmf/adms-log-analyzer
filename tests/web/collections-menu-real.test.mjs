@@ -58,18 +58,65 @@ test("two clicks on different row menus while the module loads open one menu, an
   assert.equal(menuEls(doc).length, 1);
 });
 
-test("a menu of one row opened after another row's menu closes the first", async () => {
-  const { triggers, release } = await setup();
-  release();
-  await tick();
+test("a button whose request was dropped is not stuck in the cache: the same button opens its menu on the next click", async () => {
+  const { panel, triggers, release } = await setup();
   const [a, b] = triggers();
   a.dispatch("click", { detail: 0 });
-  await tick();
-  await tick();
-  assert.equal(menuEls(doc).length, 1);
   b.dispatch("click", { detail: 0 });
+  release();
+  await tick();
+  await tick();
+  assert.equal(panel.menus.has(a), false); // dropped: no entry left for the original button
+  assert.equal(panel.menus.has(b), true);
+  a.dispatch("click", { detail: 0 }); // the same button, no redraw in between
   await tick();
   await tick();
   assert.equal(menuEls(doc).length, 1);
+  assert.equal(panel.activeMenuGroup, 4);
   assert.equal(listeners(), 1);
 });
+
+// Sequences of operations on two row menus: never more than one menu or one document listener, none after closing.
+const OPS = {
+  clickA: (c) => c.a.dispatch("click", { detail: 0 }),
+  clickB: (c) => c.b.dispatch("click", { detail: 0 }),
+  keyA: (c) => c.a.dispatch("keydown", { key: "ArrowDown" }),
+  keyB: (c) => c.b.dispatch("keydown", { key: "ArrowDown" }),
+  redraw: async (c) => { c.setList([group(4, 1), group(9, 2, { records: c.n++ + 100 })]); await c.panel.refresh(); },
+  escape: (c) => { const m = menuEls(doc)[0]; if (m) m.dispatch("keydown", { key: "Escape" }); },
+  outside: (c) => { for (const fn of [...(doc.listeners.pointerdown || [])]) fn({ target: doc.body }); },
+};
+const SEQUENCES = [
+  ["clickA", "clickB", "clickA"],
+  ["clickA", "clickB", "keyA"],
+  ["clickA", "clickB", "keyA", "redraw"],
+  ["clickA", "keyB", "keyA", "keyB", "redraw"],
+  ["clickA", "escape", "clickB", "escape", "clickA"],
+  ["clickA", "outside", "clickB", "redraw"],
+  ["clickA", "clickA", "clickA"],
+  ["clickB", "clickA", "keyB", "outside", "keyA", "escape"],
+];
+
+for (const sequence of SEQUENCES) {
+  test("row menus, sequence: " + sequence.join(" > "), async () => {
+    const { panel, triggers, release, setList } = await setup();
+    release();
+    await tick();
+    const ctx = { panel, setList, n: 0 };
+    for (const name of sequence) {
+      const [a, b] = triggers(); // the buttons of the current drawing
+      ctx.a = a;
+      ctx.b = b;
+      await OPS[name](ctx);
+      await tick();
+      await tick();
+      assert.ok(menuEls(doc).length <= 1, name + ": menus " + menuEls(doc).length);
+      assert.ok(listeners() <= 1, name + ": listeners " + listeners());
+      assert.equal(menuEls(doc).length, listeners(), name + ": a menu without its listener or the reverse");
+      if (name === "redraw" || name === "escape" || name === "outside") {
+        assert.equal(menuEls(doc).length, 0, name);
+        assert.equal(listeners(), 0, name);
+      }
+    }
+  });
+}

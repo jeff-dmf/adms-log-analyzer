@@ -472,6 +472,16 @@ export class CollectionsPanel {
     return li;
   }
 
+  // The single point of exclusivity: every opening of a row menu (a new instance, one built before, by keyboard or by
+  // pointer) asks for its items first, and that call lands here. The menu that was open closes, this one is the active one.
+  claimMenu(menu, group) {
+    if (this.activeMenu && this.activeMenu !== menu && this.activeMenu.isOpen()) {
+      this.activeMenu.close(false);
+    }
+    this.activeMenu = menu;
+    this.activeMenuGroup = group;
+  }
+
   // The row's "..." menu: loaded on the first click, then it toggles itself. Its one item starts the two-step removal.
   openRowMenu(item, tag, trigger, event) {
     if (this.menus.has(trigger)) {
@@ -486,15 +496,11 @@ export class CollectionsPanel {
         this.menus.delete(trigger); // a later click, a new drawing or a removed row: nothing to open (a click tries again)
         return null;
       }
-      if (this.activeMenu && this.activeMenu.isOpen()) {
-        this.activeMenu.close(false); // one row menu open at a time
-      }
       const menu = mod.createMenu({
         trigger,
         label: format(S.colRowMenuLabel, { tag }),
         getItems: () => {
-          this.activeMenu = menu; // asked at every opening, so a later opening of this menu is the active one
-          this.activeMenuGroup = item.group;
+          this.claimMenu(menu, item.group); // asked at every opening: first, built, keyboard or pointer
           return [{
             id: "col-remove",
             label: format(S.colRemoveItem, { tag }),
