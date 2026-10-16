@@ -1529,6 +1529,35 @@ Banco sintético de 2 M registros (20 fontes, 10% com continuação; 1,2 GB), te
 - Buscar janela menor automaticamente quando o `^.*?` da promoção não cabe no orçamento do catálogo: o veredito do carregador já diz "declare a smaller window"; a escolha fica com quem promove.
 - O conjunto de caracteres "imprimíveis" aceitos crus segue o `str.isprintable()` da versão do Python (pode variar em code points recém-atribuídos entre 3.11 e 3.14); o escape `\uHHHH` funciona em todas.
 
+### 10.12 Preferências versionadas (9.10)
+
+**Decisão.** As preferências do usuário continuam nos arquivos atuais da pasta de dados (`presets.toml`, `alerts.toml`, `redaction.toml`), cada um com seu validador e seu `schema`. Não há novo armazenamento nem migração do banco do caso (as preferências são por usuário, não por caso; a próxima migração livre, 8, não é consumida). O **pacote** é um documento JSON de transporte/backup (`store/preferences.py`), não um novo arquivo vivo.
+
+**Pacote (`schema` 1, `kind` = `dmslog-preferences`).** Seções opcionais na importação:
+- `presets`: presets do usuário (`name`, `description`, `family`, `filter`); os curados nunca entram.
+- `alert_rules`: regras de `alerts.toml` (campos conhecidos).
+- `redaction`: perfil de anonimização (`name`, `categories`, `terms`, `exceptions`, `payload_names`, `mode`). Contém os termos do usuário: é dado sensível local.
+- Fora do pacote: destaques/regras de cor (por caso, tabela `highlight_rule`) e painéis (9.11 ainda não existe). Seção nova = `schema` novo.
+
+**Exportação.** `GET /api/preferences/export?sections=` devolve `{package, text, warnings}`. Determinística: chaves ordenadas, itens ordenados por (família, nome sem caixa), sem timestamps. Arquivo inválido vira aviso e a seção sai do pacote. Sem `redaction.toml` a seção é omitida (nada personalizado).
+
+**Importação.** `POST /api/preferences/import {package, dry_run, mode, on_item_error}`:
+1. Dado não confiável: limite de bytes (8 MiB), profundidade (64), nós (500 mil), strings, só tipos JSON, inteiros em 64 bits, floats finitos, sem chaves duplicadas nem NaN, UTF-8 válido. Nomes nunca viram caminho: os três arquivos são fixos.
+2. `schema` ausente, não inteiro (bool não vale), < 1 ou maior que o do programa: erro estrutural, nada é aplicado. Migração `N → N+1` por funções puras encadeadas (`MIGRATIONS`), sobre cópia; passo ausente ou falho = erro estrutural. `kind` errado ou seção desconhecida: erro estrutural.
+3. Cada seção é tudo-ou-nada: validadores existentes (`validate_preset`, `validate_rule`, `profile_from_dict`), campo desconhecido recusado, nome duplicado ou reservado (preset curado) recusado, limites de quantidade do resultado. `on_item_error="reject_section"` (padrão): um item recusado rejeita a seção; `"skip_item"`: entram os válidos. `replace` nunca remove nada por causa de item recusado (a seção é rejeitada).
+4. `mode`: `merge` (padrão; atualiza por identidade mantendo a ordem do arquivo e as chaves extras do item existente) ou `replace` (a seção fica igual ao pacote). Redaction sempre substitui o perfil inteiro.
+5. Idempotente: item igual ao guardado = `unchanged`; seção sem mudança não reescreve o arquivo. Comparação por valor canônico com tipos exatos (`true` ≠ `1` ≠ `1.0`).
+6. Auto-verificação: o texto TOML que seria gravado é relido e deve dar exatamente os itens planejados; senão a seção é rejeitada (`not_representable`).
+7. Arquivo guardado inválido nunca é sobrescrito (`file_invalid`); exceção: perfil de anonimização inválido é substituído com aviso (igual ao `PUT /api/redaction`).
+
+**Relatório.** `{outcome: rejected|partial|applied|unchanged|failed, ok, applied, dry_run, schema:{found,current,migrated}, errors, sections:{<nome>:{status: absent|unchanged|changed|rejected, counts, items:[{index,name,outcome,code,message}], removed, warnings, error}}, summary}`. Itens: `added|updated|unchanged|rejected|not_applied`. O nome no relatório é rótulo limpo (80 caracteres, sem controles); nenhum outro valor do pacote é ecoado.
+
+**Escrita atômica.** `paths.atomic_write_bytes`: temporário na mesma pasta, `fsync`, `os.replace` (repete em `PermissionError`, Windows), `fsync` da pasta; nenhum handle fica aberto; falha remove o temporário e preserva o anterior. Os três arquivos são gravados em sequência sob os travos dos três módulos; se uma gravação falha, os já gravados são restaurados (`save_failed`; `rollback_failed` se a restauração também falhar). Temporários órfãos só sobram se o processo morrer entre `mkstemp` e `replace`.
+
+**HTTP sugerido.** 200 com o relatório (inclusive `rejected`/`partial`), 500 se `outcome = failed`, 400 para opção inválida, 413 acima do limite (`_BODY_LIMITS` = `MAX_PACKAGE_BYTES` + 64 KiB).
+
+**Testes.** `tests/unit/test_preferences.py`, `tests/property/test_preferences_properties.py` (round-trip, idempotência, dry-run = real, migração encadeada com oráculo em forma fechada, fuzz de dados arbitrários), `tests/unit/test_api_preferences.py`.
+
 ## 11. Viewer: funcionalidades × LogViewPlus, por marco
 
 | Funcionalidade | Conceito LogViewPlus | Marco |
@@ -1708,3 +1737,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-16 | 9.7 (issue #104): comparação de visões por tipo de mensagem, só backend (`store/align.py`, `store/viewcompare.py`, `POST /api/entries/compare`); quatro modos (filtro, janela, operação, processo), ordem estável sem `id`, LCS exata (Myers, depois bit-paralelo de Hirschberg) dentro de orçamentos determinísticos, degradação ancorada marcada, corte em 20.000 por lado; sem esquema novo (seção 10.9) | Opus |
 | 2026-10-16 | UI-21 (issue #161): lateral com o caso aberto: cabeçalho fixo do caso (nome, "Add files…", menu ⋯; formulários de novo caso e de caminho sob demanda, ocultos desde o primeiro paint), coletas compactas e recolhíveis (uma linha por coleta, menu ⋯ com "Remove Cn…" e confirmação em dois passos, aviso "N files unreadable"), lista de fontes de uma linha com `min-height: 240px`, reconciliada por `id` (foco, rolagem e seleção preservados; roving tabindex; marcador `!` na fonte ilegível; meta sem segmento ausente; progresso "Indexing: N records") em `js/sources.js` e `js/collections-panel.js`, `css/sources.css` (novo), `css/collections.css`; as funções puras ficam exportadas de `sources.js` (sem módulo novo, para caber nos 40 módulos do boot) | Sonnet |
 | 2026-10-16 | ROADMAP 9.8 (issue #105): extrator ad hoc por regex, só backend (`parse/extractor.py`, `parse/promote.py`, `store/extract.py`, folha de filtro `{"extract": …}` com a função SQL `dmslog_extract`, rotas `POST /api/extract/check`, `/api/entries/extract`, `/extract/values`, `/extract/promote`): gramática pequena lida no texto original (grupos nomeados, repetição de um átomo até 64, `?` só em grupos), orçamento de passos estático (janela por regex), resultado determinístico em ordem estável independente do `id`, prazo de 5 s com 408, "promote to template" só devolve o texto `[[template]]` conferido pelo carregador; ARQUITETURA 10.11 | Opus |
+| 2026-10-16 | ROADMAP 9.10 (issue #107): preferências versionadas, só backend (`store/preferences.py`, `paths.atomic_write_bytes`, `GET /api/preferences/export`, `POST /api/preferences/import`): pacote JSON `{schema, kind, presets, alert_rules, redaction}` de transporte/backup sobre os arquivos vivos existentes (sem migração do banco), migração encadeada por funções puras, importação com relatório por seção e item (tudo-ou-nada por seção, `merge`/`replace`, `reject_section`/`skip_item`, dry-run), exportação determinística, escrita atômica com restauração se uma gravação falha; ARQUITETURA 10.12 | Sonnet |
