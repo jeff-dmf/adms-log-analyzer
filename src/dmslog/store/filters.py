@@ -98,6 +98,9 @@ REGEX_WINDOW = 512
 MAX_REGEX_CHARS = 256
 MAX_REGEX_SEARCH_STEPS = 1 << 22
 REGEX_FUNCTION = "dmslog_regexp"
+# Canonical JSON (object keys sorted at every depth, arrays in order), registered by db.connect: the
+# repeat leaf compares field values with it (ROADMAP 9.12, store/repeats.py).
+CANON_FUNCTION = "dmslog_json_canon"
 
 SEV_NAMES = {"critical": 1, "error": 2, "warning": 3, "info": 4, "noise": 5}
 LEVEL_NAMES = {name.decode("ascii").lower(): value for name, value in LEVELS.items()}
@@ -278,6 +281,16 @@ def regexp(pattern: str, text: str | None) -> int:
     if text is None or not isinstance(pattern, str):
         return 0
     return 1 if _search_regex(pattern).search(text, 0, REGEX_WINDOW) is not None else 0
+
+
+def json_canon(text: Any) -> str | None:
+    """Canonical text of a JSON value (sorted object keys, compact), or None when ``text`` is not JSON."""
+    if not isinstance(text, str):
+        return None
+    try:
+        return json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except (ValueError, TypeError, RecursionError):
+        return None
 
 
 # --- validation helpers -----------------------------------------------------------

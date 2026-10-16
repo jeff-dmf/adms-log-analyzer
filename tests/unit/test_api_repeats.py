@@ -116,3 +116,18 @@ def test_repeat_marks_invalid_spec_and_case(client, rep_case):  # noqa: F811
         "/api/entries/distinct", {"case": "Rep", "field": "tpl", "filter": {"repeat": {}}}
     )
     assert status == 200 and body["total"] == 1
+
+
+@pytest.mark.parametrize(
+    "after",
+    ["9223372036854775808:1", "1000:9223372036854775808", "-9223372036854775809:1", "1:-9223372036854775809"],
+)
+def test_cursors_outside_int64_are_rejected(client, seq_case, after):  # noqa: F811
+    _bad(client, f"/api/events/missing?case=Seq&after={after}")
+    _bad(client, f"/api/events?case=Seq&after={after}")
+
+
+def test_cursor_at_the_int64_limits_is_accepted(client, seq_case):  # noqa: F811
+    for after in ("9223372036854775807:9223372036854775807", "-9223372036854775808:-9223372036854775808"):
+        assert client.get(f"/api/events/missing?case=Seq&after={after}")[0] == 200
+        assert client.get(f"/api/events?case=Seq&after={after}")[0] == 200

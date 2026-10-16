@@ -65,7 +65,36 @@ SPECS = (
     {"window_ms": 2500, "tid": True},
     {"fields": ["state"]},
     {"fields": ["map", "nope"], "window_ms": 400},
+    {"fields": ["kv"]},
+    {"fields": ["request_id", "kv"], "tid": True, "window_ms": 1500},
 )
+# WFM-S010 (sensitive): the continuation parser keeps the order of the lines, so the same values can be
+# stored as JSON with the keys in another order (review of PR #200)
+S010 = 'Changed crews request received. Request with ID "00000000-0000-4000-8000-00000000000{}" content:'
+KV = (("Identifier: CREW0001", "Availability: Available"), ("Identifier: CREW0002", "Availability: Busy"))
+s010 = st.tuples(
+    st.one_of(st.just(0), st.integers(-300, 1200)),  # time step
+    st.integers(1, 2),  # request id
+    st.integers(0, 1),  # values
+    st.booleans(),  # reversed continuation lines
+    st.sampled_from([7, 9]),
+)
+# Expected sequences, scripted so that the outcome is known without the derivers (an independent oracle):
+# unit -> the missing step it must produce (kind, missing, cause, proven), or None
+UNITS = {
+    "op_ok": None,
+    "op_superseded": ("operation", "end", "superseded", True),
+    "op_eof": ("operation", "end", "end_of_log", False),
+    "startup_hot": None,
+    "startup_timeout": ("startup", "hot", "timeout", True),
+    "map_ok": None,
+    "map_superseded": ("map_reload", "open", "superseded", True),
+    "map_eof": ("map_reload", "open", "end_of_log", False),
+    "retry_sent": None,
+    "retry_failed": None,
+    "retry_open": ("retry_seq", "outcome", "end_of_log", False),
+}
+STARTUP_EOF = ("startup", "hot", "end_of_log", False)
 
 record = st.tuples(
     st.one_of(st.just(0), st.integers(-800, 1500)),  # time step in ms (0: a tie; negative: back in time)
@@ -91,6 +120,64 @@ def render(records, t0: int, pid: int) -> tuple[bytes, int]:
     return mf.render(lines), ts
 
 
+def render_s010(records, pid: int) -> bytes:
+    ts = 500
+    lines: list[str] = []
+    for step, rid, values, reverse, tid in records:
+        ts = max(0, ts + step)
+        lines.append(mf.header(ts, "DEBUGLOG", S010.format(rid), pid=pid, tid=tid))
+        kv = KV[values][::-1] if reverse else KV[values]
+        lines.extend(kv)
+    return mf.render(lines)
+
+
+def render_units(units: list[str], startup_eof: bool, pid: int) -> bytes:
+    """One Smn log: every unit on its own thread, 130 s apart (a startup block closes in 120 s)."""
+    lines: list[str] = []
+    t = 0
+
+    def add(text: str, tid: int) -> None:
+        nonlocal t
+        lines.append(mf.header(t, "INFO", text, pid=pid, tid=tid))
+        t += 10
+
+    for i, unit in enumerate(units):
+        tid, guid = 100 + i, f"00000000-0000-4000-8000-{i:012d}"
+        start = f"[SendWorks] Sending following Work Request: WR {1000 + i}."
+        end = "[SendWorks] Sending Work Request finished successfully."
+        attempt = f'Sending "WorksEventMessageType" message: {guid} with verb: Changed...'
+        if unit.startswith("op_"):
+            add(start, tid)
+            if unit == "op_superseded":
+                add(f"[SendWorks] Sending following Work Request: WR {5000 + i}.", tid)
+            if unit != "op_eof":
+                add(end, tid)
+        elif unit.startswith("startup_"):
+            add("[Configuration] [LogLevel]: [Info]. Type: [ConfigurationRegistry]", tid)
+            if unit == "startup_hot":
+                add("[SystemStatusPublisher] - Server state changed. New state: HOT.", tid)
+        elif unit.startswith("map_"):
+            add(f'"M{i}" map closed.', tid)
+            if unit == "map_superseded":
+                t += 1500  # a second "closed" more than 1 s later is a new reload
+                add(f'"M{i}" map closed.', tid)
+            if unit != "map_eof":
+                add(f'"M{i}" map is now open.', tid)
+        else:
+            add(attempt, tid)
+            add(attempt, tid)
+            if unit == "retry_sent":
+                add(attempt.replace("Changed...", "Changed finished successfully."), tid)
+            elif unit == "retry_failed":
+                add(f"Request message with MessageId '{guid}' unsuccessfully sent. Reason: 'x'.", tid)
+        t += 130_000
+    if units:
+        add("[Alpha] the last unit is over", 98)  # a later record: a startup without HOT times out
+    if startup_eof:
+        add("[Configuration] [LogLevel]: [Info]. Type: [ConfigurationRegistry]", 99)
+    return mf.render(lines)
+
+
 def write_state(base: Path, files: dict[str, bytes]) -> None:
     if base.exists():
         shutil.rmtree(base)
@@ -99,7 +186,7 @@ def write_state(base: Path, files: dict[str, bytes]) -> None:
         (base / name).write_bytes(data)
 
 
-def final_files(chain, other) -> dict[str, bytes]:
+def final_files(chain, other, s010_records=(), units=(), startup_eof=False) -> dict[str, bytes]:
     old, t = render(chain[0], 0, 4444)
     new, _ = render(chain[1], t, 4444)
     files = {"WfmAdapter_4444.log": new}
@@ -107,6 +194,10 @@ def final_files(chain, other) -> dict[str, bytes]:
         files["WfmAdapter_4444.log.0"] = old
     if other:
         files["OntAdapter_5555.log"], _ = render(other, 300, 5555)
+    if s010_records:
+        files["WfmAdapter_4444.sensitive.log"] = render_s010(s010_records, 4444)
+    if units or startup_eof:
+        files["SmnAdapter_6000.log"] = render_units(list(units), startup_eof, 6000)
     return files
 
 
@@ -168,18 +259,22 @@ def model(conn, spec: RepeatSpec) -> dict:
     """Brute force over every pair of records (the definition of ``store/repeats.py``)."""
     rows = conn.execute(
         "SELECT e.id, s.member, e.line_no, s.stream_id, e.ts, e.tpl_id, e.fields, e.msg, b.cont, e.tid,"
-        " s.rotation, s.file_name, s.collection_id, e.source_id"
-        " FROM entry e JOIN source s ON s.id = e.source_id LEFT JOIN entry_body b ON b.entry_id = e.id"
+        " s.rotation, s.file_name, coalesce(c.ers_variant, '') || char(0) || c.path, e.source_id"
+        " FROM entry e JOIN source s ON s.id = e.source_id JOIN collection c ON c.id = s.collection_id"
+        " LEFT JOIN entry_body b ON b.entry_id = e.id"
     ).fetchall()
 
+    def canon(value):  # by value: JSON keys sorted, arrays in order, types kept (1, 1.0 and true differ)
+        return None if value is None else json.dumps(value, sort_keys=True, separators=(",", ":"))
+
     def key(r):
+        data = json.loads(r[6]) if r[6] else None
         if spec.fields:
-            data = json.loads(r[6]) if r[6] else {}
-            k = tuple(repr(data.get(n)) for n in spec.fields)
+            k = tuple(canon((data or {}).get(n)) for n in spec.fields)
             if r[5] == 0:
                 k += (r[7], r[8])
         else:
-            k = (r[6],) if r[6] is not None else (None, r[7], r[8])
+            k = (canon(data),) if data is not None else (None, r[7], r[8])
         return (r[3], r[5], k, r[9] if spec.tid else None)
 
     def rot(r):
@@ -212,6 +307,31 @@ def model(conn, spec: RepeatSpec) -> dict:
     return out
 
 
+def check_oracle(conn, units, startup_eof) -> None:
+    expected = sorted([UNITS[u] for u in units if UNITS[u]] + ([STARTUP_EOF] if startup_eof else []))
+    row = conn.execute("SELECT stream_id FROM source WHERE file_name = 'SmnAdapter_6000.log'").fetchone()
+    if row is None:
+        assert not expected
+        return
+    flt = EventFilter(stream_id=row[0])
+    items = list_missing(conn, flt, limit=1000)[0]
+    got = sorted((i["event"]["kind"], i["missing"][0], i["cause"], i["proven"]) for i in items)
+    assert got == expected
+    for i in items:
+        assert i["steps"][-1] == i["missing"][0] and len(i["steps"]) == 2
+    counts: dict = {}
+    for kind, step, cause, _ in expected:
+        group = counts.setdefault((kind, step), {})
+        group[cause] = group.get(cause, 0) + 1
+    summary = missing_summary(conn, flt)
+    merged: dict = {}
+    for g in summary["groups"]:
+        group = merged.setdefault((g["kind"], g["missing"]), {})
+        for cause, n in g["causes"].items():
+            group[cause] = group.get(cause, 0) + n
+    assert merged == counts and summary["total"] == len(expected)
+
+
 # --------------------------------------------------------------------------- the property
 
 
@@ -219,15 +339,20 @@ def model(conn, spec: RepeatSpec) -> dict:
 @given(
     chain=chain_spec,
     other=st.lists(record, max_size=15),
+    s010_records=st.lists(s010, max_size=10),
+    units=st.lists(st.sampled_from(sorted(UNITS)), max_size=8),
+    startup_eof=st.booleans(),
     cut=st.floats(0, 1),  # where the first incremental pass cuts the current file
     window=st.one_of(st.none(), st.tuples(st.floats(0, 1), st.floats(0, 1))),
     pick=st.one_of(st.none(), st.sets(st.integers(0, 3), min_size=1, max_size=2)),
 )
-def test_repeats_and_missing_steps_do_not_depend_on_how_the_case_was_indexed(chain, other, cut, window, pick):
+def test_repeats_and_missing_steps_do_not_depend_on_how_the_case_was_indexed(
+    chain, other, s010_records, units, startup_eof, cut, window, pick
+):
     work = Path(tempfile.mkdtemp(prefix="dmslog-repeats-"))
     plain = IngestOptions(chunk_size=700, batch_bytes=1500)
     try:
-        files = final_files(chain, other)
+        files = final_files(chain, other, s010_records, units, startup_eof)
         folder = work / "Log"
         write_state(folder / LOGDIR, files)
         full = create_case_db(work / "full" / "case.sqlite")
@@ -238,14 +363,16 @@ def test_repeats_and_missing_steps_do_not_depend_on_how_the_case_was_indexed(cha
             reference = observed(full)
             for k, spec in enumerate(SPECS):
                 assert reference[f"marks{k}"] == model(full, parse_spec(spec)), spec
+            # the missing steps of the scripted Smn log are the expected ones (kind, step, cause, proven)
+            check_oracle(full, units, startup_eof)
 
             # incremental: the old content as the current file (cut anywhere), then rotated and grown
             old = files.get("WfmAdapter_4444.log.0")
             first = old if old else files["WfmAdapter_4444.log"]
             early = {"WfmAdapter_4444.log": first[: int(len(first) * cut)]}
-            if other:
-                data = files["OntAdapter_5555.log"]
-                early["OntAdapter_5555.log"] = data[: int(len(data) * (1 - cut))]
+            for name, data in files.items():  # every other file cut too
+                if not name.startswith("WfmAdapter_4444.log"):
+                    early[name] = data[: int(len(data) * (1 - cut))]
             write_state(folder / LOGDIR, early)
             run_ingest(incr, folder, plain)
             if old:  # grow the current file to the whole old content, then rotate

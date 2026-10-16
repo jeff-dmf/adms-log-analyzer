@@ -239,3 +239,161 @@ def test_the_plan_walks_the_template_index(tmp_path):
     )
     assert "SEARCH rp USING INDEX ix_entry_tpl_ts (tpl_id=? AND ts>? AND ts<?)" in plan
     assert "SEARCH rse USING INTEGER PRIMARY KEY" in plan and "SEARCH rsp USING INTEGER PRIMARY KEY" in plan
+
+
+# --------------------------------------------------------------------------- review of PR #200
+
+
+def _two_halves(tmp_path, enterprise_first: bool, ts=(100, 100)):
+    """The same member in the same stream from the two halves of one ERS, added in either order."""
+    path = tmp_path / ("ent" if enterprise_first else "sen") / "case.sqlite"
+    conn = create_case_db(path)
+    halves = [("enterprise", "/cases/ERS_Enterprise.zip"), ("sensitive", "/cases/ERS_Sensitive.zip")]
+    if not enterprise_first:
+        halves.reverse()
+    with conn:
+        for cid, (variant, zpath) in enumerate(halves, 1):
+            conn.execute(
+                "INSERT INTO collection(id, kind, path, ers_variant, ers_group, added_at)"
+                " VALUES (?, 'ers_zip', ?, ?, 1, 'x')",
+                (cid, zpath, variant),
+            )
+        conn.execute(
+            "INSERT INTO stream(id, collection_group, family, process, pid, sensitive)"
+            " VALUES (1, 1, 'AWFM', 'WfmAdapter', 1, 0)"
+        )
+        conn.execute("INSERT INTO template(id, code, family, class, sev, pattern, fts, def_version)"
+                     " VALUES (1, 'TST-001', 'AWFM', 'other', 4, 'x', 1, 'v')")  # fmt: skip
+        for cid in (1, 2):
+            conn.execute(
+                "INSERT INTO source(id, collection_id, stream_id, member, file_name, envelope)"
+                " VALUES (?, ?, 1, 'Log/W.log', 'W.log', 'adms')",
+                (cid, cid),
+            )
+            conn.execute(
+                "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, tid, sev, tpl_id, flags,"
+                " msg)"
+                " VALUES (?, ?, 1, 0, 1, ?, 7, 4, 1, 0, 'same')",
+                (cid, cid, ts[cid - 1] if enterprise_first else ts[2 - cid]),
+            )
+    conn.close()
+    ro = connect(path, readonly=True)
+    variant = dict(
+        ro.execute("SELECT s.id, c.ers_variant FROM source s JOIN collection c ON c.id = s.collection_id")
+    )
+    return ro, variant
+
+
+@pytest.mark.parametrize("ts", [(100, 100), (100, 150)])
+def test_ties_between_the_halves_of_an_ers_do_not_depend_on_the_order_they_were_added(tmp_path, ts):
+    """ts = (Enterprise, Sensitive). Tied: the Enterprise record is first either way."""
+    results = []
+    for enterprise_first in (True, False):
+        conn, variant = _two_halves(tmp_path, enterprise_first, ts)
+        marks = repeat_marks(conn, [1, 2], RepeatSpec())
+        results.append({variant[e]: (variant[m["prev"]], m["dt_ms"]) for e, m in marks.items()})
+        assert {variant[i] for i in _hits(conn)} == set(results[-1])
+        conn.close()
+    assert results[0] == results[1] == {"sensitive": ("enterprise", ts[1] - ts[0])}
+
+
+def test_the_closest_earlier_record_is_chosen_by_origin_not_by_id(tmp_path):
+    for enterprise_first in (True, False):
+        conn, variant = _two_halves(tmp_path, enterprise_first)
+        # a third record, later in the Sensitive file, at the same time: it repeats both, the closest is
+        # the Sensitive one (same source, earlier line), whatever the ids
+        sensitive = next(s for s, v in variant.items() if v == "sensitive")
+        conn.close()
+        rw = connect(tmp_path / ("ent" if enterprise_first else "sen") / "case.sqlite")
+        with rw:
+            rw.execute(
+                "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, tid, sev, tpl_id, flags,"
+                " msg)"
+                " VALUES (3, ?, 2, 10, 1, 100, 7, 4, 1, 0, 'same')",
+                (sensitive,),
+            )
+        rw.close()
+        conn = connect(tmp_path / ("ent" if enterprise_first else "sen") / "case.sqlite", readonly=True)
+        marks = repeat_marks(conn, [3], RepeatSpec())
+        assert marks == {3: {"prev": sensitive, "dt_ms": 0, "earlier": 2}}
+        conn.close()
+
+
+def test_field_values_are_compared_canonically(tmp_path):
+    rows = [
+        (3, 10, 1, {"kv": {"Identifier": "C1", "Availability": "A"}, "n": [1, 2]}, "a", None, 7),  # 1
+        (3, 20, 1, {"kv": {"Availability": "A", "Identifier": "C1"}, "n": [1, 2]}, "b", None, 7),  # 2 = 1
+        (3, 30, 1, {"n": [1, 2], "kv": {"Identifier": "C1", "Availability": "A"}}, "c", None, 7),  # 3 = 1
+        (3, 40, 2, {"kv": {"Identifier": "C1", "Availability": "A"}, "n": [2, 1]}, "d", None, 7),  # 4
+        (3, 50, 2, {"kv": {"Availability": "A", "Identifier": "C1"}, "n": [1, 2]}, "e", None, 7),  # 5 != 4
+        (3, 60, 2, {"kv": {"Availability": "B", "Identifier": "C1"}, "n": [2, 1]}, "f", None, 7),  # 6
+        (3, 70, 2, {"kv": '{"Availability":"B","Identifier":"C1"}'}, "g", None, 7),  # 7 text, not object
+    ]
+    conn = _case(tmp_path, rows)
+    assert _hits(conn) == [2, 3]
+    assert _hits(conn, {"fields": ["kv"]}) == [2, 3, 5]
+    assert _hits(conn, {"fields": ["n"]}) == [2, 3, 6]
+    assert _hits(conn, {"fields": ["kv", "n"]}) == [2, 3]
+    assert repeat_marks(conn, [2, 5], RepeatSpec(fields=("kv",))) == {
+        2: {"prev": 1, "dt_ms": 10, "earlier": 1},
+        5: {"prev": 4, "dt_ms": 10, "earlier": 1},
+    }
+
+
+def test_canonical_json_function():
+    from dmslog.store.filters import json_canon
+
+    assert (
+        json_canon('{"b":{"y":1,"x":[2,{"q":1,"p":2}]},"a":"\u00e9"}')
+        == '{"a":"\u00e9","b":{"x":[2,{"p":2,"q":1}],"y":1}}'
+    )
+    assert json_canon("not json") is None and json_canon(None) is None and json_canon(5) is None
+    assert json_canon("[" * 100_000) is None  # too deep: no crash
+
+
+def test_real_parser_reorders_continuations_wfm_s010(tmp_path):
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    from dmslog.ingest.pipeline import run_ingest
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("make_fixture", root / "tools" / "make_fixture.py")
+    mf = sys.modules.get("make_fixture") or importlib.util.module_from_spec(spec)
+    if "make_fixture" not in sys.modules:
+        sys.modules["make_fixture"] = mf
+        spec.loader.exec_module(mf)
+    folder = tmp_path / "Log" / "dnaApp_zone1" / "SVC"
+    folder.mkdir(parents=True)
+    head = 'Changed crews request received. Request with ID "00000000-0000-4000-8000-000000000001" content:'
+    lines = [
+        mf.header(0, "DEBUGLOG", head, pid=4444, tid=7), "Identifier: CREW0001", "Availability: Available",
+        mf.header(100, "DEBUGLOG", head, pid=4444, tid=7), "Availability: Available", "Identifier: CREW0001",
+    ]  # fmt: skip
+    (folder / "WfmAdapter_4444.sensitive.log").write_bytes(mf.render(lines))
+    (folder / "WfmAdapter_4444.log").write_bytes(mf.render([mf.header(0, "INFO", "x", pid=4444)]))
+    path = tmp_path / "case.sqlite"
+    conn = create_case_db(path)
+    run_ingest(conn, tmp_path / "Log")
+    conn.close()
+    ro = connect(path, readonly=True)
+    ids = [r[0] for r in ro.execute("SELECT e.id FROM entry e JOIN template t ON t.id = e.tpl_id"
+                                    " WHERE t.code = 'WFM-S010' ORDER BY e.id")]  # fmt: skip
+    first, second = ids
+    raw = [r[0] for r in ro.execute("SELECT fields FROM entry WHERE id IN (?, ?) ORDER BY id", ids)]
+    assert raw[0] != raw[1] and json.loads(raw[0]) == json.loads(raw[1])  # the case the review found
+    for spec_ in (RepeatSpec(), RepeatSpec(fields=("kv",))):
+        assert repeat_marks(ro, ids, spec_) == {second: {"prev": first, "dt_ms": 100, "earlier": 1}}
+
+
+def test_field_types_and_null(tmp_path):
+    rows = [
+        (3, 10, 1, {"v": True}, "a", None, 7),  # 1
+        (3, 20, 1, {"v": 1}, "b", None, 7),  # 2 integer, not true
+        (3, 30, 1, {"v": 1.0}, "c", None, 7),  # 3 real, not integer
+        (3, 40, 1, {"v": None}, "d", None, 7),  # 4 null
+        (3, 50, 1, {"w": 1}, "e", None, 7),  # 5 missing = null
+    ]
+    conn = _case(tmp_path, rows)
+    assert _hits(conn, {"fields": ["v"]}) == [5]

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dmslog.paths import private_mkdir
 
-from .filters import REGEX_FUNCTION, regexp
+from .filters import CANON_FUNCTION, REGEX_FUNCTION, json_canon, regexp
 
 SCHEMA_RESOURCE = "schema.sql"
 
@@ -273,6 +273,7 @@ def connect(path: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
     for pragma in _COMMON_PRAGMAS:
         conn.execute(pragma)
     conn.create_function(REGEX_FUNCTION, 2, regexp, deterministic=True)  # text.regex of the filters
+    conn.create_function(CANON_FUNCTION, 1, json_canon, deterministic=True)  # repeat leaf of the filters
     if readonly:
         conn.execute("PRAGMA query_only=ON")
     return conn

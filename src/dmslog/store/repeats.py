@@ -9,17 +9,25 @@ A record ``e`` with a timestamp is a **repeat** when another record ``p`` exists
 * the same **template** (``tpl_id``) and the same **key** (below);
 * ``e.ts - window_ms <= p.ts <= e.ts`` (the window looks back only);
 * ``p`` comes **before** ``e``: an earlier ``ts``, or the same ``ts`` and, in the same source, a smaller
-  ``id`` (file order); in another source of the stream, the order of ``(rotation: .log.N with the
-  highest N first and the current .log last, file_name, member, collection_id)``.
+  ``id`` (file order); in another source of the stream, the order of the stable identity of the origin
+  ``(rotation: .log.N with the highest N first and the current .log last, file_name, member, ERS half
+  (``collection.ers_variant``, '' for a folder or file), collection path)``. Nothing in it depends on
+  ids or on the order in which the collections were added (the Enterprise and Sensitive halves of one
+  ERS can hold the same member in the same stream). Two sources with the same identity (not possible
+  in one case) would not order each other: neither record repeats the other.
 
 The first record of a burst is not a repeat; every later one is. Key:
 
-* default (no ``fields``): the extracted fields (``entry.fields``, the same JSON text for the same
-  values of one template) when the record has any, else the whole text (first line ``msg`` and the
-  continuation lines, so two different payloads or stack traces under the same first line differ).
+* default (no ``fields``): the VALUES of the extracted fields (``entry.fields``) when the record has
+  any, compared canonically: JSON objects with their keys sorted at every depth, arrays in order (a
+  continuation parser can produce the same keys in another order, ``WFM-S010``); else the whole
+  text (first line ``msg`` and the continuation lines, so two different payloads or stack traces
+  under the same first line differ).
   Unknown records (``tpl_id = 0``) never have fields, so their key is their whole text;
-* ``fields = [names]``: the values of those fields (``json_extract`` compared with ``IS``: value and
-  type; a missing field is NULL and equals a missing field), and the whole text for unknown records;
+* ``fields = [names]``: the values of those fields: the same JSON type (``json_type``; integer and real,
+  true and 1, a string and an object differ) and the same value (``json_extract ... IS``; an object or
+  an array canonically, as above); a missing field and a JSON null are both "no value" and equal each
+  other; and the whole text for unknown records;
 * ``tid = true`` adds the thread (``IS``: two records without a thread are equal).
 
 Why at query time and with this order: the answer is a function of the records and of attributes
@@ -44,7 +52,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from .filters import _FIELD_NAME, INT64_MIN, FilterError, _int, _str
+from .filters import _FIELD_NAME, CANON_FUNCTION, INT64_MIN, FilterError, _int, _str
 from .query import PAGE_TIMEOUT_S, read_guard
 
 DEFAULT_WINDOW_MS = 1_000
@@ -110,6 +118,29 @@ _SAME_TEXT = (
 )
 
 
+# Same values of ``entry.fields``: the same text, or the same canonical JSON. The canonical form only
+# reorders object keys, so it keeps the length of the compact text every case was written with since
+# the M2 (``separators=(",", ":")``, ``ensure_ascii=False``): the length test keeps the Python function
+# off almost every pair.
+_SAME_FIELDS = (
+    "(rp.fields IS e.fields OR (length(rp.fields) = length(e.fields)"
+    f" AND {CANON_FUNCTION}(rp.fields) = {CANON_FUNCTION}(e.fields)))"
+)
+# One field: the same JSON type (a JSON null counts as missing) and the same value; an object or array
+# by its canonical text (``json_extract`` gives the JSON text of both a string and an object).
+_SAME_FIELD = (
+    "(nullif(json_type(rp.fields, ?), 'null') IS nullif(json_type(e.fields, ?), 'null')"
+    " AND (json_extract(rp.fields, ?) IS json_extract(e.fields, ?)"
+    "  OR (json_type(rp.fields, ?) IN ('object', 'array')"
+    f"   AND {CANON_FUNCTION}(json_extract(rp.fields, ?)) = {CANON_FUNCTION}(json_extract(e.fields, ?)))))"
+)
+# Stable identity of the origin of a source (alias ``s``): its ERS half and collection path.
+_ORIGIN = (
+    "(SELECT coalesce(c.ers_variant, '') || char(0) || c.path FROM collection c"
+    " WHERE c.id = {s}.collection_id)"
+)
+
+
 def _match(spec: RepeatSpec) -> tuple[str, list[Any]]:
     """``FROM ... WHERE ...`` of the earlier records ``rp`` that ``e`` repeats (constants and ``?``).
 
@@ -121,11 +152,11 @@ def _match(spec: RepeatSpec) -> tuple[str, list[Any]]:
     key: list[str] = []
     if spec.fields:
         for name in spec.fields:
-            key.append("json_extract(rp.fields, ?) IS json_extract(e.fields, ?)")
-            params.extend(("$." + name, "$." + name))
+            key.append(_SAME_FIELD)
+            params.extend(["$." + name] * 7)
         key.append(f"(e.tpl_id <> 0 OR {_SAME_TEXT})")
     else:
-        key.append(f"rp.fields IS e.fields AND (e.fields IS NOT NULL OR {_SAME_TEXT})")
+        key.append(f"{_SAME_FIELDS} AND (e.fields IS NOT NULL OR {_SAME_TEXT})")
     if spec.tid:
         key.append("rp.tid IS e.tid")
     sql = (
@@ -140,8 +171,8 @@ def _match(spec: RepeatSpec) -> tuple[str, list[Any]]:
         "  OR (rp.source_id <> e.source_id AND ("
         "   (rsp.rotation IS NOT NULL AND rse.rotation IS NULL)"
         "   OR (rsp.rotation > rse.rotation)"
-        "   OR (rsp.rotation IS rse.rotation AND (rsp.file_name, rsp.member, rsp.collection_id)"
-        "    < (rse.file_name, rse.member, rse.collection_id)))))"
+        "   OR (rsp.rotation IS rse.rotation AND (rsp.file_name, rsp.member, " + _ORIGIN.format(s="rsp") + ")"
+        "    < (rse.file_name, rse.member, " + _ORIGIN.format(s="rse") + ")))))"
         " AND " + " AND ".join(key)
     )
     return sql, params
@@ -156,7 +187,7 @@ def predicate_sql(spec: RepeatSpec) -> tuple[str, list[Any]]:
 # Closest earlier record first: the reverse of the "before" order of the module docstring.
 _CLOSEST = (
     " ORDER BY rp.ts DESC, (rsp.rotation IS NULL) DESC, rsp.rotation ASC, rsp.file_name DESC,"
-    " rsp.member DESC, rsp.collection_id DESC, rp.id DESC LIMIT 1"
+    " rsp.member DESC, " + _ORIGIN.format(s="rsp") + " DESC, rp.id DESC LIMIT 1"
 )
 
 
