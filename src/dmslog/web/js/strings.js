@@ -1510,6 +1510,11 @@ export const S = {
   actSideBySide: "Normal and sensitive side by side",
   actSameKey: "Same key",
   actCompare: "Compare…",
+  actCopyRecord: "Copy text",
+  actContext: "Context",
+  actOnlyThisType: "Only this message type",
+  actHighlightType: "Highlight this message type",
+  detailHighlightLoading: "Loading the highlight rules…",
   errorStartup: "The viewer could not start. Reload the page; if it happens again, restart dmslog.",
   actionUnavailable: "This feature could not be loaded.",
   // Bottom dock (UI-15): tabs for the analysis panels.

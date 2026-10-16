@@ -1,21 +1,10 @@
 /* Record detail in investigation order (UI-20) and the Knowledge section ("What it means").
-   Reading order is set here with `order` (the panel is a flex column), so index.html can keep its markup:
-   1 header, 2 actions, 3 message type, 4 text, 5 What it means, 6 Fields and Keys, 7 Links, 8 Payload, 9 bookmark note.
-   Colours come from tokens.css only. */
-#detail-panel > #detail-title { order: 0; }
-#detail-panel > #detail-empty { order: 1; }
-#detail-panel > #detail-meta { order: 1; }
-#detail-panel > #detail-actions { order: 2; }
-#detail-panel > .detail-highlight { order: 2; } /* the "Highlight" popover opens right under the actions */
-#detail-panel > #detail-template { order: 3; }
-#detail-panel > #detail-text { order: 4; }
-#detail-panel > #detail-knowledge { order: 5; }
-#detail-panel > #detail-fields { order: 6; }
-#detail-panel > #detail-keys { order: 6; }
-#detail-panel > #detail-links { order: 7; }
-#detail-panel > #detail-payload { order: 8; }
-#detail-panel > #detail-bookmark { order: 9; }
-#detail-panel > #context-box { order: 10; }
+   The reading order IS the DOM order of index.html (Tab and screen readers follow the DOM, never CSS `order`):
+   1 header, 2 actions (the Highlight section opens right under them), 3 message type, 4 text, 5 What it means,
+   6 Fields, 7 Keys, 8 Links, 9 Payload, 10 bookmark note, then the context box. Colours come from tokens.css only. */
+#detail-empty[hidden] {
+  display: none;
+}
 
 /* Header: facts, not a sentence. */
 .dt-row {
@@ -77,11 +66,6 @@
 .detail-actions .ui-button[aria-pressed="true"] .dt-icon,
 .detail-actions .ui-button[aria-expanded="true"] .dt-icon {
   color: var(--accent);
-}
-
-/* The empty state replaces the whole detail until a record is selected. */
-#detail-empty[hidden] {
-  display: none;
 }
 
 /* Collapsible sections 5 to 9: the heading is a button; the rest of the section folds away. The Knowledge heading

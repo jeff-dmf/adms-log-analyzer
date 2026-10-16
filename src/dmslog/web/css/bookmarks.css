@@ -260,6 +260,6 @@
   display: none;
 }
 
-.detail-bookmark:not(:has(.bm-editor:not([hidden]))) {
+.detail-bookmark:not([data-marked="true"]) {
   display: none;
 }

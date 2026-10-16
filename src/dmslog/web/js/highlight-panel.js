@@ -322,14 +322,22 @@ export function mountHighlights(options) {
     }
     if (entry.tpl_id > 0) {
       const chip = button("hl-chip", S.hlTemplateChip);
-      chip.addEventListener("click", () => {
-        const code = options.getTemplateCode ? options.getTemplateCode(entry.tpl_id) : "";
-        store.create({
-          name: code || String(entry.tpl_id), color: nextColor(store.rules()), cond: { tpl: [entry.tpl_id] }, enabled: true,
-        }).then(() => showMessage("", false), (error) => showMessage(errorText(error), true));
-      });
+      // record.highlightType: through the action registry when main.js hands in runHighlightType.
+      chip.addEventListener("click", () => (options.runHighlightType ? options.runHighlightType() : highlightType()));
       detail.appendChild(chip);
     }
+  }
+
+  // Highlight rule for the message type of the shown record (the action record.highlightType).
+  function highlightType() {
+    if (!entry || !(entry.tpl_id > 0)) {
+      return Promise.resolve();
+    }
+    const tplId = entry.tpl_id;
+    const code = options.getTemplateCode ? options.getTemplateCode(tplId) : "";
+    return store.create({
+      name: code || String(tplId), color: nextColor(store.rules()), cond: { tpl: [tplId] }, enabled: true,
+    }).then(() => showMessage("", false), (error) => showMessage(errorText(error), true));
   }
 
   // -- ]/[ navigation: next/previous record of the view that any enabled rule highlights
@@ -379,5 +387,6 @@ export function mountHighlights(options) {
       entry = next || null;
       renderDetail();
     },
+    highlightType,
   };
 }

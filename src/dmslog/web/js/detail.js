@@ -85,6 +85,7 @@ export function adoptHeading(host, key, prefs = detailPrefs()) {
 export class Detail {
   constructor(refs, {
     getCase, getSourceName, getSourceInfo, getCompareLabel, onError, getTemplateCode, onTemplate, onFields, onEntry, isBookmarked, onBookmarkToggle,
+    runAction,
   }) {
     this.refs = refs;
     this.getCase = getCase;
@@ -99,14 +100,17 @@ export class Detail {
     this.onTemplate = onTemplate || (() => {});
     this.onFields = onFields || (() => {});
     this.onEntry = onEntry || (() => {}); // entry fetched (or null when cleared): Knowledge section
+    // The record actions (record.context, record.copy, record.filterType) go through the action registry when main.js
+    // hands in runAction(id, args); alone, the detail runs them directly.
+    this.runAction = runAction || ((id, args) => this.runDirect(id, args));
     this.entry = null;
     this.entryCase = null;
     this.terms = [];
     this.entryGuard = new RequestGuard();
     this.contextGuard = new RequestGuard();
-    refs.contextButton.addEventListener("click", () => this.loadContext());
+    refs.contextButton.addEventListener("click", () => this.runAction("record.context", this.refs.contextSame.value));
     refs.contextClose.addEventListener("click", () => this.closeContext());
-    refs.copyButton.addEventListener("click", () => this.copyText());
+    refs.copyButton.addEventListener("click", () => this.runAction("record.copy"));
     this.paintActions();
     if (refs.bookmarkButton) {
       refs.bookmarkButton.addEventListener("click", () => {
@@ -117,12 +121,30 @@ export class Detail {
     }
     if (refs.template) {
       refs.template.addEventListener("click", () => {
-        if (this.entry && this.entry.tpl_id > 0) {
-          this.onTemplate(this.entry.tpl_id);
-        }
+        this.runAction("record.filterType");
       });
     }
     this.clear();
+  }
+
+  runDirect(id, args) {
+    if (id === "record.context") {
+      return this.loadContext(args);
+    }
+    if (id === "record.copy") {
+      return this.copyText();
+    }
+    if (id === "record.filterType") {
+      return this.filterType();
+    }
+    return undefined;
+  }
+
+  // "Only this message type" (record.filterType): the filter of the shown record's message type.
+  filterType() {
+    if (this.entry && this.entry.tpl_id > 0) {
+      this.onTemplate(this.entry.tpl_id);
+    }
   }
 
   setTerms(terms) {
@@ -347,13 +369,13 @@ export class Detail {
     }
   }
 
-  async loadContext() {
+  async loadContext(sameValue) {
     const caseId = this.getCase();
     if (!canLoadContext(this.entry, this.entryCase, caseId)) {
       return;
     }
     const entryId = this.entry.id;
-    const same = this.refs.contextSame.value;
+    const same = sameValue === undefined ? this.refs.contextSame.value : sameValue;
     const ticket = this.contextGuard.begin(caseId, entryId);
     try {
       const data = await api.context(caseId, entryId, same, 50, 50, ticket.signal);

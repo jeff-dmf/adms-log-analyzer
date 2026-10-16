@@ -3,7 +3,7 @@
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
 import { api, onForbidden, onNetworkError } from "./api.js";
-import { loadSections, mountLate, retryable } from "./late-init.js";
+import { createButtonGate, loadSections, mountLate, retryable } from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
@@ -350,6 +350,7 @@ function start() {
     },
     getCase: () => caseId,
     getSourceName: (id) => sourceNames.get(id) || String(id),
+    runAction: (id, args) => actions.invoke(id, ctx, args), // the record actions (app-actions.js); ctx exists by the first click
     getSourceInfo: (id) => {
       const source = sources.find((item) => item.id === id);
       const tags = isMulti(collections) ? gridTags(collections) : null; // the collection is said only when there are several
@@ -775,6 +776,23 @@ function start() {
   // not at the opening (UI-14). Each one that loads shows the record that is already on screen.
   // Each section loads on its own and a failure is forgotten, so the next record tries again (retryable).
   let detailFailureShown = false;
+  // Highlight rules (detail section, ]/[ navigation); the store is above, the panel is a dock panel.
+  const highlightGate = createButtonGate(byId("highlight-button"), { loadingTitle: S.detailHighlightLoading, failedTitle: S.actionUnavailable });
+  const loadHighlights = retryable(() => import("./highlight-panel.js").then((module) => {
+    highlightUi = module.mountHighlights({
+      detailAnchor: byId("detail-actions"),
+      detailTrigger: byId("highlight-button"),
+      runHighlightType: () => actions.invoke("record.highlightType", ctx),
+      store: highlightStore,
+      getCase: () => caseId,
+      getFilter: () => currentFilter,
+      getSelectedRow: () => grid.selectedRow(),
+      getTemplateCode: (id) => templateLabels.get(id) || "",
+      reveal: (row) => grid.revealRow(row),
+      showMessage,
+    });
+    highlightUi.showEntry(detail.entry);
+  }));
   const detailLoaders = [
     retryable(() => import("./links.js").then((links) => {
       linksSection = new links.LinksSection(byId("detail-links"), {
@@ -801,21 +819,8 @@ function start() {
         payloadSection.show(detail.entry);
       }
     })),
-    // Highlight rules (detail section, ]/[ navigation); the store is above, the panel is a dock panel.
-    retryable(() => import("./highlight-panel.js").then((module) => {
-      highlightUi = module.mountHighlights({
-        detailAnchor: byId("detail-actions"),
-        detailTrigger: byId("highlight-button"),
-        store: highlightStore,
-        getCase: () => caseId,
-        getFilter: () => currentFilter,
-        getSelectedRow: () => grid.selectedRow(),
-        getTemplateCode: (id) => templateLabels.get(id) || "",
-        reveal: (row) => grid.revealRow(row),
-        showMessage,
-      });
-      highlightUi.showEntry(detail.entry);
-    })),
+    // Highlight rules: the button stays disabled (with its reason) while the module loads or after it failed.
+    () => highlightGate.track(loadHighlights()),
     // Bookmarks (detail section; the shortcuts use the store and the panel is a dock panel).
     retryable(() => import("./bookmarks-panel.js").then((module) => {
       detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
@@ -1164,6 +1169,18 @@ function start() {
     },
     theme: themePreference,
     setTheme: (choice) => setThemePreference(choice),
+    recordShown: () => detail.entry !== null,
+    hasType: () => detail.entry !== null && detail.entry.tpl_id > 0,
+    copyRecord: () => detail.copyText(),
+    loadContext: (same) => detail.loadContext(same),
+    filterType: () => detail.filterType(),
+    highlightReady: () => highlightUi !== null,
+    highlightType: () => {
+      if (highlightUi === null) {
+        throw new Error(S.actionUnavailable);
+      }
+      return highlightUi.highlightType();
+    },
     shortcutsText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp].join(" "),
   };
   registerAppPanels(dock, deps);

@@ -386,20 +386,30 @@ test("highlight: with a trigger the section stays closed until the button is pre
 
 // ---- stylesheet contract -----------------------------------------------------------------------------------
 
-test("css: the detail sections are ordered header, actions, type, text, meaning, fields and keys, links, payload, bookmark", () => {
-  const css = CSS("knowledge.css");
-  const order = (selector) => {
-    const m = new RegExp("#detail-panel > " + selector.replace(/[.#]/g, "\\$&") + " \\{ order: (\\d+); \\}").exec(css);
-    assert.ok(m, selector + " has an order");
-    return Number(m[1]);
-  };
-  const chain = ["#detail-meta", "#detail-actions", "#detail-template", "#detail-text", "#detail-knowledge", "#detail-fields", "#detail-links",
-    "#detail-payload", "#detail-bookmark"].map(order);
-  for (let i = 1; i < chain.length; i += 1) {
-    assert.ok(chain[i] > chain[i - 1], "order is strictly increasing at " + i);
+// Tab and screen readers follow the DOM, so the DOM itself must be in reading order (contract 5.2); CSS `order` is not used.
+test("html: the DOM order of the detail panel is the reading order and CSS does not reorder it", () => {
+  const html = readFileSync(new URL("../../src/dmslog/web/index.html", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const start = html.indexOf('<aside id="detail-panel"');
+  const aside = html.slice(start, html.indexOf("</aside>", start));
+  const ids = [...aside.matchAll(/^ {8}<[a-z0-9]+\b[^>]*\bid="([^"]+)"/gm)].map((m) => m[1]);
+  assert.deepEqual(ids, ["detail-title", "detail-empty", "detail-meta", "detail-actions", "detail-template", "detail-text",
+    "detail-knowledge", "detail-fields", "detail-keys", "detail-links", "detail-payload", "detail-bookmark", "context-box"]);
+  for (const name of ["knowledge.css", "links.css", "payload.css", "bookmarks.css", "app.css"]) {
+    assert.equal(/(^|[\s;{])order:\s*\d/m.test(CSS(name)), false, name + " must not reorder with `order`");
   }
-  assert.equal(order("#detail-keys"), order("#detail-fields"));
-  assert.ok(order("#detail-links") > order("#detail-keys"));
+});
+
+test("html: the Highlight section is inserted right after the actions, so DOM order stays the reading order", () => {
+  const parent = el("aside");
+  const actions = parent.appendChild(el("div"));
+  parent.appendChild(el("button")); // the message type
+  const store = { get: () => null, known: () => true, ensure() {}, rules: () => [], active: () => [] };
+  mountHighlights({
+    detailAnchor: actions, detailTrigger: el("button"), store, getCase: () => "c1", getFilter: () => null,
+    getSelectedRow: () => null, reveal: async () => {}, showMessage: () => {},
+  });
+  assert.equal(parent.children[1].className.split(/\s+/).includes("detail-highlight"), true);
+  assert.equal(parent.children.length, 3);
 });
 
 test("css: every collapsible section hides its body but keeps its heading; actions never wrap a label", () => {
@@ -410,6 +420,8 @@ test("css: every collapsible section hides its body but keeps its heading; actio
   assert.match(css, /\.detail-actions \.ui-button \{\s*white-space: nowrap;/);
   assert.match(CSS("payload.css"), /\.pl-panes\.is-wrap \.pl-pre \{\s*white-space: pre-wrap;/);
   assert.match(CSS("bookmarks.css"), /\.detail-bookmark \.bm-toggle \{\s*display: none;/);
+  assert.equal(CSS("bookmarks.css").includes(":has("), false, "no :has() (no fallback in older browsers)");
+  assert.match(CSS("bookmarks.css"), /\.detail-bookmark:not\(\[data-marked="true"\]\) \{\s*display: none;/);
 });
 
 test("css: the record text keeps six lines minimum, 45vh maximum and a vertical resize", () => {
@@ -425,4 +437,149 @@ test("no innerHTML in the detail modules", () => {
     const text = readFileSync(new URL("../../src/dmslog/web/js/" + file, import.meta.url), "utf8");
     assert.equal(/innerHTML/.test(text), false, file);
   }
+});
+
+// ---- bookmark note section: visibility is a flag set by the code, not :has() ----------------------------------
+
+test("bookmark note: data-marked follows the store and is false without a record", async () => {
+  const { initDetailBookmark } = await import("../../src/dmslog/web/js/bookmarks-panel.js");
+  const marks = new Map();
+  const store = { get: (id) => marks.get(id) || null, ensure() {}, load: async () => null, toggle: async () => {}, update: async () => {} };
+  const host = el("section");
+  const ui = initDetailBookmark(host, { store, onError: () => {} });
+  ui.show(null);
+  assert.equal(host.attrs["data-marked"], "false");
+  assert.equal(host.hidden, true);
+  ui.show({ id: 3 });
+  assert.equal(host.attrs["data-marked"], "false");
+  marks.set(3, { id: 3, color: "yellow" });
+  ui.refresh();
+  assert.equal(host.attrs["data-marked"], "true");
+  marks.delete(3);
+  ui.refresh();
+  assert.equal(host.attrs["data-marked"], "false");
+});
+
+// ---- the Highlight button while its module loads or failed ------------------------------------------------------
+
+test("highlight button: disabled while the module loads, opens on the first click once loaded, disabled again with a reason on failure", async () => {
+  const { createButtonGate } = await import("../../src/dmslog/web/js/late-init.js");
+  const button = el("button");
+  const gate = createButtonGate(button, { loadingTitle: "loading", failedTitle: S.actionUnavailable });
+  assert.equal(button.disabled, true);
+  assert.equal(button.title, "loading");
+  let finish;
+  const loading = gate.track(new Promise((resolve) => { finish = resolve; }));
+  button.click(); // a click while loading goes nowhere (disabled)
+  finish("module");
+  assert.equal(await loading, "module");
+  assert.equal(button.disabled, false);
+  assert.equal(button.attrs["aria-disabled"], "false");
+  // the first click after loading opens the section
+  const parent = el("aside");
+  const anchor = parent.appendChild(el("div"));
+  const store = { get: () => null, known: () => true, ensure() {}, rules: () => [], active: () => [] };
+  const ui = mountHighlights({
+    detailAnchor: anchor, detailTrigger: button, store, getCase: () => "c1", getFilter: () => null,
+    getSelectedRow: () => null, reveal: async () => {}, showMessage: () => {},
+  });
+  ui.showEntry({ id: 1, keys: [{ key_type: "gid", value: "7" }], tpl_id: 0 });
+  button.click();
+  assert.equal(button.attrs["aria-expanded"], "true");
+  assert.equal(parent.children[1].hidden, false);
+  // once ready, a later attempt is a no-op and never disables the focused button again
+  await gate.track(Promise.resolve());
+  assert.equal(button.disabled, false);
+});
+
+test("highlight button: a failed load leaves it disabled with the unavailable reason and a retry can enable it", async () => {
+  const { createButtonGate } = await import("../../src/dmslog/web/js/late-init.js");
+  const button = el("button");
+  const gate = createButtonGate(button, { loadingTitle: "loading", failedTitle: S.actionUnavailable });
+  await assert.rejects(gate.track(Promise.reject(new Error("boom"))), /boom/);
+  assert.equal(button.disabled, true);
+  assert.equal(button.title, S.actionUnavailable);
+  const retry = gate.track(Promise.resolve());
+  assert.equal(button.title, "loading");
+  await retry;
+  assert.equal(button.disabled, false);
+  assert.equal(button.title, "");
+});
+
+test("main.js sends the Highlight loader through the button gate and the module through retryable()", () => {
+  const main = readFileSync(new URL("../../src/dmslog/web/js/main.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  assert.match(main, /createButtonGate\(byId\("highlight-button"\)/);
+  assert.match(main, /\(\) => highlightGate\.track\(loadHighlights\(\)\)/);
+  assert.match(main, /const loadHighlights = retryable\(/);
+});
+
+// ---- UI-20 record actions in the registry ----------------------------------------------------------------------
+
+async function recordRegistry(over = {}) {
+  const { createActionRegistry } = await import("../../src/dmslog/web/js/actions.js");
+  const { registerAppActions } = await import("../../src/dmslog/web/js/app-actions.js");
+  const errors = [];
+  const registry = createActionRegistry({ onError: (err) => errors.push(String(err.message)) });
+  const calls = [];
+  const state = { shown: true, type: true, hlReady: true };
+  registerAppActions(registry, {
+    ready: {},
+    recordShown: () => state.shown,
+    hasType: () => state.type,
+    highlightReady: () => state.hlReady,
+    copyRecord: () => calls.push(["copy"]),
+    loadContext: (same) => calls.push(["context", same]),
+    filterType: () => calls.push(["filterType"]),
+    highlightType: () => calls.push(["highlightType"]),
+    ...over,
+  });
+  return { registry, calls, state, errors };
+}
+
+test("record actions: copy, context, filterType and highlightType are registered with strings.js labels", async () => {
+  const { registry } = await recordRegistry();
+  const labels = { "record.copy": "Copy text", "record.context": "Context", "record.filterType": "Only this message type",
+    "record.highlightType": "Highlight this message type" };
+  for (const [id, label] of Object.entries(labels)) {
+    const def = registry.get(id);
+    assert.ok(def, id);
+    assert.equal(def.group, "record");
+    assert.equal(S[def.labelKey], label);
+  }
+  assert.deepEqual(registry.get("record.context").children({}).map((c) => c.args), ["source", "tid", "merge"]);
+});
+
+test("record actions: run through invoke with their arguments and follow the record and its message type", async () => {
+  const { registry, calls, state } = await recordRegistry();
+  const ctx = { caseId: () => "c1" };
+  assert.deepEqual(await registry.invoke("record.copy", ctx), { ok: true });
+  await registry.invoke("record.context", ctx, "tid");
+  await registry.invoke("record.filterType", ctx);
+  await registry.invoke("record.highlightType", ctx);
+  assert.deepEqual(calls, [["copy"], ["context", "tid"], ["filterType"], ["highlightType"]]);
+  state.type = false;
+  assert.equal((await registry.invoke("record.filterType", ctx)).reason, "disabled");
+  assert.equal((await registry.invoke("record.highlightType", ctx)).reason, "disabled");
+  state.type = true;
+  state.hlReady = false;
+  assert.equal((await registry.invoke("record.highlightType", ctx)).reason, "disabled");
+  state.shown = false;
+  assert.equal((await registry.invoke("record.copy", ctx)).reason, "disabled");
+  assert.equal(registry.state("record.copy", ctx).reasonKey, "cmpNeedRecord");
+});
+
+test("detail controls run through runAction with the record action ids", () => {
+  freshPrefs();
+  const refs = {};
+  for (const name of ["empty", "meta", "text", "actions", "contextButton", "contextClose", "contextSame", "contextBox", "contextList",
+    "copyButton", "compareButton", "bookmarkButton", "highlightButton", "copyStatus", "fields", "template"]) {
+    refs[name] = el(name.endsWith("Button") || name === "template" || name === "contextClose" ? "button" : "div");
+  }
+  refs.contextSame.value = "tid";
+  const ran = [];
+  new Detail(refs, { getCase: () => "c1", getSourceName: String, onError: (e) => { throw e; }, runAction: (id, args) => ran.push([id, args]) });
+  refs.contextButton.click();
+  refs.copyButton.click();
+  refs.template.click();
+  assert.deepEqual(ran, [["record.context", "tid"], ["record.copy", undefined], ["record.filterType", undefined]]);
 });

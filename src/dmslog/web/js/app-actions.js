@@ -15,6 +15,7 @@
 //   loadCopyExport()           loads (once) and mounts the "Copy as" popover; resolves when it can open
 //   cases()                    [{id, name}] known cases;  selectCase(id), closeCase(), focusNewCase(), focusAddFiles()
 //   openColumns(), copyExportOpen(), followTailOn(), toggleFollowTail(), setTheme(choice), theme()
+//   recordShown(), hasType(), copyRecord(), loadContext(same), filterType(), highlightType(), highlightReady()   the record actions
 //   shortcutsText()            the lines of the shortcut help (until the dialog of UI-28)
 import { S } from "./strings.js";
 import { THEME_CHOICES } from "./theme.js";
@@ -388,6 +389,32 @@ export function registerAppActions(actions, deps) {
       checked: deps.theme() === choice,
     })),
     run: (ctx, choice) => deps.setTheme(choice),
+  });
+
+  // ---- Record (UI-20): the actions of the detail pane. The buttons of the pane run them through the registry.
+  //   deps.recordShown(), deps.hasType()     is there a record in the detail / does it have a message type
+  //   deps.copyRecord(), deps.loadContext(same), deps.filterType(), deps.highlightType(), deps.highlightReady()
+  const recordShown = () => deps.recordShown();
+  const recordAction = (def) => actions.register({ group: "record", enabled: recordShown, disabledKey: "cmpNeedRecord", ...def });
+  recordAction({ id: "record.copy", labelKey: "actCopyRecord", run: () => deps.copyRecord() });
+  recordAction({
+    id: "record.context",
+    labelKey: "actContext",
+    children: () => [["source", "contextSameSource"], ["tid", "contextSameTid"], ["merge", "contextSameMerge"]]
+      .map(([value, key]) => ({ label: S[key], args: value })),
+    run: (ctx, same) => deps.loadContext(same),
+  });
+  recordAction({
+    id: "record.filterType",
+    labelKey: "actOnlyThisType",
+    enabled: () => recordShown() && deps.hasType(),
+    run: () => deps.filterType(),
+  });
+  recordAction({
+    id: "record.highlightType",
+    labelKey: "actHighlightType",
+    enabled: () => recordShown() && deps.hasType() && deps.highlightReady(),
+    run: () => deps.highlightType(),
   });
 
   // ---- Help (a plain list until the dialog of UI-28)
