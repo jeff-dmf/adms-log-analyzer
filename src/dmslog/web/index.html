@@ -192,22 +192,26 @@
 
       <aside id="detail-panel" class="panel" aria-labelledby="detail-title">
         <h2 id="detail-title" data-i18n="panelDetail"></h2>
+        <div id="detail-empty" class="ui-empty"></div>
         <div id="detail-meta" class="detail-meta"></div>
-        <div id="detail-actions" class="inline-form" hidden>
+        <div id="detail-actions" class="detail-actions" hidden>
           <label for="context-same" class="visually-hidden" data-i18n="contextSame"></label>
-          <select id="context-same"></select>
-          <button type="button" id="context-button" data-i18n="contextButton"></button>
-          <button type="button" id="copy-button" data-i18n="copyButton"></button>
-          <button type="button" id="compare-button" data-i18n="cmpButton"></button>
+          <select id="context-same" class="ui-select"></select>
+          <button type="button" id="context-button" class="ui-button is-ghost"></button>
+          <button type="button" id="copy-button" class="ui-button is-ghost"></button>
+          <button type="button" id="compare-button" class="ui-button is-ghost"></button>
+          <button type="button" id="bookmark-button" class="ui-button is-ghost" aria-pressed="false"></button>
+          <button type="button" id="highlight-button" class="ui-button is-ghost" aria-expanded="false"></button>
           <span id="copy-status" class="source-meta" role="status"></span>
         </div>
         <button type="button" id="detail-template" class="tpl-link-button" hidden></button>
         <pre id="detail-text" class="detail-text"></pre>
+        <section id="detail-knowledge" class="detail-knowledge" data-i18n-aria-label="knowMeansTitle" hidden></section>
         <div id="detail-fields" class="detail-fields"></div>
-        <section id="detail-bookmark" class="detail-bookmark" data-i18n-aria-label="bmDetailTitle" hidden></section>
-        <section id="detail-knowledge" class="detail-knowledge" data-i18n-aria-label="knowTitle" hidden></section>
-        <section id="detail-payload" class="detail-payload" data-i18n-aria-label="plTitle" hidden></section>
+        <section id="detail-keys" class="detail-keys" data-i18n-aria-label="lnkKeysTitle" hidden></section>
         <section id="detail-links" class="detail-links" data-i18n-aria-label="lnkTitle" hidden></section>
+        <section id="detail-payload" class="detail-payload" data-i18n-aria-label="plTitle" hidden></section>
+        <section id="detail-bookmark" class="detail-bookmark" data-i18n-aria-label="bmDetailTitle" hidden></section>
         <div id="context-box" class="context-box" hidden>
           <div class="context-head">
             <h3 data-i18n="contextTitle"></h3>

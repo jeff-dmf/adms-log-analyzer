@@ -2,30 +2,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// Minimal document: only what detail.js touches while rendering the context list.
-globalThis.document = {
-  createElement: () => ({
-    className: "", textContent: "", tabIndex: 0, children: [],
-    classList: { add() {} },
-    appendChild(child) { this.children.push(child); },
-    addEventListener() {},
-    scrollIntoView() {},
-  }),
-};
+// Fake DOM shared by the UI flow tests: detail.js builds buttons and header spans while rendering.
+import { installGlobalDom } from "./fixtures/fake-dom.mjs";
+
+installGlobalDom();
 
 const { Detail } = await import("../../src/dmslog/web/js/detail.js");
 const { api } = await import("../../src/dmslog/web/js/api.js");
 
 function fakeRefs() {
-  const el = () => ({ hidden: false, textContent: "", value: "source", listeners: {}, addEventListener(n, f) { this.listeners[n] = f; } });
-  const list = { textContent: "", children: [], appendChild(c) { this.children.push(c); } };
-  Object.defineProperty(list, "textContent", {
-    get() { return ""; },
-    set() { this.children.length = 0; },
-  });
+  const el = () => {
+    const node = document.createElement("div");
+    node.value = "source";
+    return node;
+  };
   return {
     meta: el(), text: el(), actions: el(), contextButton: el(), contextClose: el(), contextSame: el(),
-    contextBox: el(), contextList: list, copyButton: el(), copyStatus: el(),
+    contextBox: el(), contextList: el(), copyButton: el(), copyStatus: el(),
   };
 }
 

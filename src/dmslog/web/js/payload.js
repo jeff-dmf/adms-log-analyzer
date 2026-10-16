@@ -3,6 +3,7 @@
 // announcement. Everything comes from the ERS (untrusted): textContent only, the text goes into
 // <pre> elements; ONE delegated click listener on the host. Large payloads are rendered in chunks.
 import { api } from "./api.js";
+import { detailPrefs, sectionHeading } from "./detail.js";
 import { revealLabel } from "./links-model.js";
 import {
   CHUNK_CHARS, announcementTarget, buildChips, carrierTarget, confidenceText, createPayloadFlow, displayView, splitChunks,
@@ -89,6 +90,7 @@ export class PayloadSection {
     this.entry = null;
     this.copyNote = "";
     this.renderedKey = null;
+    this.panes = null; // the panes element of the current render (Wrap lines toggles its class)
     this.flow = createPayloadFlow({ api, getCase, onState: (state) => this.render(state) });
     host.addEventListener("click", (event) => this.handleClick(event));
     this.clear();
@@ -156,8 +158,16 @@ export class PayloadSection {
       this.flow.select(Number(button.dataset.id));
     } else if (action === "mode") {
       this.flow.setMode(button.dataset.mode);
-    } else if (action === "copy-raw" || action === "copy-formatted") {
-      this.copy(action === "copy-raw" ? "raw" : "formatted");
+    } else if (action === "copy") {
+      const view = displayView(state.detail.data, state.mode);
+      this.copy(view ? view.shown : "raw");
+    } else if (action === "wrap") {
+      const wrap = !detailPrefs().wrap();
+      detailPrefs().setWrap(wrap); // remembered for the next record and the next session
+      button.setAttribute("aria-pressed", wrap ? "true" : "false");
+      if (this.panes) {
+        this.panes.classList.toggle("is-wrap", wrap);
+      }
     } else if (action === "pair") {
       this.flow.togglePair();
     } else if (action === "operation" && meta && meta.event_id !== null && meta.event_id !== undefined &&
@@ -202,7 +212,7 @@ export class PayloadSection {
     this.renderedKey = key;
     host.hidden = false;
     host.textContent = "";
-    host.appendChild(element("h3", "pl-title", S.plTitle));
+    host.appendChild(sectionHeading(host, "payload", S.plTitle, "pl-title"));
     if (state.status === "loading") {
       host.appendChild(element("div", "pl-muted", S.plLoading));
       return;
@@ -291,10 +301,10 @@ export class PayloadSection {
       modes.appendChild(node);
     }
     bar.appendChild(modes);
-    bar.appendChild(this.button(S.plCopyRaw, "copy-raw"));
-    const copyFormatted = this.button(S.plCopyFormatted, "copy-formatted");
-    copyFormatted.disabled = !view.formattedUsable;
-    bar.appendChild(copyFormatted);
+    const wrapButton = this.button(S.plWrapLines, "wrap", "pl-mode");
+    wrapButton.setAttribute("aria-pressed", detailPrefs().wrap() ? "true" : "false");
+    bar.appendChild(wrapButton);
+    bar.appendChild(this.button(S.plCopy, "copy")); // copies what is shown (Formatted or Raw)
     if (data.pair) {
       bar.appendChild(this.button(state.pair.open ? S.plHidePair : S.plShowPair, "pair"));
     }
@@ -304,12 +314,13 @@ export class PayloadSection {
     if (view.text.length > 200000) {
       box.appendChild(element("div", "pl-muted", S.plLargeNote));
     }
-    const panes = element("div", state.pair.open ? "pl-panes pl-panes-two" : "pl-panes");
+    const panes = element("div", (state.pair.open ? "pl-panes pl-panes-two" : "pl-panes") + (detailPrefs().wrap() ? " is-wrap" : ""));
     panes.appendChild(this.pane(format(S.plPaneThis, { id: meta.id, role: meta.role }), view.text, state.pair.open));
     if (state.pair.open) {
       panes.appendChild(this.pairPane(state));
     }
     box.appendChild(panes);
+    this.panes = panes;
     return box;
   }
 
