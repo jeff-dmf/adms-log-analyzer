@@ -1037,6 +1037,7 @@ class Api:
             ("DELETE", re.compile(r"/api/alerts/history\Z"), self.clear_alert_history),
         ]
         self._routes += [("POST", re.compile(r"/api/entries/aggregate\Z"), self.entries_aggregate)]
+        self._routes += [("POST", re.compile(r"/api/entries/compare\Z"), self.entries_compare)]
 
     def shutdown(self) -> None:
         self.picker.close()
@@ -2393,6 +2394,26 @@ class Api:
             "X-Dmslog-Truncated": "1" if result.truncated else "0",
         }
         return Download("text/csv; charset=utf-8", iter([text.encode("utf-8")]), headers)
+
+    # -- comparison of views by message type (store/viewcompare.py; ARQUITETURA 10.10)
+
+    def entries_compare(self, request: Request) -> Response:
+        """``{case, mode, filter, a, b, max_side, offset, limit, only_diff}``: runs of the alignment of the
+        two sides' message types and a page of aligned rows."""
+        from ..store import viewcompare
+
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        req = viewcompare.parse_request(body)
+        for side in (req.a, req.b):
+            _check_scan_filter(req.side_tree(side))
+        try:
+            with self.store.reader(cid) as conn:
+                return Response(200, viewcompare.compare(conn, req))
+        except viewcompare.CompareError as exc:
+            if exc.code in ("event_not_found", "stream_not_found"):
+                raise ApiError(404, exc.code, str(exc), path=exc.path) from None
+            raise
 
 
 _PRESET_STATUS = {
