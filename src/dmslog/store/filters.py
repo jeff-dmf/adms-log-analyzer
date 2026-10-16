@@ -297,14 +297,35 @@ def json_canon(text: Any) -> str | None:
         return None
 
 
+CANON_ENTRY_OVERHEAD = 64
+
+
+def _entry_size(text: str) -> int:
+    return 2 * len(text) + CANON_ENTRY_OVERHEAD
+
+
 def _cache_limit() -> int:
     return CANON_CACHE_CHARS  # read at each insertion (a test can lower it)
 
 
+_MISSING = object()
+
+
 class _CanonCache:
-    """Canonical form by text, bounded by :data:`CANON_CACHE_CHARS`; counts calls and parses (tests)."""
+    """Canonical form by text, bounded by :data:`CANON_CACHE_CHARS`; counts calls and parses (tests).
+
+    Shared by every connection (the server reads from several threads). Lookups read the current dict
+    without a lock (one ``dict.get``; the dict is only ever replaced whole). A miss parses OUTSIDE the lock
+    (nothing here calls back into SQLite), then inserts under the lock after checking again that the text
+    is still missing: check, empty when full, insert and count are one atomic step, so ``chars`` never
+    passes the limit. A text whose entry alone would pass the limit is compared without being kept.
+    ``chars`` counts each entry as twice the length of its text (the text and its canonical form) plus
+    :data:`CANON_ENTRY_OVERHEAD` for the dictionary slot and the two string objects, so many tiny texts
+    cannot hold much more memory than the limit says.
+    """
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.forms: dict[str, str | None] = {}
         self.chars = 0
         self.calls = 0
@@ -312,28 +333,32 @@ class _CanonCache:
 
     def reset(self) -> None:
         """Empty the cache and the counters (tests)."""
-        self.forms, self.chars, self.calls, self.parses = {}, 0, 0, 0
+        with self._lock:
+            self.forms, self.chars, self.calls, self.parses = {}, 0, 0, 0
 
     def form(self, text: str) -> str | None:
-        try:
-            return self.forms[text]
-        except KeyError:
-            pass
-        self.parses += 1
+        value = self.forms.get(text, _MISSING)
+        if value is not _MISSING:
+            return value  # type: ignore[return-value]
         value = json_canon(text)
-        size = 2 * len(text)
-        if self.chars + size > _cache_limit():
-            self.forms, self.chars = (
-                {},
-                0,
-            )  # dict ops are atomic under the GIL: readers never see a half state
-        self.forms[text] = value
-        self.chars += size
+        size = _entry_size(text)
+        limit = _cache_limit()
+        with self._lock:
+            self.parses += 1
+            if size > limit:
+                return value  # larger than the whole budget: compared, never kept
+            kept = self.forms.get(text, _MISSING)
+            if kept is not _MISSING:
+                return kept  # type: ignore[return-value]  # another thread inserted it meanwhile
+            if self.chars + size > limit:
+                self.forms, self.chars = {}, 0
+            self.forms[text] = value
+            self.chars += size
         return value
 
     def same(self, a: Any, b: Any) -> int:
         """1 when ``a`` and ``b`` are JSON texts of the same value, else 0 (the SQL function)."""
-        self.calls += 1
+        self.calls += 1  # diagnostic counter (tests read it single-threaded): not under the lock
         if not isinstance(a, str) or not isinstance(b, str):
             return 0
         if a == b:

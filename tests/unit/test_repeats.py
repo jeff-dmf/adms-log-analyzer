@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -449,7 +450,67 @@ def test_the_cache_bound_keeps_the_answers(tmp_path, monkeypatch):
     )
     conn = _case(tmp_path, rows)
     filters.CANON_CACHE.reset()
-    monkeypatch.setattr(filters, "CANON_CACHE_CHARS", 300)  # a couple of texts: emptied all the time
+    monkeypatch.setattr(filters, "CANON_CACHE_CHARS", 500)  # a couple of texts: emptied all the time
     assert _hits(conn) == [41]
     assert repeat_marks(conn, [41], RepeatSpec()) == {41: {"prev": 1, "dt_ms": 400, "earlier": 1}}
-    assert filters.CANON_CACHE.chars <= 300
+    assert filters.CANON_CACHE.chars <= 500
+
+
+def test_a_text_larger_than_the_cache_is_compared_but_never_kept(monkeypatch):
+    """Review of PR #200: the cache emptied itself and kept the oversized entry anyway."""
+    from dmslog.store import filters
+
+    cache = filters._CanonCache()
+    monkeypatch.setattr(filters, "CANON_CACHE_CHARS", 200)
+    big_a = json.dumps({"a": "x" * 60, "b": 1}, separators=(",", ":"))
+    big_b = json.dumps({"b": 1, "a": "x" * 60}, separators=(",", ":"))
+    small = '{"k":1}'
+    assert cache.same(small, small) == 1 and cache.chars == filters._entry_size(small)
+    assert cache.same(big_a, big_b) == 1  # still compared canonically
+    assert cache.same(big_a, '{"a":"y","b":1}') == 0
+    assert big_a not in cache.forms and big_b not in cache.forms
+    assert set(cache.forms) == {small, '{"a":"y","b":1}'}  # the small ones only
+    assert cache.chars == sum(filters._entry_size(t) for t in cache.forms) <= 200
+
+
+def test_concurrent_insertions_keep_the_limit(monkeypatch):
+    """Review of PR #200: check, empty and insert were not one step; two threads could pass the limit."""
+    import random
+    import threading
+
+    from dmslog.store import filters
+
+    cache = filters._CanonCache()
+    limit = 400  # a handful of entries: emptied all the time
+    monkeypatch.setattr(filters, "CANON_CACHE_CHARS", limit)
+    texts = [json.dumps({"n": i, "pad": "p" * (i % 17)}, separators=(",", ":")) for i in range(400)]
+    canon = {t: filters.json_canon(t) for t in texts}
+    seen_over: list[int] = []
+    errors: list[str] = []
+    start = threading.Barrier(8)
+
+    def work(seed: int) -> None:
+        rnd = random.Random(seed)
+        start.wait()
+        for _ in range(3000):
+            t = rnd.choice(texts)
+            if cache.form(t) != canon[t]:
+                errors.append(t)
+            chars = cache.chars
+            if chars > limit:
+                seen_over.append(chars)
+
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # switch threads as often as possible
+    try:
+        threads = [threading.Thread(target=work, args=(k,)) for k in range(8)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+    finally:
+        sys.setswitchinterval(old)
+    assert not errors and not seen_over
+    with cache._lock:
+        assert cache.chars == sum(filters._entry_size(t) for t in cache.forms) <= limit
+        assert all(cache.forms[t] == canon[t] for t in cache.forms)
