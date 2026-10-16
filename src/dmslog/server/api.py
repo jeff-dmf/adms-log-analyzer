@@ -1037,6 +1037,12 @@ class Api:
             ("DELETE", re.compile(r"/api/alerts/history\Z"), self.clear_alert_history),
         ]
         self._routes += [("POST", re.compile(r"/api/entries/aggregate\Z"), self.entries_aggregate)]
+        self._routes += [
+            ("POST", re.compile(r"/api/extract/check\Z"), self.extract_check),
+            ("POST", re.compile(r"/api/entries/extract\Z"), self.entries_extract),
+            ("POST", re.compile(r"/api/entries/extract/values\Z"), self.entries_extract_values),
+            ("POST", re.compile(r"/api/entries/extract/promote\Z"), self.entries_extract_promote),
+        ]
 
     def shutdown(self) -> None:
         self.picker.close()
@@ -2393,6 +2399,60 @@ class Api:
             "X-Dmslog-Truncated": "1" if result.truncated else "0",
         }
         return Download("text/csv; charset=utf-8", iter([text.encode("utf-8")]), headers)
+
+    # -- ad hoc extraction by regex (store/extract.py; ROADMAP 9.8)
+
+    def extract_check(self, request: Request) -> Response:
+        """``{regex, target, types}`` -> the compiled regex (columns, window, step bound) or 400 with the
+        offset of the problem. No case: the UI validates while the user types."""
+        from ..store import extract
+
+        body = request.read_body()
+        ex = extract.extractor(body.get("regex"), body.get("target", "msg"), body.get("types"))
+        return Response(200, extract.describe(ex))
+
+    def entries_extract(self, request: Request) -> Response:
+        """``{case, filter, regex, target, types, limit, top}`` -> temporary columns over the first ``limit``
+        records of the filter (stable order), with per-column top values, drill-down leaves and statistics."""
+        from ..store import extract
+
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        ex, flt, limit, top = extract.parse_request(body)
+        _check_scan_filter(flt)
+        try:
+            with self.store.reader(cid) as conn:
+                result = extract.extract(conn, ex, flt, limit=limit, top=top)
+        except query.QueryTimeout:
+            raise ApiError(408, "extract_timeout", messages.API_EXTRACT_TIMEOUT) from None
+        return Response(200, extract.as_json(result))
+
+    def entries_extract_values(self, request: Request) -> Response:
+        """``{case, ids, regex, target, types}`` -> ``{"values": {"<id>": {"values", "cut"}}}`` for the ids
+        the regex matches (the temporary columns of a grid page)."""
+        from ..store import extract
+
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        extract._unknown(body, extract._VALUES_KEYS)
+        ids = extract.parse_ids(body.get("ids"), "$.ids", extract.MAX_IDS)
+        ex = extract.extractor(body.get("regex"), body.get("target", "msg"), body.get("types"))
+        try:
+            with self.store.reader(cid) as conn:
+                values = extract.extract_values(conn, ex, ids)
+        except query.QueryTimeout:
+            raise ApiError(408, "extract_timeout", messages.API_EXTRACT_TIMEOUT) from None
+        return Response(200, {**extract.describe(ex), "values": {str(k): v for k, v in values.items()}})
+
+    def entries_extract_promote(self, request: Request) -> Response:
+        """``{case, ids, regex, types, family, code}`` -> the TOML text of a template built from the regex and
+        the example records, with the catalog loader's verdict. Nothing is written."""
+        from ..store import extract
+
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        with self.store.reader(cid) as conn:
+            return Response(200, extract.promote(conn, body))
 
 
 _PRESET_STATUS = {
