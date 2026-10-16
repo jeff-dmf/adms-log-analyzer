@@ -257,7 +257,8 @@ export function mountHighlightPanel(host, options) {
 }
 
 // options: detailAnchor (element after which the detail section
-// goes), store (createHighlightStore), getCase, getFilter (the view filter), getSelectedRow, reveal(row),
+// goes), detailTrigger (optional "Highlight" action button of the detail: the section opens under it and stays closed
+// until it is pressed; without it the section is always shown), store (createHighlightStore), getCase, getFilter (the view filter), getSelectedRow, reveal(row),
 // getTemplateCode, showMessage(text, isError). The "Highlights" panel itself is mountHighlightPanel (dock).
 export function mountHighlights(options) {
   const { store, getCase, getFilter, getSelectedRow, reveal, showMessage } = options;
@@ -270,10 +271,22 @@ export function mountHighlights(options) {
     options.detailAnchor.parentNode.insertBefore(detail, options.detailAnchor.nextSibling);
   }
   let entry = null;
+  const trigger = options.detailTrigger || null;
+  let expanded = false;
+  if (trigger) {
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.addEventListener("click", () => {
+      expanded = !expanded;
+      renderDetail();
+    });
+  }
 
   function renderDetail() {
     detail.textContent = "";
-    if (!entry || !getCase()) {
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", expanded && entry ? "true" : "false");
+    }
+    if (!entry || !getCase() || (trigger && !expanded)) {
       detail.hidden = true;
       return;
     }
@@ -309,14 +322,22 @@ export function mountHighlights(options) {
     }
     if (entry.tpl_id > 0) {
       const chip = button("hl-chip", S.hlTemplateChip);
-      chip.addEventListener("click", () => {
-        const code = options.getTemplateCode ? options.getTemplateCode(entry.tpl_id) : "";
-        store.create({
-          name: code || String(entry.tpl_id), color: nextColor(store.rules()), cond: { tpl: [entry.tpl_id] }, enabled: true,
-        }).then(() => showMessage("", false), (error) => showMessage(errorText(error), true));
-      });
+      // record.highlightType: through the action registry when main.js hands in runHighlightType.
+      chip.addEventListener("click", () => (options.runHighlightType ? options.runHighlightType() : highlightType()));
       detail.appendChild(chip);
     }
+  }
+
+  // Highlight rule for the message type of the shown record (the action record.highlightType).
+  function highlightType() {
+    if (!entry || !(entry.tpl_id > 0)) {
+      return Promise.resolve();
+    }
+    const tplId = entry.tpl_id;
+    const code = options.getTemplateCode ? options.getTemplateCode(tplId) : "";
+    return store.create({
+      name: code || String(tplId), color: nextColor(store.rules()), cond: { tpl: [tplId] }, enabled: true,
+    }).then(() => showMessage("", false), (error) => showMessage(errorText(error), true));
   }
 
   // -- ]/[ navigation: next/previous record of the view that any enabled rule highlights
@@ -366,5 +387,6 @@ export function mountHighlights(options) {
       entry = next || null;
       renderDetail();
     },
+    highlightType,
   };
 }

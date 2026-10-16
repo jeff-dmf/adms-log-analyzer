@@ -2,18 +2,21 @@
 // dataset, focus and event dispatch with bubbling. Not a general implementation.
 export class El {
   constructor(doc, tag) {
-    this.doc = doc;
-    this.ownerDocument = doc;
     this.tagName = String(tag).toUpperCase();
     this.attrs = {};
     this.dataset = {};
-    this.children = [];
-    this.parent = null;
-    this.listeners = {};
     this.style = {};
     this.className = "";
     this.id = "";
     this.title = "";
+    // Consequence: assert.deepEqual/structuredClone/JSON/spread of a node do NOT compare or copy these links. Compare nodes
+    // by identity (assert.equal(a, b)) or through an explicit projection of the tree in tests that need structure.
+    // The links that make the node graph cyclic (and reach the whole document) are NOT enumerable: node's
+    // assert formats a failing comparison with util.inspect(depth 1000, customInspect off), and on two nodes that
+    // walked the entire document and exhausted the machine's memory (systemd-oomd killed the tmux, 2026-10-16).
+    for (const [key, value] of [["doc", doc], ["ownerDocument", doc], ["children", []], ["parent", null], ["listeners", {}]]) {
+      Object.defineProperty(this, key, { value, writable: true, configurable: true, enumerable: false });
+    }
     this._hidden = false;
     this.disabled = false;
     this._text = "";

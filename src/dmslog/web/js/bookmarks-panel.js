@@ -105,6 +105,7 @@ export function initDetailBookmark(container, { store, onError }) {
   function refresh() {
     if (!entry) {
       container.hidden = true;
+      container.setAttribute("data-marked", "false");
       return;
     }
     container.hidden = false;
@@ -112,6 +113,7 @@ export function initDetailBookmark(container, { store, onError }) {
     toggle.textContent = (mark ? "★ " : "☆ ") + (mark ? S.bmToggleOff : S.bmToggleOn);
     toggle.setAttribute("aria-pressed", mark ? "true" : "false");
     editor.hidden = !mark;
+    container.setAttribute("data-marked", mark ? "true" : "false"); // the stylesheet hides an unmarked note section
     if (mark) {
       fill(mark);
     } else {

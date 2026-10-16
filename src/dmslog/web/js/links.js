@@ -3,6 +3,7 @@
 // Everything comes from the ERS (untrusted): textContent and class names only; ONE delegated
 // listener on the host.
 import { api } from "./api.js";
+import { sectionHeading } from "./detail.js";
 import { PREVIEW_LINES, buildKeyChips, createLinksFlow, revealLabel } from "./links-model.js";
 import { S, format, pluralKey } from "./strings.js";
 
@@ -23,9 +24,15 @@ function element(tag, className, text) {
 //   onSideBySide(entryId)       open the side-by-side view for the shown entry
 //   onSameKey(type, value)      open the "same key" panel
 //   onError(err)
+//   keysHost                    optional own host for the "Keys" chips (UI-20: they sit with the fields, above Links);
+//                               without it the chips render inside `host`, as before
 export class LinksSection {
-  constructor(host, { getCase, onReveal, onSideBySide, onSameKey, onError }) {
+  constructor(host, { getCase, onReveal, onSideBySide, onSameKey, onError, keysHost }) {
     this.host = host;
+    this.keysHost = keysHost || null;
+    if (this.keysHost) {
+      this.keysHost.addEventListener("click", (event) => this.handleClick(event));
+    }
     this.getCase = getCase;
     this.onReveal = onReveal || (() => {});
     this.onSideBySide = onSideBySide || (() => {});
@@ -44,6 +51,10 @@ export class LinksSection {
     this.flow.reset();
     this.host.hidden = true;
     this.host.textContent = "";
+    if (this.keysHost) {
+      this.keysHost.hidden = true;
+      this.keysHost.textContent = "";
+    }
   }
 
   // The entry just fetched by the detail pane (or null when it was cleared).
@@ -62,7 +73,7 @@ export class LinksSection {
       return;
     }
     const button = event.target.closest("button[data-action]");
-    if (!button || !this.host.contains(button)) {
+    if (!button || !(this.host.contains(button) || (this.keysHost && this.keysHost.contains(button)))) {
       return;
     }
     const action = button.dataset.action;
@@ -96,7 +107,9 @@ export class LinksSection {
   render(state) {
     const host = this.host;
     host.textContent = "";
-    const hasChips = this.chips.length > 0;
+    this.renderKeys();
+    // With its own keys host the chips no longer keep this section alive.
+    const hasChips = this.keysHost === null && this.chips.length > 0;
     if (!this.entry || (!hasChips && (state.status === "idle" || (state.status === "ready" && state.rows.length === 0)))) {
       host.hidden = true;
       return;
@@ -105,7 +118,7 @@ export class LinksSection {
     if (hasChips) {
       host.appendChild(this.keyChips());
     }
-    host.appendChild(element("h3", "lnk-title", S.lnkTitle));
+    host.appendChild(sectionHeading(host, "links", S.lnkTitle, "lnk-title"));
     if (state.status === "loading") {
       host.appendChild(element("div", "lnk-muted", S.lnkLoading));
     } else if (state.status === "error") {
@@ -117,9 +130,27 @@ export class LinksSection {
     }
   }
 
+  // The "Keys" block in its own host (section 6 of the detail, next to the fields).
+  renderKeys() {
+    const keysHost = this.keysHost;
+    if (keysHost === null) {
+      return;
+    }
+    keysHost.textContent = "";
+    if (!this.entry || this.chips.length === 0) {
+      keysHost.hidden = true;
+      return;
+    }
+    keysHost.hidden = false;
+    keysHost.appendChild(sectionHeading(keysHost, "keys", S.lnkKeysTitle, "lnk-title"));
+    keysHost.appendChild(this.keyChips());
+  }
+
   keyChips() {
     const box = element("div", "lnk-keys");
-    box.appendChild(element("h3", "lnk-title", S.lnkKeysTitle));
+    if (this.keysHost === null) {
+      box.appendChild(element("h3", "lnk-title", S.lnkKeysTitle));
+    }
     const list = element("div", "lnk-chips");
     this.chips.forEach((chip, index) => {
       const button = element("button", "lnk-chip", chip.label);
