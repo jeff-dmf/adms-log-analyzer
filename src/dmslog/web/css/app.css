@@ -365,22 +365,45 @@ progress {
   flex: none;
 }
 
+/* Default widths in ch of the grid font (UI-16); column-resize.js applies the same sums in px from the measured character
+   width, and a width the user dragged (stored in px) replaces them. */
 .col-ts {
-  width: 190px;
+  width: calc(12ch + 2 * var(--cell-pad));
 }
 
 .col-pid,
 .col-tid {
-  width: 72px;
+  width: calc(6ch + 2 * var(--cell-pad));
   text-align: right;
 }
 
 .col-level {
-  width: 84px;
+  width: calc(9ch + 2 * var(--cell-pad));
 }
 
 .col-source {
-  width: 160px;
+  width: calc(20ch + 2 * var(--cell-pad));
+}
+
+/* "S" badge of the sensitive sources (text from strings.js through data-badge); the full name is the title. */
+.grid-row .col-source[data-badge]::before {
+  content: attr(data-badge);
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  vertical-align: baseline;
+}
+
+/* Hidden row that column-resize.js uses to measure the width of one character. */
+.grid-probe {
+  position: absolute;
+  visibility: hidden;
+  height: 0;
+  pointer-events: none;
 }
 
 .col-msg {
@@ -538,6 +561,11 @@ mark {
   .grid-row.selected .grid-cell.col-collection[data-tag] {
     background: transparent;
     color: HighlightText;
+  }
+
+  /* The S badge keeps its author border under forced-color-adjust: none; draw it in the text color of the row. */
+  .grid-row.selected .col-source[data-badge]::before {
+    border-color: HighlightText;
   }
 
   .grid-row.selected mark {

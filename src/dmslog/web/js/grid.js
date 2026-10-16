@@ -2,8 +2,8 @@
 // maps onto the time range of the chosen sources; wheel and keys move by rows.
 import { api } from "./api.js";
 import {
-  END_CURSOR, PAGE_LIMIT, ROW_HEIGHT, SCROLL_SPAN, RowWindow, fetchPlan, jumpCursor, scrollToTs,
-  topAfterResize, tsToScroll,
+  END_CURSOR, PAGE_LIMIT, ROW_HEIGHT, SCROLL_SPAN, RowWindow, SourceLabels, fetchPlan, isMultiDay,
+  jumpCursor, scrollToTs, shortTs, topAfterResize, tsToScroll,
 } from "./grid-model.js";
 import { ColumnResizer } from "./column-resize.js";
 import { baseName } from "./source-filter-model.js";
@@ -11,6 +11,7 @@ import { markerLabel } from "./bookmarks-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
+import { CELL_PAD_PX, SOURCE_CH_MULTIDAY, TS_CH_MULTIDAY } from "./column-resize-model.js";
 
 export const COLUMNS = [
   { key: "ts", label: () => S.columnTs },
@@ -60,6 +61,9 @@ export class Grid {
     this.window = new RowWindow();
     this.visibleColumns = COLUMNS.map((c) => c.key);
     this.sourceNames = new Map();
+    this.sourceLabels = new SourceLabels(); // cut names by (source, width in characters), see relayoutSource()
+    this.fitting = false;
+    this.multiDay = false;                  // the case covers several days: the time column shows MM-DD too
     this.collectionColumn = false; // the Collection column (C<n>) is shown
     this.collectionTags = new Map(); // collection group -> {tag, color}
     this.terms = [];
@@ -83,7 +87,17 @@ export class Grid {
       getCells: (key) => this.pool.filter((s) => s.cells[key]).map((s) => s.cells[key]),
       getVisibleCells: (key) => this.pool.filter((s) => !s.el.hidden && s.cells[key]).map((s) => s.cells[key]),
       getKeys: () => this.columnDefs().map((c) => c.key),
+      onLayout: () => this.relayoutSource(),
+      prepareFit: (key) => this.prepareFit(key),
     });
+    if (typeof document !== "undefined" && document.fonts && typeof document.fonts.addEventListener === "function") {
+      // A font that finished loading changes the character width: measure again (never per row or on scroll).
+      document.fonts.addEventListener("loadingdone", () => {
+        if (this.resizer.measure()) {
+          this.resizer.apply();
+        }
+      });
+    }
     this.bind();
     this.renderHeader();
   }
@@ -242,6 +256,48 @@ export class Grid {
 
   setSourceNames(map) {
     this.sourceNames = map;
+    this.sourceLabels.setNames(map);
+    this.render();
+  }
+
+  // Characters that fit in the Source cell, from its width and the measured character width; Infinity while the
+  // character width is unknown. Called after every width change (never per row): a new value empties the label cache.
+  relayoutSource() {
+    const model = this.resizer.model;
+    const width = model.get("source") - CELL_PAD_PX;
+    const chars = Number.isFinite(width) && model.charPx > 0 ? Math.floor(width / model.charPx) : Infinity;
+    if (!this.fitting && chars !== this.sourceLabels.maxChars) {
+      this.sourceLabels.setMaxChars(chars);
+      if (this.pool.length > 0) {
+        this.render();
+      }
+    }
+  }
+
+  // "Fit to content" of the Source column measures the whole names: show them uncut while it measures.
+  prepareFit(key) {
+    if (key !== "source") {
+      return null;
+    }
+    this.fitting = true;
+    this.sourceLabels.setMaxChars(Infinity);
+    this.render();
+    return () => {
+      this.fitting = false;
+      this.relayoutSource();
+    };
+  }
+
+  // The time column is wider only for a case that covers more than one day; decided when the case changes and then
+  // kept (a narrower source selection does not shrink the column back and forth).
+  setMultiDay(on) {
+    const next = Boolean(on);
+    if (next === this.multiDay) {
+      return;
+    }
+    this.multiDay = next;
+    this.resizer.setDefaultCh("ts", next ? TS_CH_MULTIDAY : null, false);
+    this.resizer.setDefaultCh("source", next ? SOURCE_CH_MULTIDAY : null);
     this.render();
   }
 
@@ -258,9 +314,11 @@ export class Grid {
       cell.className = "grid-cell " + cellClass(column);
       cell.setAttribute("role", "columnheader");
       cell.textContent = column.label();
+      cell.title = column.label(); // narrow columns (Collection) cut the label
       this.header.appendChild(cell);
       this.resizer.decorate(cell, column);
     }
+    this.resizer.measure(); // once per column change
     this.resizer.apply();
   }
 
@@ -270,7 +328,10 @@ export class Grid {
 
   // -- loading ------------------------------------------------------------------------------
 
-  async setView({ caseId, filter, range }) {
+  // `range`: time span of the filtered view; `caseRange`: span of the whole case, which decides the time column (the
+  // restored filter of one day must not hide the date of a multi-day case). Without it the view range is used.
+  async setView({ caseId, filter, range, caseRange }) {
+    this.setMultiDay(isMultiDay(caseRange === undefined ? range : caseRange) || (caseId === this.caseId && this.multiDay));
     this.caseId = caseId;
     this.filter = filter;
     this.range = range;
@@ -585,7 +646,9 @@ export class Grid {
   fillCells(slot, row) {
     const { cells } = slot;
     if (cells.ts) {
-      cells.ts.textContent = formatTs(row.ts);
+      const full = formatTs(row.ts);
+      cells.ts.textContent = shortTs(full, this.multiDay);
+      cells.ts.title = full; // the full date, also when the cell shows the clock only
     }
     if (cells.pid) {
       cells.pid.textContent = row.pid === null || row.pid === undefined ? "" : String(row.pid);
@@ -604,7 +667,17 @@ export class Grid {
     }
     if (cells.source) {
       const name = this.sourceNames.get(row.source_id);
-      cells.source.textContent = name === undefined ? String(row.source_id) : baseName(name);
+      const label = this.sourceLabels.get(row.source_id, name === undefined ? undefined : baseName(name));
+      cells.source.textContent = label.text;
+      cells.source.title = label.sensitive ? label.full + " (" + S.sourceSensitive + ")" : label.full;
+      if (label.sensitive) {
+        cells.source.dataset.badge = S.gridSensitiveBadge;
+        // The visible text omits ".sensitive" (the S badge is a CSS pseudo-element): name the state for screen readers.
+        cells.source.setAttribute("aria-label", cells.source.title);
+      } else {
+        delete cells.source.dataset.badge;
+        cells.source.removeAttribute("aria-label");
+      }
     }
     if (cells.collection) {
       const info = this.collectionTags.get(row.collection);

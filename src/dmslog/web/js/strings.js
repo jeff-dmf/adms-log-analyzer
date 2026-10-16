@@ -49,6 +49,7 @@ export const S = {
   sourceMetaOne: "{family} - pid {pid} - {records} record",
   sourceMetaOther: "{family} - pid {pid} - {records} records",
   sourceSensitive: "sensitive",
+  gridSensitiveBadge: "S",
 
   // Filters
   filterSource: "Source",

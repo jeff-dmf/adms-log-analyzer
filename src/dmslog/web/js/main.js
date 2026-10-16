@@ -405,7 +405,8 @@ function start() {
     grid.setTerms(terms);
     detail.setTerms(terms);
     detail.clear();
-    const loaded = grid.setView({ caseId, filter, range });
+    const caseRange = timeSpan(sources, [], null, null); // the whole case: decides the date in the time column
+    const loaded = grid.setView({ caseId, filter, range, caseRange });
     loaded.then(firstViewDone, firstViewDone);
     if (timeline) {
       timeline.refresh();
