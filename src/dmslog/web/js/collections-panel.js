@@ -53,6 +53,7 @@ export class CollectionsPanel {
     this.menus = new WeakMap(); // row menu button -> its menu (promise)
     this.activeMenu = null; // the menu that may be open
     this.activeMenuGroup = null; // the collection whose row it belongs to
+    this.menuToken = 0; // the latest click that asked for a row menu: an older request that arrives later is dropped
     this.renderGen = 0; // counts the drawings of the rows: a menu that finished loading for an older drawing is dropped
     this.signature = null; // what the rows were last drawn from: an identical list is not drawn again
     this.confirming = null; // group waiting for the second step
@@ -317,8 +318,8 @@ export class CollectionsPanel {
         target = this.list.querySelector('[data-group="' + want.group + '"][data-act="pick"]');
       }
     }
-    if (!target && want.act !== "pick") {
-      target = this.fold; // the folding header is the panel's way in
+    if (!target && (want.act !== "pick" || this.list.hidden)) {
+      target = this.fold; // the folding header is the panel's way in (a row control cannot be focused in a folded list)
     }
     if (target && !target.disabled) {
       target.focus();
@@ -478,10 +479,15 @@ export class CollectionsPanel {
     }
     const where = event && event.detail === 0 ? "first" : null;
     const gen = this.renderGen;
+    this.menuToken += 1;
+    const token = this.menuToken;
     const ready = this.loadMenu().then((mod) => {
-      if (gen !== this.renderGen || trigger.isConnected === false) {
-        this.menus.delete(trigger); // its row was replaced or removed while the module loaded: nothing to open
+      if (token !== this.menuToken || gen !== this.renderGen || trigger.isConnected === false) {
+        this.menus.delete(trigger); // a later click, a new drawing or a removed row: nothing to open (a click tries again)
         return null;
+      }
+      if (this.activeMenu && this.activeMenu.isOpen()) {
+        this.activeMenu.close(false); // one row menu open at a time
       }
       const menu = mod.createMenu({
         trigger,

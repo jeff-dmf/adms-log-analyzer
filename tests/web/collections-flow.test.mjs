@@ -732,3 +732,24 @@ test("UI-21 review: a wanted focus on a row of a folded list goes to the fold bu
   panel.render();
   assert.equal(document.activeElement, byClass(host, "col-fold")[0]);
 });
+
+test("UI-21 review: in a folded list every row control that was focused hands the focus to the fold button", async () => {
+  for (const act of ["pick", "expand", "menu", "remove", "yes", "cancel"]) {
+    const { host, panel } = setup([group(4, 1)]); // one collection: the list is folded
+    await panel.refresh();
+    document.activeElement = null;
+    panel.wanted = { group: 4, act };
+    panel.render();
+    assert.equal(document.activeElement, byClass(host, "col-fold")[0], act);
+  }
+});
+
+test("UI-21 review: a refresh that folds the list while the checkbox has the focus moves it to the fold button", async () => {
+  const { host, panel, setList } = setup([group(4, 1), group(9, 2)]);
+  await panel.refresh();
+  const box = host.find((n) => n.tag === "input" && n.dataset.act === "pick")[1];
+  box.focus();
+  setList([group(4, 1)]);
+  await panel.refresh();
+  assert.equal(document.activeElement, byClass(host, "col-fold")[0]);
+});
