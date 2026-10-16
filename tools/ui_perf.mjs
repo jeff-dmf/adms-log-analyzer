@@ -728,7 +728,14 @@ async function measureInteractions(cdp, session, searchTerm) {
     for (let i = 0; i < 5; i++) { await pressKey(cdp, session, "ArrowDown", "ArrowDown", 40); await sleep(40); }
     for (let i = 0; i < 2; i++) { await pressKey(cdp, session, "ArrowUp", "ArrowUp", 38); await sleep(40); }
   })).inp;
-  // Filter: pick a severity option that differs from the current one, then click Apply.
+  // Filter: open the "Filters" popover of the strip (UI-18), pick a severity option that differs from the current
+  // one, then click Apply (which closes the popover).
+  await evaluate(cdp, session, `(() => {
+    const form = document.getElementById("filter-form");
+    const opener = document.getElementById("strip-filters");
+    if (opener && form.hidden) opener.click();
+    0;
+  })()`);
   await evaluate(cdp, session, `(() => {
     const s = document.getElementById("sev-select");
     const next = [...s.options].find((o) => o.value !== s.value && o.value !== "");

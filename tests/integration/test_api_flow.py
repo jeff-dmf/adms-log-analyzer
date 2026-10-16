@@ -112,7 +112,9 @@ def test_full_flow_with_sse_progress(session, tmp_path):
     assert done["job_id"] == body["job_id"] and done["status"] == "ok"
     progress = [d for n, d in events if n == "progress"]
     assert all(
-        set(d) == {"job_id", "source", "bytes_done", "bytes_total", "records", "status"} for d in progress
+        set(d) == {"job_id", "source", "bytes_done", "bytes_total", "records", "status", "stage"}
+        and d["stage"] is None
+        for d in progress
     )
     assert progress[-1]["records"] == 31 and progress[-1]["bytes_done"] == progress[-1]["bytes_total"]
 

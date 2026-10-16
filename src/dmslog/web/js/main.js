@@ -19,7 +19,7 @@ import { createDock } from "./dock.js";
 import { COLUMNS, Grid } from "./grid.js";
 import { CollectionsPanel } from "./collections-panel.js";
 import {
-  columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi,
+  columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi, tagMap,
 } from "./collections-model.js";
 import { resetFormWithErrors, setFieldError } from "./field-error.js";
 import { createStatusBar } from "./status-bar.js";
@@ -31,7 +31,7 @@ import { SourceFilter } from "./source-filter.js";
 import { SourcesPanel } from "./sources.js";
 import { S, format } from "./strings.js";
 import { applyTheme, setThemePreference, themePreference } from "./theme.js";
-import { parseTs } from "./time.js";
+import { formatTs, parseTs } from "./time.js";
 
 const COLUMNS_KEY = "dmslog.columns";
 const FIELD_COLUMNS_KEY = "dmslog.fieldColumns";
@@ -199,6 +199,8 @@ function start() {
   let applyPending = false; // a full view reload follows: the Collection column need not reload the grid itself
   let viewsStack = null; // chained views: model (views-stack-model.js) and UI (views-stack.js)
   let viewsUi = null;
+  let filterChips = null; // the chips of the filter strip (filter-chips.js)
+  let removingChip = false; // a chip removal clears the side selection and applies ONE view afterwards
   const compareSelection = createCompareSelection();
   const compareButton = byId("compare-button");
   function paintCompareButton(entry) {
@@ -412,6 +414,9 @@ function start() {
     if (viewsUi) {
       viewsUi.changed();
     }
+    if (filterChips) {
+      filterChips.refresh();
+    }
     return loaded;
   };
 
@@ -478,7 +483,7 @@ function start() {
         });
       }
     },
-    onSelection: () => applyView(),
+    onSelection: () => (removingChip ? undefined : applyView()),
     onProgress: (value) => status.progress(value),
     onWatching: (on) => {
       if (menubar) {
@@ -514,7 +519,7 @@ function start() {
         showMessage(S.colPanelsOne, false);
       }
       refreshDerived(); // Operations, Dashboard and the clock banner follow the chosen collection
-      return applyView();
+      return removingChip ? undefined : applyView();
     },
     onList: (list) => {
       const multiChanged = isMulti(list) !== isMulti(collections);
@@ -570,9 +575,14 @@ function start() {
       setFieldError(byId(id), errors.includes(key) ? S.filterBadTime : null); // under the field that is wrong
     }
     if (errors.length > 0) {
+      // The popover stays open on the field that is wrong; the previous filter stays applied.
+      byId(errors.includes("from") ? "from-input" : "to-input").focus();
       return;
     }
     formState = { sevMax: state.sevMax, levelMax: state.levelMax, from: state.from, to: state.to };
+    if (filterChips) {
+      filterChips.closePopovers(true); // only a valid Apply closes the form
+    }
     applyView();
   });
   byId("filter-reset").addEventListener("click", () => {
@@ -804,12 +814,59 @@ function start() {
       showMessage(S.detailSectionsUnavailable, true);
     }
   });
+  // Filter strip chips (filter-chips.js, filter-chips-model.js): optional module; without it the filter form stays open.
+  const chipSelection = () => ({
+    sourceIds: panel.selectedIds(),
+    collectionIds: collectionsPanel ? collectionsPanel.selectedGroups() : [],
+  });
+  // The words of the chips and of the trail of views: the same lookups (ui-contratos.md 4.1).
+  const chipLookups = {
+    sourceName: (id) => sourceNames.get(id) || String(id),
+    collectionTag: (group) => tagMap(collections).get(group) || String(group),
+    typeLabel: (id) => templateLabels.get(id) || String(id),
+    formatTs,
+  };
+  // One popover open at a time: the Filters form, "+N more" and the "..." menu join the same group.
+  const popoverGroup = import("./popover-group.js").then((m) => m.createPopoverGroup()).catch(() => null);
+  Promise.all([import("./filter-chips.js"), import("./filter-chips-model.js"), popoverGroup]).then(([chipsUi, chipsModel, group]) => {
+    const removal = chipsModel.createChipRemoval({
+      getLive: captureLive,
+      getSelection: chipSelection,
+      restoreLive,
+      clearSources: () => panel.clearSelection(),
+      clearCollections: () => (collectionsPanel ? collectionsPanel.clearSelection() : undefined),
+      setBusy: (busy) => {
+        removingChip = busy;
+      },
+      applyView: () => applyView(),
+    });
+    filterChips = chipsUi.mountFilterChips({
+      strip: byId("filter-strip"),
+      chipsHost: byId("strip-chips"),
+      stateLabel: byId("strip-state"),
+      filtersButton: byId("strip-filters"),
+      popover: byId("filter-form"),
+      group,
+      getState: () => ({
+        live: captureLive(),
+        selection: chipSelection(),
+        parentsFilter: viewsStack ? viewsStack.parentsFilter() : null,
+      }),
+      lookups: chipLookups,
+      onRemove: (chipId) => removal.remove(chipId),
+      onOpenTree: () => byId("filter-tree-button").click(),
+    });
+    filterChips.refresh();
+  }).catch(() => {
+    byId("filter-form").hidden = false; // no chips module: the filter form stays where the user can reach it
+  });
   // Chained views (breadcrumbs, Narrow this view, Show in parent/root): optional modules.
-  Promise.all([import("./views-stack.js"), import("./views-stack-model.js")]).then(([uiModule, model]) => {
-    viewsStack = model.createViewsStack({ ownFilter: ownFilterOf, getLive: captureLive });
+  Promise.all([import("./views-stack.js"), import("./views-stack-model.js"), popoverGroup]).then(([uiModule, model, group]) => {
+    viewsStack = model.createViewsStack({ ownFilter: ownFilterOf, getLive: captureLive, lookups: chipLookups });
     viewsUi = uiModule.mountViewsStack({
-      parent: byId("grid-panel"),
-      beforePanel: byId("filter-form"),
+      trailHost: byId("strip-trail"),
+      actionsHost: byId("strip-actions"),
+      group,
       stack: viewsStack,
       storage: (() => {
         try {
