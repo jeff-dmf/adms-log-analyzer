@@ -139,3 +139,36 @@ def test_identical_long_sequences_cost_linear_work():
     a = list(range(20_000))
     out = align(a, list(a))
     assert out.optimal and len(out.pairs) == 20_000 and out.work <= 3 * 20_000
+
+
+@pytest.mark.parametrize("occurrences", [1, AL.DENSE])
+def test_bit_parallel_memory_is_bounded_with_many_distinct_tokens(occurrences):
+    """20,000 tokens per side (the route limit), each token repeated ``occurrences`` times, in different
+    orders: Myers runs out and the bit-parallel stage runs. All distinct is the case that needed one
+    M-bit integer per token (about 100 MB); exactly DENSE occurrences is the worst case of the bound
+    (the most dense vectors). Both stay under 3 * M**2 / (8 * DENSE) bytes plus the lists."""
+    import tracemalloc
+
+    rnd = random.Random(occurrences)
+    n = 20_000
+    a = [k % (n // occurrences) for k in range(n)]
+    rnd.shuffle(a)
+    b = list(a)
+    rnd.shuffle(b)
+    tracemalloc.start()
+    try:
+        out = align(a, b, work=0)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    check_valid(a, b, out.pairs)
+    assert out.method == "bit_parallel" and out.optimal
+    assert peak < 3 * n * n // (8 * AL.DENSE) + 8 * 2**20, peak
+
+
+def test_bit_parallel_masks_are_dense_only_for_frequent_tokens():
+    rnd = random.Random(10)
+    b = [rnd.randrange(3) for _ in range(500)] + list(range(100, 600))
+    h = AL._Hirschberg(list(b), b, AL._Meter(10**9))
+    assert set(h.fwd) == set(h.rev) == {0, 1, 2}
+    assert all(len(h.pos[t]) < AL.DENSE for t in range(100, 600))

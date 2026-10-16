@@ -458,3 +458,32 @@ def test_rows_and_sequences_come_from_the_same_snapshot(ops_case, monkeypatch):
     out = run(b.path, body)
     assert all((r["a"] is None) == (r["a_pos"] is None) for r in out["rows"])
     assert all((r["b"] is None) == (r["b_pos"] is None) for r in out["rows"])
+
+
+def test_alignment_cache_key_has_no_structural_collisions():
+    cache = V._AlignCache(4)
+    x = ["?a\x00?b", "?c"]
+    y = ["?a", "?b\x00?c"]  # same bytes as x once joined with NUL separators
+    assert cache.get(x, y).pairs == ()
+    assert cache.get(y, y).pairs == AL.align(y, y).pairs == ((0, 0), (1, 1))
+    assert cache.get(x, x).pairs == ((0, 0), (1, 1))
+
+
+@pytest.mark.parametrize("width", [1, 2, 3, 7, 4095, 4096, 4097, 9000])
+def test_long_unknown_messages_keep_the_signature_window(tmp_path, width):
+    """Unknown messages longer than the signature window, with multibyte characters around the cut."""
+    text = ("\u00e9\u4e2d\U0001f600x" * 3000)[:width]
+    recs = [
+        Record("wfm1", 1, 1_000_000, None, text + "\x00a"),
+        Record("wfm2", 1, 1_000_000, None, text + "\x00b"),
+    ]
+    b = build(tmp_path / "w.sqlite", Content(recs))
+    out = run(
+        b.path, {"mode": "process", "a": {"stream": b.stream["wfm1"]}, "b": {"stream": b.stream["wfm2"]}}
+    )
+    same = signature(text + "\x00a") == signature(text + "\x00b")
+    assert out["stats"]["same"] == (1 if same else 0)
+    labels = {t["label"] for t in out["templates"]}
+    assert labels == {signature(text + "\x00a"), signature(text + "\x00b")}
+    row = out["rows"][0]
+    assert row["a"]["msg"] == (text + "\x00a")[:4096] and row["a"]["msg_len"] == len(text) + 2

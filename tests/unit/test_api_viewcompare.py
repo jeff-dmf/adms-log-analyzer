@@ -110,3 +110,31 @@ def test_compare_windows_and_errors(client, server):  # noqa: F811
         client, {**ok, "mode": "filter", "a": {"filter": {"text": {"substr": "m"}}}, "b": {"filter": None}}
     )
     assert status == 400 and body["error"] == "substr_needs_scope"
+
+
+def test_unknown_messages_that_differ_after_a_nul_do_not_match(client, server):  # noqa: F811
+    """SQLite's substr() and length() stop a TEXT value at the first NUL: the signature must see it all."""
+    case_dir = server.api.store.root / "NulText"
+    case_dir.mkdir(parents=True)
+    recs = [
+        Record("wfm1", 1, 1_000_000, None, "prefix\x00alpha"),
+        Record("wfm2", 1, 1_000_000, None, "prefix\x00beta"),
+    ]
+    built = build(case_dir / "case.sqlite", Content(recs))
+    status, body, _ = post(
+        client,
+        {
+            "case": "NulText",
+            "mode": "process",
+            "a": {"stream": built.stream["wfm1"]},
+            "b": {"stream": built.stream["wfm2"]},
+        },
+    )
+    assert status == 200
+    assert body["stats"]["same"] == 0 and body["stats"]["changed_a"] == 1
+    assert sorted(t["label"] for t in body["templates"]) == ["prefix\x00alpha", "prefix\x00beta"]
+    a, b = body["rows"][0]["a"], body["rows"][0]["b"]
+    assert (a["msg"], a["msg_len"]) == ("prefix\x00alpha", 12) and (b["msg"], b["msg_len"]) == (
+        "prefix\x00beta",
+        11,
+    )

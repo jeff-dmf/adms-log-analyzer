@@ -23,8 +23,10 @@ hashable tokens (template codes, in :mod:`store.viewcompare`). It is pure, deter
 
 Ties between optimal alignments are broken by construction (Myers' middle snake; the smallest split
 column in Hirschberg), so the result depends only on which tokens are equal. The meters count
-operations, never time: the same input gives the same output on any machine. Memory is linear in N+M
-(one bit vector per distinct token of B).
+operations, never time: the same input gives the same output on any machine. Memory: linear in N+M
+for Myers and the fallback; the bit-parallel stage keeps dense vectors only for tokens with at least
+:data:`DENSE` positions, so it is bounded by 3 * M**2 / (8 * DENSE) bytes (about 19 MB at 20,000; see
+:class:`_Hirschberg`).
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ FALLBACK_WORK = 2_000_000
 GAP_WORK = 200_000  # exact attempt on one gap of the anchored fallback
 WINDOW = 192  # tokens per side in a window of the anchored fallback
 SMALL = 4_096  # Hirschberg cells (rows x columns) solved directly by Myers
+DENSE = 8  # positions in B from which a token keeps dense bit vectors (memory bound, see _Hirschberg)
 
 
 class _OverBudget(Exception):
@@ -223,37 +226,57 @@ _ZEROS = bytes.maketrans(b"01", b"\x01\x00")  # bit character -> 1 when the bit 
 
 
 class _Hirschberg:
-    """Hirschberg's linear-space LCS with bit-parallel rows.
+    """Hirschberg's divide and conquer with bit-parallel rows (memory bounded, see below).
 
-    ``fwd[t]`` has bit j set when ``b[j] == t`` and ``rev[t]`` the same for ``b`` reversed (bit
-    ``m - 1 - j``), so any range of ``b`` is a shift and a mask."""
+    ``pos[t]`` lists the positions of token t in ``b``. Frequent tokens (at least :data:`DENSE`
+    positions) also get dense bit vectors: ``fwd[t]`` with bit j set when ``b[j] == t`` and ``rev[t]`` the
+    same for ``b`` reversed (bit ``m - 1 - j``), so the mask of any range is a shift and a cut. A rare
+    token's mask is built from its few positions when a row needs it and is not kept. One M-bit integer
+    per distinct token would cost U * M / 8 bytes (about 100 MB for 20,000 distinct tokens of 20,000);
+    with the threshold at most M / DENSE tokens are dense, so the vectors plus the per-row cache of one
+    pass stay under 3 * M**2 / (8 * DENSE) bytes (about 19 MB at 20,000; measured peak of the whole
+    alignment: 11 MB with 20,000 distinct tokens, 22 MB with every token 8 times, the worst case)."""
 
     def __init__(self, a: list[int], b: list[int], meter: _Meter) -> None:
         self.a, self.b, self.meter, self.m = a, b, meter, len(b)
+        m = len(b)
+        self.pos: dict[int, list[int]] = {}
+        for j, t in enumerate(b):
+            self.pos.setdefault(t, []).append(j)
         self.fwd: dict[int, int] = {}
         self.rev: dict[int, int] = {}
-        m = len(b)
-        for j, t in enumerate(b):
-            self.fwd[t] = self.fwd.get(t, 0) | (1 << j)
-            self.rev[t] = self.rev.get(t, 0) | (1 << (m - 1 - j))
+        for t, where in self.pos.items():
+            if len(where) >= DENSE:
+                self.fwd[t] = sum(1 << j for j in where)
+                self.rev[t] = sum(1 << (m - 1 - j) for j in where)
         meter.spend(m)
 
     def run(self, out: list[tuple[int, int]]) -> None:
         self._solve(0, len(self.a), 0, self.m, out)
 
-    def _zeros(self, rows: Sequence[int], masks: dict[int, int], shift: int, width: int) -> list[int]:
-        """``z[j]`` = LCS of the tokens ``a[i] for i in rows`` and the first j columns of the masked range:
-        the number of 0 bits among the j lowest bits of the bit vector after the rows."""
+    def _zeros(self, rows: Sequence[int], forward: bool, b0: int, b1: int) -> list[int]:
+        """``z[j]`` = LCS of the tokens ``a[i] for i in rows`` and the first j columns of ``b[b0:b1]``
+        (reversed when not ``forward``): the number of 0 bits among the j lowest bits of the bit vector
+        after the rows."""
+        width = b1 - b0
         self.meter.spend(len(rows) * (1 + width // 64) + width // 16)
-        a = self.a
+        a, pos = self.a, self.pos
+        dense = self.fwd if forward else self.rev
+        shift = b0 if forward else self.m - b1
         full = (1 << width) - 1
         v = full
-        cache: dict[int, int] = {}
+        cache: dict[int, int] = {}  # dense tokens only: at most M / DENSE of them
         for i in rows:
             t = a[i]
             mt = cache.get(t)
             if mt is None:
-                mt = cache[t] = (masks.get(t, 0) >> shift) & full
+                if t in dense:
+                    mt = cache[t] = (dense[t] >> shift) & full
+                else:
+                    mt = 0
+                    for p in pos.get(t, ()):
+                        if b0 <= p < b1:
+                            mt |= 1 << (p - b0 if forward else b1 - 1 - p)
             if mt:
                 u = v & mt
                 v = (v + u) | (v - u)
@@ -277,8 +300,8 @@ class _Hirschberg:
                 self.meter.spend(n * m)
             else:
                 mid = (a0 + a1) // 2
-                top = self._zeros(range(a0, mid), self.fwd, b0, m)
-                bottom = self._zeros(range(a1 - 1, mid - 1, -1), self.rev, self.m - b1, m)
+                top = self._zeros(range(a0, mid), True, b0, b1)
+                bottom = self._zeros(range(a1 - 1, mid - 1, -1), False, b0, b1)
                 best, split = -1, 0
                 for j in range(m + 1):  # smallest column wins ties: deterministic
                     score = top[j] + bottom[m - j]

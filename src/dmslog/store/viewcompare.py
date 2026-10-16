@@ -81,8 +81,10 @@ class _AlignCache:
         )  # the budgets shape the result
         for seq in (a, b):
             h.update(len(seq).to_bytes(8, "little"))
-            for token in seq:
-                h.update(token.encode("utf-8", "surrogatepass") + b"\x00")
+            for token in seq:  # length-prefixed: tokens may contain any character, NUL included
+                raw = token.encode("utf-8", "surrogatepass")
+                h.update(len(raw).to_bytes(8, "little"))
+                h.update(raw)
         key = h.hexdigest()
         with self.lock:
             hit = self.items.get(key)
@@ -240,10 +242,23 @@ def _templates(conn) -> dict[int, tuple[str, str | None]]:
     return {tid: (code, title) for tid, code, title in conn.execute("SELECT id, code, title FROM template")}
 
 
+# SQLite's substr(), length() and instr() stop a TEXT value at its first NUL, and the ingestion keeps NUL
+# characters: text is read as BLOB (UTF-8 bytes, at most 4 per character) and decoded here.
+_UTF8_MAX = 4
 _SEQ_SELECT = (
     "SELECT e.id, e.ts, e.source_id, e.line_no, e.tpl_id,"
-    f" CASE WHEN e.tpl_id = 0 THEN substr(e.msg, 1, {MAX_INPUT_CHARS}) END FROM entry e"
+    f" CASE WHEN e.tpl_id = 0 THEN substr(CAST(e.msg AS BLOB), 1, {_UTF8_MAX * MAX_INPUT_CHARS}) END"
+    " FROM entry e"
 )
+
+
+def _text(raw: bytes | str | None, chars: int) -> str:
+    """The first ``chars`` characters of a value read with ``CAST(... AS BLOB)`` (NUL kept). A character
+    cut by the byte limit lies beyond ``chars`` (each one takes at most 4 bytes), so it is dropped."""
+    if raw is None:
+        return ""
+    text = raw if isinstance(raw, str) else bytes(raw).decode("utf-8", "replace")
+    return text[:chars]
 
 
 def _sequence(
@@ -280,7 +295,7 @@ def _sequence(
         path, member, _ = locs.get(sid, ("", "", None))
         key = (ts is not None, ts if ts is not None else 0, path, member, line, rid)
         if tpl == 0:
-            text = msg or ""
+            text = _text(msg, MAX_INPUT_CHARS)
             token = unknown.get(text)
             if token is None:
                 token = unknown[text] = UNKNOWN_PREFIX + signature(text)
@@ -345,15 +360,37 @@ def _page(
     return out, total
 
 
+_ROW_SELECT = (
+    ", ".join(f"e.{c}" for c in Q.BASE_COLUMNS)
+    + f", substr(CAST(e.msg AS BLOB), 1, {_UTF8_MAX * Q.MSG_PREVIEW_CHARS}) AS msg_head,"
+    " length(e.msg) AS text_len, instr(CAST(e.msg AS BLOB), X'00') AS nul,"
+    " length(CAST(e.msg AS BLOB)) AS byte_len"
+)
+
+
 def _row_details(conn, ids: list[int], templates: Mapping[int, tuple[str, str | None]]) -> dict[int, dict]:
+    """Grid rows of the page (``msg`` up to ``MSG_PREVIEW_CHARS`` characters and ``msg_len``), read as
+    BLOB so that a NUL inside the message does not cut it."""
     if not ids:
         return {}
     marks = ",".join("?" * len(ids))
-    cur = conn.execute(f"SELECT {Q._BASE_SELECT} FROM entry e WHERE e.id IN ({marks})", ids)
+    cur = conn.execute(f"SELECT {_ROW_SELECT} FROM entry e WHERE e.id IN ({marks})", ids)
     names = [d[0] for d in cur.description]
     out = {}
     for row in cur.fetchall():
         item = dict(zip(names, row, strict=True))
+        head, nul, byte_len = item.pop("msg_head"), item.pop("nul"), item.pop("byte_len")
+        text_len = item.pop("text_len")
+        item["msg"] = _text(head, Q.MSG_PREVIEW_CHARS)
+        if not nul:
+            item["msg_len"] = text_len  # no NUL: length() counts every character
+        elif byte_len <= _UTF8_MAX * Q.MSG_PREVIEW_CHARS:
+            item["msg_len"] = len(_text(head, byte_len))
+        else:  # rare: a long message with a NUL; count its characters from the whole value
+            whole = conn.execute(
+                "SELECT CAST(msg AS BLOB) FROM entry WHERE id = ?", (item["id"],)
+            ).fetchone()[0]
+            item["msg_len"] = len(_text(whole, byte_len))
         code, title = templates.get(item["tpl_id"], (None, None))
         item["tpl"] = code
         item["label"] = title or code

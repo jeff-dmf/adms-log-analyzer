@@ -63,7 +63,7 @@ records = st.lists(
         st.sampled_from(list(STREAMS)),
         st.one_of(st.none(), st.integers(1_000_000, 1_000_012)),  # few distinct ms: ties across files
         st.one_of(st.sampled_from(CODES), st.none()),
-        st.sampled_from(["odd 1 x", "odd 22 x", "other 'q' y"]),
+        st.sampled_from(["odd 1 x", "odd 22 x", "other 'q' y", "nul\x00 a", "nul\x00 b", "\x00"]),
     ),
     max_size=40,
 )
@@ -156,3 +156,14 @@ def test_bit_parallel_stage_is_a_longest_common_subsequence(a, b):
     finally:
         AL.SMALL = small
     assert _valid(a, b, out.pairs) and out.optimal and len(out.pairs) == lcs_length(a, b)
+
+
+tokens = st.lists(st.text(alphabet="?ab\x00", max_size=4), max_size=6)
+
+
+@SETTINGS
+@given(st.lists(st.tuples(tokens, tokens), min_size=1, max_size=6))
+def test_alignment_cache_returns_what_a_new_computation_would(calls):
+    cache = V._AlignCache(V.CACHE_SIZE)
+    for a, b in calls:
+        assert cache.get(a, b) == align(a, b)
