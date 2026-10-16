@@ -1,6 +1,6 @@
 /* Responsive layout without overlap (UI-17). Tokens only. Loaded after the other sheets so its panel rules win.
-   Wide  (>= 1500px): sources 248 | grid | detail 380.
-   Rail  (1280-1499px): sources become a 44px rail that opens as a 280px drawer | grid | detail 360.
+   Wide  (>= 1600px): sources 248 | grid | detail 380.
+   Rail  (1280-1599px): sources become a 44px rail that opens as a 280px drawer | grid | detail 340.
    Narrow (< 1280px): rail | grid; the detail is a 420px drawer on the right (Enter in the grid, or the Detail button).
    The user can also collapse either panel in the wide layout (classes is-side-collapsed and is-detail-collapsed on
    #panels, set by js/drawers.js). The layout is decided here by media queries, so it is right before any script runs;
@@ -27,6 +27,7 @@
   --side-bg: var(--surface-panel);
   --rail-display: none;
   --detail-col: var(--detail-w);
+  --detail-toggle-display: none;
   --detail-pos: relative;
   --detail-area: 1 / 3;
   --detail-display: flex;
@@ -37,8 +38,8 @@
   --detail-bg: var(--surface-panel);
 }
 
-/* Rail layout: below 1500px, or the sources panel collapsed by the user. */
-@media (width < 1500px) {
+/* Rail layout: below 1600px, or the sources panel collapsed by the user. */
+@media (width < 1600px) {
   #panels {
     --side-col: var(--rail-w);
     --side-pos: absolute;
@@ -50,7 +51,7 @@
     --side-shadow: var(--shadow-overlay);
     --side-bg: var(--surface-overlay);
     --rail-display: flex;
-    --detail-col: 360px;
+    --detail-col: 340px;
   }
 }
 
@@ -58,6 +59,7 @@
 @media (width < 1280px) {
   #panels {
     --detail-col: 0px;
+    --detail-toggle-display: inline-flex;
     --detail-pos: absolute;
     --detail-area: auto;
     --detail-display: none;
@@ -83,6 +85,7 @@
 
 #panels.is-detail-collapsed {
   --detail-col: 0px;
+  --detail-toggle-display: inline-flex;
   --detail-pos: absolute;
   --detail-area: auto;
   --detail-display: none;
@@ -206,6 +209,10 @@
 }
 
 /* The Detail button of the filter strip exists only where the detail is a drawer. */
+#detail-toggle {
+  display: var(--detail-toggle-display);
+}
+
 #detail-toggle[aria-expanded="true"] {
   background: var(--surface-raised);
 }

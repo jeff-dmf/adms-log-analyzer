@@ -12,8 +12,9 @@ const KEYS = ["ts", "pid", "tid", "level", "source", "msg"]; // the columns of t
 
 test("the layout mode follows the breakpoints and falls back to wide for nothing measurable", () => {
   assert.equal(layoutModeFor(1920), "wide");
-  assert.equal(layoutModeFor(1500), "wide");
-  assert.equal(layoutModeFor(1499), "rail");
+  assert.equal(layoutModeFor(1600), "wide");
+  assert.equal(layoutModeFor(1599), "rail");
+  assert.equal(layoutModeFor(1536), "rail"); // a very common laptop resolution
   assert.equal(layoutModeFor(1280), "rail");
   assert.equal(layoutModeFor(1279), "narrow");
   assert.equal(layoutModeFor(800), "narrow");
@@ -22,7 +23,7 @@ test("the layout mode follows the breakpoints and falls back to wide for nothing
   }
 });
 
-test("rail below 1500, detail drawer below 1280, and the user's choices only act in the layouts that allow them", () => {
+test("rail below 1600, detail drawer below 1280, and the user's choices only act in the layouts that allow them", () => {
   assert.deepEqual(effectiveLayout("wide", null), { mode: "wide", sideRail: false, detailDrawer: false, canCollapseSide: true, canCollapseDetail: true });
   const rail = effectiveLayout("rail", null);
   assert.equal(rail.sideRail, true);
@@ -87,16 +88,29 @@ test("remembered choices survive bad storage: throwing, missing, corrupt or the 
   assert.deepEqual(normalizePrefs(7), { sideCollapsed: false, detailCollapsed: false });
 });
 
-test("acceptance: Message keeps at least 50 characters at 1366 and 1280 wide, with a multi-day case too", () => {
-  for (const [width, mode] of [[1366, "rail"], [1280, "rail"], [1920, "wide"], [1500, "wide"]]) {
+test("acceptance: Message keeps at least 50 characters from 1280 to 1600 and beyond (1536 included), with 1 or 2 collections, one or several days", () => {
+  const withCollection = [...KEYS.slice(0, -1), "collection", "msg"]; // two collections: the Collection column shows
+  for (const width of [1280, 1300, 1366, 1440, 1500, 1536, 1599, 1600, 1700]) {
     const layout = layoutWidths(layoutModeFor(width));
-    assert.equal(layoutModeFor(width), mode);
-    const chars = messageChars(width, KEYS, { charPx: 7.2, layout });
-    assert.ok(chars >= 50, `${width}px: ${chars} characters`);
+    for (const [name, keys] of [["1 collection", KEYS], ["2 collections", withCollection]]) {
+      for (const multiDay of [false, true]) {
+        for (const charPx of [6.6, 7.2, 7.25]) { // Consolas (Windows) and the Linux monospace fonts (7.22)
+          const chars = messageChars(width, keys, { charPx, multiDay, layout });
+          assert.ok(chars >= 50, `${width}px, ${name}, multiDay=${multiDay}, ${charPx}px: ${chars} characters`);
+        }
+      }
+    }
   }
-  const multi = messageChars(1280, KEYS, { charPx: 7.2, multiDay: true, layout: layoutWidths("rail") });
-  assert.ok(multi >= 50, `multi-day at 1280: ${multi}`);
   assert.ok(messageChars(1366, KEYS, { charPx: 7.2 }) < 50, "the old fixed layout was the problem");
+});
+
+test("acceptance: the wide layout from 1600 px keeps 60 characters in every combination", () => {
+  const withCollection = [...KEYS.slice(0, -1), "collection", "msg"];
+  for (const keys of [KEYS, withCollection]) {
+    for (const multiDay of [false, true]) {
+      assert.ok(messageChars(1600, keys, { multiDay, layout: layoutWidths("wide") }) >= 60);
+    }
+  }
 });
 
 test("layout widths: collapsing frees the columns, and nonsense falls back instead of poisoning the sum", () => {

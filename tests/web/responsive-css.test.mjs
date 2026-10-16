@@ -32,7 +32,7 @@ test("the breakpoints in the stylesheet are those of the model", () => {
   assert.equal(DETAIL_DRAWER_QUERY, `(width < ${RAIL_MIN_WIDTH}px)`);
   assert.ok(css.includes("@media " + SIDE_RAIL_QUERY + " {"));
   assert.ok(css.includes("@media " + DETAIL_DRAWER_QUERY + " {"));
-  assert.equal(WIDE_MIN_WIDTH, 1500);
+  assert.equal(WIDE_MIN_WIDTH, 1600);
   assert.equal(RAIL_MIN_WIDTH, 1280);
 });
 
@@ -57,6 +57,7 @@ test("the three layouts use the widths of the proposal and of the column model",
   assert.match(css, new RegExp(`--rail-w: ${LAYOUT_BY_MODE.rail.side}px`));
   const rail = block("@media " + SIDE_RAIL_QUERY);
   assert.match(rail, new RegExp(`--detail-col: ${LAYOUT_BY_MODE.rail.detail}px`));
+  assert.equal(LAYOUT_BY_MODE.rail.detail, 340, "20 px less than the proposal: Message must reach 50 characters at 1280 with the Collection column");
   assert.match(css, /--drawer-side-w: 280px/);
   assert.match(css, /--drawer-detail-w: 420px/);
   assert.match(block("@media " + DETAIL_DRAWER_QUERY), /--detail-col: 0px/);
@@ -104,6 +105,11 @@ test("the page carries the rail, the buttons and the stylesheet, last; the modul
   assert.match(html, /id="detail-collapse"/);
   const links = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
   assert.equal(links.at(-1), "/css/responsive.css");
-  assert.match(main, /import\("\.\/drawers\.js"\)[\s\S]{0,300}\.catch\(/);
+  assert.match(main, /const loadDrawers = retryable\(\(\) => import\("\.\/drawers\.js"\)/, "a failed import is forgotten and tried again");
+  assert.match(main, /focusNewCase: \(\) => withSources\(\(\) => panel\.revealNewCase\(\)\)/);
+  assert.match(main, /focusAddFiles: \(\) => withSources\(\(\) => panel\.revealAddFiles\(\)\)/);
+  assert.match(main, /openWhenLoaded\(\{ current: \(\) => drawers, load: loadDrawers/);
+  assert.doesNotMatch(html, /id="detail-toggle"[^>]*\bhidden\b/, "visible from the first paint where CSS shows it, so a failed module leaves no dead end");
+  assert.match(css, /#detail-toggle \{\s*display: var\(--detail-toggle-display\)/);
   assert.doesNotMatch(main.split("\n").filter((l) => /^import /.test(l)).join("\n"), /drawers/, "not in the static graph of the opening");
 });

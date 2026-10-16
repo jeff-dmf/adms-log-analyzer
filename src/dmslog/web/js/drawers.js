@@ -1,4 +1,4 @@
-// The sources rail and the drawers (UI-17): below 1500 px the sources panel is a 44 px rail that opens as a drawer over
+// The sources rail and the drawers (UI-17): below 1600 px the sources panel is a 44 px rail that opens as a drawer over
 // the grid; below 1280 px the detail is a drawer too (opened with Enter in the grid or the "Detail" button of the filter
 // strip). The layout itself is CSS (css/responsive.css, media queries) so nothing waits for this module; this file owns
 // the open state, the focus, Escape, aria-expanded, the user's own collapse choices and the count on the rail.
@@ -28,12 +28,16 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
     detailCollapse: byId("detail-collapse"),
     viewport: byId("grid-viewport"),
     gridPanel: byId("grid-panel"),
+    search: byId("search-input"), // the last place for the focus when the whole grid area is not displayed
   };
   const store = storage === undefined ? storageOf(win) : storage;
   const state = new DrawerState();
   let prefs = loadPrefs(store);
   let counts = { selected: 0, total: NaN };
   let openers = { side: null, detail: null };
+  let focusIn = null; // which guarded node ("sources", "detail", "rail", "detailToggle", ...) holds the focus, or null
+  let snapshot = "";
+  const listeners = new Set();
   const cleanups = [];
 
   const on = (target, type, handler) => {
@@ -59,6 +63,60 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
   const layoutNow = () => effectiveLayout(modeNow(), prefs);
   const panelOf = (which) => (which === "side" ? el.sources : el.detail);
   const buttonOf = (which) => (which === "side" ? el.rail : el.detailToggle);
+
+  // Effective visibility: the node and every ancestor are not [hidden], and the CSS (media queries, the open class)
+  // leaves it displayed. `hidden` alone is not enough: the panels are hidden by CSS, not by the attribute.
+  const visible = (node) => {
+    if (!node || node.isConnected === false) {
+      return false;
+    }
+    for (let n = node; n; n = n.parentElement || n.parent || null) {
+      if (n.hidden === true) {
+        return false;
+      }
+    }
+    if (typeof node.checkVisibility === "function") {
+      try {
+        return node.checkVisibility({ visibilityProperty: true }) !== false;
+      } catch {
+        return true;
+      }
+    }
+    return true;
+  };
+  // The guarded nodes: whatever can lose the focus by being hidden when the layout changes, and where it goes then.
+  const guards = () => [
+    { id: "sources", node: el.sources, fallback: [el.rail] },
+    { id: "detail", node: el.detail, fallback: [el.detailToggle] },
+    { id: "rail", node: el.rail, fallback: [el.sources] },
+    { id: "detailToggle", node: el.detailToggle, fallback: [el.detail] },
+  ];
+  const guardOf = (target) => {
+    for (const g of guards()) {
+      if (g.node && target && typeof g.node.contains === "function" && g.node.contains(target)) {
+        return g;
+      }
+    }
+    return null;
+  };
+  // First visible control that can take the focus; the grid panel is always there.
+  const focusFirstVisible = (candidates) => {
+    const target = [...candidates, el.viewport, el.gridPanel, el.search].find((node) => node && visible(node) && typeof node.focus === "function");
+    if (target) {
+      target.focus();
+    }
+  };
+  // The focus was inside a guarded node that is no longer displayed (a resize, a collapse): move it somewhere visible.
+  function settleFocus() {
+    if (focusIn === null) {
+      return;
+    }
+    const guard = guards().find((g) => g.id === focusIn);
+    if (guard && !visible(guard.node)) {
+      focusIn = null;
+      focusFirstVisible(guard.fallback);
+    }
+  }
 
   const setHidden = (node, hidden) => {
     if (node) {
@@ -105,7 +163,28 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
     paintCollapse(el.sideCollapse, layout.canCollapseSide && (!layout.sideRail || prefs.sideCollapsed), layout.sideRail, S.sideCollapse, S.sidePin);
     paintCollapse(el.detailCollapse, layout.canCollapseDetail && (!layout.detailDrawer || prefs.detailCollapsed), layout.detailDrawer, S.detailCollapse, S.detailPin);
     paintCount();
+    settleFocus();
+    emitIfChanged(layout);
     return { layout, closed };
+  }
+
+  function emitIfChanged(layout) {
+    const next = `${state.open}|${layout.sideRail}|${layout.detailDrawer}`;
+    if (next === snapshot) {
+      return;
+    }
+    const first = snapshot === "";
+    snapshot = next;
+    if (first) {
+      return;
+    }
+    for (const fn of [...listeners]) {
+      try {
+        fn({ open: state.open, sideRail: layout.sideRail, detailDrawer: layout.detailDrawer });
+      } catch {
+        // a listener's failure never breaks the layout
+      }
+    }
   }
 
   function paintCollapse(button, visible, asDrawer, collapseText, pinText) {
@@ -119,11 +198,7 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
   }
 
   function restoreFocus(which) {
-    const opener = openers[which];
-    const target = [opener, buttonOf(which), el.viewport].find((node) => node && node.isConnected !== false && node.hidden !== true);
-    if (target && typeof target.focus === "function") {
-      target.focus();
-    }
+    focusFirstVisible([openers[which], buttonOf(which)]);
   }
 
   function open(which, opener = null) {
@@ -159,7 +234,25 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
     return true;
   }
 
+  // Is the panel on screen: in the flow, or an open drawer.
+  function isOpen(which) {
+    const layout = layoutNow();
+    if (which === "side") {
+      return !layout.sideRail || state.open === "side";
+    }
+    if (which === "detail") {
+      return !layout.detailDrawer || state.open === "detail";
+    }
+    return false;
+  }
+
   function toggle(which, opener = null) {
+    const layout = layoutNow();
+    const inFlow = which === "side" ? !layout.sideRail : which === "detail" ? !layout.detailDrawer : false;
+    if (inFlow) {
+      collapse(which); // a panel in the flow: the toggle collapses it (a choice that is remembered)
+      return isOpen(which);
+    }
     if (state.open === which) {
       close(which, { restore: true });
       return false;
@@ -211,17 +304,27 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
       open("detail", el.viewport);
     }
   });
-  on(el.gridPanel, "pointerdown", () => close(null)); // a click on the grid dismisses the drawer; the focus stays where the click put it
-  on(win, "resize", () => {
-    // A drawer whose panel goes back into the flow closes; if the focus was inside it, it goes to the opener.
-    const was = state.open;
-    const panel = was ? panelOf(was) : null;
-    const hadFocus = Boolean(panel && panel.contains(doc.activeElement));
-    paint();
-    if (was !== null && state.open === null && hadFocus) {
-      restoreFocus(was);
+  // A click on the grid dismisses the drawer; the focus stays where the click put it. The Detail button and the rail are
+  // the controls of the drawers themselves: their own click toggles, so a pointerdown there must not close it first.
+  on(el.gridPanel, "pointerdown", (event) => {
+    const target = event && event.target;
+    const own = [el.rail, el.detailToggle].some((node) => node && target && typeof node.contains === "function" && node.contains(target));
+    if (!own) {
+      close(null);
     }
   });
+  // Where the focus is, so a layout change that hides it can move it (the browser reports nothing when CSS hides a node).
+  const onFocusIn = (event) => {
+    const guard = guardOf(event && event.target);
+    focusIn = guard ? guard.id : null;
+  };
+  on(doc, "focusin", onFocusIn);
+  on(doc, "pointerdown", (event) => {
+    if (guardOf(event && event.target) === null) {
+      focusIn = null; // a click elsewhere took the focus away from the drawers
+    }
+  });
+  on(win, "resize", () => paint()); // paint() closes a drawer whose panel went back to the flow and rescues the focus
   paint();
 
   return {
@@ -230,6 +333,15 @@ export function createDrawers({ doc = document, win = window, storage } = {}) {
     toggle,
     paint,
     openWhich: () => state.open,
+    isOpen,
+    // fn({open, sideRail, detailDrawer}) after the open drawer or the layout changed; returns the function that unsubscribes.
+    on(type, fn) {
+      if (type !== "change" || typeof fn !== "function") {
+        return () => {};
+      }
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
     layout: layoutNow,
     prefs: () => ({ ...prefs }),
     // The rail shows "selected/total" next to its name. Anything that is not a count is shown as the name alone.

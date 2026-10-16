@@ -11,6 +11,8 @@ export const S = {
   railTitle: "Sources: open the sources panel",
   railCountTitle: "Sources: {selected} of {total} selected. Open the sources panel",
   railDetail: "Detail",
+  actSources: "Sources panel",
+  actDetail: "Record detail panel",
   sideCollapse: "Collapse the sources panel",
   sidePin: "Keep the sources panel open",
   detailCollapse: "Collapse the record detail",

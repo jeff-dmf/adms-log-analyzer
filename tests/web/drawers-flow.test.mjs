@@ -18,6 +18,7 @@ function setup({ width = 1400, stored = null, throwingStorage = false, noMatchMe
   };
   const panels = make("main", "panels");
   const top = make("header", "toolbar", doc.body);
+  const search = make("input", "search-input", top);
   const rail = make("button", "side-rail", panels);
   const count = make("span", "side-rail-count", rail);
   const sources = make("aside", "sources-panel", panels);
@@ -29,6 +30,27 @@ function setup({ width = 1400, stored = null, throwingStorage = false, noMatchMe
   const detail = make("aside", "detail-panel", panels);
   const detailCollapse = make("button", "detail-collapse", detail);
   const detailText = make("pre", "detail-text", detail);
+  // What the CSS does (css/responsive.css), so "visible" is the effective one: ancestors and media queries, not `hidden`.
+  const css = { viewportHidden: false };
+  const has = (node, name) => node.classList.contains(name);
+  const rules = {
+    "sources-panel": () => (win.innerWidth >= 1600 && !has(panels, "is-side-collapsed")) || has(panels, "is-side-open"),
+    "detail-panel": () => (win.innerWidth >= 1280 && !has(panels, "is-detail-collapsed")) || has(panels, "is-detail-open"),
+    "side-rail": () => win.innerWidth < 1600 || has(panels, "is-side-collapsed"),
+    "detail-toggle": () => win.innerWidth < 1280 || has(panels, "is-detail-collapsed"),
+    "grid-viewport": () => !css.viewportHidden,
+  };
+  const effective = (node) => {
+    for (let n = node; n; n = n.parent) {
+      if (n.hidden || (rules[n.id] && !rules[n.id]())) return false;
+    }
+    return node.isConnected;
+  };
+  for (const node of doc.body.all()) {
+    node.checkVisibility = () => effective(node);
+    const focus = node.focus.bind(node);
+    node.focus = () => { if (effective(node)) focus(); }; // the browser does not focus what is not displayed
+  }
   const mem = new Map(stored ? [["dmslog.layout", JSON.stringify(stored)]] : []);
   const storage = throwingStorage
     ? { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("quota"); } }
@@ -48,10 +70,11 @@ function setup({ width = 1400, stored = null, throwingStorage = false, noMatchMe
   const drawers = createDrawers({ doc, win, storage });
   const resize = (w) => {
     win.innerWidth = w;
+    if (!effective(doc.activeElement)) doc.activeElement = doc.body; // the browser's focus fixup: a hidden node loses it silently
     resizers.slice().forEach((fn) => fn());
   };
   const key = (target, k, init = {}) => target.dispatch("keydown", { key: k, ...init });
-  return { doc, panels, top, rail, count, sources, sideCollapse, sourceInput, gridPanel, detailToggle, viewport, detail, detailCollapse, detailText, mem, drawers, resize, key, win };
+  return { search, css, effective, doc, panels, top, rail, count, sources, sideCollapse, sourceInput, gridPanel, detailToggle, viewport, detail, detailCollapse, detailText, mem, drawers, resize, key, win };
 }
 
 const cls = (node, name) => node.classList.contains(name);
@@ -157,7 +180,7 @@ test("a click on the grid dismisses the drawer and leaves the focus where the cl
   assert.equal(t.doc.activeElement, t.viewport);
 });
 
-test("resizing with a drawer open: it stays while it is still a drawer, closes when the panel is back in the flow, focus to the opener", () => {
+test("resizing with a drawer open: it stays while it is still a drawer; back in the flow it closes and the focus stays on the field", () => {
   const t = setup({ width: 1300 });
   t.rail.focus();
   t.rail.click();
@@ -168,18 +191,153 @@ test("resizing with a drawer open: it stays while it is still a drawer, closes w
   assert.equal(t.drawers.openWhich(), null);
   assert.ok(!cls(t.panels, "is-side-open"));
   assert.equal(t.rail.hidden, true);
-  assert.equal(t.doc.activeElement, t.viewport, "the hidden rail never takes the focus: it goes to the grid");
+  assert.equal(t.doc.activeElement, t.sourceInput, "the panel is in the flow and shows the field: the focus stays");
 });
 
-test("a resize that puts the detail back in the flow while the focus is inside it moves the focus out", () => {
+test("a resize that puts the detail back in the flow keeps the focus inside it, on a visible node", () => {
   const t = setup({ width: 1100 });
   t.viewport.focus();
   t.key(t.viewport, "Enter");
   t.detailText.focus();
   t.resize(1400);
   assert.equal(t.drawers.openWhich(), null);
-  assert.equal(t.doc.activeElement, t.viewport);
+  assert.equal(t.doc.activeElement, t.detailText);
   assert.equal(t.detailToggle.hidden, true);
+});
+
+test("resize hides the panel that holds the focus, with no drawer ever opened: the focus goes to the visible opener (sources)", () => {
+  const t = setup({ width: 1600 });
+  t.sourceInput.focus();
+  t.resize(1599);
+  assert.equal(t.effective(t.sources), false);
+  assert.equal(t.doc.activeElement, t.rail, "not left on a hidden field");
+  assert.ok(t.effective(t.doc.activeElement));
+  assert.equal(t.drawers.openWhich(), null);
+});
+
+test("resize hides the detail with the focus inside it (1280 -> 1279): the focus goes to the Detail button", () => {
+  const t = setup({ width: 1280 });
+  t.detailText.focus();
+  assert.equal(t.doc.activeElement, t.detailText);
+  t.resize(1279);
+  assert.equal(t.doc.activeElement, t.detailToggle);
+  t.resize(1600);
+  t.detailToggle.focus(); // hidden at 1600: refused, the focus stays
+  assert.notEqual(t.doc.activeElement, t.detailToggle);
+});
+
+test("resize hides the rail or the Detail button that holds the focus: it goes to the panel that came back into the flow", () => {
+  const t = setup({ width: 1400 });
+  t.rail.focus();
+  t.resize(1600);
+  assert.equal(t.doc.activeElement, t.sources);
+  const u = setup({ width: 1100 });
+  u.detailToggle.focus();
+  u.resize(1400);
+  assert.equal(u.doc.activeElement, u.detail);
+});
+
+test("a click elsewhere forgets where the focus was: a later resize does not steal it", () => {
+  const t = setup({ width: 1600 });
+  t.sourceInput.focus();
+  t.viewport.dispatch("pointerdown"); // lands outside the drawers
+  t.doc.activeElement = t.doc.body; // the click on a blank area: the browser focuses the body, no focusin
+  t.doc.listeners.pointerdown?.forEach((fn) => fn({ type: "pointerdown", target: t.viewport }));
+  t.resize(1599);
+  assert.equal(t.doc.activeElement, t.doc.body);
+});
+
+test("the Detail button: pointerdown then click (a real mouse press) toggles once, never close-and-reopen", () => {
+  const t = setup({ width: 1100 });
+  const press = (node) => {
+    node.dispatch("pointerdown"); // bubbles to the grid panel, where the button lives
+    t.doc.listeners.pointerdown?.forEach((fn) => fn({ type: "pointerdown", target: node }));
+    node.click();
+  };
+  press(t.detailToggle);
+  assert.equal(t.drawers.openWhich(), "detail");
+  assert.equal(t.detailToggle.getAttribute("aria-expanded"), "true");
+  press(t.detailToggle);
+  assert.equal(t.drawers.openWhich(), null, "the second press closes it");
+  assert.equal(t.detailToggle.getAttribute("aria-expanded"), "false");
+  press(t.rail); // the rail is outside the grid, but the same rule holds for it
+  assert.equal(t.drawers.openWhich(), "side");
+  press(t.rail);
+  assert.equal(t.drawers.openWhich(), null);
+});
+
+test("focus goes back only to something displayed: an opener that was removed or sits in a hidden grid is skipped", () => {
+  const t = setup({ width: 1100 });
+  const opener = t.doc.createElement("button");
+  opener.id = "elsewhere";
+  opener.checkVisibility = () => t.effective(opener);
+  t.top.appendChild(opener);
+  opener.focus();
+  t.detailToggle.focus();
+  t.drawers.open("detail", opener);
+  opener.remove(); // gone before Escape
+  t.key(t.detail, "Escape");
+  assert.equal(t.doc.activeElement, t.detailToggle, "removed opener: next visible control");
+  // the grid is hidden (dock maximized): Enter-opened drawer cannot return to the grid
+  t.viewport.focus();
+  t.key(t.viewport, "Enter");
+  t.css.viewportHidden = true;
+  t.key(t.detail, "Escape");
+  assert.notEqual(t.doc.activeElement, t.viewport);
+  assert.ok(t.effective(t.doc.activeElement), "the focus is on something displayed");
+  // a hidden ancestor (the whole grid area hidden) is seen too
+  t.css.viewportHidden = false;
+  t.viewport.focus();
+  t.key(t.viewport, "Enter");
+  t.gridPanel.hidden = true;
+  t.key(t.detail, "Escape");
+  assert.equal(t.doc.activeElement, t.search, "the whole grid area is hidden: the focus goes to the search box, never into the grid");
+});
+
+test("a node whose engine cannot tell (no checkVisibility) is still not focused when an ancestor is hidden", () => {
+  const t = setup({ width: 1100 });
+  for (const node of t.doc.body.all()) delete node.checkVisibility; // plain DOM: only the [hidden] chain is known
+  t.viewport.focus();
+  t.key(t.viewport, "Enter");
+  t.gridPanel.hidden = true; // the whole grid area, viewport and Detail button with it
+  t.key(t.detail, "Escape");
+  assert.equal(t.doc.activeElement, t.search);
+});
+
+test("the public interface: isOpen, open, close, toggle and on(change)", () => {
+  const t = setup({ width: 1100 });
+  const seen = [];
+  const off = t.drawers.on("change", (e) => seen.push(e.open));
+  assert.equal(t.drawers.isOpen("side"), false);
+  assert.equal(t.drawers.isOpen("detail"), false);
+  assert.equal(t.drawers.toggle("side"), true);
+  assert.equal(t.drawers.isOpen("side"), true);
+  assert.equal(t.drawers.isOpen("nope"), false);
+  t.drawers.open("detail");
+  assert.deepEqual(seen, ["side", "detail"]);
+  assert.equal(t.drawers.isOpen("side"), false, "one at a time");
+  t.drawers.close("detail");
+  assert.deepEqual(seen, ["side", "detail", null]);
+  off();
+  t.drawers.open("side");
+  assert.equal(seen.length, 3, "unsubscribed");
+  t.drawers.on("change", () => { throw new Error("listener bug"); });
+  t.resize(1600); // the layout changed: listeners are told, a throwing one does not break it
+  assert.equal(t.rail.hidden, true);
+  assert.equal(t.drawers.isOpen("side"), true, "in the flow = on screen");
+  assert.equal(t.drawers.on("other", () => {}) instanceof Function, true);
+});
+
+test("in the wide layout toggle collapses the panel (and back); the change event carries the new layout", () => {
+  const t = setup({ width: 1700 });
+  const layouts = [];
+  t.drawers.on("change", (e) => layouts.push(e.sideRail));
+  assert.equal(t.drawers.toggle("side"), false);
+  assert.equal(t.drawers.isOpen("side"), false);
+  assert.ok(cls(t.panels, "is-side-collapsed"));
+  assert.equal(t.drawers.toggle("side"), true, "open again as a drawer");
+  assert.equal(t.drawers.isOpen("side"), true);
+  assert.deepEqual(layouts, [true, true]);
 });
 
 test("the count on the rail follows setSources; bad numbers show the name alone", () => {

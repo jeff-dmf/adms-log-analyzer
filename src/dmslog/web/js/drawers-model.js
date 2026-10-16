@@ -10,7 +10,7 @@ export const DETAIL_DRAWER_QUERY = `(width < ${RAIL_MIN_WIDTH}px)`;
 export { layoutModeFor };
 
 // What is on screen for a layout mode and the user's choices.
-//   sideRail: the sources panel is the 44 px rail (forced below 1500 px, or collapsed by the user)
+//   sideRail: the sources panel is the 44 px rail (forced below 1600 px, or collapsed by the user)
 //   detailDrawer: the detail is a drawer (forced below 1280 px, or collapsed by the user)
 //   canCollapseSide / canCollapseDetail: the user's choice has an effect (wide layout); below that the layout forces it
 export function effectiveLayout(mode, prefs) {

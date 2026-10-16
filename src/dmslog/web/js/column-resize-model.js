@@ -14,18 +14,18 @@ const MAX_STORED = 200;           // entries kept in storage (dynamic field colu
 // Windows and Linux, the text of the column does not. Widths the user dragged are stored in px and win over these.
 export const DEFAULT_CH = { ts: 12, pid: 6, tid: 6, level: 9, source: 20, collection: 5 };
 export const TS_CH_MULTIDAY = 18;  // "MM-DD HH:MM:SS.mmm", used when the case covers more than one day
-export const SOURCE_CH_MULTIDAY = 16; // the wider time column is paid by Source (its middle ellipsis keeps the tail)
+export const SOURCE_CH_MULTIDAY = 14; // the wider time column is paid by Source (its middle ellipsis keeps the tail)
 // Layout of the page at the acceptance size (css/tokens.css, css/app.css): sources panel, detail panel, grid panel
 // padding (2 x --space-3) and border, viewport border (2 px) and the vertical scrollbar.
 export const LAYOUT_PX = { side: 248, detail: 380, panelChrome: 17, viewportBorder: 2, scrollbar: 15 };
 // Page layout by viewport width (UI-17, css/responsive.css uses the same breakpoints): wide = sources panel and detail
-// side by side with the grid; rail = the sources panel shrinks to a rail and opens as a drawer; narrow = the detail is a
+// side by side with the grid; rail = the sources panel shrinks to a rail and opens as a drawer (the detail gives 20 px so Message keeps 50 characters at 1280 with the Collection column and a multi-day case); narrow = the detail is a
 // drawer too. The widths are those of the columns that stay in the flow.
-export const WIDE_MIN_WIDTH = 1500; // px: from here on, 248 | grid | 380
+export const WIDE_MIN_WIDTH = 1600; // px: from here on, 248 | grid | 380
 export const RAIL_MIN_WIDTH = 1280; // px: from here on, rail 44 | grid | 360; below it the detail is a drawer
 export const LAYOUT_BY_MODE = {
   wide: { side: 248, detail: 380 },
-  rail: { side: 44, detail: 360 },
+  rail: { side: 44, detail: 340 },
   narrow: { side: 44, detail: 0 },
 };
 // "wide" | "rail" | "narrow" for a viewport width in CSS px; not a positive finite number = "wide" (nothing to measure).
