@@ -8,7 +8,7 @@ function fakeElement() {
     style: {}, dataset: {}, children: [], hidden: false, clientHeight: 66, scrollTop: 0, className: "", attrs,
     classList: { toggle() {} },
     addEventListener() {}, appendChild(c) { this.children.push(c); return c; },
-    setAttribute(k, v) { attrs[k] = String(v); }, focus() {},
+    setAttribute(k, v) { attrs[k] = String(v); }, removeAttribute(k) { delete attrs[k]; }, focus() {},
     set textContent(v) { this.children = []; this._t = v; }, get textContent() { return this._t || ""; },
   };
 }

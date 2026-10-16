@@ -32,7 +32,7 @@ test("clamp keeps widths inside the limits and survives junk", () => {
 });
 
 test("defaults: fixed columns, msg and dynamic fields", () => {
-  assert.equal(defaultWidth("ts"), 190);
+  assert.equal(defaultWidth("ts"), 96); // ceil(12ch of the nominal 7.2px) + 8px of padding + 1px
   assert.equal(defaultWidth("fields.Foo"), 140);
   assert.equal(defaultWidth("constructor"), 140); // not an inherited property
 });
@@ -64,9 +64,9 @@ test("widths persist per column name and come back on a new instance", () => {
   a.set("fields.Foo", 5); // clamped
   const b = new ColumnWidths(storage);
   assert.equal(b.get("msg"), 640);
-  assert.equal(b.get("ts"), 200);
+  assert.equal(b.get("ts"), 96 + STEP);
   assert.equal(b.get("fields.Foo"), MIN_WIDTH);
-  assert.equal(b.get("source"), 160);
+  assert.equal(b.get("source"), 153); // 20ch + padding
 });
 
 test("dragging does not write until persisted", () => {
@@ -85,17 +85,17 @@ test("corrupt or hostile stored data is ignored or sanitized", () => {
   }
   const w = new ColumnWidths(fakeStorage({ [STORAGE_KEY]: '{"ts":99999,"__proto__":7,"pid":1e999}' }));
   assert.equal(w.get("ts"), MAX_WIDTH);
-  assert.equal(w.get("pid"), 72);
+  assert.equal(w.get("pid"), 53);
 });
 
 test("unavailable storage: works for the session, never throws", () => {
   for (const storage of [brokenStorage, null]) {
     const w = new ColumnWidths(storage);
-    assert.equal(w.get("ts"), 190);
+    assert.equal(w.get("ts"), 96);
     w.set("ts", 250);
     assert.equal(w.get("ts"), 250);
     w.reset();
-    assert.equal(w.get("ts"), 190);
+    assert.equal(w.get("ts"), 96);
   }
 });
 
@@ -124,5 +124,44 @@ test("the stored set is capped, dropping the oldest", () => {
 test("total sums the visible columns", () => {
   const w = new ColumnWidths(null);
   w.set("ts", 100, false);
-  assert.equal(w.total(["ts", "pid", "msg"]), 100 + 72 + 300);
+  assert.equal(w.total(["ts", "pid", "msg"]), 100 + 53 + 300);
+});
+
+test("UI-16: default widths are in ch of the measured character; a dragged px width wins and survives a new measure", () => {
+  const storage = fakeStorage();
+  const w = new ColumnWidths(storage);
+  assert.equal(w.setCharPx(9), true);
+  assert.equal(w.get("ts"), 117);
+  assert.equal(w.get("pid"), 63);
+  assert.equal(w.get("level"), 90);
+  assert.equal(w.get("source"), 189);
+  assert.equal(w.get("collection"), 54);
+  w.set("source", 333); // dragged: stored in px
+  w.setCharPx(10);
+  assert.equal(w.get("source"), 333);
+  assert.equal(new ColumnWidths(storage).get("source"), 333);
+  assert.equal(w.get("ts"), 129);
+});
+
+test("UI-16: a failed character measurement (0, NaN, null, negative) keeps the previous value", () => {
+  const w = new ColumnWidths(null);
+  w.setCharPx(8);
+  for (const bad of [0, NaN, null, undefined, -3, Infinity, "8"]) {
+    assert.equal(w.setCharPx(bad), false);
+    assert.equal(w.charPx, 8);
+  }
+  assert.equal(defaultWidth("ts", 0), 96);
+  assert.equal(defaultWidth("ts", NaN), 96);
+});
+
+test("UI-16: the time column of a multi-day case is 18ch, and back to 12ch when the override is removed", () => {
+  const w = new ColumnWidths(null);
+  w.setCharPx(8);
+  w.setDefaultCh("ts", 18);
+  assert.equal(w.get("ts"), 153);
+  w.set("ts", 150);
+  assert.equal(w.get("ts"), 150); // the user's width still wins
+  w.reset();
+  w.setDefaultCh("ts", null);
+  assert.equal(w.get("ts"), 105);
 });

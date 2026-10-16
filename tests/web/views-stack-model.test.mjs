@@ -21,20 +21,20 @@ function make() {
 
 test("names come from the last filter", () => {
   assert.equal(describeFilter(null), null);
-  assert.equal(describeFilter({ and: [{ sev: { le: 3 } }, { tid: [12] }] }), "tid = 12");
-  assert.equal(describeFilter({ tid: [1, 2] }), "tid in 1, 2");
-  assert.equal(describeFilter({ key: { type: "gid", eq: "ab" } }), "key gid = ab");
+  assert.equal(describeFilter({ and: [{ sev: { le: 3 } }, { tid: [12] }] }), "Thread 12");
+  assert.equal(describeFilter({ tid: [1, 2] }), "Thread 1, 2");
+  assert.equal(describeFilter({ key: { type: "gid", eq: "ab" } }), "gid = ab");
   assert.equal(describeFilter({ field: { name: "op", eq: "Read" } }), "op = Read");
-  assert.equal(describeFilter({ not: { tpl: [5] } }), "not template = 5");
-  assert.equal(describeFilter({ ts: { ge: 1 } }), "time range");
-  assert.equal(describeFilter({ key: { type: "gid", eq: "x".repeat(60) } }).length < 40, true);
+  assert.equal(describeFilter({ not: { tpl: [5] } }), "not Type 5");
+  assert.equal(describeFilter({ ts: { ge: 1 } }), "from 1");
+  assert.equal(describeFilter({ key: { type: "gid", eq: "x".repeat(60) } }).length <= 40, true);
 });
 
 test("narrow needs a filter, then parent AND own composes", () => {
   const m = make();
   assert.deepEqual(m.stack.narrow(), { ok: false, reason: "empty" });
   m.set({ userFilter: { tid: [12] } });
-  assert.equal(m.stack.name(0), "tid = 12");
+  assert.equal(m.stack.name(0), "Thread 12");
   const res = m.stack.narrow();
   assert.equal(res.ok, true);
   m.setLive(res.state);
@@ -42,7 +42,7 @@ test("narrow needs a filter, then parent AND own composes", () => {
   assert.deepEqual(m.stack.parentsFilter(), { and: [{ tid: [12] }] });
   assert.equal(m.stack.name(1), "View 2");
   m.set({ userFilter: { key: { type: "gid", eq: "g1" } } });
-  assert.equal(m.stack.name(1), "key gid = g1");
+  assert.equal(m.stack.name(1), "gid = g1");
   const second = m.stack.narrow();
   m.setLive(second.state);
   assert.deepEqual(m.stack.parentsFilter(), { and: [{ tid: [12] }, { key: { type: "gid", eq: "g1" } }] });
@@ -97,7 +97,7 @@ test("rename wins over the automatic name and is sanitised", () => {
   assert.equal(m.stack.name(0).startsWith("my view x"), true);
   assert.equal(m.stack.name(0).length <= 40, true);
   m.stack.rename(0, "");
-  assert.equal(m.stack.name(0), "tid = 1");
+  assert.equal(m.stack.name(0), "Thread 1");
 });
 
 test("the root without filter is named", () => {
@@ -171,4 +171,19 @@ test("malformed stored filters are discarded, valid ones kept", () => {
   assert.equal(m.stack.crumbs().length, 2); // renders names without throwing
   m.stack.load(bad({ and: [{ tid: [4] }] }));
   assert.deepEqual(m.stack.parentsFilter(), { and: [{ tid: [4] }] });
+});
+
+test("the names of the views are the chips' words, with the lookups of the app (type titles, source names, times)", async () => {
+  const { chipsFromState } = await import("../../src/dmslog/web/js/filter-chips-model.js");
+  const { S } = await import("../../src/dmslog/web/js/strings.js");
+  const lookups = { sourceName: (i) => "adapter-" + i, collectionTag: (g) => "C" + g, typeLabel: (i) => "Validation failed #" + i, formatTs: (m) => "T" + m };
+  assert.equal(describeFilter({ tpl: [5] }, lookups), "Type Validation failed #5");
+  assert.equal(describeFilter({ and: [{ tid: [1] }, { source: [3] }] }, lookups), "Source adapter-3");
+  assert.equal(describeFilter({ ts: { ge: 1, le: 2 } }, lookups), "T1 to T2");
+  assert.equal(describeFilter({ or: [{ tid: [1] }, { tid: [2] }] }, lookups), S.vsNameFilter);
+  assert.equal(describeFilter({ and: [{ tid: [1] }, {}] }), "Thread 1"); // {} is "no filter", not a node
+  const own = () => ({ and: [{ tpl: [7] }] });
+  const stack = createViewsStack({ ownFilter: own, getLive: () => emptyState(), lookups });
+  const chip = chipsFromState({ ...emptyState(), userFilter: { tpl: [7] } }, { sourceIds: [], collectionIds: [] }, lookups, S)[0];
+  assert.equal(stack.name(0), chip.label); // the trail and the chip say the same thing
 });

@@ -195,6 +195,16 @@ export class SourcesPanel {
     return [...this.selected];
   }
 
+  // The strip's "x" on the sources chip: nothing selected again (the owner applies the view).
+  clearSelection() {
+    if (this.selected.size === 0) {
+      return;
+    }
+    this.selected = new Set();
+    this.renderSources();
+    this.handlers.onSelection([]);
+  }
+
   setQuery(query) {
     this.query = String(query);
     this.renderSources();
