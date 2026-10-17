@@ -39,6 +39,6 @@ test("timeline.js writes text only and keeps its labels in strings.js", () => {
   assert.match(source, /aria-expanded/);
 });
 
-test("the ? help carries the timeline hint", () => {
-  assert.match(read("js/main.js"), /helpText: \(\) => \[[^\]]*S\.timelineHint[^\]]*\]\.join/);
+test("the ? dialog carries the timeline hint (UI-28)", () => {
+  assert.match(read("js/shortcuts.js"), /S\.timelineHint/);
 });

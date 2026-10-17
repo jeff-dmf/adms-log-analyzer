@@ -247,14 +247,3 @@ export function loadStack(storage, caseId, stack) {
     return null;
   }
 }
-
-// Alt+Left / Alt+Right: back / forward in the stack of views. Returns "back" | "forward" | null.
-export function viewsKey(event) {
-  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
-    return null;
-  }
-  if (event.key === "ArrowLeft") {
-    return "back";
-  }
-  return event.key === "ArrowRight" ? "forward" : null;
-}
