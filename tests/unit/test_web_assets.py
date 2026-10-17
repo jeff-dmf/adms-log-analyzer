@@ -90,6 +90,8 @@ EXPECTED_MODULES = {
     "distinct-panel.js",
     "highlight-model.js",
     "highlight-panel.js",
+    "case-dialogs.js",
+    "case-empty.js",
     "case-files-model.js",
     "case-files.js",
     "folder-browser-model.js",
