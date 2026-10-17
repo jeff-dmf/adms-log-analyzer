@@ -67,6 +67,7 @@ function setup({ height = 10 * ROW_HEIGHT, rows = 300, observer = true } = {}) {
     report(height);
   }
   grid.render();
+  vp.el.dispatch("scroll"); // the echo of the writes made while the grid came up: the next event is a fresh one
   const runFrames = () => {
     const pending = frames.splice(0).filter(Boolean);
     pending.forEach((fn) => fn());
@@ -193,28 +194,35 @@ test("wheel units are normalised on both axes: pixel, line and page", () => {
   assert.equal(grid.window.top, grid.visible - 1);
 });
 
-test("a wheel burst, its frame and the scroll sync read no layout; each scroll event reads one position of each axis", () => {
+test("a wheel burst, its frames and the scroll sync read no layout; a scroll event reads at most one position", () => {
   const { grid, vp, runFrames } = setup();
   const before = vp.reads.total;
+  let inListener = 0;
+  const scrollEvent = () => {
+    const at = vp.reads.total;
+    vp.el.dispatch("scroll");
+    const used = vp.reads.total - at;
+    assert.ok(used <= 1, "a scroll event of our own write reads at most one position, read " + used);
+    inListener += used;
+  };
   for (let i = 0; i < 120; i += 1) {
     wheel(vp, ROW_HEIGHT);
     if (i % 30 === 29) {
       runFrames();
+      scrollEvent();
     }
   }
   runFrames();
   wheel(vp, 0, { deltaX: 40 });
   runFrames();
+  scrollEvent();
   grid.scrollRows(-7);
   grid.syncScroll();
   grid.render();
-  assert.equal(vp.reads.total, before, "the wheel, the frames, scrollRows, syncScroll and render read nothing: " + JSON.stringify(vp.reads));
+  scrollEvent();
+  assert.equal(vp.reads.total - before, inListener, "every read happened inside a scroll event of the grid: " + JSON.stringify(vp.reads));
+  assert.ok(inListener > 0 && inListener <= 7);
   assert.equal(vp.values.scrollTop, Math.round((grid.window.topRow().ts - 1000) / (grid.range.max - 1000) * SCROLL_SPAN));
-  // The events these writes cause: one scroll event, one read of each position, and they match what was written.
-  for (let i = 0; i < 5; i += 1) {
-    vp.el.dispatch("scroll");
-  }
-  assert.equal(vp.reads.total - before, 10);
   assert.equal(grid.pendingJump, null, "an echo is not a drag");
   assert.equal(grid.header.scrollLeft, 40);
 });
@@ -387,8 +395,8 @@ test("the hot scroll and render paths read no geometry (static): only readHeight
   const reads = source.split("\n").filter((l) => /clientHeight|\.scrollTop\b(?!\s*=)/.test(l) && !/^\s*\/\//.test(l));
   assert.equal(reads.length, 2, reads.join("\n"));
   assert.ok(/readHeight\(\) \{/.test(method("readHeight")) && /clientHeight/.test(method("readHeight")));
-  const bar = method("onScrollBar");
-  assert.ok(/scrollTop/.test(bar) && /scrollLeft/.test(bar), "the one read of each position is in the scroll listener");
+  const bar = method("onScrollBar") + method("followSideways");
+  assert.ok(/scrollTop/.test(bar) && /scrollLeft/.test(bar), "the reads of the native position are in the scroll listener only");
   assert.ok(!/setTimeout|selfScroll|settle/.test(bar) && !/selfScroll|settleScroll|settleTimer/.test(source), "no timer, no ignore-the-next-event state");
 });
 
@@ -684,4 +692,55 @@ test("sideways travel continues from the last write, and an echo of it keeps pen
   runFrames();
   assert.equal(vp.values.scrollLeft, 150);
   assert.equal(grid.header.scrollLeft, 150);
+});
+
+test("which axis an event reads follows our own write: top after a vertical write, left after a sideways one", () => {
+  const { grid, vp, runFrames } = setup();
+  let at = { ...vp.reads };
+  const delta = (name) => (vp.reads[name] || 0) - (at[name] || 0);
+  grid.window.top = 150;
+  grid.syncScroll();
+  at = { ...vp.reads };
+  vp.el.dispatch("scroll");
+  assert.deepEqual([delta("scrollTop"), delta("scrollLeft")], [1, 0]);
+  wheel(vp, 0, { deltaX: 40 });
+  runFrames();
+  at = { ...vp.reads };
+  vp.el.dispatch("scroll");
+  assert.deepEqual([delta("scrollTop"), delta("scrollLeft")], [0, 1]);
+  at = { ...vp.reads };
+  vp.el.dispatch("scroll"); // not ours: the vertical bar is where we left it, so the sideways one is checked too
+  assert.deepEqual([delta("scrollTop"), delta("scrollLeft")], [1, 1]);
+});
+
+test("a stale own-write flag never hides a vertical drag: the position is compared at every event", () => {
+  const { grid, vp } = setup();
+  grid.window.top = 150;
+  grid.syncScroll(); // no event is delivered for this write
+  vp.values.scrollTop = grid.lastScroll + 800;
+  vp.el.dispatch("scroll");
+  assert.notEqual(grid.pendingJump, null);
+  grid.destroy();
+});
+
+test("Home answers before the drag's debounce, End starts: the old drag timer cannot abort End", async () => {
+  const { grid, vp, pages } = withApi();
+  grid.window.top = 150;
+  grid.syncScroll();
+  const home = grid.goHome();
+  assert.equal(pages.length, 1);
+  vp.el.dispatch("scroll"); // flush the own-write flag
+  vp.values.scrollTop = grid.lastScroll + 700; // the user drags while Home loads
+  vp.el.dispatch("scroll");
+  assert.notEqual(grid.pendingJump, null, "the debounce is running");
+  pages[0].resolve({ rows: makeRows(300), prev: null, next: null }); // Home answers before 80 ms
+  assert.equal(await home, "ok");
+  assert.notEqual(grid.pendingJump, null, "the timer's reference survives the answer");
+  const end = grid.goEnd(); // End starts: it owns the navigation now
+  assert.equal(grid.pendingJump, null, "and End cancelled it");
+  await new Promise((r) => setTimeout(r, 160));
+  assert.equal(pages.length, 2, "Home and End only: the drag's jump never ran");
+  assert.equal(pages[1].signal.aborted, false, "End is not aborted");
+  pages[1].resolve({ rows: makeRows(300), prev: null, next: null });
+  assert.equal(await end, "ok");
 });
