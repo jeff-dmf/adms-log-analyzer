@@ -776,7 +776,7 @@ export class SourcesPanel {
       }
       const waiter = { jobId: null, caseId: this.caseId, resolve, seen: new Map() };
       this.waiter = waiter;
-      this.watchProgress(this.caseId);
+      const opened = this.watchProgress(this.caseId);
       api.addCollection(waiter.caseId, path, scope).then((started) => {
         if (waiter.cancelled) {
           return;
@@ -791,7 +791,7 @@ export class SourcesPanel {
           return;
         }
         this.waiter = null;
-        this.closeEvents();
+        this.closeEvents(opened);
         resolve(refusalResult(err, {
           duplicate: S.cfDuplicateCollection, busy: S.cfBusy,
         }));
@@ -836,14 +836,14 @@ export class SourcesPanel {
     }
     setFieldError(this.refs.pathInput, null);
     const scope = this.refs.scopeSelect.value === "all" ? "all" : "default";
-    this.watchProgress(this.caseId);
+    const opened = this.watchProgress(this.caseId);
     try {
       await api.addCollection(this.caseId, path, scope);
       this.handlers.onMessage(S.collectionStarted, false);
       this.refs.pathInput.value = "";
       this.closeDialog("add"); // the job runs on; its progress is in the status bar
     } catch (err) {
-      this.closeEvents();
+      this.closeEvents(opened);
       if (err instanceof ApiError && err.status === 409) {
         this.handlers.onMessage(conflictMessage(err), true);
       } else if (err instanceof ApiError && PATH_FIELD_ERRORS.has(err.code)) {
@@ -854,10 +854,12 @@ export class SourcesPanel {
     }
   }
 
+  // Opens the progress stream and returns it (null without EventSource). Whoever opens one closes only that one
+  // (closeEvents(opened)): a stream opened since, by a Retry for instance, is not theirs to close.
   watchProgress(caseId) {
     this.closeEvents();
     if (typeof EventSource !== "function") {
-      return;
+      return null;
     }
     this.reportProgress({ value: null, max: null, text: "" });
     const events = new EventSource(api.progressUrl(caseId));
@@ -909,6 +911,7 @@ export class SourcesPanel {
         }
       }
     });
+    return events;
   }
 
   refreshThrottled() {
@@ -933,7 +936,16 @@ export class SourcesPanel {
     return this.events !== null;
   }
 
-  closeEvents() {
+  closeEvents(only) {
+    if (only !== undefined) {
+      if (only === null) {
+        return;
+      }
+      only.close();
+      if (this.events !== only) {
+        return; // already replaced: the current stream and its progress stay
+      }
+    }
     if (this.events) {
       this.events.close();
       this.events = null;

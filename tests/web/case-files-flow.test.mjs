@@ -475,3 +475,52 @@ test("a progress stream the browser closed (HTTP error) is a recoverable stop at
   await panel.selectCase("D");
   assert.equal(panel.resumeProgress(), false);
 });
+
+test("a refused (409) file closes only the stream IT opened: the stream a Retry opened meanwhile keeps running", async () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.progressUrl = () => "/p";
+  api.sources = async () => ({ sources: [] });
+  const refs = {
+    caseSelect: new FakeNode("select"), newCaseForm: new FakeNode("form"), newCaseName: new FakeNode("input"),
+    openForm: new FakeNode("form"), pathInput: Object.assign(new FakeNode("input"), { value: "/x" }), scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
+    progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), sourceList: new FakeNode("ul"),
+  };
+  const stopped = [];
+  const panel = new SourcesPanel(refs, {
+    onCase() {}, onSources() {}, onSelection() {}, onDone() {}, onMessage() {}, onStreamStopped: () => stopped.push(1),
+  });
+  panel.caseId = "C";
+  panel.watchProgress("C"); // file A indexing
+  FakeEventSource.instances[0].readyState = 2;
+  FakeEventSource.instances[0].listeners.error({}); // A's stream stopped
+  assert.equal(stopped.length, 1);
+  // file B starts: its own stream, and its request is still in flight
+  let refuse = null;
+  api.addCollection = () => new Promise((_, reject) => { refuse = reject; });
+  const b = panel.runCollection(ENT, "default");
+  await new Promise((r) => setTimeout(r, 0));
+  const streamB = FakeEventSource.instances.at(-1);
+  // the Retry opens the progress stream again meanwhile
+  assert.equal(panel.resumeProgress(), true);
+  const resumed = FakeEventSource.instances.at(-1);
+  assert.notEqual(resumed, streamB);
+  // B is refused: it closes its own stream and nothing else
+  refuse(Object.assign(new Error("busy"), { status: 409, code: "job_running" }));
+  assert.equal((await b).status, "refused");
+  assert.equal(resumed.closed, undefined);
+  assert.equal(panel.events, resumed);
+  // and the same for the Add dialog's own path (openCollection)
+  panel.refs.pathInput.value = "/y";
+  panel.progressStopped = true; // stopped again
+  let refuse2 = null;
+  api.addCollection = () => new Promise((_, reject) => { refuse2 = reject; });
+  const opening = panel.openCollection();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(panel.resumeProgress(), true);
+  const resumedAgain = FakeEventSource.instances.at(-1);
+  refuse2(Object.assign(new Error("busy"), { status: 409, code: "job_running" }));
+  await opening;
+  assert.equal(resumedAgain.closed, undefined);
+  assert.equal(panel.events, resumedAgain);
+});

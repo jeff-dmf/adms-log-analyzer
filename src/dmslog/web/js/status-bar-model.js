@@ -247,9 +247,11 @@ export function createFailureCenter(deps) {
   };
   const syncNoticeNow = () => {
     let taskText = null;
+    let taskName = "";
     for (const [name, message] of messages) {
       if (message !== null && recovery.has(name)) {
         taskText = message; // the most recent one
+        taskName = name;
       }
     }
     const retryable = taskText !== null;
@@ -259,7 +261,9 @@ export function createFailureCenter(deps) {
       dismissShown();
       return;
     }
-    const key = text + "\u0000" + (retryable ? "retry" : "");
+    // The identity of what is shown: which failure (task or the 4xx's origin), its text and whether Retry is there.
+    const origin = plain !== null ? "plain:" + plain.name : "task:" + taskName;
+    const key = origin + "\u0000" + text + "\u0000" + (retryable ? "retry" : "");
     if (key === dismissedKey) {
       return;
     }
@@ -310,6 +314,7 @@ export function createFailureCenter(deps) {
     const kind = errorKind(err);
     messages.delete(name);
     dropPlain(name);
+    dismissedKey = null; // a NEW failure is news even if its text equals one the user dismissed
     if (isRetryable(kind)) {
       messages.set(name, kind === "network" || kind === "forbidden" ? null : messageOf(err));
       recovery.fail(name, run);

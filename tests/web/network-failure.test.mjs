@@ -428,3 +428,39 @@ test("one change of the failure shows ONE message on the bar (no second pass fro
   center.timelineFailure(new ApiError(408, "query_timeout", "second")); // replaces the text: dismiss + show, once
   assert.equal(shownCount, 2);
 });
+
+test("a dismissed failure does not hide a NEW failure that has the same text (another task, or the same one again)", async () => {
+  const { createFailureCenter } = await import("../../src/dmslog/web/js/status-bar-model.js");
+  const { ApiError } = await import("../../src/dmslog/web/js/api.js");
+  const doc2 = makeDoc();
+  const root = doc2.createElement("footer");
+  doc2.body.appendChild(root);
+  const status = createStatusBar(root, { S });
+  const pick = (cls) => root.all().find((n) => n.className.split(/\s+/).includes(cls));
+  const text = () => (pick("sb-message").hidden ? null : pick("sb-message-text").textContent);
+  const center = createFailureCenter({
+    status, retryLabel: "Retry now", genericMessage: "x", pageHint: "",
+    goOffline() {}, health: async () => {}, setOnline() {}, openingPending: () => false, reloadCases: async () => {},
+    fallback: async () => {}, onError() {}, retryView: async () => {}, hasViewRetry: () => false, dropViewRetry() {},
+    retryGrid: async () => {}, retryCount: async () => {}, refreshTimeline: async () => {}, resumeStream: () => true,
+    cancelRequests() {},
+  });
+  const timeout = () => new ApiError(408, "query_timeout", "The query took too long");
+  center.gridFailure(timeout(), { kind: "timeout", scope: "count", op: "count" });
+  pick("sb-dismiss").click();
+  assert.equal(text(), null);
+  center.timelineFailure(timeout()); // same standard text, another origin
+  assert.equal(text(), "The query took too long");
+  assert.equal(center.recovery.has("count"), true);
+  assert.equal(center.recovery.has("timeline"), true);
+  pick("sb-dismiss").click();
+  assert.equal(text(), null);
+  center.timelineFailure(timeout()); // the same task failing again is a new failure too
+  assert.equal(text(), "The query took too long");
+  // dismissed while two tasks share the text; one recovers: the OTHER failure comes into view (it was never dismissed)
+  pick("sb-dismiss").click();
+  assert.equal(text(), null);
+  center.timelineRecovered();
+  assert.equal(text(), "The query took too long");
+  assert.equal(center.recovery.has("count"), true);
+});
