@@ -16,6 +16,7 @@ back to ``entry`` (and, on timeout, to an estimate).
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
 import sqlite3
@@ -172,6 +173,26 @@ def _authorizer(action: int, arg1: str | None, arg2: str | None, db: str | None,
     return sqlite3.SQLITE_DENY
 
 
+# Absolute ``time.monotonic()`` instant that no read guard of the current context may outlive (None = no
+# ceiling). A caller with a total budget (panel runs) sets it so that every phase, including the ones with
+# their own fixed timeouts (field checks, labels, lookups), stops by then.
+_CEILING: contextvars.ContextVar[float | None] = contextvars.ContextVar("dmslog_guard_ceiling", default=None)
+
+
+@contextmanager
+def deadline_ceiling(deadline: float | None) -> Iterator[None]:
+    """Clamp every :func:`read_guard` opened inside to end by ``deadline`` (``time.monotonic()`` domain).
+    Nested ceilings keep the earlier one."""
+    current = _CEILING.get()
+    if deadline is not None and (current is None or deadline < current):
+        current = deadline
+    token = _CEILING.set(current)
+    try:
+        yield
+    finally:
+        _CEILING.reset(token)
+
+
 @contextmanager
 def read_guard(conn: sqlite3.Connection, timeout_s: float | None) -> Iterator[Callable[[], bool]]:
     """Allow only reads on ``conn`` and interrupt statements after ``timeout_s`` seconds.
@@ -179,6 +200,9 @@ def read_guard(conn: sqlite3.Connection, timeout_s: float | None) -> Iterator[Ca
     Yields a function that tells whether the deadline was reached.
     """
     deadline = None if timeout_s is None else time.monotonic() + timeout_s
+    ceiling = _CEILING.get()
+    if ceiling is not None and (deadline is None or ceiling < deadline):
+        deadline = ceiling
     expired = False
 
     def progress() -> int:
