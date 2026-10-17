@@ -47,6 +47,30 @@ export function allowedWhileTyping(spec) {
   return isRegionKey(spec) || (typeof spec === "string" && spec.startsWith("Ctrl+"));
 }
 
+/** An input method is composing (isComposing, or the legacy keyCode 229 some browsers send instead). */
+export function isComposingEvent(event) {
+  return Boolean(event) && (event.isComposing === true || event.keyCode === 229);
+}
+
+/** AltGr (Firefox on Linux reports it as AltGraph without Ctrl or Alt): the key typed a character, it is not a shortcut. */
+export function hasAltGraph(event) {
+  try {
+    return Boolean(event) && typeof event.getModifierState === "function" && event.getModifierState("AltGraph") === true;
+  } catch {
+    return false;
+  }
+}
+
+// The actions that may repeat while the key is held (walking records); everything else, bookmark toggles included, runs once.
+export const REPEATABLE_ACTIONS = Object.freeze([
+  "navigate.nextError", "navigate.prevError", "navigate.nextType", "navigate.prevType",
+  "navigate.nextHighlight", "navigate.prevHighlight",
+]);
+
+export function allowsRepeat(id) {
+  return REPEATABLE_ACTIONS.includes(id);
+}
+
 /**
  * Whether a key may run an action at all.
  *   spec            canonical KeySpec of the event (actions.js keySpec) or null
@@ -55,9 +79,10 @@ export function allowedWhileTyping(spec) {
  *   inMenu          the focus is inside an open menu (it owns its keys; F6 still closes it)
  *   inDialog        the focus is in a dialog, or a modal dialog is open (it owns every key)
  *   defaultPrevented  a widget already handled the event
+ *   composing / altGraph  an input method is composing / AltGr is down (isComposingEvent, hasAltGraph)
  */
-export function shouldDispatch(spec, { singleKeysOn = true, typing = false, inMenu = false, inDialog = false, defaultPrevented = false } = {}) {
-  if (typeof spec !== "string" || spec === "" || defaultPrevented || inDialog) {
+export function shouldDispatch(spec, { singleKeysOn = true, typing = false, inMenu = false, inDialog = false, defaultPrevented = false, composing = false, altGraph = false } = {}) {
+  if (typeof spec !== "string" || spec === "" || defaultPrevented || inDialog || composing || altGraph) {
     return false;
   }
   if (isRegionKey(spec)) {

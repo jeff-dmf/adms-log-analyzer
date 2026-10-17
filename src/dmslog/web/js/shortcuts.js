@@ -7,7 +7,7 @@ import { isSingleKey, keySpec, shortcutLabel } from "./actions.js";
 import { isInDialog, isInMenu, isTypingTarget } from "./filters.js";
 import { createDialogShell, node } from "./panel-shell.js";
 import {
-  loadSingleKeys, nextRegion, saveSingleKeys, shouldDispatch,
+  allowsRepeat, hasAltGraph, isComposingEvent, loadSingleKeys, nextRegion, saveSingleKeys, shouldDispatch,
 } from "./shortcuts-model.js";
 import { S } from "./strings.js";
 
@@ -148,7 +148,7 @@ function dismissOverlays(doc) {
  * The regions F6 walks (docs/notas/ui-contratos.md, 5.1), in DOM and Tab order. Options:
  *   doc, hasCase() (no case: only the bar and the empty state), drawers() (the UI-17 drawers or null: a closed drawer is
  *   not a region even where the DOM cannot tell).
- * Returns { ids, available(), current(), focus(id), move(dir), destroy() }.
+ * Returns { ids, available(), current(), regionOf(node), focus(id), restore(node, region), move(dir), destroy() }.
  */
 export function createRegions({ doc = document, hasCase = () => true, drawers = () => null } = {}) {
   const byId = (id) => (typeof doc.getElementById === "function" ? doc.getElementById(id) : null);
@@ -263,21 +263,40 @@ export function createRegions({ doc = document, hasCase = () => true, drawers = 
 
   const current = () => regionOf(doc.activeElement);
 
-  // Lands in region `id`: the element that had the focus in it last time if it is still there and displayed, else the
-  // region's own target. False when there is nothing to focus.
+  // A control the focus may go to: connected, displayed, and not disabled.
+  const usable = (el) => Boolean(el) && el.isConnected !== false && isVisible(el) && el.disabled !== true &&
+    !(typeof el.getAttribute === "function" && el.getAttribute("aria-disabled") === "true");
+  // Focuses `el` and checks that the focus really moved there (the browser refuses what it does not display).
+  function land(el) {
+    if (!usable(el) || typeof el.focus !== "function") {
+      return false;
+    }
+    el.focus();
+    return doc.activeElement === el;
+  }
+
+  // Lands in region `id`: the element that had the focus in it last time if it is still usable (displayed and enabled:
+  // a Back button that became disabled is not a place to stop), else the region's own target. False when nothing takes it.
   function focus(id) {
     const def = defOf(id);
     if (!def) {
       return false;
     }
     const last = remembered.get(id);
-    const back = last && last.isConnected !== false && isVisible(last) && rootsOf(def).some((root) => within(root, last)) ? last : null;
-    const target = back || safe(() => def.target(), null);
-    if (!target || typeof target.focus !== "function") {
-      return false;
+    if (last && rootsOf(def).some((root) => within(root, last)) && land(last)) {
+      return true;
     }
-    target.focus();
-    return true;
+    return land(safe(() => def.target(), null));
+  }
+
+  // Gives the focus back to `el` (a dialog's opener); if that is gone, hidden or disabled, to the region it was in
+  // (`region`, read while it was still there), else to the grid, else to the first region that takes it.
+  function restore(el, region = null) {
+    if (land(el)) {
+      return true;
+    }
+    const order = [region, "grid", ...ids].filter((id, i, all) => id && all.indexOf(id) === i);
+    return order.some((id) => focus(id));
   }
 
   // dir > 0 next region, dir < 0 previous. A region that cannot take the focus is skipped. Returns the id it landed in.
@@ -315,7 +334,9 @@ export function createRegions({ doc = document, hasCase = () => true, drawers = 
     ids,
     available,
     current,
+    regionOf,
     focus,
+    restore,
     move,
     destroy() {
       if (typeof doc.removeEventListener === "function") {
@@ -353,7 +374,9 @@ export function createShortcuts({ actions, ctx, getCase = () => null, drawers = 
       typing,
       inMenu: isInMenu(target),
       inDialog: isInDialog(target) || dialogIsOpen(),
-      defaultPrevented: Boolean(event.defaultPrevented) || event.isComposing === true,
+      defaultPrevented: Boolean(event.defaultPrevented),
+      composing: isComposingEvent(event),
+      altGraph: hasAltGraph(event),
     });
     if (!allowed) {
       return;
@@ -363,6 +386,9 @@ export function createShortcuts({ actions, ctx, getCase = () => null, drawers = 
       return;
     }
     event.preventDefault();
+    if (event.repeat === true && !allowsRepeat(id)) {
+      return; // a held key does not toggle again (taken from the browser all the same)
+    }
     actions.invoke(id, ctx); // never rejects: failures go to the registry's onError
   }
   doc.addEventListener("keydown", onKeydown);
@@ -370,7 +396,14 @@ export function createShortcuts({ actions, ctx, getCase = () => null, drawers = 
   // The skip link: the grid, or the empty state without a case. Without this module the link is a plain #grid-viewport anchor.
   const skip = byId("skip-link");
   const onSkip = (event) => {
-    if (regions.focus("grid")) {
+    const viewport = byId("grid-viewport");
+    const dock = ctx && ctx.dock;
+    // The maximized dock hides the grid: restore it first so the link has somewhere to go.
+    if (getCase() !== null && !isVisible(viewport) && dock && typeof dock.maximize === "function") {
+      dock.maximize(false);
+    }
+    // Still hidden (no room to restore): the next best place is the dock itself, which is displayed.
+    if (regions.focus("grid") || (getCase() !== null && regions.focus("dock"))) {
       event.preventDefault();
     }
   };
@@ -485,7 +518,10 @@ export function createShortcuts({ actions, ctx, getCase = () => null, drawers = 
       return;
     }
     paint();
-    shell.open(from);
+    const region = regions.regionOf(from);
+    // The shell gives the focus back through this: the opener if it is still usable (the window may have shrunk and
+    // hidden it, or it may be gone), else the region it was in or the grid.
+    shell.open({ focus: () => regions.restore(from, region) });
   }
 
   return {

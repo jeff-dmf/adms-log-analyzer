@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  REGION_ORDER, SINGLE_KEYS_STORAGE_KEY, allowedWhileTyping, isRegionKey, loadSingleKeys, navAnchor, nextRegion, parseSingleKeys,
+  REGION_ORDER, REPEATABLE_ACTIONS, SINGLE_KEYS_STORAGE_KEY, allowedWhileTyping, allowsRepeat, hasAltGraph, isComposingEvent, isRegionKey, loadSingleKeys, navAnchor, nextRegion, parseSingleKeys,
   saveSingleKeys, shouldDispatch,
 } from "../../src/dmslog/web/js/shortcuts-model.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
@@ -164,4 +164,25 @@ test("navPlan: t/T still need a selected record that has a message type", () => 
   const plan = navPlan("template", "fwd", { id: 3, ts: 1, tpl_id: 9 }, rows, { sev: { le: 2 } });
   assert.deepEqual(plan.request, { filter: { and: [{ sev: { le: 2 } }, { tpl: [9] }] }, cursor: "1:3", dir: "fwd", limit: 1 });
   assert.ok(S_HAS("navNoSelection") && S_HAS("navNoTemplate"));
+});
+
+test("composition, AltGr and repeat rules", () => {
+  assert.equal(isComposingEvent({ isComposing: true }), true);
+  assert.equal(isComposingEvent({ keyCode: 229 }), true);
+  assert.equal(isComposingEvent({ keyCode: 78 }), false);
+  assert.equal(isComposingEvent(null), false);
+  assert.equal(hasAltGraph({ getModifierState: (k) => k === "AltGraph" }), true);
+  assert.equal(hasAltGraph({ getModifierState: () => false }), false);
+  assert.equal(hasAltGraph({ getModifierState() { throw new Error("x"); } }), false);
+  assert.equal(hasAltGraph({}), false);
+  assert.equal(shouldDispatch("[", { altGraph: true }), false);
+  assert.equal(shouldDispatch("F6", { altGraph: true }), false);
+  assert.equal(shouldDispatch("n", { composing: true }), false);
+  assert.equal(shouldDispatch("F6", { composing: true }), false);
+  assert.deepEqual([...REPEATABLE_ACTIONS].sort(), [
+    "navigate.nextError", "navigate.nextHighlight", "navigate.nextType", "navigate.prevError", "navigate.prevHighlight", "navigate.prevType"]);
+  assert.equal(allowsRepeat("navigate.nextError"), true);
+  for (const id of ["record.bookmark", "record.compare", "toggle.bookmarks", "navigate.nextRegion", "help.shortcuts", "views.back", "navigate.focusSearch"]) {
+    assert.equal(allowsRepeat(id), false, id);
+  }
 });

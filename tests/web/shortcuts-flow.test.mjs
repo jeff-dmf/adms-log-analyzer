@@ -84,6 +84,7 @@ function page({ width = 1700, caseId = "C1", storage = null, withDrawers = true,
   const rules = {
     "sources-panel": () => !noCase() && ((win.innerWidth >= 1600 && !has(panels, "is-side-collapsed")) || has(panels, "is-side-open")),
     "detail-panel": () => !noCase() && ((win.innerWidth >= 1280 && !has(panels, "is-detail-collapsed")) || has(panels, "is-detail-open")),
+    "grid-viewport": () => !state.maximized, // dock.css hides the grid while the dock is maximized
     "side-rail": () => !noCase() && (win.innerWidth < 1600 || has(panels, "is-side-collapsed")),
     "detail-toggle": () => !noCase() && (win.innerWidth < 1280 || has(panels, "is-detail-collapsed")),
   };
@@ -104,7 +105,7 @@ function page({ width = 1700, caseId = "C1", storage = null, withDrawers = true,
   if (!caseId) doc.body.classList.add("no-case");
 
   const calls = [];
-  const state = { caseId, selected: null, messages: [], errors: [], dockOpen: new Set() };
+  const state = { caseId, selected: null, messages: [], errors: [], dockOpen: new Set(), maximized: false, maximizedOnly: false };
   let shortcuts = null;
   const actions = createActionRegistry({
     onError: (err) => state.errors.push(err.message),
@@ -115,7 +116,7 @@ function page({ width = 1700, caseId = "C1", storage = null, withDrawers = true,
   const ctx = Object.freeze({
     caseId: () => state.caseId, filter: () => null, userFilter: () => null, selectedRow: () => state.selected, entry: () => null,
     setUserFilter: async () => {}, reveal: async () => {}, actions,
-    dock: { isOpen: (id) => state.dockOpen.has(id), open: async (id) => { state.dockOpen.add(id); calls.push(["dock.open", id]); }, close: (id) => state.dockOpen.delete(id) },
+    dock: { maximize: (on) => { calls.push(["dock.maximize", on]); if (!state.maximizedOnly) state.maximized = Boolean(on); }, isOpen: (id) => state.dockOpen.has(id), open: async (id) => { state.dockOpen.add(id); calls.push(["dock.open", id]); }, close: (id) => state.dockOpen.delete(id) },
     status: { message: (text) => state.messages.push(text) },
   });
   registerAppActions(actions, {
@@ -135,8 +136,8 @@ function page({ width = 1700, caseId = "C1", storage = null, withDrawers = true,
   shortcuts = createShortcuts({ actions, ctx, getCase: () => state.caseId, drawers: () => drawers, storage, doc });
 
   // A key press as the browser delivers it: the target and its ancestors first, then the document.
-  const press = async (key, { target = doc.activeElement, ctrl = false, alt = false, shift = false } = {}) => {
-    const event = target.dispatch("keydown", { key, ctrlKey: ctrl, altKey: alt, shiftKey: shift });
+  const press = async (key, { target = doc.activeElement, ctrl = false, alt = false, shift = false, ...init } = {}) => {
+    const event = target.dispatch("keydown", { key, ctrlKey: ctrl, altKey: alt, shiftKey: shift, ...init });
     for (const fn of (doc.listeners.keydown ?? []).slice()) fn(event);
     await tick();
     return event;
@@ -182,7 +183,9 @@ test("every shortcut of the registry runs its action through the one dispatcher"
   assert.equal(back.prevented, true, "Alt+Left would otherwise leave the app");
   await p.press("ArrowRight", { alt: true });
   assert.deepEqual(p.calls.at(-1), ["viewsForward"]);
-  // B opens the Bookmarks panel (toggle.bookmarks, registered by the UI-12 code, run through the same dispatcher)
+  // B opens the Bookmarks panel (toggle.bookmarks, registered by the UI-12 code, run through the same dispatcher).
+  // Its loader is a real import(): wait for that promise, never for the clock (a slow disk made this test flaky).
+  await p.actions.preload("toggle.bookmarks");
   await p.press("B", { shift: true });
   assert.deepEqual(p.calls.at(-1), ["dock.open", "bookmarks"]);
   // modified keys are not the one-letter shortcuts
@@ -800,4 +803,118 @@ test("isVisible and firstFocusable follow hidden ancestors, checkVisibility, tab
   const wrap = p.make("div", "wrap2", p.nodes.toolbar);
   wrap.appendChild(link);
   assert.equal(firstFocusable(wrap), link, "an anchor with href");
+});
+
+// ---- review round: disabled landing places, dialog return, skip link with the dock maximized, AltGr, repeat, IME -----------
+
+test("a remembered control that became disabled, or that refuses the focus, is not a landing place", async () => {
+  const p = page({ width: 1700 });
+  p.nodes.chipA.focus();
+  await p.press("F6"); // grid
+  p.nodes.chipA.disabled = true; // the Back button of the root view
+  await p.press("F6", { shift: true });
+  assert.equal(p.focusedId(), "chip-b", "the first enabled control of the strip, not a stuck grid");
+  p.nodes.viewport.focus();
+  p.nodes.chipB.focus = () => {}; // the browser would not take it
+  await p.press("F6", { shift: true });
+  assert.equal(p.focusedId() !== "grid-viewport", true, "F6 moved on to a region that takes the focus");
+  p.nodes.chipA.setAttribute("aria-disabled", "true");
+  assert.equal(p.shortcuts.regions.restore(p.nodes.chipA), true);
+  assert.notEqual(p.doc.activeElement, p.nodes.chipA);
+});
+
+test("the dialog returns the focus to a visible control: window shrunk, opener removed or disabled", async () => {
+  const p = page({ width: 1700 });
+  p.nodes.detailTitle.focus();
+  await p.press("?", { shift: true });
+  p.resize(1000); // the detail is a closed drawer now
+  p.shortcuts.closeDialog();
+  assert.equal(p.effective(p.doc.activeElement), true, "never a hidden opener");
+  assert.equal(p.doc.activeElement, p.nodes.viewport, "the grid");
+  const q = page({ width: 1700 });
+  const gone = q.make("button", "gone", q.nodes.strip);
+  gone.focus();
+  q.shortcuts.openDialog();
+  gone.remove();
+  q.shortcuts.closeDialog();
+  assert.equal(q.focusedId(), "chip-a", "the region the opener was in");
+  const r = page({ width: 1700 });
+  r.nodes.chipB.focus();
+  r.shortcuts.openDialog();
+  r.nodes.chipB.disabled = true;
+  r.shortcuts.closeDialog();
+  assert.equal(r.focusedId(), "chip-a");
+  const t = page({ width: 1700 });
+  t.nodes.chipB.focus();
+  t.shortcuts.openDialog();
+  t.shortcuts.closeDialog();
+  assert.equal(t.focusedId(), "chip-b", "the normal case still returns to the opener");
+});
+
+test("the skip link restores a maximized dock to reach the grid, or lands on the dock when there is no room", async () => {
+  const p = page({ width: 1700, dockOpen: true });
+  p.state.maximized = true;
+  p.nodes.skip.focus();
+  const click = p.nodes.skip.dispatch("click");
+  assert.deepEqual(p.calls.filter(([n]) => n === "dock.maximize"), [["dock.maximize", false]]);
+  assert.equal(click.prevented, true);
+  assert.equal(p.focusedId(), "grid-viewport");
+  const q = page({ width: 1700, dockOpen: true });
+  q.state.maximized = true;
+  q.state.maximizedOnly = true;
+  q.nodes.empty.hidden = true; // case-empty.js hides the empty state while a case is open
+  q.nodes.skip.focus();
+  assert.equal(q.nodes.skip.dispatch("click").prevented, true);
+  assert.equal(q.focusedId(), "tab-b", "the dock is the visible place");
+  // the grid is shown: the dock is left alone
+  const r = page({ width: 1700, dockOpen: true });
+  r.nodes.skip.focus();
+  r.nodes.skip.dispatch("click");
+  assert.deepEqual(r.calls.filter(([n]) => n === "dock.maximize"), []);
+});
+
+test("AltGr (AltGraph without Ctrl or Alt) types a character: it is never a shortcut", async () => {
+  const p = page();
+  p.nodes.viewport.focus();
+  const altGr = { getModifierState: (name) => name === "AltGraph" };
+  for (const key of ["[", "]", "n", "F6", "/"]) {
+    assert.equal((await p.press(key, altGr)).prevented, false, key);
+  }
+  assert.deepEqual(p.calls, []);
+  assert.equal(p.focusedId(), "grid-viewport");
+  assert.equal((await p.press("[", { getModifierState: () => false })).prevented, true, "without AltGr it is the shortcut");
+  const broken = { getModifierState() { throw new Error("nope"); } };
+  assert.equal((await p.press("]", broken)).prevented, true, "a failing getModifierState does not break the keys");
+});
+
+test("holding a key repeats only the navigation; a held b does not toggle again", async () => {
+  const p = page();
+  p.nodes.viewport.focus();
+  p.calls.length = 0;
+  const held = await p.press("b", { repeat: true });
+  assert.deepEqual(p.calls, []);
+  assert.equal(held.prevented, true, "still taken from the browser");
+  await p.press("b");
+  assert.deepEqual(p.calls, [["toggleBookmark"]]);
+  p.calls.length = 0;
+  await p.press("c", { repeat: true });
+  await p.press("F6", { repeat: true });
+  await p.press("?", { repeat: true, shift: true });
+  await p.press("ArrowLeft", { alt: true, repeat: true });
+  assert.deepEqual(p.calls, []);
+  assert.equal(p.focusedId(), "grid-viewport", "F6 did not run again either");
+  await p.press("n", { repeat: true });
+  await p.press("]", { repeat: true });
+  assert.deepEqual(p.calls, [["navigateRecord", "error", "fwd"], ["navigateHighlight", "fwd"]]);
+});
+
+test("an input method that is composing (isComposing or keyCode 229) is left alone", async () => {
+  const p = page();
+  p.nodes.viewport.focus();
+  for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+    assert.equal((await p.press("n", init)).prevented, false);
+    assert.equal((await p.press("F6", init)).prevented, false);
+  }
+  assert.deepEqual(p.calls, []);
+  assert.equal((await p.press("n", { keyCode: 78 })).prevented, true);
 });
