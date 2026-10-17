@@ -5,17 +5,21 @@ added in any order), per installation ``Log`` folder or per loose file. Each gro
 capture time and clock; the API and the UI name a group by its id (``collection.ers_group``, the id of its
 first collection) and number them ``C1``, ``C2``... in that order.
 
-Times of different groups come from different clocks (U6: shown as logged, no conversion, and
-``clock_offset_ms`` stays 0 until task 9.15), so the merge by ``ts`` across groups is only an APPROXIMATE
-order: ``ordering`` says so whenever the case has more than one group.
+Times of different groups come from different clocks (U6: shown as logged, no conversion), so the merge by
+``ts`` across groups is only an APPROXIMATE order: ``ordering`` says so whenever the case has more than one
+group. The user may align the clocks (task 9.15, ``store/clock.py``): ``clock_offset_ms`` is then what the
+grid, the timeline and the time filters add to the group's times, ``clock_source`` how it was obtained
+(``{"method": "pair", "anchor", "target", "set_at"}`` or ``{"method": "manual", "set_at"}``; null without an
+offset) and ``clocks`` is ``adjusted`` while some group has an offset. The order stays approximate: an offset
+is the user's estimate.
 
 ``GET /api/cases/<case>/collections``::
 
-    {"case", "ordering": "exact" | "approximate", "collections": [<group>]}
+    {"case", "ordering": "exact" | "approximate", "clocks": "raw" | "adjusted", "collections": [<group>]}
 
     <group> = {"id", "group", "number", "tag", "kind", "guid", "capture", "server", "machine", "system",
-               "label", "variants", "missing", "clock_offset_ms", "status", "sources", "listed",
-               "records", "first_ts", "last_ts", "added_at", "members": [<member>]}
+               "label", "variants", "missing", "clock_offset_ms", "clock_source", "status", "sources",
+               "listed", "records", "first_ts", "last_ts", "added_at", "members": [<member>]}
     <member> = {"id", "kind", "variant", "name", "label", "added_at", "status", "sources", "listed",
                 "records", "first_ts", "last_ts"}
 
@@ -30,6 +34,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .clock import describe as describe_clocks
 from .query import PAGE_TIMEOUT_S, read_guard
 
 if TYPE_CHECKING:
@@ -69,6 +74,7 @@ def list_collections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """The collection groups of the case with their members and counts, in group order."""
     with read_guard(conn, PAGE_TIMEOUT_S):
         rows = conn.execute(_MEMBER_SQL).fetchall()
+        clocks = describe_clocks(conn)
     groups: dict[int, dict[str, Any]] = {}
     for (cid, kind, path, guid, stamp, variant, group, machine, system, label, added, offset, listed, chosen,
          pending, failed, records, first_ts, last_ts) in rows:  # fmt: skip
@@ -85,7 +91,8 @@ def list_collections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "id": group, "group": group, "number": 0, "tag": "", "kind": member["kind"],
                 "guid": guid if is_ers else None, "capture": stamp if is_ers else None,
                 "server": None, "machine": machine, "system": system, "label": label,
-                "variants": [], "missing": None, "clock_offset_ms": offset or 0, "status": "ready",
+                "variants": [], "missing": None, "clock_offset_ms": offset or 0, "clock_source": None,
+                "status": "ready",
                 "sources": 0, "listed": 0, "records": 0, "first_ts": None, "last_ts": None,
                 "added_at": added, "members": [],
             }  # fmt: skip
@@ -96,6 +103,9 @@ def list_collections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     for number, info in enumerate(out, 1):
         members = info["members"]
         info["number"], info["tag"] = number, f"C{number}"
+        clock = clocks.get(info["group"])  # the head row's offset (the group's first collection)
+        if clock is not None:
+            info["clock_offset_ms"], info["clock_source"] = clock["clock_offset_ms"], clock["clock_source"]
         info["server"] = info["machine"] or info["system"]
         info["variants"] = sorted(
             {m["variant"] for m in members if m["variant"]}, key=lambda v: v != "enterprise"
@@ -118,6 +128,11 @@ def list_collections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 def ordering(groups: list[dict[str, Any]]) -> str:
     """``approximate`` when the case merges records of more than one clock (more than one group)."""
     return "approximate" if len(groups) > 1 else "exact"
+
+
+def clock_state(groups: list[dict[str, Any]]) -> str:
+    """``adjusted`` while some group has a clock offset (9.15), else ``raw``."""
+    return "adjusted" if any(g["clock_offset_ms"] for g in groups) else "raw"
 
 
 def group_tags(conn: sqlite3.Connection) -> dict[int, str]:
