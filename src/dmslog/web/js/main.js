@@ -184,6 +184,7 @@ function start() {
   let toggles = { hideNoise: false, unclassified: false };
   let currentFilter = null; // what the grid and the timeline use: the ONE composed filter
   let templateLabels = new Map(); // template id -> readable title (code when the catalogue has none)
+  let templateTitles = new Map(); // template id -> title only (no fallback to the code): the same-key panel
   let filterTree = null;
   let timeline = null;
   let followTail = null;
@@ -268,41 +269,44 @@ function start() {
   // "Show in grid" of the same-key panel: a chained view (a chip in the strip) with the key filter. A view with its own
   // conditions is narrowed first; an empty one just gets the chip; a full stack says so and changes nothing.
   const loadKeyModel = retryable(() => import("./key-panel-model.js"));
-  const showKeyInGrid = async ({ filter }) => {
-    if (caseId === null || !filter) {
+  let childFilter = null; // set only while viewsUi.narrow() runs: the new child view starts holding it (one reload)
+  const showKeyInGrid = async (arg) => {
+    const forCase = caseId;
+    if (forCase === null) {
       return;
     }
-    const forCase = caseId;
     try {
       const model = await loadKeyModel();
       if (caseId !== forCase) {
         return; // the case changed while the module loaded
       }
-      const chained = viewsStack !== null && viewsUi !== null;
-      const plan = model.planShowInGrid({
-        chained,
-        ownEmpty: ownFilterOf(captureLive()) === null,
-        alreadyShown: userFilter !== null && JSON.stringify(userFilter) === JSON.stringify(filter),
-        depth: chained ? viewsStack.depth : 0,
-        maxDepth: chained ? viewsStack.maxDepth : 0,
-      });
-      if (plan === "none") {
-        return;
-      }
-      if (plan === "full") {
-        showMessage(format(S[pluralKey("vsFull", viewsStack.maxDepth)], { n: viewsStack.maxDepth }), true);
-        return;
-      }
-      if (plan === "narrow") {
-        const before = viewsStack.depth;
-        viewsUi.narrow();
-        if (viewsStack.depth === before) {
-          return; // it did not narrow (it said why): never replace the conditions of this view
-        }
-        await setUserFilter(filter);
-      } else {
-        await setUserFilter(andFilters(userFilter, filter));
-      }
+      await model.createShowKeyInGrid({
+        getCase: () => caseId,
+        getUserFilter: () => userFilter,
+        getParentsFilter: () => (viewsStack ? viewsStack.parentsFilter() : null),
+        state: () => {
+          const chained = viewsStack !== null && viewsUi !== null;
+          return {
+            chained,
+            ownEmpty: ownFilterOf(captureLive()) === null,
+            depth: chained ? viewsStack.depth : 0,
+            maxDepth: chained ? viewsStack.maxDepth : 0,
+          };
+        },
+        narrowWith: (filter) => {
+          const before = viewsStack.depth;
+          childFilter = filter;
+          try {
+            viewsUi.narrow(); // restoreLive() gives the child its filter; the single reload of narrow() loads the final state
+          } finally {
+            childFilter = null;
+          }
+          return viewsStack.depth !== before;
+        },
+        applyHere: (filter) => setUserFilter(andFilters(userFilter, filter)),
+        message: showMessage,
+        onError: showError,
+      })(arg);
     } catch (err) {
       showError(err);
     }
@@ -312,12 +316,15 @@ function start() {
   const loadTemplates = async (forCase) => {
     if (forCase === null) {
       templateLabels = new Map();
+      templateTitles = new Map();
       return;
     }
+    templateTitles = new Map(); // titles of another case never show while this one loads
     try {
       const data = await api.templates(forCase, null);
       if (forCase === caseId) {
         templateLabels = new Map((data.templates || []).map((t) => [t.id, t.title || t.code]));
+        templateTitles = new Map((data.templates || []).filter((t) => t.title).map((t) => [t.id, t.title]));
         if (detail.entry) {
           detail.renderTemplate(detail.entry);
         }
@@ -442,7 +449,7 @@ function start() {
     toggles = { ...state.toggles };
     byId("hide-noise").checked = toggles.hideNoise;
     byId("unclassified-only").checked = toggles.unclassified;
-    userFilter = state.userFilter;
+    userFilter = childFilter !== null ? childFilter : state.userFilter;
     if (filterTree) {
       filterTree.setFilter(userFilter);
     }
@@ -1204,7 +1211,7 @@ function start() {
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
     sourceName: (id) => sourceNames.get(id) || String(id),
-    typeLabel: (id) => templateLabels.get(id) || "",
+    typeLabel: (id) => templateTitles.get(id) || "",
     showKeyInGrid,
     showEntry: (id) => detail.show(id),
     reveal: (row) => revealEntry(row),

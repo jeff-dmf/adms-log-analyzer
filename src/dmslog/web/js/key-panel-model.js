@@ -20,9 +20,11 @@ export function buildKeyRow(record, lookups = {}) {
   const raw = unknown ? record.member : known;
   const full = raw === null || raw === undefined ? "" : baseName(raw);
   const sensitive = record.sensitive === true || isSensitiveName(full);
-  const label = typeof lookups.getTypeLabel === "function" && Number.isInteger(record.tpl_id) && record.tpl_id !== 0
+  // getTypeLabel answers a TITLE only (never the code); a type without a title is "Unclassified", never its code.
+  const title = typeof lookups.getTypeLabel === "function" && Number.isInteger(record.tpl_id) && record.tpl_id !== 0
     ? lookups.getTypeLabel(record.tpl_id)
     : "";
+  const label = title === null || title === undefined || String(title) === "" ? S.keyTypeUnclassified : String(title);
   return {
     id: record.id,
     sourceId: record.source_id,
@@ -32,7 +34,7 @@ export function buildKeyRow(record, lookups = {}) {
     sourceTitle: sensitive && full ? full + " (" + S.sourceSensitive + ")" : full,
     sensitive,
     level: Number.isInteger(record.level) && S.levelNames[record.level] ? S.levelNames[record.level] : "",
-    type: label === null || label === undefined ? "" : String(label),
+    type: label,
     text: record.msg === null || record.msg === undefined ? "" : String(record.msg),
     sev: record.sev,
   };
@@ -41,6 +43,20 @@ export function buildKeyRow(record, lookups = {}) {
 // The filter "Show in grid" applies: records that carry this key (same shape as the "key" chip).
 export function keyFilter(type, value) {
   return { key: { type: String(type), eq: String(value) } };
+}
+
+// True when `filter` (a tree of {and:[...]} nodes) already holds the condition `node`.
+export function filterHasKey(filter, node) {
+  if (!filter || typeof filter !== "object") {
+    return false;
+  }
+  if (Array.isArray(filter.and)) {
+    return filter.and.some((child) => filterHasKey(child, node));
+  }
+  const mine = node.key;
+  const other = filter.key;
+  return Boolean(other) && typeof other === "object" && other.type === mine.type && other.eq === mine.eq
+    && Object.keys(filter).length === 1 && Object.keys(other).length === 2;
 }
 
 // What "Show in grid" does with the views of the strip: "narrow" (the current view has conditions of its own: they become
@@ -174,4 +190,42 @@ export function createKeyFlow({ api, getCase, onState, limit = KEY_PAGE_LIMIT })
   }
 
   return { state, open, close, loadMore };
+}
+
+// The "Show in grid" action of the host. deps:
+//   getCase()                       current case id or null
+//   getUserFilter(), getParentsFilter()   the conditions of this view and of its ancestors (the key may already be there)
+//   state() -> {chained, ownEmpty, depth, maxDepth}   the stack of views (chained false without the module)
+//   narrowWith(filter) -> boolean   opens the child view ALREADY holding `filter`, with ONE reload; false when it did not narrow
+//   applyHere(filter) -> Promise    sets the user filter of this view (one reload)
+//   message(text, isError), onError(err)
+export function createShowKeyInGrid(deps) {
+  return async function showKeyInGrid({ filter }) {
+    const forCase = deps.getCase();
+    if (forCase === null || !filter) {
+      return;
+    }
+    try {
+      const view = deps.state();
+      const parents = view.chained ? deps.getParentsFilter() : null;
+      const plan = planShowInGrid({
+        ...view,
+        alreadyShown: filterHasKey(deps.getUserFilter(), filter) || filterHasKey(parents, filter),
+      });
+      if (plan === "none") {
+        return;
+      }
+      if (plan === "full") {
+        deps.message(format(S[pluralKey("vsFull", view.maxDepth)], { n: view.maxDepth }), true);
+        return;
+      }
+      if (plan === "narrow") {
+        deps.narrowWith(filter);
+        return;
+      }
+      await deps.applyHere(filter);
+    } catch (err) {
+      deps.onError(err);
+    }
+  };
 }

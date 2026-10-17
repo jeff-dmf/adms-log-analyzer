@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildKeyRow, keyCountText, keyFilter, keyHeading } from "../../src/dmslog/web/js/key-panel-model.js";
+import { buildKeyRow, createShowKeyInGrid, filterHasKey, keyCountText, keyFilter, keyHeading } from "../../src/dmslog/web/js/key-panel-model.js";
 
 const lookups = {
   getSourceName: (id) => (id === 2 ? "C:\\ADMS\\Log\\WfmAdapter_41.sensitive.log" : undefined),
@@ -28,13 +28,13 @@ test("nulls, unknown source and unknown type are tolerated", () => {
   const odd = buildKeyRow({ id: 6, source_id: null, member: null, sensitive: null, ts: null, tid: null, level: null, tpl_id: null, tpl_code: "X", msg: null }, lookups);
   assert.deepEqual(
     { time: odd.time, source: odd.source, sensitive: odd.sensitive, level: odd.level, type: odd.type, text: odd.text },
-    { time: "", source: "", sensitive: false, level: "", type: "", text: "" },
+    { time: "", source: "", sensitive: false, level: "", type: "Unclassified", text: "" },
   );
   // a source the case does not list is named by its id: the member (file name only) is used instead
   const row = buildKeyRow({ id: 7, source_id: 3, member: "Log/dir/a.log", sensitive: false, ts: 1, level: 99, tpl_id: 4, msg: "m" }, { getSourceName: (id) => String(id), getTypeLabel: () => null });
   assert.equal(row.source, "a.log");
   assert.equal(row.level, "");
-  assert.equal(row.type, "");
+  assert.equal(row.type, "Unclassified", "a type without a title is neutral, never the code");
   // no lookups at all
   assert.equal(buildKeyRow({ id: 8, source_id: 1, member: "x/y.log", ts: 1, msg: "" }).source, "y.log");
   // a sensitive source recognised by its name even when the record does not say so
@@ -67,4 +67,86 @@ test("Show in grid plan: narrow a view with conditions, key joins an empty or un
   assert.equal(planShowInGrid({ ...base, alreadyShown: true }), "none", "a second click does not stack an identical view");
   assert.equal(planShowInGrid({ ...base, alreadyShown: true, depth: 9 }), "none");
   assert.equal(planShowInGrid({ ...base, alreadyShown: "yes" }), "narrow", "only a real true counts");
+});
+
+test("filterHasKey finds the key at any depth of the AND tree, and only the same key", () => {
+  const key = keyFilter("gid", "7");
+  assert.equal(filterHasKey(key, key), true);
+  assert.equal(filterHasKey({ and: [{ sev: { le: 3 } }, key] }, key), true);
+  assert.equal(filterHasKey({ and: [{ and: [key] }, { sev: { le: 3 } }] }, key), true);
+  assert.equal(filterHasKey({ and: [{ sev: { le: 3 } }] }, key), false);
+  assert.equal(filterHasKey(keyFilter("gid", "8"), key), false);
+  assert.equal(filterHasKey(keyFilter("msgid", "7"), key), false);
+  assert.equal(filterHasKey({ key: { type: "gid" } }, key), false);
+  assert.equal(filterHasKey(null, key), false);
+  assert.equal(filterHasKey("x", key), false);
+});
+
+function harness(over = {}) {
+  const calls = [];
+  const st = { userFilter: null, parents: null, view: { chained: true, ownEmpty: false, depth: 1, maxDepth: 10 }, caseId: "A", narrowed: true };
+  const run = createShowKeyInGrid({
+    getCase: () => st.caseId,
+    getUserFilter: () => st.userFilter,
+    getParentsFilter: () => st.parents,
+    state: () => st.view,
+    narrowWith: (f) => { calls.push(["narrow", f]); return st.narrowed; },
+    applyHere: async (f) => { calls.push(["here", f]); },
+    message: (t, e) => calls.push(["message", t, e]),
+    onError: (e) => calls.push(["error", e.message]),
+    ...over,
+  });
+  return { run, calls, st };
+}
+const arg = { filter: keyFilter("gid", "7") };
+
+test("Show in grid: a view with conditions opens ONE child that already holds the key (a single reload)", async () => {
+  const { run, calls } = harness();
+  await run(arg);
+  assert.deepEqual(calls, [["narrow", arg.filter]], "no second applyHere after the narrowing");
+});
+
+test("Show in grid: an empty view or no stack applies the key in place", async () => {
+  const a = harness();
+  a.st.view = { chained: true, ownEmpty: true, depth: 0, maxDepth: 10 };
+  await a.run(arg);
+  assert.deepEqual(a.calls, [["here", arg.filter]]);
+  const b = harness();
+  b.st.view = { chained: false, ownEmpty: false, depth: 0, maxDepth: 0 };
+  await b.run(arg);
+  assert.deepEqual(b.calls, [["here", arg.filter]]);
+});
+
+test("Show in grid: repeated clicks never duplicate the key, with or without the stack", async () => {
+  // the view {sev} + key (no stack loaded): the key is inside the AND
+  const a = harness();
+  a.st.view = { chained: false, ownEmpty: false, depth: 0, maxDepth: 0 };
+  a.st.userFilter = { and: [{ sev: { le: 3 } }, arg.filter] };
+  await a.run(arg);
+  assert.deepEqual(a.calls, []);
+  // the key is already in an ancestor view
+  const b = harness();
+  b.st.parents = { and: [arg.filter] };
+  await b.run(arg);
+  assert.deepEqual(b.calls, []);
+  // the filter of this very view
+  const c = harness();
+  c.st.userFilter = arg.filter;
+  await c.run(arg);
+  assert.deepEqual(c.calls, []);
+});
+
+test("Show in grid: a full stack says so and changes nothing; no case, no filter and failures are quiet or reported", async () => {
+  const a = harness();
+  a.st.view = { chained: true, ownEmpty: false, depth: 9, maxDepth: 10 };
+  await a.run(arg);
+  assert.deepEqual(a.calls, [["message", "The stack is limited to 10 views.", true]]);
+  const b = harness();
+  b.st.caseId = null;
+  await b.run(arg);
+  await harness().run({});
+  assert.deepEqual(b.calls, []);
+  const c = harness({ narrowWith: () => { throw new Error("boom"); } });
+  await c.run(arg);
+  assert.deepEqual(c.calls, [["error", "boom"]]);
 });

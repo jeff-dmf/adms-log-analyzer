@@ -81,7 +81,8 @@ export function initKeyPanel(host, { getCase, onSelect, onShowInGrid = null, get
     sourceCell.title = row.sourceTitle;
     if (row.sensitive) { // the badge first: a long name is cut at its end, never the badge
       const badge = element("span", "ui-badge is-sensitive key-badge", S.gridSensitiveBadge);
-      badge.setAttribute("aria-label", S.sourceSensitive);
+      badge.setAttribute("aria-hidden", "true"); // the cell carries the name: a generic span cannot be named
+      sourceCell.setAttribute("aria-label", row.sourceTitle); // like the grid: the full name and "sensitive"
       sourceCell.appendChild(badge);
     }
     sourceCell.appendChild(element("span", "key-source-name", row.source));

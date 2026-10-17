@@ -82,6 +82,11 @@ test("no full path and no template code anywhere in the panel; the sensitive sou
   assert.equal(findAll(rows[0], "ui-badge").length, 0);
   const badge = find(rows[1], "ui-badge");
   assert.equal(badge.textContent, S.gridSensitiveBadge);
+  // the accessible name is on the CELL (full name + "sensitive"), like the grid; the badge itself is decorative
+  assert.equal(rows[1].children[1].getAttribute("aria-label"), "Adapter_1.sensitive.log (sensitive)");
+  assert.equal(badge.getAttribute("aria-hidden"), "true");
+  assert.equal(badge.getAttribute("aria-label"), null, "a generic span cannot carry a name");
+  assert.equal(rows[0].children[1].getAttribute("aria-label"), null, "a normal source needs no extra name");
   assert.equal(rows[1].children[1].textContent, "SAdapter_1.log");
   assert.equal(rows[1].children[1].title, "Adapter_1.sensitive.log (sensitive)");
 });
@@ -170,4 +175,12 @@ test("the dock panel is wired to the host: sources, type titles and Show in grid
   assert.deepEqual(row.children.map((c) => c.textContent).slice(1, 4), ["Src_1.log", "ERROR", "Readable title"]);
   find(host, "key-show").click();
   assert.deepEqual(shown.map((a) => a.type + "=" + a.value), ["gid=7"]);
+});
+
+test("a type without a title shows the neutral label, never its template code", async () => {
+  const w = world({ getTypeLabel: () => "" });
+  await load(w, [rec(1), rec(2, { tpl_id: null, tpl_code: null })]);
+  const types = findAll(w.host, "key-type").map((n) => n.textContent);
+  assert.deepEqual(types, [S.keyTypeUnclassified, S.keyTypeUnclassified]);
+  assert.equal(w.host.all().some((n) => n.textContent.includes("WFM-001") || n.title.includes("WFM-001")), false);
 });

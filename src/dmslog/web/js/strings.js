@@ -639,6 +639,7 @@ export const S = {
   keyColTime: "Time",
   keyColSource: "Source",
   keyColLevel: "Level",
+  keyTypeUnclassified: "Unclassified",
   keyColTemplate: "Message type",
   keyColText: "Message",
   keyShowInGrid: "Show in grid",
