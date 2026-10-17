@@ -75,7 +75,10 @@ function element(tag, className, text) {
 //   onRangeSelected   ({ from, to }) after a drag (epoch ms of log time, inclusive), or null on clear
 //   getSourceName(id) optional name for the "source" split
 // Returns { refresh(), destroy() }; call refresh() whenever the case or the filter changed.
-export function initTimeline(container, { api, getFilter, onRangeSelected, getSourceName, uplot = uPlot }) {
+// onFailure(error) / onRecovered(): the histogram request failed (also the first one, with no chart yet) / worked again.
+export function initTimeline(container, {
+  api, getFilter, onRangeSelected, getSourceName, uplot = uPlot, onFailure, onRecovered,
+}) {
   const root = element("div", "tl");
   const head = element("div", "tl-head");
   const splitLabel = element("label", "visually-hidden", S.timelineSplitLabel);
@@ -154,6 +157,23 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
 
   function defaultReadout() {
     status.textContent = statusText;
+  }
+
+  // The last histogram could not be refreshed: the chart still shows the previous data, marked as out of date.
+  let stale = false;
+  let failed = false; // the last request failed (there may be no chart at all); `stale` is only "old data is shown"
+  function setFailed(on, err) {
+    const was = failed;
+    failed = Boolean(on);
+    if (failed && typeof onFailure === "function") {
+      onFailure(err);
+    } else if (!failed && was && typeof onRecovered === "function") {
+      onRecovered();
+    }
+  }
+  function setStale(on) {
+    stale = Boolean(on);
+    root.classList.toggle("tl-stale", stale);
   }
 
   function setStatus(text, isError) {
@@ -393,6 +413,8 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
     const request = getFilter();
     if (!request || request.caseId === null || request.caseId === undefined) {
       loader.invalidate();
+      setStale(false);
+      setFailed(false);
       response = null;
       data = null;
       renderChart();
@@ -415,6 +437,8 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       if (result.stale || destroyed) {
         return;
       }
+      setStale(false);
+      setFailed(false);
       response = result.data;
       data = toChartData(response, (k) => labelOf(response.split, k));
       renderChart();
@@ -422,8 +446,35 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       renderUndated();
       setStatus(data.series.length === 0 ? S.timelineEmpty : describeTotals(), false);
     } catch (err) {
-      setStatus(format(S.timelineError, { error: err && err.message ? err.message : "" }), true);
+      if (err && err.name === "AbortError") {
+        return;
+      }
+      // Keep the previous chart (never mixed with the new answer) and say that it is out of date.
+      setStale(data !== null);
+      setFailed(true, err);
+      setStatus(format(data !== null ? S.timelineStale : S.timelineError, { error: err && err.message ? err.message : "" }), true);
     }
+  }
+
+  // Refreshes now and resolves when the request is over (a recovery waits for it; refresh() only schedules).
+  function refreshNow() {
+    forcedBucketMs = null;
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    return load();
+  }
+
+  // Another case: the request in flight and the scheduled one are dropped, and what failed is forgotten.
+  function invalidate() {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    loader.invalidate();
+    failed = false;
+    setStale(false);
   }
 
   function refresh() {
@@ -524,5 +575,5 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
   }
 
   refresh();
-  return { refresh, destroy };
+  return { refresh, refreshNow, invalidate, destroy, isStale: () => stale, hasFailure: () => failed };
 }

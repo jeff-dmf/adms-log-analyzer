@@ -8,6 +8,41 @@ export class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
+
+  get kind() {
+    return errorKind(this);
+  }
+}
+
+// What kind of failure an error is, to treat it differently: "network" (server unreachable; the status bar owns it),
+// "forbidden" (session gone), "timeout" (408 or a *_timeout code: the same request may succeed later), "server" (5xx),
+// "query" (any other 4xx: the request itself is wrong, repeating it cannot help) or "unknown".
+export function errorKind(err) {
+  if (!err) {
+    return "unknown";
+  }
+  const status = Number(err.status);
+  if (err.code === "network" || status === 0) {
+    return "network";
+  }
+  if (status === 403) {
+    return "forbidden";
+  }
+  if (status === 408 || /timeout/i.test(String(err.code || ""))) {
+    return "timeout";
+  }
+  if (status >= 500) {
+    return "server";
+  }
+  if (status >= 400) {
+    return "query";
+  }
+  return "unknown";
+}
+
+// Repeating the same request can only help when the failure was not caused by the request itself.
+export function isRetryable(kind) {
+  return kind !== "query" && kind !== "forbidden";
 }
 
 let forbiddenHandler = null;
@@ -22,8 +57,30 @@ export function onNetworkError(handler) {
   networkHandler = handler;
 }
 
-function networkFailed() {
-  if (networkHandler) {
+// A consumer that discards an answer (a newer request replaced it) says so by aborting its signal, or by binding a
+// check to it: the global notice (Disconnected / session) is then not raised for a response nobody uses.
+const currentChecks = new WeakMap();
+
+export function bindCurrent(signal, isCurrent) {
+  if (signal && typeof isCurrent === "function") {
+    currentChecks.set(signal, isCurrent);
+  }
+  return signal;
+}
+
+function stillWanted(signal) {
+  if (!signal) {
+    return true;
+  }
+  if (signal.aborted) {
+    return false;
+  }
+  const check = currentChecks.get(signal);
+  return check === undefined || Boolean(check());
+}
+
+function networkFailed(signal) {
+  if (networkHandler && stillWanted(signal)) {
     networkHandler();
   }
   return new ApiError(0, "network", S.errorNetwork);
@@ -42,7 +99,7 @@ async function request(method, url, body, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw networkFailed();
+    throw networkFailed(signal);
   }
   if (response.status === 204) {
     return null;
@@ -54,7 +111,7 @@ async function request(method, url, body, signal) {
     data = null;
   }
   if (response.status === 403) {
-    if (forbiddenHandler) {
+    if (forbiddenHandler && stillWanted(signal)) {
       forbiddenHandler();
     }
     throw new ApiError(403, "forbidden", S.errorForbidden);
@@ -83,10 +140,10 @@ async function requestFile(url, body, as, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw networkFailed();
+    throw networkFailed(signal);
   }
   if (response.status === 403) {
-    if (forbiddenHandler) {
+    if (forbiddenHandler && stillWanted(signal)) {
       forbiddenHandler();
     }
     throw new ApiError(403, "forbidden", S.errorForbidden);
@@ -109,7 +166,7 @@ async function requestFile(url, body, as, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw networkFailed(); // the stream broke: never a half file
+    throw networkFailed(signal); // the stream broke: never a half file
   }
   const rows = Number(response.headers.get("X-Dmslog-Rows"));
   return {

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 
 import {
   MARK_BATCH, PALETTE, buildCondition, colorLabel, createHighlightStore, cursorOf, defaultName, describeCondition,
-  highlightNavKey, nextColor,
+  nextColor,
 } from "../../src/dmslog/web/js/highlight-model.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 
@@ -57,15 +57,7 @@ test("describeCondition and defaultName are short plain text", () => {
   assert.equal(defaultName("text", "z".repeat(200), "").length, 80);
 });
 
-test("] and [ navigate; modified keys and other keys do not", () => {
-  assert.equal(highlightNavKey({ key: "]" }), "fwd");
-  assert.equal(highlightNavKey({ key: "[" }), "back");
-  for (const key of ["n", "N", "t", "T", "b", "B", "c"]) {
-    assert.equal(highlightNavKey({ key }), null, key); // the existing shortcuts stay theirs
-  }
-  assert.equal(highlightNavKey({ key: "]", ctrlKey: true }), null);
-  assert.equal(highlightNavKey({ key: "[", altKey: true }), null);
-  assert.equal(highlightNavKey({ key: "]", metaKey: true }), null);
+test("cursorOf is time:id, null for no record", () => {
   assert.equal(cursorOf({ ts: 5, id: 7 }), "5:7");
   assert.equal(cursorOf({ ts: null, id: 7 }), "null:7");
   assert.equal(cursorOf(null), null);

@@ -47,6 +47,8 @@ export function createDebounce({ run, wait, maxWait, timers }) {
   };
 }
 
+export { MAX_STREAM_FAILURES, createStreamGuard } from "./status-bar-model.js";
+
 // "bottom": the last row of the data is in view; "scrolled": the buffer ends the data but the view is
 // above its last row; "middle": the buffer does not reach the end of the data.
 export function tailPosition(info) {

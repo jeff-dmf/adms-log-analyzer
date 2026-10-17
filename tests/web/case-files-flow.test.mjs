@@ -393,3 +393,24 @@ test("UI-14: when the folder browser cannot open, Browse says so and is usable a
   assert.equal(files.waiting, false);
   assert.equal(browse.disabled, false);
 });
+
+test("restoreSelection puts a selection back without telling the owner, and drops ids that are not sources", () => {
+  const selections = [];
+  const refs = {
+    caseSelect: new FakeNode("select"), newCaseForm: new FakeNode("form"), newCaseName: new FakeNode("input"),
+    openForm: new FakeNode("form"), pathInput: new FakeNode("input"), scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
+    progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), sourceList: new FakeNode("ul"),
+  };
+  const panel = new SourcesPanel(refs, {
+    onCase() {}, onSources() {}, onSelection: (ids) => selections.push(ids), onDone() {}, onMessage() {},
+  });
+  panel.sources = [{ id: 1, name: "a.log" }, { id: 2, name: "b.log" }];
+  let repainted = 0;
+  panel.renderSources = () => { repainted += 1; }; // the rows are DOM; this test is about the selection
+  panel.restoreSelection([2, 99]);
+  assert.equal(repainted, 1);
+  assert.deepEqual(panel.selectedIds(), [2]);
+  assert.deepEqual(selections, []);
+  panel.restoreSelection(null);
+  assert.deepEqual(panel.selectedIds(), []);
+});

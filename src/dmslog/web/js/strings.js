@@ -341,6 +341,8 @@ export const S = {
   timelineUndatedOne: "{count} undated record",
   timelineUndatedOther: "{count} undated records",
   timelineError: "Could not load the timeline: {error}",
+  gridPageHint: "Press Home to reload the grid.",
+  timelineStale: "Out of date: could not refresh the timeline ({error}). Showing the previous data.",
   widthSeconds: "{n} s",
   widthMinutes: "{n} min",
   widthHours: "{n} h",
@@ -349,7 +351,7 @@ export const S = {
   // Errors
   errorGeneric: "Request failed. Try again.",
   errorForbidden: "Session not valid. Reopen the link printed by the dmslog server.",
-  errorNetwork: "Could not reach the server. Check that dmslog serve is still running.",
+  errorNetwork: "Disconnected: dmslog is not running. Start it again, then Retry.",
   errorSearch: "Search failed. Check the search text and try again.",
   // Unknown-templates panel
   unkTitle: "Unknown message types",
@@ -985,9 +987,6 @@ export const S = {
   cmpMetaTid: "TID",
   cmpMetaTemplate: "Message type",
 
-  // Keyboard shortcuts
-  shortcutsHelp: "Shortcuts: n/N next/previous error, t/T next/previous record of the message type, b bookmark the selected record, B open the bookmarks, c compare two records.",
-
   // Copy as / export of the view
   cxTitle: "Copy or export the current view",
   cxWhat: "What",
@@ -1233,7 +1232,6 @@ export const S = {
   hlNavNone: "No more highlighted records in this direction of the view.",
   hlNavNoRules: "No highlight rule is on.",
   hlNavFound: "Highlighted by {name}",
-  hlShortcutsHelp: "Highlights: ] next, [ previous highlighted record of the view.",
   // Case files and folder browser (9.17)
   cfTitle: "ERS files of the new case",
   cfHelp: "Add 1 or more ERS ZIPs (Enterprise and Sensitive files, or several captures). Use Browse to pick them in a file dialog; Ctrl or Shift selects many at once.",
@@ -1375,7 +1373,6 @@ export const S = {
   vsFullOther: "The stack is limited to {n} views.",
   vsAtRoot: "Already at the root view.",
   vsNeedCase: "Open a case first.",
-  vsShortcutsHelp: "Alt+Left/Alt+Right previous/next view of the stack.",
   // Filter strip (UI-18)
   stripLabel: "Filters and views",
   stripFiltered: "Filtered",
@@ -1648,6 +1645,39 @@ export const S = {
   statusRecordsApproxOther: "about {count} records",
   sbDismiss: "Dismiss",
   sbRetry: "Retry now",
+  // Keyboard (UI-28): skip link, region names, action labels of the keys and the shortcuts dialog.
+  skipToGrid: "Skip to log records",
+  regionBar: "Top bar",
+  actNextError: "Next error",
+  actPrevError: "Previous error",
+  actNextType: "Next record of this message type",
+  actPrevType: "Previous record of this message type",
+  actNextHighlight: "Next highlighted record",
+  actPrevHighlight: "Previous highlighted record",
+  actFocusSearch: "Go to search",
+  actNextRegion: "Next region",
+  actPrevRegion: "Previous region",
+  actBookmark: "Bookmark the selected record",
+  actViewBack: "Previous view",
+  actViewForward: "Next view",
+  scTitle: "Keyboard shortcuts",
+  scSingleKeys: "Single-key shortcuts",
+  scSingleKeysHint: "Turn them off if single keys get in the way of typing or of assistive technology. F6 and the shortcuts with Ctrl or Alt keep working.",
+  scOn: "On",
+  scOff: "Off",
+  scColKey: "Key",
+  scColAction: "Action",
+  scRowOff: "(off)",
+  scGridTitle: "In the records grid and elsewhere",
+  scGridMoveKeys: "Up, Down, PageUp, PageDown",
+  scGridMove: "Move the selection",
+  scGridEdgeKeys: "Home, End",
+  scGridEdge: "First or last record",
+  scGridEnterKeys: "Enter",
+  scGridEnter: "Show the selected record",
+  scEscKeys: "Esc",
+  scEsc: "Close the menu, panel or drawer that has the focus",
+  scTimelineTitle: "Timeline:",
   sbHelp: "?",
   keyNames: {
     ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down", Escape: "Esc",

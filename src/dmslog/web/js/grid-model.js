@@ -259,3 +259,151 @@ export class SourceLabels {
     return label;
   }
 }
+
+// Which view change the screen really shows (UI-25). `begin(attempt)` is called for every view change and returns a
+// token; `settle(token, outcome, retryable)` says what to do with the answer: "confirm" (the attempt is now the
+// confirmed view), "rollback" (go back to `to`, the last confirmed view of the same case, or null when there is none;
+// the attempt is kept for Retry when it is retryable) or "stale" (a newer change or another case owns the screen, so
+// a late answer, success or failure, changes nothing). Pure: the caller restores the toolbar, the trail and the filter.
+export function createViewTracker() {
+  let seq = 0;
+  let current = null;
+  let confirmed = null;
+  let failed = null;
+  return {
+    begin(attempt) {
+      seq += 1;
+      current = attempt;
+      failed = null; // a newer view change replaces the failed one
+      return seq;
+    },
+    settle(token, outcome, retryable = true) {
+      if (token !== seq || current === null) {
+        return { action: "stale" };
+      }
+      if (outcome === "ok") {
+        confirmed = current;
+        failed = null;
+        return { action: "confirm" };
+      }
+      if (outcome === "failed") {
+        failed = retryable ? current : null;
+        return { action: "rollback", to: confirmed !== null && confirmed.caseId === current.caseId ? confirmed : null };
+      }
+      return { action: "stale" };
+    },
+    // The user navigated while this view change was loading: it is dropped. Returns the confirmed view to go back to
+    // (null when there is none); the answers of the dropped change are stale from now on.
+    abandon() {
+      seq += 1;
+      current = null;
+      failed = null;
+      return confirmed;
+    },
+    dropRetry() {
+      failed = null;
+    },
+    // The attempt that did not load and may be repeated (null when nothing failed, or it cannot succeed by repeating).
+    retryTarget: () => failed,
+    get confirmed() {
+      return confirmed;
+    },
+    // Another case was opened: nothing of the old one survives, and its late answers are stale.
+    caseChanged() {
+      seq += 1;
+      current = null;
+      confirmed = null;
+      failed = null;
+    },
+  };
+}
+
+// The orchestration around the tracker (UI-25), with its effects injected so it can be tested without the page:
+//   capture()            the state of the view being applied: {caseId, live, selection, stack, filter} (filter is set by
+//                        the caller once composed)
+//   restoreState(a)      puts the toolbar, the side selection and the trail back to attempt `a`
+//   afterRollback(a)     what follows a rollback (terms, filter, timeline, chips); `a` is the view that is back
+//   onConfirm()          the first page of the new view is there (the detail pane may go)
+// begin() -> {attempt, token}; settle(token, outcome, retryable) applies the verdict; abandon() is the user navigating
+// during a pending change; retryState() restores the attempt that failed and returns it (the caller applies the view).
+export function createViewFlow({ capture, restoreState, afterRollback, onConfirm }) {
+  const tracker = createViewTracker();
+  return {
+    tracker,
+    begin() {
+      const attempt = capture();
+      return { attempt, token: tracker.begin(attempt) };
+    },
+    settle(token, outcome, retryable = true) {
+      const verdict = tracker.settle(token, outcome, retryable);
+      if (verdict.action === "confirm") {
+        onConfirm();
+      } else if (verdict.action === "rollback" && verdict.to !== null) {
+        restoreState(verdict.to);
+        afterRollback(verdict.to);
+      }
+      return verdict;
+    },
+    // Applies the verdict when the view change settles. `kindOf()` names the kind of the failure (read when it settles).
+    // Never rejects: a change that throws is simply never confirmed.
+    track(token, loaded, kindOf, retryableOf) {
+      return loaded.then((outcome) => {
+        const retryable = typeof retryableOf === "function" ? retryableOf(kindOf()) : true;
+        return this.settle(token, outcome, retryable);
+      }, () => ({ action: "stale" }));
+    },
+    abandon() {
+      const to = tracker.abandon();
+      if (to !== null) {
+        restoreState(to);
+        afterRollback(to);
+      }
+      return to;
+    },
+    retryState(caseId) {
+      const failed = tracker.retryTarget();
+      if (failed === null || failed.caseId !== caseId) {
+        return null;
+      }
+      restoreState(failed);
+      return failed;
+    },
+    retryTarget: () => tracker.retryTarget(),
+    // The view change that failed is no longer what Retry repeats (something else failed or worked since).
+    dropRetry() {
+      tracker.dropRetry();
+    },
+    caseChanged: () => tracker.caseChanged(),
+  };
+}
+
+// createViewFlow with the page's pieces injected (UI-25), so the decisions live here and main.js only connects:
+//   getCase(), captureLive(), restoreLive(live), getSelection() -> {ids, groups}, setSelection({ids, groups}),
+//   getStack() -> a views stack (checkpoint/rollback) or null, refreshDerived() (the panels fed by the selection:
+//   Operations, Dashboard, the clock banner), afterRollback(to), onConfirm().
+// Restoring a view restores its selection AND tells the derived panels, in a rollback and in a Retry alike.
+export function createViewController(deps) {
+  return createViewFlow({
+    capture: () => {
+      const stack = deps.getStack();
+      return {
+        caseId: deps.getCase(),
+        live: deps.captureLive(),
+        selection: deps.getSelection(),
+        stack: stack ? stack.checkpoint() : null,
+        filter: null,
+      };
+    },
+    restoreState: (to) => {
+      deps.restoreLive(to.live);
+      deps.setSelection(to.selection);
+      const stack = deps.getStack();
+      if (stack && to.stack) {
+        stack.rollback(to.stack);
+      }
+      deps.refreshDerived();
+    },
+    afterRollback: deps.afterRollback,
+    onConfirm: deps.onConfirm,
+  });
+}

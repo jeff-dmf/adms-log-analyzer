@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from . import clock as clock_store
 from . import query
 from .filters import MAX_JSON_BYTES, MAX_PARAMS, CompiledFilter, FilterError, compile_filter
 from .views import ViewError, sanitize_name
@@ -378,23 +379,42 @@ def next_match(
     direction: query.Direction = "fwd",
     *,
     timeout_s: float | None = NEXT_TIMEOUT_S,
+    clock: clock_store.ClockMap = clock_store.NO_CLOCK,
 ) -> NextMatch:
     """The first record after (``fwd``) or before (``back``) ``cursor`` that matches the view filter and
-    any of the conditions (keyset on ``(ts, id)``, one row, no paging in between)."""
+    any of the conditions (keyset on ``(ts, id)``, one row, no paging in between).
+
+    With clock offsets (ROADMAP 9.15) the order and the cursor are those of the grid, on adjusted time, and
+    the view's time conditions are on adjusted time; the highlight conditions stay on the log's own time,
+    as :func:`mark` evaluates them."""
     conds = compile_conditions(rules, rowwise=False)
     if not conds:
         return NextMatch(None, None)
     flt = compile_filter(view)
     if len(flt.params) + sum(len(c.params) for c in conds) > MAX_PARAMS:
         raise HighlightError("too_many_params", limit=MAX_PARAMS)
-    combined = CompiledFilter(
-        f"({flt.sql}) AND (" + " OR ".join(f"({c.sql})" for c in conds) + ")",
-        (*flt.params, *(p for c in conds for p in c.params)),
-        flt.uses_fts or any(c.uses_fts for c in conds),
-        flt.uses_substr or any(c.uses_substr for c in conds),
-        flt.uses_regex or any(c.uses_regex for c in conds),
-    )
-    found = query.page(conn, combined, cursor, direction, 1, timeout_s=timeout_s)
+
+    def combined(view_filter: CompiledFilter) -> CompiledFilter:
+        return CompiledFilter(
+            f"({view_filter.sql}) AND (" + " OR ".join(f"({c.sql})" for c in conds) + ")",
+            (*view_filter.params, *(p for c in conds for p in c.params)),
+            view_filter.uses_fts or any(c.uses_fts for c in conds),
+            view_filter.uses_substr or any(c.uses_substr for c in conds),
+            view_filter.uses_regex or any(c.uses_regex for c in conds),
+        )
+
+    if clock.active:
+        found = clock_store.page(
+            conn,
+            lambda delta: combined(compile_filter(clock_store.shift_tree(view, delta))),
+            cursor,
+            direction,
+            1,
+            clock=clock,
+            timeout_s=timeout_s,
+        )
+    else:
+        found = query.page(conn, combined(flt), cursor, direction, 1, timeout_s=timeout_s)
     if not found.rows:
         return NextMatch(None, None)
     row = found.rows[0]

@@ -3,15 +3,17 @@
 // itself; nothing is ever laid over the filter strip, and showing or hiding a message never moves another element
 // (the bar has a fixed height and the message has its own fixed segment). Contract: docs/notas/ui-contratos.md, 3.
 // Every text is set with textContent; every visible text comes from strings.js.
-import { createMessageState, formatCount, isConnectionText, normalizeKind } from "./status-bar-model.js";
+import { createMessageState, formatCount, isConnectionText, isShown, normalizeKind } from "./status-bar-model.js";
 import { format } from "./strings.js";
 import { formatTs } from "./time.js";
 
 // root: the #status-bar footer. Options:
 //   S                  the string catalog
-//   helpText()         the text shown by the "?" button until the shortcuts dialog exists (UI-28)
+//   helpText()         the text shown by the "?" button when there is no onHelp
+//   onHelp()           what the "?" button does instead (UI-28: opens the shortcuts dialog); the button then announces a dialog
 //   now, setTimer, clearTimer   injected clock and timers (tests)
-export function createStatusBar(root, { S, helpText = () => "", now = () => Date.now(), setTimer, clearTimer } = {}) {
+//   focusFallback()    where the focus goes when the control that had it (Retry, Dismiss) disappears
+export function createStatusBar(root, { S, helpText = () => "", onHelp = null, now = () => Date.now(), setTimer, clearTimer, focusFallback } = {}) {
   const doc = root.ownerDocument;
   const arm = setTimer || ((fn, ms) => setTimeout(fn, ms));
   const disarm = clearTimer || ((id) => clearTimeout(id));
@@ -25,6 +27,22 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     }
     return node;
   };
+
+  // A control that disappears while it has the focus would drop it on the page: after any repaint, if the focused element
+  // of the bar is no longer shown (hidden itself, or hidden with the part of the bar that holds it), the focus goes to
+  // the fallback, whatever the transition (error -> info, offline -> forbidden, message cleared, back online).
+  function guarded(change) {
+    const active = doc.activeElement;
+    const inside = Boolean(active) && active !== doc.body && root.contains(active);
+    change();
+    if (!inside || typeof focusFallback !== "function") {
+      return;
+    }
+    const swallowed = root.classList.contains("is-error") && !errorEl.contains(active); // the error replaces the segments
+    if (swallowed || !isShown(active)) {
+      focusFallback();
+    }
+  }
 
   root.textContent = "";
   root.classList.add("ui-statusbar");
@@ -51,7 +69,10 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
   const messageText = make("span", "sb-message-text");
   const dismissButton = make("button", "ui-button is-ghost sb-button sb-dismiss", S.sbDismiss);
   dismissButton.type = "button";
-  messageEl.append(messageText, dismissButton);
+  const actionButton = make("button", "ui-button sb-button sb-action", "");
+  actionButton.type = "button";
+  actionButton.hidden = true;
+  messageEl.append(messageText, actionButton, dismissButton);
   const announcer = make("span", "visually-hidden sb-announcer");
   announcer.setAttribute("aria-live", "polite");
   announcer.setAttribute("aria-atomic", "true");
@@ -60,6 +81,11 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
   helpButton.setAttribute("aria-label", S.actShortcuts);
   helpButton.setAttribute("aria-expanded", "false");
   helpButton.setAttribute("aria-controls", "sb-help-pop");
+  if (typeof onHelp === "function") {
+    helpButton.removeAttribute("aria-expanded");
+    helpButton.removeAttribute("aria-controls");
+    helpButton.setAttribute("aria-haspopup", "dialog");
+  }
   const helpPop = make("div", "sb-help-pop");
   helpPop.id = "sb-help-pop";
   helpPop.hidden = true;
@@ -147,11 +173,32 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
       timer = null;
     }
   }
-  function paintMessage() {
+  // `onEnd(reason)` of a message runs when it stops being the one on the bar: "replaced" (a newer message),
+  // "expired", "dismissed" (the user's Dismiss button) or "cleared" (its handle, or an empty message). Listeners of
+  // onIdle() run when the bar is left without any message.
+  let painted = null;
+  const idleListeners = new Set();
+  const paintMessage = (reason = "replaced") => {
+    guarded(paintMessageNow);
+    const after = messages.current;
+    const ended = painted !== null && (after === null || after.id !== painted.id) ? painted : null;
+    painted = after;
+    if (ended !== null && ended.onEnd !== null) {
+      ended.onEnd(reason);
+    }
+    if (ended !== null && after === null) {
+      for (const listener of [...idleListeners]) {
+        listener();
+      }
+    }
+  };
+  function paintMessageNow() {
     const current = messages.current;
     clearTimerNow();
     if (current === null) {
       messageText.textContent = "";
+      actionButton.hidden = true;
+      actionButton.textContent = "";
       messageEl.hidden = true;
       dismissButton.hidden = true;
       messageEl.className = "sb-seg sb-message";
@@ -162,23 +209,34 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     messageEl.className = "sb-seg sb-message is-" + current.kind;
     messageEl.hidden = false;
     dismissButton.hidden = current.kind !== "error";
+    actionButton.hidden = current.action === null;
+    actionButton.textContent = current.action === null ? "" : current.action.label;
     if (current.expiresAt !== null) {
       timer = arm(() => {
         timer = null;
         if (messages.expire(now())) {
-          paintMessage();
+          paintMessage("expired");
         }
       }, Math.max(0, current.expiresAt - now()));
     }
   }
+  // The action (Retry) runs once per click on the message that is shown now; the message stays until the work
+  // it stands for succeeds (its owner dismisses it) or the user dismisses it.
+  actionButton.addEventListener("click", () => {
+    const current = messages.current;
+    if (current !== null && current.action !== null) {
+      current.action.run();
+    }
+  });
   dismissButton.addEventListener("click", () => {
     messages.show("");
-    paintMessage();
+    paintMessage("dismissed");
   });
 
   // ---- connection
   let retryHandler = null;
-  function connection(state, { onRetry } = {}) {
+  const connection = (state, options = {}) => guarded(() => connectionNow(state, options));
+  function connectionNow(state, { onRetry } = {}) {
     if (state === "online") {
       root.classList.remove("is-error");
       errorEl.hidden = true;
@@ -207,7 +265,7 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     helpPop.hidden = !on;
     helpButton.setAttribute("aria-expanded", String(on));
   }
-  helpButton.addEventListener("click", () => setHelp());
+  helpButton.addEventListener("click", () => (typeof onHelp === "function" ? onHelp() : setHelp()));
   doc.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !helpPop.hidden) {
       setHelp(false);
@@ -224,20 +282,26 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     count: paintCount,
     position: paintPosition,
     progress: paintProgress,
-    message(text, { kind = "info", timeoutMs } = {}) {
+    onIdle(listener) {
+      idleListeners.add(listener);
+      return () => idleListeners.delete(listener);
+    },
+    message(text, { kind = "info", timeoutMs, action, onEnd } = {}) {
       if (isConnectionText(text, S)) {
         // The connection error owns the bar (connection()); a stale copy must not come back after recovery.
         return { dismiss() {} };
       }
-      const shown = messages.show(text, { kind: normalizeKind(kind), timeoutMs }, now());
-      paintMessage();
+      const shown = messages.show(text, { kind: normalizeKind(kind), timeoutMs, action, onEnd }, now());
+      paintMessage(text === "" ? "cleared" : "replaced");
       const id = shown === null ? null : shown.id;
       return {
         dismiss() {
           if (id !== null && messages.dismiss(id)) {
-            paintMessage();
+            paintMessage("cleared");
           }
         },
+        // Is this still the message on the bar (a newer one replaces it: the bar shows one at a time)?
+        isCurrent: () => id !== null && messages.current !== null && messages.current.id === id,
       };
     },
     connection,

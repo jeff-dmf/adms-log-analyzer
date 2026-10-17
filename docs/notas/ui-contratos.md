@@ -587,7 +587,7 @@ export function isFiltered(live, selection, parentsFilter) -> boolean   // estad
 - **Decisão:** a ordem do F6 segue a do DOM e a do Tab (doca antes do detalhe), para o F6 e o Tab andarem na mesma ordem (WCAG 2.4.3). A versão anterior (detalhe antes da doca) foi corrigida nas outras fontes para ficarem iguais a esta: `docs/analises-ui/CONSOLIDADO.md` (UI-28, Proposta) e `docs/UI-HANDOFF.md` (seção 8).
 - `F6`/`Shift+F6` vão para a próxima/anterior região **disponível**, com volta ao início. Ao voltar a uma região, o foco pousa no último elemento focado nela, se ainda conectado e visível; senão em `focusTarget`.
 - Com `<dialog>` modal aberto, F6 não age (o diálogo prende o foco). Com menu ou popover aberto, F6 fecha-o e então muda de região.
-- Puro (`js/shortcuts-model.js`, UI-28): `nextRegion(order, availableIds, currentId, dir) -> id`; `currentRegion` é decidido no DOM por `root.contains(document.activeElement)`. As definições (`js/regions.js`, DOM) são da UI-28.
+- Puro (`js/shortcuts-model.js`, UI-28): `nextRegion(order, availableIds, currentId, dir) -> id`; `currentRegion` é decidido no DOM por `root.contains(document.activeElement)`. As regiões (DOM) ficam em `js/shortcuts.js` (`createRegions`), fundidas com o despachante para não passar do teto de 40 módulos no grafo estático; o módulo carrega com `import()` depois da primeira vista (UI-28).
 
 ### 5.2 Ordem de tab
 
@@ -612,7 +612,7 @@ export function isFiltered(live, selection, parentsFilter) -> boolean   // estad
 | `js/status-bar.js`, `js/field-error.js` | DOM | mensagem não move o grid; erro de campo com `aria-invalid` | UI-13 |
 | `js/dock.js` | DOM | fluxo: abrir, Esc, foco, `notify` | UI-15 |
 | `js/filter-chips.js` | DOM | fluxo: remover ficha recarrega uma vez | UI-18 |
-| `js/shortcuts.js`, `js/regions.js` | DOM | fluxo do diálogo `?` e F6 | UI-28 |
+| `js/shortcuts.js` (despachante, regiões F6, diálogo `?`) | DOM | fluxo do diálogo `?` e F6 | UI-28 |
 | `js/commands.js`, `js/context-menu.js` | DOM | teclado do menu de contexto e da paleta | UI-29 |
 
 ## 7. Trechos-guia por PR para a sessão principal
@@ -772,7 +772,7 @@ actions.register({ id: "record.sameKey", labelKey: "actSameKey", group: "record"
 
 ### UI-28 (teclado)
 
-Arquivos do agente: `js/shortcuts.js`, `js/shortcuts-model.js` (+ testes), `js/regions.js`, `js/highlight-panel.js` (sai o ouvinte `:332`). A sessão principal aplica, no mesmo PR:
+Arquivos do agente: `js/shortcuts.js`, `js/shortcuts-model.js` (+ testes), `js/highlight-panel.js` (sai o ouvinte `:332`; ganha `navigate(dir)`). A sessão principal aplica, no mesmo PR:
 
 ```js
 const prefs = createShortcutPrefs(safeLocalStorage());          // dmslog.singleKeys, padrão on

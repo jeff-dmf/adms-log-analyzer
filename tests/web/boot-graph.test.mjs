@@ -36,7 +36,7 @@ const NOT_AT_OPENING = [
   "filter-tree", "tpl-leaf", "presets", "saved-views", "folder-browser", "links", "payload", "bookmarks-panel",
   "highlight-panel", "copy-export", "distinct-panel", "aggregate-panel", "events-panel", "dashboard", "unknown-panel",
   "config-panel", "key-panel", "payload-list", "side-by-side", "compare", "export-panel", "redaction-panel",
-  "alerts-panel", "follow-tail", "clock-banner", "dock-model", "case-dialogs", "case-empty",
+  "alerts-panel", "follow-tail", "clock-banner", "dock-model", "case-dialogs", "case-empty", "shortcuts", "shortcuts-model",
   "partial-open", "partial-open-model", "resume-banner",
 ];
 const MAX_STATIC_MODULES = 40; // main.js + boot.js, uPlot included; the budget on open is 40 with everything else
@@ -75,6 +75,9 @@ test("the panels and sections left out of the opening are all loaded by import()
   for (const name of ["case-dialogs", "case-empty"]) {
     assert.match(sources, new RegExp(`import\\("\\./${name}\\.js"\\)`), name + " (sources.js)");
   }
+  // UI-28: the keyboard layer loads after the first view, with a retry after a failure.
+  assert.match(main, /retryable\(\(\) => import\("\.\/shortcuts\.js"\)/);
+  assert.match(main, /afterFirstView\.then\(startShortcuts\)/);
   // The four detail sections start together, on the first record shown, not at the opening.
   assert.match(main, /if \(entry\) \{\s*loadDetailModules\(\);/);
 });

@@ -66,19 +66,12 @@ globalThis.document = {
   querySelector: () => null,
   addEventListener: (type, fn) => { (docListeners[type] ||= []).push(fn); },
 };
-const keydown = async (key, target = new FakeElement("div")) => {
-  let prevented = false;
-  for (const fn of docListeners.keydown || []) {
-    await fn({ key, target, preventDefault() { prevented = true; } });
-  }
-  return prevented;
-};
-
 const { mountHighlightPanel, mountHighlights } = await import("../../src/dmslog/web/js/highlight-panel.js");
 const { createHighlightStore } = await import("../../src/dmslog/web/js/highlight-model.js");
 const { S } = await import("../../src/dmslog/web/js/strings.js");
 
 const tick = async () => { for (let i = 0; i < 10; i += 1) { await Promise.resolve(); } };
+let nextHold = null; // a list while a test answers the ]/[ lookups by hand
 const HOSTILE = "<img src=x onerror=alert(1)>";
 
 function setup(extraRules = 0) {
@@ -99,7 +92,14 @@ function setup(extraRules = 0) {
       order: async (caseId, ids) => { calls.order.push(ids); return {}; },
       remove: async (caseId, id) => { calls.remove.push(id); rules = rules.filter((r) => r.id !== id); return {}; },
       key: async (...args) => { calls.key.push(args.slice(1)); return {}; },
-      next: async (...args) => { calls.next.push(args.slice(1)); return { row: { id: 77, ts: 5 }, rule: 0 }; },
+      next: async (...args) => {
+        calls.next.push(args.slice(1));
+        if (nextHold) {
+          const id = await new Promise((resolve) => nextHold.push(resolve)); // answered by the test, in any order
+          return { row: { id, ts: 5 }, rule: 0 };
+        }
+        return { row: { id: 77, ts: 5 }, rule: 0 };
+      },
     },
   };
   let ui = null;
@@ -215,30 +215,40 @@ test("Highlight this key at the rule limit still asks the server, and shows the 
   assert.equal(calls.messages.some(([text]) => text === S.hlLimitOther.replace("{max}", "20")), false);
 });
 
-test("the keys ] and [ walk the highlighted records", async () => {
-  const { calls, store, setSelected } = setup();
-  assert.equal(await keydown("]"), true);
-  await tick();
+test("navigate('fwd'|'back') walks the highlighted records; the keys themselves belong to the action registry", async () => {
+  const { calls, store, ui, setSelected } = setup();
+  assert.deepEqual(docListeners.keydown || [], [], "no key listener of its own (UI-28: shortcuts.js dispatches ] and [)");
+  await ui.navigate("fwd");
   assert.deepEqual(calls.messages.at(-1), [S.hlNavNoRules, false]); // rules not loaded yet
   await store.load();
-  await keydown("]");
-  await tick();
+  await ui.navigate("fwd");
   assert.deepEqual(calls.next[0], [{ sev: { le: 3 } }, [{ text: { substr: HOSTILE } }], "2:3", "fwd"].concat(calls.next[0].slice(4)));
   assert.deepEqual(calls.reveal, [77]);
-  await keydown("[");
-  await tick();
+  await ui.navigate("back");
   assert.equal(calls.next[1][3], "back");
-  const typing = new FakeElement("input");
-  assert.equal(await keydown("]", typing), false); // typing in a field is not a shortcut
-  assert.equal(calls.next.length, 2);
-  const menuItem = new FakeElement("div");
-  menuItem.parent = Object.assign(new FakeElement("div"), { attrs: { role: "menu" } });
-  assert.equal(await keydown("]", menuItem), false); // inside an open menu the keys belong to the menu
-  assert.equal(calls.next.length, 2);
-  assert.equal(await keydown("n"), false); // n/N stay the error navigation
   setSelected(null);
-  await keydown("]");
+  await ui.navigate("fwd");
   assert.deepEqual(calls.messages.at(-1), [S.navNoSelection, false]);
+  assert.equal(calls.next.length, 2);
+});
+
+test("navigate: only the newest lookup reveals a record (a slow older answer is dropped)", async () => {
+  const { calls, store, ui } = setup();
+  await store.load();
+  nextHold = [];
+  try {
+    const older = ui.navigate("fwd");
+    const newer = ui.navigate("back");
+    await tick();
+    assert.equal(nextHold.length, 2);
+    nextHold[1](72); // the newer answers first
+    await newer;
+    nextHold[0](71); // then the older one, too late
+    await older;
+    assert.deepEqual(calls.reveal, [72]);
+  } finally {
+    nextHold = null;
+  }
 });
 
 test("reset forgets the old case's rules and status without asking the server", async () => {
