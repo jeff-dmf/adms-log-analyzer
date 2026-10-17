@@ -451,6 +451,13 @@ export class SourcesPanel {
     return [...this.selected];
   }
 
+  // Puts a selection back (a view change that did not load goes back to the last one that did) without telling the
+  // owner: it is the owner that is restoring.
+  restoreSelection(ids) {
+    this.selected = new Set((ids || []).filter((id) => this.sources.some((s) => s.id === id)));
+    this.renderSources();
+  }
+
   // The strip's "x" on the sources chip: nothing selected again (the owner applies the view).
   clearSelection() {
     if (this.selected.size === 0) {

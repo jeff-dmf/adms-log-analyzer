@@ -270,6 +270,8 @@ export const S = {
   timelineUndatedOne: "{count} undated record",
   timelineUndatedOther: "{count} undated records",
   timelineError: "Could not load the timeline: {error}",
+  gridPageHint: "Press Home to reload the grid.",
+  timelineStale: "Out of date: could not refresh the timeline ({error}). Showing the previous data.",
   widthSeconds: "{n} s",
   widthMinutes: "{n} min",
   widthHours: "{n} h",
@@ -278,7 +280,7 @@ export const S = {
   // Errors
   errorGeneric: "Request failed. Try again.",
   errorForbidden: "Session not valid. Reopen the link printed by the dmslog server.",
-  errorNetwork: "Could not reach the server. Check that dmslog serve is still running.",
+  errorNetwork: "Disconnected: dmslog is not running. Start it again, then Retry.",
   errorSearch: "Search failed. Check the search text and try again.",
   // Unknown-templates panel
   unkTitle: "Unknown message types",

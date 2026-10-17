@@ -90,7 +90,7 @@ function summarize(rule) {
 // options: api, getCase(), onShowRecords(filter), notifier (tests).
 // Returns { flow, notes, showRecords, on(event, fn), unseen(), clearUnseen(), onCase(), refresh() } where the events
 // are "change" (flow state), "case" (the case changed) and "count" (alerts received and not yet looked at).
-export function startAlerts({ slot, onAnnounce, api = defaultApi, getCase, onShowRecords, notifier }) {
+export function startAlerts({ slot, onAnnounce, onStreamStopped, api = defaultApi, getCase, onShowRecords, notifier }) {
   const banner = slot; // the alerts segment of the status bar (status.slot("alerts"))
   const notes = notifier || createNotifier({ storage: safeStorage() });
   let stream = null;
@@ -151,6 +151,11 @@ export function startAlerts({ slot, onAnnounce, api = defaultApi, getCase, onSho
     }
     stream = connectAlertStream({
       url: defaultApi.progressUrl(caseId),
+      onStopped: () => {
+        if (typeof onStreamStopped === "function") {
+          onStreamStopped();
+        }
+      },
       onAlert: (data) => {
         const alert = flow.receive(data);
         if (alert !== null) {
@@ -187,6 +192,14 @@ export function startAlerts({ slot, onAnnounce, api = defaultApi, getCase, onSho
       fire("case");
     },
     refresh: () => flow.refresh(),
+    // Starts the stream again after it stopped (Retry). True only when a stream was really opened.
+    resumeStream() {
+      if (stream === null || !stream.stopped()) {
+        return false;
+      }
+      connect();
+      return stream !== null;
+    },
   };
 }
 

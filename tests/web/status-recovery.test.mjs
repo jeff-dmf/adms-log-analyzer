@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { setFieldError, resetFormWithErrors } from "../../src/dmslog/web/js/field-error.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 import { createStatusBar } from "../../src/dmslog/web/js/status-bar.js";
-import { createConnectionRetry } from "../../src/dmslog/web/js/status-bar-model.js";
+import { createRecovery } from "../../src/dmslog/web/js/status-bar-model.js";
 import { installGlobalDom } from "./fixtures/fake-dom.mjs";
 
 const doc = installGlobalDom();
@@ -25,7 +25,8 @@ function bar() {
 
 class FakeEventSource {
   static last = null;
-  constructor() { this.handlers = {}; FakeEventSource.last = this; }
+  static all = [];
+  constructor() { this.handlers = {}; FakeEventSource.last = this; FakeEventSource.all.push(this); }
   addEventListener(name, fn) { this.handlers[name] = fn; }
   close() {}
 }
@@ -85,30 +86,33 @@ test("a connection error text is never shown as a message (no stale copy after r
   assert.equal(shown(), true);
 });
 
-test("Retry reloads the cases when the opening failed, the view otherwise, and stays offline while down", async () => {
+test("Retry reloads the cases when the opening failed, applies the view after a restored connection, and stays offline while down", async () => {
   const calls = [];
   let healthy = false;
   let pending = true;
-  const retry = createConnectionRetry({
+  const recovery = createRecovery({
     health: async () => { if (!healthy) throw new Error("down"); },
     setOnline: () => calls.push("online"),
     openingPending: () => pending,
     reloadCases: async () => { calls.push("cases"); pending = false; },
-    refreshView: async () => { calls.push("view"); },
+    fallback: async () => { calls.push("view"); },
     onError: (e) => calls.push("error:" + e.message),
   });
-  await retry();
+  await recovery.retry();
   assert.deepEqual(calls, []);
   healthy = true;
-  await retry();
+  await recovery.retry();
   assert.deepEqual(calls, ["online", "cases"]);
-  await retry();
-  assert.deepEqual(calls, ["online", "cases", "online", "view"]);
-  const failing = createConnectionRetry({
+  await recovery.retry(); // nothing failed and the connection was not lost: nothing is reloaded
+  assert.deepEqual(calls, ["online", "cases", "online"]);
+  recovery.markOffline();
+  await recovery.retry(); // the connection was lost and nothing is registered: the view is applied again
+  assert.deepEqual(calls, ["online", "cases", "online", "online", "view"]);
+  const failing = createRecovery({
     health: async () => {}, setOnline() {}, openingPending: () => true,
-    reloadCases: async () => { throw new Error("boom"); }, refreshView: async () => {}, onError: (e) => calls.push("error:" + e.message),
+    reloadCases: async () => { throw new Error("boom"); }, fallback: async () => {}, onError: (e) => calls.push("error:" + e.message),
   });
-  await failing();
+  await failing.retry();
   assert.equal(calls.at(-1), "error:boom");
 });
 
@@ -145,4 +149,27 @@ test("a failure to open the new case after it was created is not a name error", 
   fresh.add(["/data/ERS_CL_0A1B2C3D-0000-1111-2222-333344445555_20260101120000_Enterprise.zip"]);
   const created = await fresh.create("C", deps({ createCase: async () => { throw new Error("exists"); } }));
   assert.deepEqual(created, { state: "blocked", reason: "case" });
+});
+
+test("the alerts stream stops after 3 failures; Retry (resumeStream) opens it once, and only when it stopped", () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.all = [];
+  const { status } = bar();
+  const stops = [];
+  const alerts = startAlerts({
+    slot: status.slot("alerts"), getCase: () => "C", onShowRecords() {}, onStreamStopped: () => stops.push(1),
+    notifier: { notify() {}, permission: () => "denied", request: async () => "denied" },
+    api: { alerts: async () => ({ alerts: [] }), rules: async () => ({ rules: [] }), history: async () => ({ alerts: [] }) },
+  });
+  alerts.onCase();
+  assert.equal(alerts.resumeStream(), false); // running: nothing to resume
+  const first = FakeEventSource.all[0];
+  first.handlers.error(); first.handlers.error();
+  assert.deepEqual(stops, []);
+  first.handlers.error();
+  assert.deepEqual(stops, [1]);
+  assert.equal(FakeEventSource.all.length, 1);
+  assert.equal(alerts.resumeStream(), true);
+  assert.equal(FakeEventSource.all.length, 2);
+  assert.equal(alerts.resumeStream(), false);
 });

@@ -1,6 +1,6 @@
 // Virtual log grid: a pooled set of row elements over a keyset-paged RowWindow. The scrollbar
 // maps onto the time range of the chosen sources; wheel and keys move by rows.
-import { api } from "./api.js";
+import { api, bindCurrent, errorKind } from "./api.js";
 import {
   END_CURSOR, PAGE_LIMIT, ROW_HEIGHT, SCROLL_SPAN, RowWindow, SourceLabels, fetchPlan, isMultiDay,
   jumpCursor, scrollToTs, shortTs, topAfterResize, tsToScroll,
@@ -40,7 +40,7 @@ function fieldText(value) {
 export class Grid {
   constructor({
     viewport, rowsLayer, spacer, header, onSelect, onCount, onPosition, onError, getMark, onVisible, onView,
-    getHighlight,
+    getHighlight, onFailure, onRecovered, onAbandon,
   }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
@@ -50,10 +50,24 @@ export class Grid {
     this.onCount = onCount || (() => {}); // ({n, exact} | "loading" | null, {announce}) -> status bar (UI-13)
     this.onPosition = onPosition || (() => {}); // (ts | null): first visible record's time; never announced
     this.onError = onError;
+    // A request failed (UI-25): (error, {kind, retry}). The old rows stay on screen; without this hook the error goes
+    // to onError. onRecovered() follows the next request that works, so the notice can go away.
+    this.onFailure = onFailure || ((err) => this.onError(err));
+    this.onRecovered = onRecovered || (() => {}); // (scope): "grid" (rows) or "count"
+    // A pending view change was dropped because the user navigated (Home, End, a time, a column change) before its first
+    // page arrived: the owner puts the controls back to the view the rows belong to.
+    this.onAbandon = onAbandon || (() => {});
+    this.countFailure = null; // {error, kind, announce}: the count that failed, repeatable alone with retryCount()
+    this.countFailureShown = false;
     this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
     this.getHighlight = getHighlight || (() => null); // highlight rule of a record id: {color, label} | null
     this.onVisible = onVisible || (() => {}); // ids of the rendered rows (bookmark lookup)
     this.onView = onView || (() => {});
+    this.failure = null; // {kind, error, op}: what failed last and can be repeated (retry())
+    this.failureShown = false; // onFailure was called and no request worked since
+    this.pending = null; // a view change waiting for its first page: {caseId, filter, range, count, ...}
+    this.shownCount = null; // what the status bar shows now: {n, exact} | null
+    this.busy = false;
     this.countGeneration = 0;
     this.countController = null;
     this.total = null; // last entry count of the filter (a number), the baseline of "follow tail"
@@ -330,64 +344,239 @@ export class Grid {
 
   // `range`: time span of the filtered view; `caseRange`: span of the whole case, which decides the time column (the
   // restored filter of one day must not hide the date of a multi-day case). Without it the view range is used.
+  // The view change is confirmed only when its first page arrives: until then the old rows (and the old filter, range
+  // and count) stay. A new case has nothing to keep, so it is adopted at once. Resolves to "ok", "failed" (the old
+  // rows stay; see onFailure) or "superseded" (a newer request replaced this one).
   async setView({ caseId, filter, range, caseRange }) {
     this.setMultiDay(isMultiDay(caseRange === undefined ? range : caseRange) || (caseId === this.caseId && this.multiDay));
-    this.caseId = caseId;
-    this.filter = filter;
-    this.range = range;
-    await this.reload();
+    return this.reload({ caseId, filter, range, count: null, countFailed: false, announce: false, committed: false, failed: false });
   }
 
   cancel() {
     this.generation += 1;
     this.loading = false;
+    this.setBusy(false);
     if (this.controller) {
       this.controller.abort();
       this.controller = null;
     }
   }
 
-  async reload() {
-    this.cancel();
-    this.window.reset();
-    // New case or filter: the old count is no longer a baseline, and its answer must not arrive.
-    this.total = null;
+  // aria-busy on the grid while its rows are being replaced; `dim` shows the old rows muted while a new view loads.
+  // The thin progress bar is CSS (it appears after 400 ms of aria-busy), so no timer is needed here.
+  setBusy(on, dim = false) {
+    const next = Boolean(on);
+    this.busy = next;
+    this.viewport.setAttribute("aria-busy", next ? "true" : "false");
+    this.viewport.classList.toggle("is-reloading", next && dim);
+  }
+
+  hasFailure() {
+    return this.failure !== null;
+  }
+
+  adopt(view) {
+    this.caseId = view.caseId;
+    this.filter = view.filter;
+    this.range = view.range;
+  }
+
+  currentView() {
+    return { caseId: this.caseId, filter: this.filter, range: this.range, count: null, countFailed: false, announce: false, committed: true, failed: false };
+  }
+
+  noteRecovered() {
+    this.failure = null;
+    if (this.failureShown) {
+      this.failureShown = false;
+      this.onRecovered("grid");
+    }
+  }
+
+  // A pending view change that the user's navigation replaces: it is dropped (its page and its count are discarded) and
+  // the owner is told, so the controls go back to the confirmed view. Never for a new case (nothing to go back to).
+  abandonPending() {
+    const pending = this.pending;
+    if (pending === null || pending.committed || pending.failed) {
+      return;
+    }
+    pending.abandoned = true;
+    this.pending = null;
+    this.invalidateCount();
+    this.onCount(this.shownCount);
+    this.restoreCountFailure(pending);
+    this.onAbandon(pending);
+  }
+
+  // The count in flight (or held) belongs to a view that will not be shown: its answer, success or failure, is dropped.
+  invalidateCount() {
     this.countGeneration += 1;
     if (this.countController) {
       this.countController.abort();
       this.countController = null;
     }
+  }
+
+  // A view change that did not replace the rows leaves the old view on screen: the count failure it had (and that the
+  // attempt cleared) is registered again so it can still be repeated.
+  restoreCountFailure(view) {
+    const previous = view.prevCountFailure;
+    if (previous) {
+      view.prevCountFailure = null;
+      this.failCount(previous.error, previous.announce);
+    }
+  }
+
+  // Another case: every request of the old one is cancelled and forgotten at once (rows, count, failures, pending),
+  // so a late answer can neither paint its rows nor register a recovery.
+  closeCase() {
+    this.pending = null;
+    this.cancel();
+    this.invalidateCount();
+    if (this.pendingJump !== null) {
+      clearTimeout(this.pendingJump);
+      this.pendingJump = null;
+    }
+    this.failure = null;
+    this.failureShown = false;
+    this.countFailure = null;
+    this.countFailureShown = false;
+    this.caseId = null;
+    this.filter = null;
+    this.range = null;
+    this.total = null;
+    this.shownCount = null;
+    this.window.reset();
     this.render();
+    this.onCount(null);
+    this.onPosition(null);
+  }
+
+  clearCountFailure() {
+    this.countFailure = null;
+    if (this.countFailureShown) {
+      this.countFailureShown = false;
+      this.onRecovered("count");
+    }
+  }
+
+  failCount(error, announce) {
+    const kind = errorKind(error);
+    this.countFailure = { error, kind, announce: Boolean(announce) };
+    this.countFailureShown = true;
+    this.onFailure(error, { kind, scope: "count", op: "count", retry: () => this.retryCount() });
+  }
+
+  // Repeats only the count that failed (the rows are fine). One at a time; nothing failed: nothing happens.
+  retryCount() {
+    if (this.countFailure === null || this.countController !== null) {
+      return Promise.resolve("noop");
+    }
+    const { announce } = this.countFailure;
+    this.countFailure = null;
+    this.onCount("loading");
+    return this.refreshCount(announce).then(() => (this.countFailure === null ? "ok" : "failed"));
+  }
+
+  fail(err, op) {
+    const kind = errorKind(err);
+    this.failure = { kind, error: err, op };
+    this.failureShown = true;
+    this.onFailure(err, { kind, scope: "grid", op: op.kind, retry: () => this.retry() });
+  }
+
+  // Repeats only what failed: the page of the scroll, the jump, or the view change. A second call while it runs, or
+  // with nothing failed, does nothing.
+  retry() {
+    const failure = this.failure;
+    if (failure === null || this.loading) {
+      return Promise.resolve("noop");
+    }
+    this.failure = null;
+    const op = failure.op;
+    if (op.kind === "page") {
+      return this.pump().then(() => "ok");
+    }
+    if (op.kind === "jump") {
+      return this.jump(op.cursor, op.dir);
+    }
+    return this.reload(op.target);
+  }
+
+  // `view`: a pending view change (setView) or null for the current view (columns changed).
+  async reload(view = null) {
+    if (view === null) {
+      this.abandonPending(); // a column change must not leave an older view change half applied
+    }
+    this.cancel();
+    const target = view || this.currentView();
+    this.failure = null;
+    // A count failure of the view on screen survives a view change that does not load (see restoreCountFailure).
+    const carried = this.countFailure || (this.pending && !this.pending.committed ? this.pending.prevCountFailure : null) || null;
+    if (carried !== null && target.prevCountFailure === undefined) {
+      target.prevCountFailure = carried;
+    }
+    this.pending = target;
+    // The count of the new view has its own answer, held until the page arrives; the old one is not a baseline for it.
+    this.invalidateCount();
+    this.clearCountFailure();
+    if (target.caseId !== this.caseId || target.caseId === null) {
+      // Another case: its rows cannot be replaced by those of the old one.
+      this.adopt(target);
+      target.committed = true;
+      this.window.reset();
+      this.total = null;
+      this.render();
+    }
     if (this.caseId === null) {
+      this.pending = null;
+      this.shownCount = null;
       this.onCount(null);
       this.onPosition(null);
-      return;
+      return "ok";
     }
     this.onCount("loading");
-    this.refreshCount(true);
-    await this.jump(null, "fwd");
+    this.refreshCount(true, target);
+    return this.jump(null, "fwd", target);
   }
 
   // The count has its own generation: navigation (jump, scroll) must not discard its answer; only a newer
-  // count or a reload (new case or filter) does.
-  async refreshCount(announce = false) {
+  // count or a reload (new case or filter) does. `view`: the pending view change it belongs to, if any.
+  async refreshCount(announce = false, view = null) {
     this.countGeneration += 1;
     const generation = this.countGeneration;
     if (this.countController) {
       this.countController.abort();
     }
     const controller = new AbortController();
+    bindCurrent(controller.signal, () => generation === this.countGeneration);
     this.countController = controller;
+    const caseId = view ? view.caseId : this.caseId;
+    const filter = view ? view.filter : this.filter;
     try {
-      const result = await api.count(this.caseId, this.filter, controller.signal);
+      const result = await api.count(caseId, filter, controller.signal);
       if (generation === this.countGeneration) {
-        this.total = Number(result.count);
-        this.onCount({ n: this.total, exact: Boolean(result.exact) }, { announce });
+        const value = { n: Number(result.count), exact: Boolean(result.exact) };
+        if (view && !view.committed) {
+          view.count = value; // shown with its page, never before it (dropped if the page fails)
+          view.announce = announce;
+        } else {
+          this.total = value.n;
+          this.emitCount(value, { announce });
+        }
+        if (!view || view.committed) {
+          this.clearCountFailure();
+        }
       }
     } catch (err) {
       if (generation === this.countGeneration && !(err && err.name === "AbortError")) {
-        this.onCount(null);
-        this.onError(err);
+        if (view && !view.committed) {
+          view.countFailed = true; // reported with its page, or dropped with it
+          view.countError = err;
+        } else {
+          this.emitCount(null);
+          this.failCount(err, announce);
+        }
       }
     } finally {
       if (generation === this.countGeneration) {
@@ -396,47 +585,99 @@ export class Grid {
     }
   }
 
+  emitCount(value, options) {
+    this.shownCount = value;
+    this.onCount(value, options);
+  }
+
   updateStatus() {
     const row = this.window.topRow();
     this.onPosition(row ? row.ts : null);
   }
 
-  // Replaces the window with the page found at `cursor` (null = first page).
-  async jump(cursor, dir) {
+  // Replaces the window with the page found at `cursor` (null = first page). `view`: a pending view change, adopted
+  // only when its page arrives. On failure the window, the selection and the scroll position are left as they were.
+  // Resolves to "ok", "failed" or "superseded".
+  async jump(cursor, dir, view = null) {
+    if (view === null) {
+      this.abandonPending();
+    }
     this.cancel();
     const generation = this.generation;
     this.controller = new AbortController();
+    bindCurrent(this.controller.signal, () => generation === this.generation);
     this.loading = true;
+    this.failure = null;
+    this.setBusy(true, view !== null);
+    const target = view || this.currentView();
+    let outcome = "superseded";
+    const adoptedEarly = view !== null && view.committed; // another case: its count was never held back
     try {
-      const page = await api.page(this.caseId, this.filter, cursor, dir, PAGE_LIMIT, this.controller.signal, this.columnNames());
+      const page = await api.page(target.caseId, target.filter, cursor, dir, PAGE_LIMIT, this.controller.signal, this.columnNames());
       if (generation !== this.generation) {
-        return;
+        return "superseded";
+      }
+      if (view) {
+        this.adopt(view);
+        view.committed = true;
+        this.pending = null;
       }
       this.window.load(page.rows, page.prev, page.next, 0);
       this.ensurePool();
       if (dir === "back") {
         this.window.top = this.window.maxTop(this.visible);
       }
+      outcome = "ok";
     } catch (err) {
       if (generation === this.generation && !(err && err.name === "AbortError")) {
-        this.onError(err);
+        if (view) {
+          view.failed = true;
+          this.pending = null;
+          this.invalidateCount(); // its count is dropped with it: a late answer or failure changes nothing
+          this.onCount(this.shownCount); // the held answer belongs to the view that did not load: show the old count
+        }
+        this.fail(err, view ? { kind: "reload", target: { ...view, failed: false, committed: false, count: null, countFailed: false, prevCountFailure: undefined } }
+          : { kind: "jump", cursor, dir });
+        if (view) {
+          this.restoreCountFailure(view);
+        }
+        outcome = "failed";
       }
-      return;
     } finally {
       if (generation === this.generation) {
         this.loading = false;
         this.pendingJump = null;
+        this.setBusy(false);
+      }
+    }
+    if (outcome === "failed") {
+      this.syncScroll(); // the scrollbar goes back to where the rows are
+      return outcome;
+    }
+    if (outcome !== "ok") {
+      return outcome;
+    }
+    this.noteRecovered();
+    if (view && !adoptedEarly) {
+      this.total = view.count ? view.count.n : null; // the old total is no baseline for the new view
+      if (view.countFailed) {
+        this.emitCount(null);
+        this.failCount(view.countError, view.announce);
+      } else if (view.count) {
+        this.emitCount(view.count, { announce: view.announce });
       }
     }
     this.render();
     this.syncScroll();
     this.pump();
+    return outcome;
   }
 
-  // Fetches more rows while the viewport is close to either end of the buffer.
+  // Fetches more rows while the viewport is close to either end of the buffer. Stops at a failure (a scroll does not
+  // hammer a server that is down); retry() or any navigation starts it again.
   async pump() {
     const generation = this.generation;
-    while (generation === this.generation && !this.loading) {
+    while (generation === this.generation && !this.loading && this.failure === null) {
       const w = this.window;
       const plan = fetchPlan(w.top, this.visible, w.rows.length, w.atStart, w.atEnd);
       if (plan === null) {
@@ -444,6 +685,7 @@ export class Grid {
       }
       this.loading = true;
       this.controller = new AbortController();
+      bindCurrent(this.controller.signal, () => generation === this.generation);
       const cursor = plan === "fwd" ? w.nextCursor : w.prevCursor;
       try {
         const page = await api.page(this.caseId, this.filter, cursor, plan, PAGE_LIMIT, this.controller.signal, this.columnNames());
@@ -455,9 +697,10 @@ export class Grid {
         } else {
           w.prepend(page.rows, page.prev);
         }
+        this.noteRecovered();
       } catch (err) {
         if (generation === this.generation && !(err && err.name === "AbortError")) {
-          this.onError(err);
+          this.fail(err, { kind: "page" });
         }
         return;
       } finally {
