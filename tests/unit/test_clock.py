@@ -15,7 +15,7 @@ from dmslog.store import clock as C
 from dmslog.store import collections as cs
 from dmslog.store import create_case_db, highlights, query
 from dmslog.store.db import connect
-from dmslog.store.filters import INT64_MAX, INT64_MIN
+from dmslog.store.filters import INT64_MAX, INT64_MIN, FilterError
 from dmslog.store.writer import CLOCK_PREFIX, IndexWriter
 
 T0 = 1_900_000_000_000
@@ -626,6 +626,10 @@ def test_context_keeps_records_adjusted_below_int64(case):
         assert ctx.anchor == anchor_pos
 
 
+def _many_ts(g: int, k: int) -> int:
+    return T0 + (g * 37_003 + k * 61_000) % 900_000  # spread over 15 minutes, several per minute
+
+
 def _many_groups(path, offsets_by_group):
     """One group (one collection, one source, two records) per key of ``offsets_by_group``."""
     conn = create_case_db(path)
@@ -642,11 +646,21 @@ def _many_groups(path, offsets_by_group):
                 (g, g),
             )
             for k in (0, 1):
+                ts = _many_ts(g, k)
                 conn.execute(
                     "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, sev, tpl_id, flags, msg)"
-                    " VALUES (?, ?, ?, 0, 1, ?, 4, 0, 0, 'r')",
-                    (2 * g + k, g, k + 1, T0 + (g * 37 + k * 1000) % 50_000),
+                    " VALUES (?, ?, ?, 0, 1, ?, ?, 0, 0, 'r')",
+                    (2 * g + k, g, k + 1, ts, 2 + k),
                 )
+                for table in (
+                    "bucket(source_id, minute, sev, tpl_id, n)",
+                    "bucket_sev(source_id, minute, sev, n)",
+                ):
+                    cols = "?, ?, ?, 0, 1" if table.startswith("bucket(") else "?, ?, ?, 1"
+                    conn.execute(
+                        f"INSERT INTO {table} VALUES ({cols}) ON CONFLICT DO UPDATE SET n = n + 1",
+                        (g, ts // H.MINUTE, 2 + k),
+                    )
     conn.close()
 
 
@@ -675,5 +689,95 @@ def test_classes_of_any_size(tmp_path, offsets):
             h = C.histogram(conn, window, 1000, "sev", clock=clock)
             assert h.exact and h.total == len(inside)
             assert C.histogram(conn, None, 60_000, "sev", clock=clock).total == len(want)
+    finally:
+        conn.close()
+
+
+def _model_buckets(offsets, rows, width, start, n):
+    per = [0] * n
+    for _i, src, ts in rows:
+        per[(ts + offsets[src] - start) // width] += 1
+    return per
+
+
+@pytest.mark.parametrize(
+    "offsets",
+    [
+        {g: 2 * H.MINUTE for g in range(1, 1202)},  # one class of 1.201 groups
+        {g: (H.MINUTE if g % 3 else -5 * H.MINUTE) for g in range(1, 1502)},  # two classes over 500 groups
+    ],
+)
+def test_bucket_histogram_with_many_groups(tmp_path, offsets):
+    path = tmp_path / "many.sqlite"
+    _many_groups(path, offsets)
+    conn = connect(path, readonly=True)
+    try:
+        with C.snapshot(conn) as clock:
+            rows = conn.execute("SELECT id, source_id, ts FROM entry").fetchall()
+            for split in ("sev", "source"):
+                for bucket_ms in (None, 60_000, 300_000):
+                    h = C.histogram(conn, None, bucket_ms, split, clock=clock)
+                    assert (h.method, h.exact, h.total) == ("bucket", True, len(rows))
+                    got = [sum(s["counts"][i] for s in h.series) for i in range(h.n_buckets)]
+                    assert got == _model_buckets(offsets, rows, h.bucket_ms, h.start, h.n_buckets)
+                    if split == "sev":
+                        by_sev = {s["key"]: sum(s["counts"]) for s in h.series}
+                        assert by_sev == {2: len(rows) // 2, 3: len(rows) // 2}
+    finally:
+        conn.close()
+
+
+BIG_FILTER = {"and": [{"source": list(range(1, 1001))} for _ in range(4)]}  # 4.000 parameters, bucket-ready
+BIG_TIMED = {"and": [*BIG_FILTER["and"][:3], {"source": list(range(1, 1000))}, {"ts": {"ge": T0}}]}
+
+
+@pytest.mark.parametrize("offset", [5, H.MINUTE])
+def test_the_parameter_budget_holds_on_every_read(tmp_path, offset):
+    """29.000 groups + a 4.000-parameter filter: too_many_params, never "too many SQL variables"."""
+    path = tmp_path / "huge.sqlite"
+    conn = create_case_db(path)
+    with conn:
+        conn.executemany(
+            "INSERT INTO collection(id, kind, path, ers_group, clock_offset_ms, added_at)"
+            " VALUES (?, 'file', ?, ?, ?, '2030')",
+            [(g, f"/f{g}", g, offset) for g in range(1, 29_001)],
+        )
+        conn.execute(
+            "INSERT INTO source(id, collection_id, member, file_name, envelope, status)"
+            " VALUES (1, 1, 'x.log', 'x.log', 'adms', 'ready')"
+        )
+        conn.execute(
+            "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, sev, tpl_id, flags, msg)"
+            f" VALUES (1, 1, 1, 0, 1, {T0}, 4, 0, 0, 'r')"
+        )
+        conn.execute(f"INSERT INTO bucket VALUES (1, {T0 // H.MINUTE}, 4, 0, 1)")
+        conn.execute(f"INSERT INTO bucket_sev VALUES (1, {T0 // H.MINUTE}, 4, 1)")
+    conn.close()
+    conn = connect(path, readonly=True)
+    try:
+        with C.snapshot(conn) as clock:
+            assert clock.active
+            calls = {
+                "page": lambda f: C.page(conn, f, None, "fwd", 10, clock=clock),
+                "page back": lambda f: C.page(conn, f, f"{T0}:5", "back", 10, clock=clock),
+                "histogram": lambda f: C.histogram(conn, f, None, "sev", clock=clock),
+                "count": lambda f: C.count(conn, f, clock=clock),
+                "context": lambda f: C.context(conn, 1, 3, 3, "merge", clock=clock),
+            }
+            for name, call in calls.items():
+                for flt in (BIG_FILTER, BIG_TIMED):
+                    if name == "count" and flt is BIG_FILTER:
+                        assert call(flt).n == 1  # no time condition: the plain count, no restriction
+                        continue
+                    if name == "context":
+                        continue
+                    with pytest.raises(FilterError) as err:
+                        call(flt)
+                    assert err.value.code == "too_many_params", name
+            # the same reads with a small filter still work at this size
+            assert [r["id"] for r in C.page(conn, {"sev": [4]}, None, "fwd", 10, clock=clock).rows] == [1]
+            assert C.histogram(conn, None, None, "sev", clock=clock).total == 1
+            assert C.count(conn, {"ts": {"ge": T0}}, clock=clock).n == 1
+            assert [r["id"] for r in calls["context"](None).rows] == [1]
     finally:
         conn.close()

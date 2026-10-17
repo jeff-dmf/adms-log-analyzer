@@ -52,6 +52,9 @@ MAX_OFFSET_MS = 31 * 86_400_000  # an offset of more than a month is a wrong pai
 META_PREFIX = "clock."  # meta['clock.<group>']: how the offset was obtained (writer.remove_group drops it)
 # Bound of the parameters of a filter compiled once per class (SQLite allows 32 766).
 MAX_CLOCK_PARAMS = 30_000
+# Parameters a statement adds around a class filter: keyset (2), LIMIT (1), ``fields.<name>`` columns (at most
+# query.MAX_COLUMNS), histogram window (5) and sample slices (2 x SAMPLE_SLICES). Reserved inside the budget.
+AUX_PARAMS = 128
 _FALSE: dict[str, Any] = {"or": []}
 _ANY_TIME: dict[str, Any] = {"ts": {"ge": INT64_MIN}}  # every record that has a time
 
@@ -247,6 +250,14 @@ def _restriction(groups: tuple[int, ...] | None, alias: str = "e") -> CompiledFi
     )
 
 
+def _budget(cf: CompiledFilter) -> CompiledFilter:
+    """``cf`` when one statement with it (plus :data:`AUX_PARAMS`) stays within :data:`MAX_CLOCK_PARAMS`
+    parameters; otherwise the stable ``too_many_params`` error, never SQLite's "too many SQL variables"."""
+    if len(cf.params) + AUX_PARAMS > MAX_CLOCK_PARAMS:
+        raise FilterError("too_many_params", limit=MAX_PARAMS)
+    return cf
+
+
 def _class_filter(groups: tuple[int, ...] | None, flt: Any, delta: int) -> CompiledFilter:
     """Records of one class (``groups``) that satisfy ``flt`` with its times moved by ``delta``."""
     restriction = _restriction(groups)
@@ -256,7 +267,7 @@ def _class_filter(groups: tuple[int, ...] | None, flt: Any, delta: int) -> Compi
         body = flt  # a compiled filter cannot be shifted: callers only pass one without time conditions
     else:
         body = compile_filter(shift_tree(flt, delta))
-    return _and(restriction, body)
+    return _budget(_and(restriction, body))
 
 
 def compile_clocked(tree: Any, clock: ClockMap) -> CompiledFilter:
@@ -268,14 +279,14 @@ def compile_clocked(tree: Any, clock: ClockMap) -> CompiledFilter:
         return plain
     parts = [_class_filter(groups, tree, -offset) for offset, groups in clock.classes()]
     params = tuple(v for p in parts for v in p.params)
-    if len(params) > MAX_CLOCK_PARAMS:
-        raise FilterError("too_many_params", limit=MAX_PARAMS)
-    return CompiledFilter(
-        "(" + " OR ".join(f"({p.sql})" for p in parts) + ")",
-        params,
-        plain.uses_fts,
-        plain.uses_substr,
-        plain.uses_regex,
+    return _budget(
+        CompiledFilter(
+            "(" + " OR ".join(f"({p.sql})" for p in parts) + ")",
+            params,
+            plain.uses_fts,
+            plain.uses_substr,
+            plain.uses_regex,
+        )
     )
 
 
@@ -483,7 +494,7 @@ def decorate_entry(conn: sqlite3.Connection, entry: dict[str, Any], clock: Clock
 def _bucket_class(groups: tuple[int, ...] | None, tree: Any) -> CompiledFilter | None:
     restriction = _restriction(groups, "b")
     body = compile_bucket_filter(tree)
-    return None if restriction is None or body is None else _and(restriction, body)
+    return None if restriction is None or body is None else _budget(_and(restriction, body))
 
 
 def _clamp_window(lo: int, hi: int) -> tuple[int, int, int] | None:
