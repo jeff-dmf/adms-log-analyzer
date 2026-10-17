@@ -36,7 +36,7 @@ const NOT_AT_OPENING = [
   "filter-tree", "tpl-leaf", "presets", "saved-views", "folder-browser", "links", "payload", "bookmarks-panel",
   "highlight-panel", "copy-export", "distinct-panel", "aggregate-panel", "events-panel", "dashboard", "unknown-panel",
   "config-panel", "key-panel", "payload-list", "side-by-side", "compare", "export-panel", "redaction-panel",
-  "alerts-panel", "follow-tail", "clock-banner", "dock-model",
+  "alerts-panel", "follow-tail", "clock-banner", "dock-model", "case-dialogs", "case-empty",
 ];
 const MAX_STATIC_MODULES = 40; // main.js + boot.js, uPlot included; the budget on open is 40 with everything else
 
@@ -68,6 +68,11 @@ test("the panels and sections left out of the opening are all loaded by import()
   for (const name of ["links", "payload", "highlight-panel", "bookmarks-panel", "copy-export", "follow-tail",
     "alerts-panel", "clock-banner"]) {
     assert.match(main, new RegExp(`import\\("\\./${name}\\.js"\\)`), name + " (main.js)");
+  }
+  // UI-22: the case dialogs and the empty state without a case load from sources.js, with a retry after a failure.
+  const sources = read("js/sources.js");
+  for (const name of ["case-dialogs", "case-empty"]) {
+    assert.match(sources, new RegExp(`import\\("\\./${name}\\.js"\\)`), name + " (sources.js)");
   }
   // The four detail sections start together, on the first record shown, not at the opening.
   assert.match(main, /if \(entry\) \{\s*loadDetailModules\(\);/);

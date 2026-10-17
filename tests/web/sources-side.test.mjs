@@ -408,69 +408,26 @@ test("the end of an indexing says Indexed N records. and closes the progress", a
 
 // ---- case header and layout ------------------------------------------------------------------------------------
 
-test("without a case the forms stay as they were and the header is hidden; with a case the header replaces them", async () => {
+test("with a case the header replaces the case picker; without one it is hidden and the column holds no form", async () => {
   const { refs, panel } = setup({ header: true });
   api.sources = async () => ({ sources: [] });
-  assert.equal(refs.newCaseForm.hidden, true); // until the first case selection: the column does not jump
-  assert.equal(refs.openForm.hidden, true);
   await panel.selectCase(null);
   assert.equal(refs.caseHeader.hidden, true);
-  assert.equal(refs.newCaseForm.hidden, false);
-  assert.equal(refs.openForm.hidden, false);
+  assert.equal(refs.caseRow.hidden, false);
   panel.caseNames = new Map([["A", "incident"]]);
   await panel.selectCase("A");
   assert.equal(refs.caseHeader.hidden, false);
   assert.equal(refs.caseHeaderName.textContent, "incident");
   assert.equal(refs.caseHeaderName.title, "incident");
   assert.equal(refs.caseRow.hidden, true);
-  assert.equal(refs.newCaseForm.hidden, true);
-  assert.equal(refs.openForm.hidden, true);
   await panel.selectCase(null);
   assert.equal(refs.caseHeader.hidden, true);
-  assert.equal(refs.openForm.hidden, false);
   assert.equal(refs.caseHeaderName.textContent, "");
+  assert.equal(refs.caseAddFiles.getAttribute("aria-haspopup"), "dialog", "Add files… opens a dialog (case-dialogs-flow.test.mjs)");
 });
 
-test("Add files… opens the form with the focus inside it, and a second press closes it and keeps the focus on the button", async () => {
-  const { refs, panel } = setup({ header: true });
-  api.sources = async () => ({ sources: [] });
-  await panel.selectCase("A");
-  assert.equal(refs.caseAddFiles.getAttribute("aria-expanded"), "false");
-  refs.caseAddFiles.dispatch("click");
-  assert.equal(refs.openForm.hidden, false);
-  assert.equal(refs.caseAddFiles.getAttribute("aria-expanded"), "true");
-  assert.equal(doc.activeElement, refs.addFilesHost.children[0]);
-  refs.caseAddFiles.dispatch("click");
-  assert.equal(refs.openForm.hidden, true);
-  assert.equal(refs.caseAddFiles.getAttribute("aria-expanded"), "false");
-  assert.equal(doc.activeElement, refs.caseAddFiles);
-});
 
-test("revealNewCase and revealAddFiles(true) show the form and focus its field", async () => {
-  const { refs, panel } = setup({ header: true });
-  api.sources = async () => ({ sources: [] });
-  await panel.selectCase("A");
-  panel.revealNewCase();
-  assert.equal(refs.newCaseForm.hidden, false);
-  assert.equal(doc.activeElement, refs.newCaseName);
-  panel.revealAddFiles(true);
-  assert.equal(doc.activeElement, refs.pathInput);
-});
 
-test("the revealed forms close on another case, but not while a new case is being created", async () => {
-  const { refs, panel } = setup({ header: true });
-  api.sources = async () => ({ sources: [] });
-  await panel.selectCase("A");
-  panel.revealNewCase();
-  panel.revealAddFiles();
-  await panel.selectCase("B");
-  assert.equal(refs.newCaseForm.hidden, true);
-  assert.equal(refs.openForm.hidden, true);
-  panel.revealNewCase();
-  panel.setQueueBusy(true);
-  await panel.selectCase("C"); // the queue creates the case and selects it: its results stay in view
-  assert.equal(refs.newCaseForm.hidden, false);
-});
 
 test("the case menu loads ui-menu.js once, opens it, and a failed load is reported and retried", async () => {
   const { refs, panel, calls } = setup({ header: true });
@@ -501,27 +458,8 @@ test("the case menu loads ui-menu.js once, opens it, and a failed load is report
   refs.caseMenu.dispatch("click", { detail: 1 }); // built: the menu handles its own clicks
   await tick();
   assert.equal(loads, 2);
-  items[1].run();
-  assert.equal(doc.activeElement, refs.pathInput);
 });
 
-test("UI-21 review: creating the first case keeps its form in view while the queue runs and after", async () => {
-  const { refs, panel } = setup({ header: true });
-  api.cases = async () => ({ cases: [{ id: "N", name: "new" }] });
-  api.sources = async () => ({ sources: [] });
-  await panel.selectCase(null); // no case yet
-  const seen = [];
-  panel.caseFiles = {
-    submit: async (deps) => {
-      await deps.selectCase("N"); // the new case is selected while its files are still being opened
-      seen.push(refs.newCaseForm.hidden);
-    },
-  };
-  await panel.createCase();
-  assert.deepEqual(seen, [false]);
-  assert.equal(panel.caseId, "N");
-  assert.equal(refs.newCaseForm.hidden, false); // results and Retry stay readable afterwards
-});
 
 test("UI-21 review: a refresh with nothing changed writes nothing to any row", () => {
   const { refs, panel } = setup();
