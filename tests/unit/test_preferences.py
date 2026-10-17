@@ -684,7 +684,10 @@ def test_strict_decoder_accepts_plain_utf8():
     assert out == {"a": ["\u00e9", 1.5, True, None]}
 
 
-def test_limits_apply_before_the_tree_is_built(tmp_path):
+def test_limits_apply_before_the_tree_is_built(tmp_path, monkeypatch):
+    parsed = []
+    real = preferences._json_loads
+    monkeypatch.setattr(preferences, "_json_loads", lambda *a, **k: (parsed.append(1), real(*a, **k))[1])
     hostile = {
         "deep": b"[" * 100_000,
         "wide": b"[" + b"0," * (preferences.MAX_NODES + 10) + b"0]",
@@ -692,12 +695,14 @@ def test_limits_apply_before_the_tree_is_built(tmp_path):
         "deep objects": b'{"a":' * 5000 + b"1" + b"}" * 5000,
     }
     for name, raw in hostile.items():
-        # the limit error (not bad_json) proves the scan refused it before json.loads saw it
         with pytest.raises(preferences.PreferencesError) as err:
             preferences.parse_json_bytes(raw)
         assert err.value.code in ("package_too_complex", "bad_value"), name
     rep = preferences.import_package(tmp_path, hostile["wide"])
     assert rep["outcome"] == "rejected" and rep["errors"][0]["code"] == "package_too_complex"
+    assert parsed == [], "the parser ran before the limits were checked"
+    # the spy is live: a text inside the limits does reach the parser
+    assert preferences.parse_json_bytes(b'{"a": [1, 2]}') == {"a": [1, 2]} and parsed == [1]
 
 
 def test_check_limits_counts_children_before_stacking_them():

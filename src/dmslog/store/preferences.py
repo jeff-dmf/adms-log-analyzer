@@ -303,6 +303,11 @@ def prescan(text: str, max_depth: int = MAX_DEPTH, max_string: int | None = None
     return steps
 
 
+# The one place that parses untrusted JSON; a module-level name so a test can spy on it without touching the
+# shared ``json`` module.
+_json_loads = json.loads
+
+
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in pairs:
@@ -337,7 +342,7 @@ def parse_json_bytes(
 def parse_json_text(text: str, *, max_depth: int = MAX_DEPTH, max_string: int | None = None) -> Any:
     prescan(text, max_depth, max_string)
     try:
-        return json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_reject_constant)
+        return _json_loads(text, object_pairs_hook=_no_duplicates, parse_constant=_reject_constant)
     except (ValueError, RecursionError):
         raise PreferencesError("bad_json") from None
 
