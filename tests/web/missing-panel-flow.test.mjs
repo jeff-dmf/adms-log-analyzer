@@ -49,6 +49,19 @@ function world(optionsPanel = {}) {
   const of = (name) => calls.filter((c) => c.name === name);
   const selects = host.all().filter((n) => n.tagName === "SELECT");
   const [kind, status, cause] = selects;
+  // The real tbody.children is an HTMLCollection: indexable and iterable, with no map/filter/find/forEach. The fake's own
+  // internals (push, flatMap, the setter) keep working; the panel's code gets the faithful object.
+  const tbody = host.all().find((n) => n.tagName === "TBODY" && n.parent && n.parent.className.includes("ms-list-table"));
+  let store = tbody.children;
+  Object.defineProperty(tbody, "children", {
+    configurable: true,
+    get() {
+      const view = { push: (...c) => store.push(...c), flatMap: (fn) => store.flatMap(fn), some: (fn) => store.some(fn), get length() { return store.length; }, [Symbol.iterator]: () => store[Symbol.iterator]() };
+      store.forEach((c, i) => { view[i] = c; });
+      return view;
+    },
+    set(v) { store = v; },
+  });
   const rows = () => byClass(host, "ms-row");
   const sumRows = () => byClass(host, "ms-sum-row");
   const statusText = () => byClass(host, "ms-status")[0].textContent;
@@ -344,4 +357,27 @@ test("an automatic refresh that rebuilds the list keeps the focus on the same ev
   now.focus();
   await loaded(w, [item(1)]);
   assert.equal(doc.activeElement, w.section("ms-list"));
+});
+
+test("the list body is a collection without array methods (as in a browser): a focused event survives the rebuild", async () => {
+  const w = world();
+  await loaded(w, [item(1), item(2)]);
+  assert.equal(typeof Object.getOwnPropertyDescriptor(w.host.all().find((n) => n.tagName === "TBODY" && n.className === ""), "children"), "object");
+  byClass(w.host, "ms-open")[0].focus();
+  await loaded(w, [item(1), item(2)]); // would throw "map is not a function" with the array methods of the fake
+  assert.equal(doc.activeElement, byClass(w.host, "ms-open")[0]);
+});
+
+test("a pending focus restoration is dropped when the user moves the focus elsewhere before the answer", async () => {
+  const w = world();
+  await loaded(w, [item(1)]);
+  byClass(w.host, "ms-open")[0].focus();
+  const refreshing = w.panel.refresh(); // the list empties: the focus waits on the list
+  assert.equal(doc.activeElement, w.section("ms-list"));
+  w.cause.focus(); // the user goes to the Cause selector
+  w.of("list").at(-1).d.resolve({ items: [item(1)], next: null });
+  w.of("summary").at(-1).d.resolve({ groups: [], total: 1 });
+  await refreshing;
+  await tick();
+  assert.equal(doc.activeElement, w.cause, "the answer did not take the focus back");
 });

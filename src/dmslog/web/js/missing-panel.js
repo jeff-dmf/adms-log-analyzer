@@ -156,6 +156,9 @@ export function initMissingPanel(container, { api, getCase, onShowInGrid, onRequ
   const rowsById = new Map();
 
   function renderList(state) {
+    if (wantFocus !== null && document.activeElement !== listBox && !within(listBody, document.activeElement)) {
+      wantFocus = null; // the user moved the focus elsewhere meanwhile: a late answer must not take it back
+    }
     if (state.version !== renderedVersion || state.items.length < rendered) {
       const active = document.activeElement;
       if (within(listBody, active) && active.dataset && active.dataset.id !== undefined) {
@@ -176,7 +179,7 @@ export function initMissingPanel(container, { api, getCase, onShowInGrid, onRequ
     if (wantFocus !== null) {
       // The rebuild removed the focused button: give the focus to the same event's button once it is listed again (a
       // refresh empties the list first), meanwhile to the list itself.
-      const same = listBody.children.map((tr) => tr.children[0].children[0]).find((b) => b && b.dataset.id === wantFocus);
+      const same = Array.from(listBody.children).map((tr) => tr.children[0].children[0]).find((b) => b && b.dataset.id === wantFocus);
       if (same) {
         same.focus();
         wantFocus = null;
