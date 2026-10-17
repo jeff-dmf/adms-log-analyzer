@@ -1,4 +1,5 @@
 // Status bar model (UI-13): pure functions and the message state, testable without a DOM or a real clock.
+import { errorKind, isRetryable } from "./api.js";
 import { format, pluralKey } from "./strings.js";
 
 export const MESSAGE_KINDS = ["info", "success", "warning", "error"];
@@ -79,10 +80,15 @@ export function fallbackTarget({ query, noCase }) {
 // does something only when the connection was just restored (`fallback`, the view is applied again) or when the
 // opening never finished (`reloadCases`).
 // deps: health(), setOnline(), openingPending(), reloadCases(), fallback(), onError(err).
-export function createRecovery({ health, setOnline, openingPending, reloadCases, fallback, onError }) {
+export function createRecovery({ health, setOnline, openingPending, reloadCases, fallback, onError, onChange }) {
   const tasks = new Map();
   let offline = false;
   let inflight = null;
+  const changed = () => {
+    if (typeof onChange === "function") {
+      onChange();
+    }
+  };
 
   async function run() {
     try {
@@ -100,6 +106,7 @@ export function createRecovery({ health, setOnline, openingPending, reloadCases,
       }
       const batch = [...tasks.values()];
       tasks.clear();
+      changed();
       if (batch.length === 0) {
         if (wasOffline) {
           await fallback();
@@ -129,13 +136,20 @@ export function createRecovery({ health, setOnline, openingPending, reloadCases,
     fail(name, task) {
       if (typeof task === "function") {
         tasks.set(name, task);
+        changed();
       }
     },
     clear(name) {
-      tasks.delete(name);
+      if (tasks.delete(name)) {
+        changed();
+      }
     },
     clearAll() {
+      const had = tasks.size > 0;
       tasks.clear();
+      if (had) {
+        changed();
+      }
     },
     markOffline() {
       offline = true;
@@ -146,6 +160,121 @@ export function createRecovery({ health, setOnline, openingPending, reloadCases,
     },
     get busy() {
       return inflight !== null;
+    },
+  };
+}
+
+// What is shown and repeated when something fails (UI-25), in one place with its effects injected. The notice with
+// Retry is DERIVED from the set of registered recoverable failures (not from events): it is there while any task that
+// has a message is registered, and gone when none is, so one recovery never removes the only way to repeat another.
+// Network and session failures have no message of their own (the bar owns them).
+// deps: status {message}, retryLabel, genericMessage, goOffline(onRetry), health(), setOnline(), openingPending(),
+//   reloadCases(), fallback(), onError(err), and the operations that repeat what failed:
+//   retryView() (apply the view that did not load), hasViewRetry(), dropViewRetry(), retryGrid(), retryCount(),
+//   refreshTimeline() -> Promise, resumeStream(), cancelRequests() (case changed: grid, count, histogram, stream).
+export function createFailureCenter(deps) {
+  const messages = new Map(); // task name -> message text | null
+  let notice = null;
+  let noticeText = null;
+  const dismissNotice = () => {
+    if (notice !== null) {
+      notice.dismiss();
+      notice = null;
+      noticeText = null;
+    }
+  };
+  const syncNotice = () => {
+    let text = null;
+    for (const [name, message] of messages) {
+      if (message !== null && recovery.has(name)) {
+        text = message; // the most recent one
+      }
+    }
+    if (text === null) {
+      dismissNotice();
+    } else if (notice === null || noticeText !== text) {
+      dismissNotice();
+      noticeText = text;
+      notice = deps.status.message(text, { kind: "error", action: { label: deps.retryLabel, run: () => recovery.retry() } });
+    }
+  };
+  const recovery = createRecovery({
+    health: deps.health,
+    setOnline: deps.setOnline,
+    openingPending: deps.openingPending,
+    reloadCases: deps.reloadCases,
+    fallback: deps.fallback,
+    onError: deps.onError,
+    onChange: syncNotice,
+  });
+  const messageOf = (err) => (err && err.message ? err.message : deps.genericMessage);
+
+  // A failure: registered (and noticed) when repeating can help, otherwise any older task of the same part is
+  // forgotten and, if `plain`, the error is shown once without Retry.
+  function report(name, err, run, { plain = false } = {}) {
+    const kind = errorKind(err);
+    messages.delete(name);
+    if (isRetryable(kind)) {
+      messages.set(name, kind === "network" || kind === "forbidden" ? null : messageOf(err));
+      recovery.fail(name, run);
+      syncNotice();
+      return;
+    }
+    recovery.clear(name);
+    syncNotice();
+    if (plain && kind !== "forbidden") {
+      deps.status.message(messageOf(err), { kind: "error" });
+    }
+  }
+  function clear(name) {
+    messages.delete(name);
+    recovery.clear(name);
+    syncNotice();
+  }
+  const countOrGrid = (scope) => (scope === "count" ? "count" : "grid");
+
+  return {
+    recovery,
+    retry: () => recovery.retry(),
+    goOffline() {
+      recovery.markOffline();
+      deps.goOffline(() => recovery.retry());
+    },
+    // grid.onFailure(err, {kind, scope, op}): the last operation that failed is the one Retry repeats.
+    gridFailure(err, info) {
+      const name = countOrGrid(info.scope);
+      if (name === "grid" && info.op !== "reload") {
+        deps.dropViewRetry(); // a navigation failed after the view change did: repeat THIS one, not the older one
+      }
+      const run = name === "count" ? deps.retryCount : () => (deps.hasViewRetry() ? deps.retryView() : deps.retryGrid());
+      report(name, err, run, { plain: true });
+    },
+    gridRecovered(scope) {
+      const name = countOrGrid(scope);
+      if (name === "grid") {
+        deps.dropViewRetry();
+      }
+      clear(name);
+    },
+    timelineFailure: (err) => report("timeline", err, () => deps.refreshTimeline()),
+    timelineRecovered: () => clear("timeline"),
+    streamStopped() {
+      messages.delete("stream");
+      messages.set("stream", null);
+      recovery.fail("stream", () => deps.resumeStream());
+      this.goOffline();
+    },
+    // A new view change replaces the failed grid and count: their tasks go (the timeline and the stream stay).
+    viewApplied() {
+      clear("grid");
+      clear("count");
+    },
+    // Another case: nothing that failed in the old one is repeated, and its requests are cancelled at once.
+    caseChanged() {
+      messages.clear();
+      recovery.clearAll();
+      dismissNotice();
+      deps.cancelRequests();
     },
   };
 }

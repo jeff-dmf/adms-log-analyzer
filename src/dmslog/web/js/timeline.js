@@ -456,6 +456,27 @@ export function initTimeline(container, {
     }
   }
 
+  // Refreshes now and resolves when the request is over (a recovery waits for it; refresh() only schedules).
+  function refreshNow() {
+    forcedBucketMs = null;
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    return load();
+  }
+
+  // Another case: the request in flight and the scheduled one are dropped, and what failed is forgotten.
+  function invalidate() {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    loader.invalidate();
+    failed = false;
+    setStale(false);
+  }
+
   function refresh() {
     forcedBucketMs = null; // the server picks the width for a new filter
     schedule();
@@ -554,5 +575,5 @@ export function initTimeline(container, {
   }
 
   refresh();
-  return { refresh, destroy, isStale: () => stale, hasFailure: () => failed };
+  return { refresh, refreshNow, invalidate, destroy, isStale: () => stale, hasFailure: () => failed };
 }

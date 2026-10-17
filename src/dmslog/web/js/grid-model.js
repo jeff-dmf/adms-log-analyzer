@@ -300,6 +300,9 @@ export function createViewTracker() {
       failed = null;
       return confirmed;
     },
+    dropRetry() {
+      failed = null;
+    },
     // The attempt that did not load and may be repeated (null when nothing failed, or it cannot succeed by repeating).
     retryTarget: () => failed,
     get confirmed() {
@@ -341,6 +344,14 @@ export function createViewFlow({ capture, restoreState, afterRollback, onConfirm
       }
       return verdict;
     },
+    // Applies the verdict when the view change settles. `kindOf()` names the kind of the failure (read when it settles).
+    // Never rejects: a change that throws is simply never confirmed.
+    track(token, loaded, kindOf, retryableOf) {
+      return loaded.then((outcome) => {
+        const retryable = typeof retryableOf === "function" ? retryableOf(kindOf()) : true;
+        return this.settle(token, outcome, retryable);
+      }, () => ({ action: "stale" }));
+    },
     abandon() {
       const to = tracker.abandon();
       if (to !== null) {
@@ -358,6 +369,41 @@ export function createViewFlow({ capture, restoreState, afterRollback, onConfirm
       return failed;
     },
     retryTarget: () => tracker.retryTarget(),
+    // The view change that failed is no longer what Retry repeats (something else failed or worked since).
+    dropRetry() {
+      tracker.dropRetry();
+    },
     caseChanged: () => tracker.caseChanged(),
   };
+}
+
+// createViewFlow with the page's pieces injected (UI-25), so the decisions live here and main.js only connects:
+//   getCase(), captureLive(), restoreLive(live), getSelection() -> {ids, groups}, setSelection({ids, groups}),
+//   getStack() -> a views stack (checkpoint/rollback) or null, refreshDerived() (the panels fed by the selection:
+//   Operations, Dashboard, the clock banner), afterRollback(to), onConfirm().
+// Restoring a view restores its selection AND tells the derived panels, in a rollback and in a Retry alike.
+export function createViewController(deps) {
+  return createViewFlow({
+    capture: () => {
+      const stack = deps.getStack();
+      return {
+        caseId: deps.getCase(),
+        live: deps.captureLive(),
+        selection: deps.getSelection(),
+        stack: stack ? stack.checkpoint() : null,
+        filter: null,
+      };
+    },
+    restoreState: (to) => {
+      deps.restoreLive(to.live);
+      deps.setSelection(to.selection);
+      const stack = deps.getStack();
+      if (stack && to.stack) {
+        stack.rollback(to.stack);
+      }
+      deps.refreshDerived();
+    },
+    afterRollback: deps.afterRollback,
+    onConfirm: deps.onConfirm,
+  });
 }

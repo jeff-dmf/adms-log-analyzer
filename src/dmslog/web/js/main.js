@@ -2,7 +2,7 @@
 // and reaches the page through textContent / DOM nodes only.
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
-import { api, errorKind, isRetryable, onForbidden, onNetworkError } from "./api.js";
+import { api, isRetryable, onForbidden, onNetworkError } from "./api.js";
 import { afterDrawerOpen, createButtonGate, loadSections, mountLate, openWhenLoaded, retryable } from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
@@ -17,14 +17,14 @@ import {
 import { initTimeline } from "./timeline.js";
 import { createDock } from "./dock.js";
 import { COLUMNS, Grid } from "./grid.js";
-import { createViewFlow } from "./grid-model.js";
+import { createViewController } from "./grid-model.js";
 import { CollectionsPanel } from "./collections-panel.js";
 import {
   columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi, tagMap,
 } from "./collections-model.js";
 import { resetFormWithErrors, setFieldError } from "./field-error.js";
 import { createStatusBar } from "./status-bar.js";
-import { createRecovery, fallbackTarget } from "./status-bar-model.js";
+import { createFailureCenter, fallbackTarget } from "./status-bar-model.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { mountMenubar } from "./menubar.js";
 import { searchTerms } from "./search.js";
@@ -144,53 +144,39 @@ function start() {
   };
   // UI-25: a failed request never empties the screen. The grid keeps its rows; the notice (with Retry, unless repeating
   // the request cannot help) sits in the status bar; a view change that did not load goes back to the last view that did.
-  let failureMessage = null; // the notice of a failed grid request
-  let failureName = null; // which recovery task it belongs to: "grid" or "count"
-  const dropFailureNotice = (name) => {
-    if (failureMessage && (name === undefined || name === failureName)) {
-      failureMessage.dismiss();
-      failureMessage = null;
-      failureName = null;
-    }
-  };
+  // The decisions live in status-bar-model.js (createFailureCenter) and grid-model.js (createViewController); here
+  // they are only connected to the page.
   let casesLoaded = false; // the opening (GET /api/cases) finished: until then Retry reloads the cases
-  // The one way to recover (the bar's "Retry now" and the Retry of a notice): health first, one recovery at a time,
-  // only what is registered as failed is repeated (see createRecovery).
-  const recovery = createRecovery({
+  const failures = createFailureCenter({
+    status,
+    retryLabel: S.sbRetry,
+    genericMessage: S.errorGeneric,
+    goOffline: (onRetry) => status.connection("offline", { onRetry }),
     health: () => api.health(),
     setOnline: () => status.connection("online"),
     openingPending: () => !casesLoaded,
     reloadCases: () => panel.loadCases(null).then(() => { casesLoaded = true; }),
     fallback: () => (caseId !== null ? applyView() : Promise.resolve()),
     onError: (err) => showError(err),
+    retryView: () => retryView(),
+    hasViewRetry: () => viewFlow.retryTarget() !== null,
+    dropViewRetry: () => viewFlow.dropRetry(),
+    retryGrid: () => grid.retry(),
+    retryCount: () => grid.retryCount(),
+    refreshTimeline: () => (timeline ? timeline.refreshNow() : Promise.resolve()),
+    resumeStream: () => (followTail ? followTail.resume() : false),
+    // Another case: the requests of the old one (rows, count, histogram) are cancelled now, not when the new sources
+    // arrive; the stream is closed and reopened by followTail.onCase() further down.
+    cancelRequests: () => {
+      viewFlow.caseChanged();
+      grid.closeCase();
+      if (timeline) {
+        timeline.invalidate();
+      }
+    },
   });
-  const retry = () => recovery.retry();
-  const goOffline = () => {
-    recovery.markOffline();
-    status.connection("offline", { onRetry: retry });
-  };
-  const retryGrid = () => (viewFlow.retryTarget() !== null ? retryView() : grid.retry());
-  const noticeFailure = (err, { kind, scope }) => {
-    const name = scope === "count" ? "count" : "grid";
-    if (isRetryable(kind)) {
-      recovery.fail(name, name === "count" ? () => grid.retryCount() : retryGrid);
-    }
-    if (kind === "network" || kind === "forbidden") {
-      return; // the status bar owns these (Disconnected / session)
-    }
-    failureMessage = status.message(err && err.message ? err.message : S.errorGeneric, {
-      kind: "error",
-      action: isRetryable(kind) ? { label: S.sbRetry, run: retry } : undefined,
-    });
-    failureName = name;
-  };
-  const noticeRecovered = (scope) => {
-    const name = scope === "count" ? "count" : "grid";
-    recovery.clear(name);
-    dropFailureNotice(name);
-  };
   onForbidden(() => status.connection("forbidden"));
-  onNetworkError(goOffline);
+  onNetworkError(() => failures.goOffline());
 
   const actions = createActionRegistry({ onError: (err) => showError(err), singleKeysOn: () => true });
   // Step 1 of the dock: it exists before the context that holds it; bind(ctx) is step 2.
@@ -394,8 +380,8 @@ function start() {
     onCount: (value, options) => status.count(value, options),
     onPosition: (ts) => status.position(ts),
     onError: showError,
-    onFailure: noticeFailure,
-    onRecovered: noticeRecovered,
+    onFailure: (err, info) => failures.gridFailure(err, info),
+    onRecovered: (scope) => failures.gridRecovered(scope),
     // The user navigated before the new view's first page: the controls go back to the view the rows belong to.
     onAbandon: () => viewFlow.abandon(),
     getMark: (id) => bookmarkStore.get(id),
@@ -530,21 +516,14 @@ function start() {
   };
   // Which view the screen shows (grid-model.js createViewFlow): a change that does not load goes back to the last one
   // that did (toolbar, selection, trail, filter), the detail pane is cleared only when the new page is confirmed.
-  const viewFlow = createViewFlow({
-    capture: () => ({
-      caseId,
-      live: captureLive(),
-      selection: { ids: panel.selectedIds(), groups: collectionsPanel ? collectionsPanel.selectedGroups() : [] },
-      stack: viewsStack ? viewsStack.checkpoint() : null,
-      filter: null,
-    }),
-    restoreState: (to) => {
-      restoreLive(to.live);
-      restoreSelection(to.selection);
-      if (viewsStack && to.stack) {
-        viewsStack.rollback(to.stack);
-      }
-    },
+  const viewFlow = createViewController({
+    getCase: () => caseId,
+    captureLive,
+    restoreLive,
+    getSelection: () => ({ ids: panel.selectedIds(), groups: collectionsPanel ? collectionsPanel.selectedGroups() : [] }),
+    setSelection: restoreSelection,
+    getStack: () => viewsStack,
+    refreshDerived, // Operations, Dashboard and the clock banner follow the restored collection too
     afterRollback: (to) => {
       currentFilter = to.filter;
       const terms = searchTerms(searchText);
@@ -568,9 +547,7 @@ function start() {
   const applyView = () => {
     const { attempt, token } = viewFlow.begin(); // replaces the failed view change, if any
     const { ids, groups } = attempt.selection;
-    recovery.clear("grid");
-    recovery.clear("count");
-    dropFailureNotice();
+    failures.viewApplied();
     updateRail();
     // The effective view: the ancestors' filters AND the active view's own.
     const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
@@ -585,10 +562,7 @@ function start() {
     const caseRange = timeSpan(sources, [], null, null); // the whole case: decides the date in the time column
     const loaded = grid.setView({ caseId, filter, range, caseRange });
     loaded.then(firstViewDone, firstViewDone);
-    loaded.then((outcome) => {
-      const kind = grid.failure ? grid.failure.kind : "unknown";
-      viewFlow.settle(token, outcome, isRetryable(kind));
-    }, () => {});
+    viewFlow.track(token, loaded, () => (grid.failure ? grid.failure.kind : "unknown"), isRetryable);
     if (timeline) {
       timeline.refresh();
     }
@@ -620,9 +594,7 @@ function start() {
   }, {
     onCase: (id) => {
       caseId = id;
-      viewFlow.caseChanged(); // the answers of the old case's view changes no longer count
-      recovery.clearAll(); // nothing that failed in the old case is repeated in the new one
-      dropFailureNotice();
+      failures.caseChanged(); // nothing of the old case is repeated, and its requests are cancelled now
       applyPending = true; // refreshSources() follows and rebuilds the view
       if (collectionsPanel) {
         collectionsPanel.setCase();
@@ -917,12 +889,8 @@ function start() {
     getFilter: () => (caseId === null ? null : { caseId, filter: currentFilter }),
     onRangeSelected: (range) => setUserFilter(withTsRange(userFilter, range)),
     // A histogram that failed (also the first one, with no chart yet) is repeated by Retry, alone.
-    onFailure: (err) => {
-      if (isRetryable(errorKind(err))) {
-        recovery.fail("timeline", () => timeline.refresh());
-      }
-    },
-    onRecovered: () => recovery.clear("timeline"),
+    onFailure: (err) => failures.timelineFailure(err),
+    onRecovered: () => failures.timelineRecovered(),
   });
 
   // The panels (filter tree, Analyze, Export, ...) mount in the dock the first time they open; see app-actions.js.
@@ -1191,10 +1159,7 @@ function start() {
         },
         onError: showError,
         // The watch stream gave up after 3 failures in a row: say so in the bar; Retry starts it again.
-        onStreamStopped: () => {
-          recovery.fail("stream", () => followTail.resume());
-          goOffline();
-        },
+        onStreamStopped: () => failures.streamStopped(),
       });
       return followTail;
     },

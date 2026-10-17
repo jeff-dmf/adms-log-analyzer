@@ -404,6 +404,7 @@ export class Grid {
     this.pending = null;
     this.invalidateCount();
     this.onCount(this.shownCount);
+    this.restoreCountFailure(pending);
     this.onAbandon(pending);
   }
 
@@ -414,6 +415,41 @@ export class Grid {
       this.countController.abort();
       this.countController = null;
     }
+  }
+
+  // A view change that did not replace the rows leaves the old view on screen: the count failure it had (and that the
+  // attempt cleared) is registered again so it can still be repeated.
+  restoreCountFailure(view) {
+    const previous = view.prevCountFailure;
+    if (previous) {
+      view.prevCountFailure = null;
+      this.failCount(previous.error, previous.announce);
+    }
+  }
+
+  // Another case: every request of the old one is cancelled and forgotten at once (rows, count, failures, pending),
+  // so a late answer can neither paint its rows nor register a recovery.
+  closeCase() {
+    this.pending = null;
+    this.cancel();
+    this.invalidateCount();
+    if (this.pendingJump !== null) {
+      clearTimeout(this.pendingJump);
+      this.pendingJump = null;
+    }
+    this.failure = null;
+    this.failureShown = false;
+    this.countFailure = null;
+    this.countFailureShown = false;
+    this.caseId = null;
+    this.filter = null;
+    this.range = null;
+    this.total = null;
+    this.shownCount = null;
+    this.window.reset();
+    this.render();
+    this.onCount(null);
+    this.onPosition(null);
   }
 
   clearCountFailure() {
@@ -428,7 +464,7 @@ export class Grid {
     const kind = errorKind(error);
     this.countFailure = { error, kind, announce: Boolean(announce) };
     this.countFailureShown = true;
-    this.onFailure(error, { kind, scope: "count", retry: () => this.retryCount() });
+    this.onFailure(error, { kind, scope: "count", op: "count", retry: () => this.retryCount() });
   }
 
   // Repeats only the count that failed (the rows are fine). One at a time; nothing failed: nothing happens.
@@ -446,7 +482,7 @@ export class Grid {
     const kind = errorKind(err);
     this.failure = { kind, error: err, op };
     this.failureShown = true;
-    this.onFailure(err, { kind, scope: "grid", retry: () => this.retry() });
+    this.onFailure(err, { kind, scope: "grid", op: op.kind, retry: () => this.retry() });
   }
 
   // Repeats only what failed: the page of the scroll, the jump, or the view change. A second call while it runs, or
@@ -475,6 +511,11 @@ export class Grid {
     this.cancel();
     const target = view || this.currentView();
     this.failure = null;
+    // A count failure of the view on screen survives a view change that does not load (see restoreCountFailure).
+    const carried = this.countFailure || (this.pending && !this.pending.committed ? this.pending.prevCountFailure : null) || null;
+    if (carried !== null && target.prevCountFailure === undefined) {
+      target.prevCountFailure = carried;
+    }
     this.pending = target;
     // The count of the new view has its own answer, held until the page arrives; the old one is not a baseline for it.
     this.invalidateCount();
@@ -595,8 +636,11 @@ export class Grid {
           this.invalidateCount(); // its count is dropped with it: a late answer or failure changes nothing
           this.onCount(this.shownCount); // the held answer belongs to the view that did not load: show the old count
         }
-        this.fail(err, view ? { kind: "reload", target: { ...view, failed: false, committed: false, count: null, countFailed: false } }
+        this.fail(err, view ? { kind: "reload", target: { ...view, failed: false, committed: false, count: null, countFailed: false, prevCountFailure: undefined } }
           : { kind: "jump", cursor, dir });
+        if (view) {
+          this.restoreCountFailure(view);
+        }
         outcome = "failed";
       }
     } finally {
