@@ -504,6 +504,8 @@ PANEL_ERRORS = {
     "file_invalid": "the panels file is not valid and was left untouched; fix or remove it first",
     "file_too_large": "the panels file would be larger than {limit} bytes; delete some panels",
     "save_failed": "the panels file could not be written",
+    "busy": "another process is changing the panels file; try again",
+    "rev_limit": "the panel reached the largest revision number and cannot be changed again",
 }
 # Per-widget outcome of a panel run: static texts, never the query or any log text.
 PANEL_WIDGET_ERRORS = {

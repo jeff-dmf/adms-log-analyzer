@@ -577,9 +577,10 @@ class IngestJobs:
             return []
 
     def _panel_refresh(self, cid: str, baseline: int | None, report: CycleReport) -> dict[str, Any] | None:
-        """Body of the ``panels`` event for a follow cycle (best effort: never raises)."""
+        """Body of the ``panels`` event for a follow cycle. Never raises; a cycle that cannot be analysed
+        stays pending as a full refresh and is announced as ``failed``."""
         result = report.result
-        events_changed = None if result is None else result.events_derived > 0
+        events_changed = None if result is None else (result.events_derived > 0 or result.links_created > 0)
         try:
             with self._store.reader(cid) as conn:
                 until = alerts.max_entry_id(conn)
@@ -587,7 +588,10 @@ class IngestJobs:
                     conn, self._store.data_dir, cid, baseline, until, events_changed=events_changed
                 )
         except Exception:  # noqa: BLE001 - panels must not stop the follow mode
-            return None
+            try:
+                body = self.panel_watch.note_failure(cid, baseline)
+            except Exception:  # noqa: BLE001
+                return None
         return None if body is None else {"cycle": report.cycle, **body}
 
     def _watch_cycle(self, cid: str, watcher: Watcher, hub: ProgressHub) -> CycleReport | None:
@@ -2682,7 +2686,7 @@ _BODY_LIMITS["/api/preferences/import"] = preferences.MAX_PACKAGE_BYTES + 64 * 1
 
 _PANEL_STATUS = {
     "duplicate_name": 409, "too_many_panels": 409, "not_found": 404, "file_invalid": 409,
-    "file_too_large": 409, "rev_conflict": 409, "save_failed": 500,
+    "file_too_large": 409, "rev_conflict": 409, "busy": 409, "rev_limit": 409, "save_failed": 500,
 }  # fmt: skip
 
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -252,7 +254,7 @@ def test_a_failed_write_leaves_the_file_as_it_was(tmp_path, monkeypatch):
     assert code(P.create, tmp_path, panel(name="New")) == "save_failed"
     assert code(P.delete, tmp_path, made["id"]) == "save_failed"
     assert P.panels_path(tmp_path).read_bytes() == before
-    assert not list(tmp_path.glob("panels.json.*"))  # no stray temporary file
+    assert not list(tmp_path.glob("*.tmp"))  # no stray temporary file
 
 
 def test_the_file_is_ascii_json_with_the_schema(tmp_path):
@@ -354,3 +356,150 @@ def test_an_old_file_is_read_through_the_chain(monkeypatch):
         migrations={1: lambda d: {**d, "schema": 2}},
     )
     assert not doc.invalid and doc.panels[0]["name"] == "A" and doc.problems == []
+
+
+# --- review round: ids, locks, final-document validation, copies, overflow -------------------------
+
+
+@pytest.mark.parametrize("wid", ["_errors", "-count", "_", "-", "a_b-c", "0", "a" * 32])
+def test_widget_ids_accept_the_documented_alphabet_from_the_first_character(wid):
+    assert P.validate_panel(panel(widget(id=wid)))["widgets"][0]["id"] == wid
+
+
+@pytest.mark.parametrize("wid", ["", "A", "a b", "a.b", "a" * 33, "\u00e9", "a\n", None, 5])
+def test_widget_ids_outside_the_alphabet_are_refused(wid):
+    assert code(P.validate_panel, panel(widget(id=wid))) == "bad_widget_id"
+
+
+def _quarantine(tmp_path, extra):
+    """A file with one valid panel and ``extra`` hand-edited invalid entries."""
+    good = P.create(tmp_path, PANEL)
+    data = json.loads(P.panels_path(tmp_path).read_text())
+    data["panels"].extend(extra)
+    P.panels_path(tmp_path).write_text(json.dumps(data))
+    return good
+
+
+def test_a_full_quarantine_cannot_make_the_file_invalid(tmp_path):
+    stray = [{"id": f"{k:012x}", "rev": 1, "name": f"s{k}", "widgets": [{"bogus": 1}]} for k in range(39)]
+    _quarantine(tmp_path, stray)  # 1 valid + 39 invalid = 40 = the reading limit
+    before = P.panels_path(tmp_path).read_bytes()
+    assert code(P.create, tmp_path, panel(name="one too many")) == "too_many_panels"
+    assert P.panels_path(tmp_path).read_bytes() == before
+    assert P.list_panels(tmp_path)["invalid"] is False  # still readable
+    made = P.list_panels(tmp_path)["panels"][0]
+    P.delete(tmp_path, made["id"])  # freeing a slot is allowed
+    assert P.create(tmp_path, panel(name="fits now"))["rev"] == 1
+    assert P.list_panels(tmp_path)["invalid"] is False
+
+
+def test_rev_cannot_overflow(tmp_path):
+    made = P.create(tmp_path, PANEL)
+    data = json.loads(P.panels_path(tmp_path).read_text())
+    data["panels"][0]["rev"] = 2**63 - 1
+    P.panels_path(tmp_path).write_text(json.dumps(data))
+    before = P.panels_path(tmp_path).read_bytes()
+    assert code(P.update, tmp_path, made["id"], panel(name="Again")) == "rev_limit"
+    assert P.panels_path(tmp_path).read_bytes() == before and not P.list_panels(tmp_path)["problems"]
+
+
+def test_save_refuses_a_document_the_reader_would_reinterpret(tmp_path):
+    doc = P.Document(panels=[{"id": "0123456789ab", "rev": 2**63, "name": "A", "widgets": []}])
+    with pytest.raises(P.PanelError) as info:
+        P._save(tmp_path, doc)
+    assert info.value.code == "save_failed" and not P.panels_path(tmp_path).exists()
+
+
+def test_deleting_a_panel_removes_its_quarantined_copies(tmp_path):
+    good = P.create(tmp_path, PANEL)
+    dup_id = copy.deepcopy(good) | {"widgets": [{"bogus": 1}]}  # same id, broken
+    dup_name = {"id": "ffffffffffff", "rev": 1, "name": "OVERVIEW", "widgets": []}  # same name, other id
+    data = json.loads(P.panels_path(tmp_path).read_text())
+    data["panels"] += [dup_id, dup_name]
+    P.panels_path(tmp_path).write_text(json.dumps(data))
+    assert [p["code"] for p in P.list_panels(tmp_path)["problems"]] == ["bad_widget", "duplicate_name"]
+    P.delete(tmp_path, good["id"])
+    assert P.list_panels(tmp_path) == {
+        "panels": [],
+        "invalid": False,
+        "problems": [],
+        "limits": P.LIMITS,
+    }  # nothing resurrects
+    assert json.loads(P.panels_path(tmp_path).read_text())["panels"] == []
+
+
+def test_renaming_does_not_resurrect_a_quarantined_copy_of_the_old_name(tmp_path):
+    good = P.create(tmp_path, PANEL)
+    ghost = {"id": "ffffffffffff", "rev": 1, "name": "overview", "widgets": []}
+    data = json.loads(P.panels_path(tmp_path).read_text())
+    data["panels"].append(ghost)
+    P.panels_path(tmp_path).write_text(json.dumps(data))
+    P.update(tmp_path, good["id"], panel(name="Elsewhere"))
+    assert [p["name"] for p in P.list_panels(tmp_path)["panels"]] == ["Elsewhere"]
+    assert P.list_panels(tmp_path)["problems"] == []
+
+
+def test_the_lock_serializes_threads_and_times_out(tmp_path):
+    import threading
+
+    entered, release, outcome = threading.Event(), threading.Event(), []
+
+    def holder():
+        with P._exclusive(tmp_path):
+            entered.set()
+            release.wait(10)
+
+    t = threading.Thread(target=holder)
+    t.start()
+    assert entered.wait(5)
+    try:
+        with pytest.raises(P.PanelError) as info, P._exclusive(tmp_path, timeout_s=0.1):
+            outcome.append("inside")
+        assert info.value.code == "busy" and outcome == []
+    finally:
+        release.set()
+        t.join(5)
+    with P._exclusive(tmp_path, timeout_s=1.0):
+        pass  # free again
+    assert (tmp_path / P.LOCK_FILENAME).exists()
+
+
+WORKER = """
+import json, sys
+from dmslog.store import panels as P
+data_dir, ident = sys.argv[1], int(sys.argv[2])
+out = []
+for k in range(8):
+    try:
+        P.create(data_dir, {"name": f"w{ident}-{k}", "widgets": []})
+        out.append("ok")
+    except P.PanelError as exc:
+        out.append(exc.code)
+print(json.dumps(out))
+"""
+
+
+def test_two_processes_never_lose_an_update(tmp_path):
+    import subprocess
+    import sys
+
+    env = {**os.environ, "PYTHONPATH": str(Path(P.__file__).resolve().parents[2])}
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", WORKER, str(tmp_path), str(i)], stdout=subprocess.PIPE, env=env, text=True
+        )
+        for i in range(2)
+    ]
+    outs = [json.loads(p.communicate(timeout=120)[0]) for p in procs]
+    assert all(p.returncode == 0 for p in procs)
+    created = sum(o.count("ok") for o in outs)
+    names = [p["name"] for p in P.list_panels(tmp_path)["panels"]]
+    assert created == len(names) == len(set(names)) and created <= P.MAX_PANELS
+    assert set(sum(outs, [])) <= {"ok", "too_many_panels"}  # no busy, no lost write, no corruption
+    assert P.list_panels(tmp_path)["invalid"] is False
+
+
+def test_if_rev_lets_exactly_one_of_two_stale_writers_win(tmp_path):
+    made = P.create(tmp_path, PANEL)
+    assert P.update(tmp_path, made["id"], panel(name="First"), 1)["rev"] == 2
+    assert code(P.update, tmp_path, made["id"], panel(name="Late"), 1) == "rev_conflict"

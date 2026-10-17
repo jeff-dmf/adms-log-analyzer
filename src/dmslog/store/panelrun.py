@@ -25,7 +25,9 @@ import math
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,7 @@ from . import aggregate
 from . import query as Q
 from .filters import INT64_MAX, QueryInputError, compile_filter
 from .panels import PanelError, _json_text, load
+from .presets import _walk_leaves
 
 PANEL_BUDGET_S = 15.0
 MIN_WIDGET_S = 0.05  # below this a widget is not started
@@ -95,19 +98,26 @@ def run_panel(
             entry.update(status="skipped", error=_error("budget"))
             results.append(entry)
             continue
-        share = min(remaining, 2 * remaining / (len(todo) - k))  # unused time flows to the later widgets
-        kwargs: dict[str, Any] = {
-            "timeout_s": min(aggregate.AGG_TIMEOUT_S, share / 2),
-            "estimate_timeout_s": min(aggregate.ESTIMATE_TIMEOUT_S, share / 12),
-            "bucket_timeout_s": min(aggregate.BUCKET_TIMEOUT_S, share / 12),
-        }
-        try:
-            if knowledge is not None and widget["query"].get("lookups") and not know:
-                know.append(knowledge())
-            kwargs["knowledge"] = know[0] if know else None
-            entry["result"] = aggregate.as_json(run(conn, widget["query"], **kwargs))
-        except Exception as exc:  # noqa: BLE001 - one widget must not take the panel down
-            entry.update(status="error", error=_widget_error(exc))
+        # one ABSOLUTE deadline for every phase (knowledge, field checks, exact/estimate, labels, lookups)
+        ceiling = time.monotonic() + remaining
+        with Q.deadline_ceiling(ceiling):
+            try:
+                if knowledge is not None and widget["query"].get("lookups") and not know:
+                    know.append(knowledge())
+                remaining = deadline - clock()  # loading the knowledge may have used the time
+                if remaining < MIN_WIDGET_S:
+                    entry.update(status="skipped", error=_error("budget"))
+                else:
+                    share = min(remaining, 2 * remaining / (len(todo) - k))  # unused time flows on
+                    kwargs: dict[str, Any] = {
+                        "timeout_s": min(aggregate.AGG_TIMEOUT_S, share / 2),
+                        "estimate_timeout_s": min(aggregate.ESTIMATE_TIMEOUT_S, share / 12),
+                        "bucket_timeout_s": min(aggregate.BUCKET_TIMEOUT_S, share / 12),
+                        "knowledge": know[0] if know else None,
+                    }
+                    entry["result"] = aggregate.as_json(run(conn, widget["query"], **kwargs))
+            except Exception as exc:  # noqa: BLE001 - one widget must not take the panel down
+                entry.update(status="error", error=_widget_error(exc))
         results.append(entry)
     end = clock()
     return {
@@ -121,6 +131,24 @@ def run_panel(
 
 
 # --------------------------------------------------------------------------- refresh plan
+
+
+# Filter leaves whose truth for an EXISTING record is derived later (an operation ends, a correlation links
+# the record): the records of old cycles can start or stop matching without any new record matching.
+DERIVED_LEAVES = frozenset({"event", "event_status", "event_name", "event_kind", "key"})
+
+
+def depends_on_derived(query: dict[str, Any]) -> bool:
+    """True when the widget's result can change although no new record matches its filter: it works on
+    events, filters by derived leaves (event_status, event_name, event_kind, event, key) or groups/counts
+    by correlation keys or event columns."""
+    if query.get("rows", "entries") == "events":
+        return True
+    tree = query.get("filter")
+    if tree is not None and any(leaf in DERIVED_LEAVES for leaf in _walk_leaves(tree)):
+        return True
+    names = [*query.get("group_by", ()), *query.get("measures", ())]
+    return any(isinstance(n, str) and "key." in n for n in names)
 
 
 def _widget_key(widget: dict[str, Any]) -> tuple[str, str]:
@@ -153,8 +181,8 @@ def refresh_plan(
     for panel in panels:
         ids: list[str] = []
         for widget in panel["widgets"]:
-            rows, _ = key = _widget_key(widget)
-            if rows == "events" and events_changed is not False:
+            key = _widget_key(widget)
+            if events_changed is not False and depends_on_derived(widget["query"]):
                 need = True
             elif not has_new:
                 need = False
@@ -205,8 +233,22 @@ def _probe(
 # --------------------------------------------------------------------------- follow-mode hook
 
 
+@dataclass
+class _CaseState:
+    last: float | None = None  # clock of the last evaluation that was not throttled
+    pending_from: int | None = None  # earliest id not yet reported (None: nothing pending)
+    pending_events: bool | None = False  # events may have changed in the pending stretch (None: unknown)
+    pending_full: bool = False  # the pending stretch could not be analysed: refresh everything
+    prev_to: int | None = None  # ``to_id`` of the previous event published for the case
+
+
 class PanelWatch:
-    """Per-case frequency limit and event body of the ``panels`` SSE event."""
+    """Per-case frequency limit, pending ranges and event body of the ``panels`` SSE event.
+
+    One table holds everything (bounded to ``MAX_THROTTLE_CASES`` cases, least recently used first out). A
+    case without state (first cycle of the process, or evicted) is answered with a FULL refresh, so
+    forgetting a case can only cost one extra refresh, never a lost change.
+    """
 
     def __init__(
         self,
@@ -216,13 +258,45 @@ class PanelWatch:
         self._clock = clock
         self._interval = min_interval_s
         self._lock = threading.Lock()
-        self._last: dict[str, float] = {}
-        self._pending: dict[str, tuple[int, bool | None]] = {}  # case -> (earliest unreported id, events)
+        self._cases: OrderedDict[str, _CaseState] = OrderedDict()
 
     def forget_case(self, case_id: str) -> None:
         with self._lock:
-            self._last.pop(case_id, None)
-            self._pending.pop(case_id, None)
+            self._cases.pop(case_id, None)
+
+    def _state(self, case_id: str) -> tuple[_CaseState, bool]:
+        """(state, existed); marks the case most recently used and evicts beyond the bound."""
+        state = self._cases.get(case_id)
+        existed = state is not None
+        if state is None:
+            state = self._cases[case_id] = _CaseState()
+        self._cases.move_to_end(case_id)
+        while len(self._cases) > MAX_THROTTLE_CASES:
+            self._cases.popitem(last=False)
+        return state, existed
+
+    def note_failure(self, case_id: str, baseline: int | None) -> dict[str, Any]:
+        """A cycle could not be analysed: keep its range pending as a full refresh and return a ``failed``
+        event body (the client refreshes everything it shows)."""
+        with self._lock:
+            state, _ = self._state(case_id)
+            lo = 0 if baseline is None else baseline
+            state.pending_from = lo if state.pending_from is None else min(state.pending_from, lo)
+            state.pending_full = True
+            body = self._body(state, None, None, throttled=False, full=True, refresh=[])
+            body["failed"] = True
+            state.prev_to = None
+            return body
+
+    def _body(
+        self, state: _CaseState, lo: int | None, until: int | None, *, throttled: bool, full: bool,
+        refresh: list[dict[str, Any]], wait_ms: int = 0,
+    ) -> dict[str, Any]:  # fmt: skip
+        return {
+            "from_id": lo, "to_id": until, "prev_to_id": state.prev_to, "throttled": throttled,
+            "retry_after_ms": wait_ms, "min_interval_ms": round(self._interval * 1000), "full": full,
+            "refresh": refresh,
+        }  # fmt: skip
 
     def process_cycle(
         self,
@@ -244,40 +318,54 @@ class PanelWatch:
             return None
         now = self._clock()
         with self._lock:
-            pending = self._pending.get(case_id)
-            lo = baseline if baseline is not None else None
-            if pending is not None:
-                lo = pending[0] if lo is None else min(lo, pending[0])
-                events_changed = (
-                    None if events_changed is None or pending[1] is None else (events_changed or pending[1])
+            state, existed = self._state(case_id)
+            lo = baseline
+            if state.pending_from is not None:
+                lo = state.pending_from if lo is None else min(lo, state.pending_from)
+            full = baseline is None or state.pending_full or not existed
+            if state.pending_events is None or events_changed is None:
+                events_changed = None
+            else:
+                events_changed = events_changed or state.pending_events
+            if state.last is not None and now - state.last < self._interval:
+                # an unknown stretch is "everything since 0"
+                state.pending_from = 0 if baseline is None or lo is None else lo
+                state.pending_events = events_changed
+                state.pending_full = full
+                wait_ms = max(1, math.ceil((self._interval - (now - state.last)) * 1000))
+                body = self._body(
+                    state,
+                    state.pending_from,
+                    until_id,
+                    throttled=True,
+                    full=full,
+                    refresh=[],
+                    wait_ms=wait_ms,
                 )
-            last = self._last.get(case_id)
-            if last is not None and now - last < self._interval:
-                # an unknown baseline is remembered as "everything since id 0", so no change is lost
-                self._pending[case_id] = (0 if lo is None else lo, events_changed)
-                wait_ms = max(1, math.ceil((self._interval - (now - last)) * 1000))
-                return {
-                    "from_id": lo, "to_id": until_id, "throttled": True, "retry_after_ms": wait_ms,
-                    "min_interval_ms": round(self._interval * 1000), "full": lo is None, "refresh": [],
-                }  # fmt: skip
-            self._pending.pop(case_id, None)
-            self._last[case_id] = now
-            if len(self._last) > MAX_THROTTLE_CASES:  # cases come and go: keep the table bounded
-                self._last.pop(next(iter(self._last)))
-        if lo is None:
-            refresh = [{"panel": p["id"], "widgets": [w["id"] for w in p["widgets"]]} for p in doc.panels]
-            refresh = [r for r in refresh if r["widgets"]]
-            probed = conservative = 0
+                state.prev_to = until_id
+                return body
+            state.last = now
+        everything = [{"panel": p["id"], "widgets": [w["id"] for w in p["widgets"]]} for p in doc.panels]
+        everything = [r for r in everything if r["widgets"]]
+        probed = conservative = 0
+        if full:
+            refresh = everything
         else:
-            plan = refresh_plan(
-                conn, doc.panels, since_id=lo, until_id=until_id, events_changed=events_changed
-            )
-            refresh, probed, conservative = plan["panels"], plan["probed"], plan["conservative"]
-        return {
-            "from_id": lo, "to_id": until_id, "throttled": False, "retry_after_ms": 0,
-            "min_interval_ms": round(self._interval * 1000), "full": lo is None, "refresh": refresh,
-            "probed": probed, "conservative": conservative,
-        }  # fmt: skip
+            try:
+                plan = refresh_plan(
+                    conn, doc.panels, since_id=lo or 0, until_id=until_id, events_changed=events_changed
+                )
+                refresh, probed, conservative = plan["panels"], plan["probed"], plan["conservative"]
+            except Exception:  # noqa: BLE001 - never lose the range: refresh everything instead
+                refresh, full = everything, True
+        with self._lock:
+            state, _ = self._state(case_id)
+            state.pending_from, state.pending_events, state.pending_full = None, False, False
+            body = self._body(state, None if baseline is None and lo is None else lo, until_id,
+                              throttled=False, full=full, refresh=refresh)  # fmt: skip
+            body.update(probed=probed, conservative=conservative)
+            state.prev_to = until_id
+        return body
 
 
 def changes_since(conn: sqlite3.Connection, data_dir: str | Path, since_id: Any) -> dict[str, Any]:

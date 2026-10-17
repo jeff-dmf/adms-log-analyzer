@@ -242,22 +242,43 @@ def make_watch(tmp_path, interval=5.0):
     return R.PanelWatch(clock, interval), clock
 
 
-def test_the_event_names_only_what_the_new_records_touch(case, tmp_path):
+def primed(conn, tmp_path, until, case_id="c1", interval=5.0):
+    """A watch whose first (always full) cycle for ``case_id`` is over and whose interval has elapsed."""
+    watch, clock = make_watch(tmp_path, interval)
+    first = watch.process_cycle(conn, tmp_path, case_id, 0, until, events_changed=False)
+    assert first["full"] is True and first["throttled"] is False and first["prev_to_id"] is None
+    clock.t += interval + 1
+    return watch, clock
+
+
+def test_a_case_without_state_gets_a_full_refresh(case, tmp_path):
     conn, rows = case
     until = max(r["id"] for r in rows)
     watch, _ = make_watch(tmp_path)
+    body = watch.process_cycle(conn, tmp_path, "c1", until, until, events_changed=False)
+    pid = P.list_panels(tmp_path)["panels"][0]["id"]
+    assert body["full"] is True and body["refresh"] == [{"panel": pid, "widgets": ["w"]}]
+
+
+def test_the_event_names_only_what_the_new_records_touch(case, tmp_path):
+    conn, rows = case
+    until = max(r["id"] for r in rows)
+    watch, _ = primed(conn, tmp_path, until)
     body = watch.process_cycle(conn, tmp_path, "c1", 0, until, events_changed=False)
     pid = P.list_panels(tmp_path)["panels"][0]["id"]
     assert body["refresh"] == [{"panel": pid, "widgets": ["w"]}] and body["throttled"] is False
     assert body["from_id"] == 0 and body["to_id"] == until and body["full"] is False
-    quiet = watch.process_cycle(conn, tmp_path, "c2", until, until, events_changed=False)
+    assert body["prev_to_id"] == until  # continuity token: the previous event ended here
+    watch.forget_case("c2")
+    watch2, _ = primed(conn, tmp_path / "x", until, "c2")  # separate data dir, same shape
+    quiet = watch2.process_cycle(conn, tmp_path / "x", "c2", until, until, events_changed=False)
     assert quiet["refresh"] == []  # nothing new above the baseline
 
 
 def test_frequency_limit_coalesces_into_the_earliest_id(case, tmp_path):
     conn, rows = case
     until = max(r["id"] for r in rows)
-    watch, clock = make_watch(tmp_path, 5.0)
+    watch, clock = primed(conn, tmp_path, until)
     first = watch.process_cycle(conn, tmp_path, "c1", 0, until, events_changed=False)
     assert first["throttled"] is False
     clock.t += 1.0
@@ -274,14 +295,15 @@ def test_frequency_limit_coalesces_into_the_earliest_id(case, tmp_path):
     fifth = watch.process_cycle(conn, tmp_path, "c1", 195, until, events_changed=False)
     assert fifth["from_id"] == 195  # the pending id was consumed
     other = watch.process_cycle(conn, tmp_path, "c2", 0, until, events_changed=False)
-    assert other["throttled"] is False  # cases are independent
+    assert other["throttled"] is False and other["full"] is True  # cases are independent
 
 
 def test_unknown_baseline_refreshes_everything(case, tmp_path):
     conn, rows = case
-    watch, _ = make_watch(tmp_path)
+    until = max(r["id"] for r in rows)
+    watch, _ = primed(conn, tmp_path, until)
     body = watch.process_cycle(conn, tmp_path, "c1", None, 10, events_changed=None)
-    assert body["full"] is True and body["from_id"] is None and body["refresh"][0]["widgets"] == ["w"]
+    assert body["full"] is True and body["refresh"][0]["widgets"] == ["w"]
 
 
 def test_no_panels_or_unusable_file_means_no_event(case, tmp_path):
@@ -293,20 +315,53 @@ def test_no_panels_or_unusable_file_means_no_event(case, tmp_path):
 
 
 def test_forgetting_a_case_drops_its_state(case, tmp_path):
-    conn, _ = case
-    watch, clock = make_watch(tmp_path)
-    watch.process_cycle(conn, tmp_path, "c1", 0, 10, events_changed=False)
+    conn, rows = case
+    until = max(r["id"] for r in rows)
+    watch, _ = primed(conn, tmp_path, until)
     watch.forget_case("c1")
-    assert watch.process_cycle(conn, tmp_path, "c1", 0, 10, events_changed=False)["throttled"] is False
+    body = watch.process_cycle(conn, tmp_path, "c1", until, until, events_changed=False)
+    assert body["throttled"] is False and body["full"] is True
 
 
-def test_the_throttle_table_stays_bounded(case, tmp_path, monkeypatch):
-    conn, _ = case
+def test_the_state_table_is_bounded_and_eviction_costs_only_a_full_refresh(case, tmp_path, monkeypatch):
+    conn, rows = case
+    until = max(r["id"] for r in rows)
     monkeypatch.setattr(R, "MAX_THROTTLE_CASES", 10)
-    watch, _ = make_watch(tmp_path)
-    for k in range(50):
-        watch.process_cycle(conn, tmp_path, f"c{k}", 0, 10, events_changed=False)
-    assert len(watch._last) <= 11
+    watch, clock = make_watch(tmp_path)
+    for k in range(50):  # every case gets a pending (throttled) stretch too
+        watch.process_cycle(conn, tmp_path, f"c{k}", 0, until, events_changed=False)
+        watch.process_cycle(conn, tmp_path, f"c{k}", 5, until, events_changed=False)
+        assert len(watch._cases) <= 10
+    clock.t += 100
+    body = watch.process_cycle(conn, tmp_path, "c0", until, until, events_changed=False)
+    assert body["full"] is True  # c0 was evicted with its pending stretch: everything refreshes
+
+
+def test_a_failed_cycle_stays_pending_as_a_full_refresh(case, tmp_path):
+    conn, rows = case
+    until = max(r["id"] for r in rows)
+    watch, clock = primed(conn, tmp_path, until)
+    failed = watch.note_failure("c1", 120)
+    assert failed["failed"] is True and failed["full"] is True and failed["refresh"] == []
+    clock.t += 10
+    after = watch.process_cycle(conn, tmp_path, "c1", until, until, events_changed=False)
+    assert after["full"] is True and after["from_id"] == 120 and after["refresh"]
+    clock.t += 10
+    again = watch.process_cycle(conn, tmp_path, "c1", until, until, events_changed=False)
+    assert again["full"] is False  # the pending failure was consumed
+
+
+def test_a_plan_that_raises_refreshes_everything(case, tmp_path, monkeypatch):
+    conn, rows = case
+    until = max(r["id"] for r in rows)
+    watch, clock = primed(conn, tmp_path, until)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(R, "refresh_plan", boom)
+    body = watch.process_cycle(conn, tmp_path, "c1", 0, until, events_changed=False)
+    assert body["full"] is True and body["refresh"][0]["widgets"] == ["w"]
 
 
 def test_changes_since_validates_and_plans(case, tmp_path):
@@ -323,11 +378,122 @@ def test_changes_since_validates_and_plans(case, tmp_path):
 def test_a_throttled_unknown_baseline_is_not_lost(case, tmp_path):
     conn, rows = case
     until = max(r["id"] for r in rows)
-    watch, clock = make_watch(tmp_path)
+    watch, clock = primed(conn, tmp_path, until)
     assert watch.process_cycle(conn, tmp_path, "c1", 0, until, events_changed=False)["throttled"] is False
     clock.t += 1.0
     held = watch.process_cycle(conn, tmp_path, "c1", None, until, events_changed=False)
     assert held["throttled"] is True and held["full"] is True
     clock.t += 10.0
     later = watch.process_cycle(conn, tmp_path, "c1", until, until, events_changed=False)
-    assert later["from_id"] == 0 and later["refresh"]  # the unknown stretch is covered by the next event
+    assert later["from_id"] == 0 and later["full"] is True and later["refresh"]
+
+
+# --- derived data (an operation ends: old records start or stop matching) -------------------------
+
+
+DERIVED_TREES = [
+    {"event_status": ["ok"]},
+    {"and": [{"event_status": ["ok"]}, {"tpl": [1]}]},
+    {"not": {"event_name": ["x"]}},
+    {"or": [{"tpl": [1]}, {"event_kind": ["operation"]}]},
+    {"event": [1]},
+    {"key": {"type": "msgid"}},
+]
+
+
+@pytest.mark.parametrize("tree", DERIVED_TREES)
+def test_widgets_filtering_by_derived_leaves_refresh_when_events_change(case, tree):
+    conn, rows = case
+    until = max(r["id"] for r in rows)
+    w = widget("d", {**BY_SEV, "filter": tree})
+    p = panel("a" * 12, w)
+    # nothing new at all, but an operation ended in the cycle
+    plan = R.refresh_plan(conn, [p], since_id=until, until_id=until, events_changed=True)
+    assert plan["panels"] == [{"panel": p["id"], "widgets": ["d"]}]
+    plan = R.refresh_plan(conn, [p], since_id=until, until_id=until, events_changed=None)
+    assert plan["panels"] == [{"panel": p["id"], "widgets": ["d"]}]
+    plan = R.refresh_plan(conn, [p], since_id=until, until_id=until, events_changed=False)
+    assert plan["panels"] == []
+
+
+def test_plain_widgets_do_not_follow_events(case):
+    conn, rows = case
+    until = max(r["id"] for r in rows)
+    p = panel("a" * 12, widget("plain", {**BY_SEV, "filter": {"and": [{"tpl": [1]}, {"sev": {"le": 3}}]}}))
+    assert R.refresh_plan(conn, [p], since_id=until, until_id=until, events_changed=True)["panels"] == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"group_by": ["key.msgid"]},
+        {"measures": ["distinct:key.msgid"]},
+        {"rows": "events", "measures": ["count"]},
+    ],
+)
+def test_key_and_event_queries_depend_on_derived_data(query):
+    assert R.depends_on_derived(query)
+    assert not R.depends_on_derived({"group_by": ["sev", "fields.op"], "measures": ["count"]})
+
+
+# --- the absolute deadline -------------------------------------------------------------------------
+
+
+def test_the_ceiling_clamps_every_guard_and_nests(case):
+    conn, _ = case
+    import time
+
+    from dmslog.store import query as Q
+
+    with Q.deadline_ceiling(time.monotonic() - 1):
+        with pytest.raises(Q.QueryTimeout), Q.read_guard(conn, 60.0):
+            conn.execute(
+                "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) FROM c"
+            )
+    with Q.deadline_ceiling(time.monotonic() + 100), Q.deadline_ceiling(None):
+        assert Q._CEILING.get() is not None  # a nested None never lifts an outer ceiling
+    assert Q._CEILING.get() is None
+
+
+def test_knowledge_that_eats_the_budget_stops_the_widgets(case):
+    conn, _ = case
+    clock = Clock()
+    ran = []
+
+    def slow_knowledge():
+        clock.t += 20.0  # resolving the knowledge took longer than the whole budget
+        return object()
+
+    def run(c, query, **kwargs):
+        ran.append(query)
+        return A.aggregate(c, query)
+
+    lookup = {
+        "rows": "events",
+        "group_by": ["name"],
+        "measures": ["count"],
+        "lookups": ["operation.direction"],
+    }
+    out = R.run_panel(
+        conn, panel("a" * 12, widget("l", lookup), widget("p", TOTAL)), knowledge=slow_knowledge,
+        budget_s=10.0, clock=clock, run=run,
+    )  # fmt: skip
+    assert ran == []
+    assert [r["status"] for r in out["results"]] == ["skipped", "skipped"] and out["complete"] is False
+
+
+def test_every_phase_of_a_widget_runs_under_the_panel_ceiling(case, monkeypatch):
+    conn, _ = case
+    import time
+
+    from dmslog.store import query as Q
+
+    seen = []
+
+    def spy(c, query, **kwargs):
+        seen.append(Q._CEILING.get())
+        return A.aggregate(c, query)
+
+    start = time.monotonic()
+    R.run_panel(conn, panel("a" * 12, widget("a", TOTAL)), budget_s=0.5, run=spy)
+    assert seen and start < seen[0] <= start + 0.6

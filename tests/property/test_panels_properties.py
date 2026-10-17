@@ -143,5 +143,64 @@ def test_the_refresh_plan_equals_the_reference(tree, since, events_changed):
     if plan["conservative"]:  # only a timeout may widen the plan, never narrow it
         assert ("r" in named) or not fresh
         return
-    assert ("r" in named) == fresh
+    assert ("r" in named) == (fresh or (events_changed and R.depends_on_derived(w_rows["query"])))
     assert ("e" in named) == (events_changed or fresh)
+
+
+class _Clock:
+    t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+steps = st.lists(
+    st.tuples(st.sampled_from(["cycle", "fail", "unknown"]), st.floats(0, 8), st.integers(0, 40)),
+    min_size=1, max_size=25,
+)  # fmt: skip
+
+
+@SETTINGS
+@given(steps, st.integers(1, 6))
+def test_no_range_is_ever_lost_between_cycles_failures_and_eviction(plan, table):
+    """Oracle: ``unreported`` is the lowest id not yet covered by an UNTHROTTLED event, tracked from the steps
+    alone. Every unthrottled event must start at or below it (a full refresh covers everything)."""
+    from dmslog.store import panelrun
+
+    folder = Path(tempfile.mkdtemp(prefix="dmslog-panels-watch-"))
+    try:
+        conn, rows = _case()
+        P.create(folder, {"name": "p", "widgets": [{"id": "w", "query": {}, "chart": "table"}]})
+        clock = _Clock()
+        watch = R.PanelWatch(clock, 5.0)
+        old = panelrun.MAX_THROTTLE_CASES
+        panelrun.MAX_THROTTLE_CASES = table
+        try:
+            unreported: dict[str, int | None] = {}
+            seen: set[str] = set()
+            top = 0
+            for kind, dt, extra in plan:
+                clock.t += dt
+                case = f"c{extra % 8}"
+                baseline = top
+                top += 1 + extra % 5
+                if kind == "fail":
+                    watch.note_failure(case, baseline)
+                    unreported[case] = min(unreported.get(case, baseline), baseline)
+                    continue
+                known = None if kind == "unknown" else baseline
+                low = 0 if known is None else known
+                before = unreported.get(case)
+                body = watch.process_cycle(conn, folder, case, known, top, events_changed=False)
+                want = low if before is None else min(low, before)
+                if body["throttled"]:
+                    assert body["from_id"] <= want
+                    unreported[case] = want
+                else:
+                    assert body["full"] or (body["from_id"] is not None and body["from_id"] <= want)
+                    unreported.pop(case, None)
+                seen.add(case)
+        finally:
+            panelrun.MAX_THROTTLE_CASES = old
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)

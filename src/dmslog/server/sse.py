@@ -19,6 +19,7 @@ from typing import Any
 KEEPALIVE_S = 15.0
 POLL_S = 0.5
 MAX_EVENTS = 5000
+STICKY = frozenset({"watch", "panels"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +39,8 @@ class ProgressHub:
         self._seq = 0
         self._running = False
         self._job_id: str | None = None
-        self._last_watch: HubEvent | None = None  # survives try_begin(): late subscribers still get it
+        # latest follow-mode events; survive try_begin(): late subscribers still get them
+        self._last_sticky: dict[str, HubEvent] = {}
 
     @property
     def running(self) -> bool:
@@ -68,8 +70,8 @@ class ProgressHub:
                 self._events.pop()
             event = HubEvent(self._seq, name, data, coalesce)
             self._events.append(event)
-            if name == "watch":
-                self._last_watch = event
+            if name in STICKY:
+                self._last_sticky[name] = event
             self._cond.notify_all()
 
     def finish(self, data: dict[str, Any]) -> None:
@@ -85,9 +87,12 @@ class ProgressHub:
         with self._cond:
             self._cond.wait_for(lambda: self._seq > after, timeout)
             events = [e for e in self._events if e.seq > after]
-            last = self._last_watch
-            if after == 0 and last is not None and all(e.seq != last.seq for e in events):
-                events.insert(0, last)  # a new subscriber learns about the latest follow-mode change
+            if after == 0:  # a new subscriber learns about the latest follow-mode change
+                have = {e.seq for e in events}
+                events = sorted(
+                    [*events, *(e for e in self._last_sticky.values() if e.seq not in have)],
+                    key=lambda e: e.seq,
+                )
             return events, self._seq
 
     def wake_all(self) -> None:

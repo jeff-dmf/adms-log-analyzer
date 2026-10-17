@@ -25,19 +25,22 @@ depth, string length, integer range and finite floats, before any recursive vali
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import math
+import os
 import re
 import secrets
 import threading
-from collections.abc import Callable, Mapping
+import time
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .. import messages
-from ..paths import atomic_write_bytes
+from ..paths import atomic_write_bytes, private_mkdir
 from . import aggregate
 from .filters import INT64_MAX, INT64_MIN, QueryInputError, compile_filter
 from .presets import CASE_LEAVES, _walk_leaves
@@ -72,7 +75,7 @@ CHART_OPTIONS: dict[str, frozenset[str]] = {
     "bar": frozenset({"x", "y", "series", "stacked", "top"}),
     "line": frozenset({"x", "y", "series", "stacked", "top"}),
 }
-_WIDGET_ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}\Z")
+_WIDGET_ID = re.compile(r"[a-z0-9_-]{1,32}\Z")
 _PANEL_ID = re.compile(r"[0-9a-f]{12}\Z")
 _REASON = re.compile(r"[a-z_]{1,40}\Z")
 
@@ -404,6 +407,72 @@ def panels_path(data_dir: str | Path) -> Path:
 
 
 _LOCK = threading.Lock()  # one writer at a time (read-modify-write) within the server process
+LOCK_FILENAME = "panels.json.lock"
+LOCK_TIMEOUT_S = 5.0
+LOCK_POLL_S = 0.02
+
+if os.name == "nt":  # pragma: no cover - exercised on Windows only
+    import msvcrt
+
+    def _try_lock(fd: int) -> bool:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl
+
+    def _try_lock(fd: int) -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fd: int) -> None:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def _exclusive(data_dir: str | Path, timeout_s: float | None = None) -> Iterator[None]:
+    """Exclusive writer section across threads AND processes: the thread lock, then an advisory lock on
+    ``panels.json.lock`` (flock on POSIX, msvcrt on Windows). The lock handle is opened inside the section
+    and closed on exit; waiting is bounded and ends in ``PanelError("busy")``."""
+    limit = LOCK_TIMEOUT_S if timeout_s is None else timeout_s
+    deadline = time.monotonic() + limit
+    if not _LOCK.acquire(timeout=max(0.0, limit)):
+        raise PanelError("busy")
+    fd = -1
+    try:
+        try:
+            private_mkdir(Path(data_dir))
+            fd = os.open(Path(data_dir) / LOCK_FILENAME, os.O_RDWR | os.O_CREAT, 0o600)
+            if os.name == "nt":
+                os.write(fd, b"\0")  # msvcrt locks a byte range: make sure the byte exists
+        except OSError:
+            raise PanelError("save_failed") from None
+        while not _try_lock(fd):
+            if time.monotonic() >= deadline:
+                raise PanelError("busy")
+            time.sleep(LOCK_POLL_S)
+        try:
+            yield
+        finally:
+            _unlock(fd)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        _LOCK.release()
 
 
 def _reject_constant(_name: str) -> Any:
@@ -431,6 +500,14 @@ def load(data_dir: str | Path) -> Document:
 
 
 def _save(data_dir: str | Path, doc: Document) -> None:
+    """Write ``doc`` only if reading the bytes back would give at least the panels in ``doc``, in order.
+
+    The final document is serialized, parsed again with the reader (every invariant of the reading side:
+    schema, counts, unique ids and names, revisions) and compared before the file is replaced, so a write
+    can never produce a file that the next read would reject or reinterpret.
+    """
+    if len(doc.panels) + len(doc.skipped) > MAX_PANELS * 2:
+        raise PanelError("too_many_panels", limit=MAX_PANELS)
     body = {"schema": SCHEMA, **doc.top_extra, "panels": [*doc.panels, *doc.skipped]}
     try:
         data = (json.dumps(body, ensure_ascii=True, allow_nan=False, indent=1) + "\n").encode("ascii")
@@ -439,9 +516,40 @@ def _save(data_dir: str | Path, doc: Document) -> None:
     if len(data) > MAX_FILE_BYTES:  # the next read would reject it: keep the old file
         raise PanelError("file_too_large", limit=MAX_FILE_BYTES)
     try:
+        back = parse_document(json.loads(data))
+    except (ValueError, RecursionError):
+        raise PanelError("save_failed") from None
+    # the panels we hold must come back valid and in order; skipped entries may only be promoted AFTER them
+    if back.invalid or back.panels[: len(doc.panels)] != doc.panels:
+        raise PanelError("save_failed")
+    try:
         atomic_write_bytes(panels_path(data_dir), data)
     except OSError:
         raise PanelError("save_failed") from None
+
+
+def _raw_identity(raw: Any) -> tuple[Any, str | None]:
+    """(id, canonical name) of a stored entry that may be malformed; None parts when unusable."""
+    if not isinstance(raw, dict):
+        return None, None
+    pid = raw.get("id") if isinstance(raw.get("id"), str) else None
+    try:
+        name = sanitize_name(raw.get("name")).casefold()
+    except ViewError:
+        name = None
+    return pid, name
+
+
+def _drop_copies(doc: Document, panel_id: str, name_key: str) -> None:
+    """Forget quarantined entries of the same identity (same id or same canonical name) as a panel being
+    deleted or replaced, so that they cannot become valid again when its name or slot is free."""
+    keep = []
+    for raw in doc.skipped:
+        pid, name = _raw_identity(raw)
+        if pid == panel_id or name == name_key:
+            continue
+        keep.append(raw)
+    doc.skipped = keep
 
 
 def _writable(data_dir: str | Path) -> Document:
@@ -470,7 +578,7 @@ def get_panel(data_dir: str | Path, panel_id: Any) -> dict[str, Any]:
 
 def create(data_dir: str | Path, raw: Any) -> dict[str, Any]:
     clean = validate_panel(raw)
-    with _LOCK:
+    with _exclusive(data_dir):
         doc = _writable(data_dir)
         if any(identity(p) == identity(clean) for p in doc.panels):
             raise PanelError("duplicate_name")
@@ -493,7 +601,7 @@ def update(data_dir: str | Path, panel_id: Any, raw: Any, if_rev: Any = None) ->
     if if_rev is not None and (isinstance(if_rev, bool) or not isinstance(if_rev, int)):
         raise PanelError("rev_conflict")
     clean = validate_panel(raw)
-    with _LOCK:
+    with _exclusive(data_dir):
         doc = _writable(data_dir)
         index = next((k for k, p in enumerate(doc.panels) if p["id"] == panel_id), None)
         if index is None:
@@ -503,6 +611,9 @@ def update(data_dir: str | Path, panel_id: Any, raw: Any, if_rev: Any = None) ->
             raise PanelError("rev_conflict")
         if any(identity(p) == identity(clean) for k, p in enumerate(doc.panels) if k != index):
             raise PanelError("duplicate_name")
+        if current["rev"] >= INT64_MAX:
+            raise PanelError("rev_limit")
+        _drop_copies(doc, panel_id, identity(current))
         panel = {"id": panel_id, "rev": current["rev"] + 1, **clean}
         doc.panels[index] = panel
         _save(data_dir, doc)
@@ -512,10 +623,12 @@ def update(data_dir: str | Path, panel_id: Any, raw: Any, if_rev: Any = None) ->
 def delete(data_dir: str | Path, panel_id: Any) -> None:
     if not isinstance(panel_id, str) or not _PANEL_ID.match(panel_id):
         raise PanelError("bad_id")
-    with _LOCK:
+    with _exclusive(data_dir):
         doc = _writable(data_dir)
         kept = [p for p in doc.panels if p["id"] != panel_id]
         if len(kept) == len(doc.panels):
             raise PanelError("not_found")
+        doomed = next(p for p in doc.panels if p["id"] == panel_id)
+        _drop_copies(doc, panel_id, identity(doomed))
         doc.panels = kept
         _save(data_dir, doc)

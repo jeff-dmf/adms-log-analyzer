@@ -107,3 +107,14 @@ def test_stream_ends_when_writing_fails():
     thread.start()
     thread.join(5)
     assert not thread.is_alive()
+
+
+def test_the_latest_panels_event_survives_a_new_job_for_late_subscribers():
+    hub = sse.ProgressHub()
+    assert hub.try_begin("j1")
+    hub.publish("panels", {"to_id": 10})
+    hub.publish("panels", {"to_id": 20})
+    hub.finish({})
+    assert hub.try_begin("j2")  # clears the event log of the previous job
+    events, _ = hub.wait(0, 0.01)
+    assert [(e.name, e.data["to_id"]) for e in events] == [("panels", 20)]

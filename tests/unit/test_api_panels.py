@@ -171,3 +171,53 @@ def test_no_panels_means_no_panels_events(tmp_path):
         assert all(e.name != "panels" for e in events)
     finally:
         api.shutdown()
+
+
+def test_a_cycle_that_cannot_be_analysed_is_announced_and_stays_pending(tmp_path, monkeypatch):
+    root = tp.write_folder(tmp_path / "Log", {tw.WFM: tp.make_log(20)})
+    data = tmp_path / "data"
+    panels.create(data, PANEL)
+    api = Api(data)
+    api.jobs.panel_watch = panelrun.PanelWatch(min_interval_s=0)
+    real = panelrun.PanelWatch.process_cycle
+    calls = []
+
+    def flaky(self, *args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("reader failed")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(panelrun.PanelWatch, "process_cycle", flaky)
+    try:
+        case = api.jobs.start_watch("followed", root, "default", 0.05)
+        hub = api.jobs.hub(case)
+        first, seq = wait_event(hub, "panels")
+        assert first.data["failed"] is True and first.data["full"] is True and first.data["refresh"] == []
+        with open(root / tw.WFM, "ab") as handle:
+            handle.write(tp.make_log(10, start=900_000))
+        second, _ = wait_event(hub, "panels", seq)
+        assert second.data["full"] is True and second.data["refresh"]  # the failed stretch is recovered
+        assert second.data["from_id"] == 0
+    finally:
+        api.shutdown()
+
+
+def test_a_late_subscriber_gets_the_latest_panels_event_and_events_carry_continuity(tmp_path):
+    root = tp.write_folder(tmp_path / "Log", {tw.WFM: tp.make_log(20)})
+    data = tmp_path / "data"
+    panels.create(data, PANEL)
+    api = Api(data)
+    api.jobs.panel_watch = panelrun.PanelWatch(min_interval_s=0)
+    try:
+        case = api.jobs.start_watch("followed", root, "default", 0.05)
+        hub = api.jobs.hub(case)
+        first, seq = wait_event(hub, "panels")
+        with open(root / tw.WFM, "ab") as handle:
+            handle.write(tp.make_log(10, start=900_000))
+        second, _ = wait_event(hub, "panels", seq)
+        assert second.data["prev_to_id"] == first.data["to_id"]  # no gap: nothing was missed in between
+        events, _ = hub.wait(0, 0.1)  # a subscriber that arrives now (after the job restarted)
+        assert any(e.name == "panels" for e in events)
+    finally:
+        api.shutdown()
