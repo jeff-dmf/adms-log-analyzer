@@ -122,7 +122,6 @@ function start() {
   // The status bar (UI-13). showMessage stays as the adapter the modules already call.
   const status = createStatusBar(byId("status-bar"), {
     S,
-    helpText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp, S.timelineHint].join(" "),
     // Retry / Dismiss disappeared while focused: a shown target (the grid; with no case, the empty state's button).
     focusFallback: () => {
       const target = fallbackTarget({
@@ -133,6 +132,8 @@ function start() {
         target.focus();
       }
     },
+    // The "?" button opens the shortcuts dialog (help.shortcuts); actions and ctx exist by the time it is clicked.
+    onHelp: () => actions.invoke("help.shortcuts", ctx),
   });
   const showMessage = (text, isError) => status.message(text, { kind: isError ? "error" : "info" });
   // Connection errors already own the bar: do not repeat them as a message.

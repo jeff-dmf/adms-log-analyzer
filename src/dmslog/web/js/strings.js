@@ -916,9 +916,6 @@ export const S = {
   cmpMetaTid: "TID",
   cmpMetaTemplate: "Message type",
 
-  // Keyboard shortcuts
-  shortcutsHelp: "Shortcuts: n/N next/previous error, t/T next/previous record of the message type, b bookmark the selected record, B open the bookmarks, c compare two records.",
-
   // Copy as / export of the view
   cxTitle: "Copy or export the current view",
   cxWhat: "What",
@@ -1164,7 +1161,6 @@ export const S = {
   hlNavNone: "No more highlighted records in this direction of the view.",
   hlNavNoRules: "No highlight rule is on.",
   hlNavFound: "Highlighted by {name}",
-  hlShortcutsHelp: "Highlights: ] next, [ previous highlighted record of the view.",
   // Case files and folder browser (9.17)
   cfTitle: "ERS files of the new case",
   cfHelp: "Add 1 or more ERS ZIPs (Enterprise and Sensitive files, or several captures). Use Browse to pick them in a file dialog; Ctrl or Shift selects many at once.",
@@ -1306,7 +1302,6 @@ export const S = {
   vsFullOther: "The stack is limited to {n} views.",
   vsAtRoot: "Already at the root view.",
   vsNeedCase: "Open a case first.",
-  vsShortcutsHelp: "Alt+Left/Alt+Right previous/next view of the stack.",
   // Filter strip (UI-18)
   stripLabel: "Filters and views",
   stripFiltered: "Filtered",
