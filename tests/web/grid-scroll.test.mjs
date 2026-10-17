@@ -385,7 +385,10 @@ test("the hot scroll and render paths read no geometry (static): only readHeight
   const reads = source.split("\n").filter((l) => /clientHeight|\.scrollTop\b(?!\s*=)/.test(l) && !/^\s*\/\//.test(l));
   assert.equal(reads.length, 2, reads.join("\n"));
   assert.ok(/readHeight\(\) \{/.test(method("readHeight")) && /clientHeight/.test(method("readHeight")));
-  assert.ok(/scrollTop/.test(method("onScrollBar")));
+  assert.ok(!/scrollTop|scrollLeft/.test(method("onScrollBar")), "the echo path of the scroll event reads nothing");
+  assert.ok(/scrollTop/.test(method("readNativeScroll")) && /scrollLeft/.test(method("readNativeScroll")));
+  // Only the user's input and the settle check reach readNativeScroll.
+  assert.deepEqual(source.split("\n").filter((l) => /readNativeScroll\(\)/.test(l) && !/^\s*readNativeScroll|^\s*\/\//.test(l)).length, 2);
 });
 
 test("syncScroll never reads scrollTop back (static)", () => {
@@ -532,4 +535,124 @@ test("the resizer measures the horizontal range in apply() and stops after destr
   grid.resizer.measureLayout();
   assert.equal(grid.resizer.maxScrollX, 2500);
   assert.equal(grid.rowsLayer.style.minWidth, widths);
+});
+
+
+// -- native scroll, coalesced echoes, jumps, resizer destroy ---------------------------------------------------
+
+test("a native sideways drag moves the header and the kept position; the next wheel continues from there", () => {
+  const { grid, vp, runFrames } = setup();
+  vp.values.scrollLeft = 600; // the user dragged the horizontal bar
+  vp.el.dispatch("scroll");
+  assert.equal(grid.header.scrollLeft, 600);
+  assert.equal(grid.resizer.scrollX, 600);
+  wheel(vp, 0, { deltaX: 30 });
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 630);
+  assert.equal(grid.header.scrollLeft, 630);
+});
+
+test("the native path reads each position once per event; the echo of the grid's own writes reads nothing", () => {
+  const { grid, vp, runFrames } = setup();
+  grid.window.top = 120;
+  grid.syncScroll();
+  const before = { ...vp.reads };
+  vp.el.dispatch("scroll"); // echo
+  assert.equal(vp.reads.total, before.total);
+  vp.values.scrollLeft = 200;
+  vp.el.dispatch("scroll"); // not an echo
+  assert.equal((vp.reads.scrollLeft || 0) - (before.scrollLeft || 0), 1);
+  assert.equal((vp.reads.scrollTop || 0) - (before.scrollTop || 0), 1);
+  void runFrames;
+});
+
+test("a drag coalesced with an echo is found by the settle check, once the events stop", async () => {
+  const { grid, vp } = setup();
+  grid.pump = () => {};
+  grid.window.top = 150;
+  grid.syncScroll();
+  const written = grid.lastScroll;
+  vp.values.scrollTop = written + 500; // the browser delivered one event for the write and the drag
+  vp.values.scrollLeft = 70;
+  const before = vp.reads.total;
+  vp.el.dispatch("scroll");
+  assert.equal(vp.reads.total, before, "the echo itself is not read");
+  assert.equal(grid.pendingJump, null);
+  await new Promise((r) => setTimeout(r, 160));
+  assert.notEqual(grid.pendingJump, null, "the position the user left the bar at is followed");
+  assert.equal(grid.lastScroll, written + 500);
+  assert.equal(grid.header.scrollLeft, 70);
+  grid.destroy();
+});
+
+test("a real echo settles without a jump, and a burst of echoes costs one check", async () => {
+  const { grid, vp, runFrames } = setup();
+  for (let i = 0; i < 20; i += 1) {
+    wheel(vp, 3 * ROW_HEIGHT);
+    runFrames();
+    vp.el.dispatch("scroll");
+  }
+  const before0 = { ...vp.reads };
+  await new Promise((r) => setTimeout(r, 160));
+  assert.equal(vp.reads.scrollTop - (before0.scrollTop || 0), 1, "one read of each position for the whole burst");
+  assert.equal(vp.reads.scrollLeft - (before0.scrollLeft || 0), 1);
+  assert.equal(grid.pendingJump, null, "the bar is where the rows are");
+  grid.destroy();
+});
+
+test("wheel travel gathered while a jump is on its way is dropped when the page arrives", async () => {
+  const { grid, vp, pages, runFrames } = withApi();
+  grid.window.top = 100;
+  const done = grid.goEnd();
+  wheel(vp, -10 * ROW_HEIGHT); // between the request and the answer
+  pages[0].resolve({ rows: makeRows(300), prev: null, next: null });
+  await done;
+  runFrames();
+  assert.equal(grid.window.top, grid.window.maxTop(grid.visible), "the old travel did not move the new rows");
+  assert.equal(grid.wheelRemainder, 0);
+});
+
+test("the resizer takes no input after destroy: handles, keys, double click, fit, reset, setWidth", () => {
+  const { grid } = setup();
+  const resizer = grid.resizer;
+  const handle = grid.header.children[0].children.find((c) => c.className === "col-resizer");
+  assert.ok(handle, "the header has separators");
+  let prepared = 0;
+  resizer.prepareFit = () => { prepared += 1; return null; };
+  resizer.setWidth("msg", 640, false);
+  const widthBefore = resizer.model.get("msg");
+  assert.equal(widthBefore, 640);
+  resizer.destroy();
+  resizer.destroy();
+  assert.equal(resizer.listeners.signal.aborted, true);
+  let captured = 0;
+  handle.setPointerCapture = () => { captured += 1; };
+  const events = [
+    handle.dispatch("dblclick"), handle.dispatch("keydown", { key: "ArrowRight" }), handle.dispatch("keydown", { key: "Home" }),
+    handle.dispatch("pointerdown", { button: 0, clientX: 10, pointerId: 1 }),
+  ];
+  assert.ok(events.every((e) => e.prevented === false), "no handler acts");
+  assert.equal(captured, 0);
+  resizer.fit("msg");
+  resizer.setWidth("msg", 900, true);
+  resizer.reset();
+  resizer.adoptScrollLeft(300);
+  assert.equal(prepared, 0);
+  assert.equal(resizer.model.get("msg"), widthBefore);
+  assert.equal(resizer.scrollX, 0);
+});
+
+test("a settle check pending at destroy never runs", async () => {
+  const { grid, vp } = setup();
+  grid.window.top = 150;
+  grid.syncScroll();
+  vp.values.scrollTop = grid.lastScroll + 500;
+  vp.el.dispatch("scroll"); // echo: the check is scheduled
+  grid.destroy();
+  await new Promise((r) => setTimeout(r, 160));
+  assert.equal(grid.pendingJump, null);
+  assert.equal(grid.settleTimer, null);
+  const reads = vp.reads.total;
+  grid.settleScroll(); // even called by hand
+  assert.equal(vp.reads.total, reads);
 });

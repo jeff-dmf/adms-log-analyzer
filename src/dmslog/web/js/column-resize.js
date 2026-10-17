@@ -25,12 +25,24 @@ export class ColumnResizer {
     this.maxScrollX = Infinity;  // furthest scrollLeft; Infinity while nothing was measured
     this.pageWidth = 0;          // client width of the viewport (a "page" of the horizontal wheel)
     this.destroyed = false;
+    this.listeners = new AbortController(); // every listener of the separators; destroy() removes them all
   }
 
-  // Stops the resizer: no layout work after the grid is dropped.
+  // Stops the resizer: its listeners are removed and every entry point (pointer, keys, double click, setWidth, fit,
+  // reset, apply) does nothing afterwards, so no measurement or stored preference follows a dropped grid.
   destroy() {
     this.destroyed = true;
+    this.listeners.abort();
     this.headerCells.clear();
+  }
+
+  // The body was scrolled sideways by the browser (not by scrollTo()): the header and the kept position follow.
+  adoptScrollLeft(x) {
+    if (this.destroyed || typeof x !== "number" || Math.abs(x - this.scrollX) < 1) {
+      return;
+    }
+    this.scrollX = x;
+    this.header.scrollLeft = x;
   }
 
   // Measures the width of one character of the grid font and applies it to the default widths. Called once at the start
@@ -82,7 +94,11 @@ export class ColumnResizer {
   }
 
   bindHandle(handle, key) {
+    const signal = this.listeners.signal;
     handle.addEventListener("pointerdown", (event) => {
+      if (this.destroyed) {
+        return;
+      }
       if (event.button !== undefined && event.button !== 0) {
         return;
       }
@@ -94,23 +110,32 @@ export class ColumnResizer {
       handle.classList.add("dragging");
       const move = (e) => this.setWidth(key, startWidth + e.clientX - startX, false);
       const end = () => {
+        if (this.destroyed) {
+          return;
+        }
         handle.removeEventListener("pointermove", move);
         handle.removeEventListener("pointerup", end);
         handle.removeEventListener("pointercancel", end);
         handle.classList.remove("dragging");
         this.model.save();
       };
-      handle.addEventListener("pointermove", move);
-      handle.addEventListener("pointerup", end);
-      handle.addEventListener("pointercancel", end);
-    });
-    handle.addEventListener("click", (event) => event.stopPropagation());
+      handle.addEventListener("pointermove", move, { signal });
+      handle.addEventListener("pointerup", end, { signal });
+      handle.addEventListener("pointercancel", end, { signal });
+    }, { signal });
+    handle.addEventListener("click", (event) => event.stopPropagation(), { signal });
     handle.addEventListener("dblclick", (event) => {
+      if (this.destroyed) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       this.fit(key);
     });
     handle.addEventListener("keydown", (event) => {
+      if (this.destroyed) {
+        return;
+      }
       const action = keyAction(event.key, event.shiftKey);
       if (!action) {
         return;
@@ -124,10 +149,13 @@ export class ColumnResizer {
       } else {
         this.setWidth(key, this.model.get(key) + action.delta, true);
       }
-    });
+    }, { signal });
   }
 
   setWidth(key, width, persist) {
+    if (this.destroyed) {
+      return;
+    }
     this.model.set(key, width, persist);
     this.apply();
   }
@@ -135,6 +163,9 @@ export class ColumnResizer {
   // Fits the column to the widest of its header and the rendered cells, measured without the applied
   // width and without flex-grow (see intrinsicWidths).
   fit(key) {
+    if (this.destroyed) {
+      return;
+    }
     const restore = this.prepareFit(key);
     try {
       const cells = [...this.getVisibleCells(key)];
@@ -151,6 +182,9 @@ export class ColumnResizer {
   }
 
   reset() {
+    if (this.destroyed) {
+      return;
+    }
     this.model.reset();
     this.apply();
   }

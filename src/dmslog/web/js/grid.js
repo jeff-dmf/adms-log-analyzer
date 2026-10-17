@@ -125,6 +125,7 @@ export class Grid {
     this.countFresh = false; // shownCount belongs to the view whose rows are in the window (see adopt())
     this.visible = 0;
     this.lastScroll = 0;
+    this.settleTimer = null;
     this.selfScroll = false; // syncScroll() moved the bar and its scroll event has not arrived yet
     this.pendingJump = null;
     this.selectTimer = null;
@@ -278,6 +279,8 @@ export class Grid {
     this.invalidateCount();  // the same for the count
     this.pending = null;
     this.listeners.abort();
+    clearTimeout(this.settleTimer);
+    this.settleTimer = null;
     if (this.fontsHandler && document.fonts && typeof document.fonts.removeEventListener === "function") {
       document.fonts.removeEventListener("loadingdone", this.fontsHandler);
     }
@@ -784,6 +787,7 @@ export class Grid {
         view.committed = true;
         this.pending = null;
       }
+      this.cancelWheel(); // travel gathered while this page was on its way was meant for the rows it replaces
       this.window.load(page.rows, page.prev, page.next, 0);
       this.ensurePool();
       if (dir === "back") {
@@ -944,12 +948,34 @@ export class Grid {
     this.lastScroll = top;
   }
 
+  // The scroll event of the viewport. The echo of a write made here (syncScroll, resizer.scrollTo) is not read: the
+  // wheel path stays free of layout reads. But an echo can hide a user drag that the browser coalesced with it, so one
+  // check is scheduled for when the events stop (settleScroll). Any other event is the user's: both positions are read.
   onScrollBar() {
     if (this.selfScroll) {
-      this.selfScroll = false; // the echo of syncScroll(): nothing to read, the position is the one just written
+      this.selfScroll = false;
+      clearTimeout(this.settleTimer);
+      this.settleTimer = setTimeout(() => this.settleScroll(), 100);
       return;
     }
-    const position = this.viewport.scrollTop;
+    this.readNativeScroll();
+  }
+
+  // One read of each position, only for input that did not come from this code: a drag of either scrollbar.
+  readNativeScroll() {
+    this.resizer.adoptScrollLeft(this.viewport.scrollLeft); // header and kept position follow a sideways drag
+    this.followBar(this.viewport.scrollTop);
+  }
+
+  settleScroll() {
+    this.settleTimer = null;
+    if (!this.destroyed) {
+      this.readNativeScroll();
+    }
+  }
+
+  // The scrollbar is at `position`: when it is not where the rows are, the user moved it, so the rows go there.
+  followBar(position) {
     if (Math.abs(position - this.lastScroll) < 3 || this.caseId === null) {
       return;
     }
