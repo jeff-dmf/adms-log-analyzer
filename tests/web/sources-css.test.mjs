@@ -59,5 +59,5 @@ test("index.html loads sources.css after app.css and carries the case header the
   assert.match(html, /id="open-form"[^>]*\shidden/);
   assert.match(html, /id="case-add-files"[^>]*aria-controls="open-form"/);
   assert.match(main, /collectionsPanel\.setSources\(list\)/);
-  assert.match(main, /focusNewCase: \(\) => panel\.revealNewCase\(\)/);
+  assert.match(main, /focusNewCase: \(\) => withSources/);
 });
