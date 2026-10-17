@@ -46,6 +46,7 @@ export class SourcesPanel {
     this.loadEmpty = () => import("./case-empty.js"); // replaced by tests
     this.menuReady = null; // promise of the case menu (ui-menu.js loads on first use)
     this.loadMenu = () => import("./ui-menu.js"); // replaced by tests
+    this.sourcesLoud = { gen: -1, loud: false }; // a non-silent query of this case selection was superseded: the winner stays non-silent
     this.sourcesSeq = 0; // one per /sources query: only the latest one may publish (an older answer is stale data)
     this.caseGen = 0; // counts the case selections (A -> B -> A is three): a late window of an earlier one is dropped
     this.opSeq = 0; // ids of the operations (an opening or a resume) the panel runs: this.waiter is the current one
@@ -534,6 +535,7 @@ export class SourcesPanel {
   async refreshSources(quiet = false) {
     if (this.caseId === null) {
       this.sourcesSeq += 1;
+      this.sourcesLoud = { gen: -1, loud: false };
       this.sources = [];
       this.renderSources();
       this.handlers.onSources(this.sources, quiet);
@@ -544,6 +546,14 @@ export class SourcesPanel {
     const caseId = this.caseId;
     const gen = this.caseGen;
     const seq = ++this.sourcesSeq;
+    // A silent query (the progress refresh) must not swallow the view load that a non-silent one (selecting the case, the
+    // end of a job) asked for: if that one is superseded, the query that wins publishes for both. Per case selection.
+    if (this.sourcesLoud.gen !== gen) {
+      this.sourcesLoud = { gen, loud: false };
+    }
+    if (!quiet) {
+      this.sourcesLoud.loud = true;
+    }
     let sources;
     let failure = null;
     try {
@@ -555,6 +565,8 @@ export class SourcesPanel {
     if (this.caseId !== caseId || this.caseGen !== gen || seq !== this.sourcesSeq) {
       return; // another case, or a newer query of this one is (or was) in charge: its answer is the one that counts
     }
+    quiet = quiet && !this.sourcesLoud.loud;
+    this.sourcesLoud = { gen, loud: false }; // the winner carries the load: nothing is owed any more
     if (failure) {
       this.sources = [];
       this.handlers.onMessage(failure.message, true);

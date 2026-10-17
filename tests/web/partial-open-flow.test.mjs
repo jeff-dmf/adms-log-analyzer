@@ -1672,3 +1672,80 @@ test("two /sources queries of the same case: only the latest publishes, even if 
   assert.deepEqual(ctx.panel.sources.map((s) => s.name), ["rest.log"]);
   assert.equal(ctx.calls.messages.some(([t]) => t === "old broke"), false);
 });
+
+// quiet = true means "do not reload the view" (main.js applies it only when onSources gets quiet=false)
+async function racing(order, { sameGeneration = true } = {}) {
+  const ctx = page();
+  await ctx.panel.selectCase("A");
+  const flags = [];
+  ctx.panel.handlers.onSources = (list, quiet) => flags.push(quiet);
+  const gates = [deferred(), deferred()];
+  let n = 0;
+  api.sources = async () => { const gate = gates[n]; n += 1; await gate.promise; return { sources: [{ id: n, name: "s" + n }] }; };
+  const first = ctx.panel.refreshSources(order[0]);
+  if (!sameGeneration) {
+    await ctx.panel.selectCase("A"); // another selection: a new generation (this one starts its own queries)
+    n = 0; gates.length = 0; gates.push(deferred(), deferred());
+  }
+  const second = ctx.panel.refreshSources(order[1]);
+  for (const g of gates) { g.resolve(); }
+  await Promise.all([first, second]);
+  return flags;
+}
+
+test("a silent query that supersedes a non-silent one still loads the view; the other combinations keep their flag", async () => {
+  assert.deepEqual(await racing([false, true]), [false], "non-silent then silent: the winner (silent) publishes non-silent");
+  assert.deepEqual(await racing([true, false]), [false], "silent then non-silent: non-silent");
+  assert.deepEqual(await racing([true, true]), [true], "silent and silent stay silent");
+  assert.deepEqual(await racing([false, false]), [false]);
+});
+
+test("the owed view load does not leak into the next generation or the next query", async () => {
+  const ctx = page();
+  await ctx.panel.selectCase("A");
+  const flags = [];
+  ctx.panel.handlers.onSources = (list, quiet) => flags.push(quiet);
+  const gate = deferred();
+  api.sources = async () => { await gate.promise; return { sources: [] }; };
+  const loud = ctx.panel.refreshSources(false); // superseded by a newer selection of the same case
+  const switching = ctx.panel.selectCase("A");
+  gate.resolve();
+  await Promise.all([loud, switching]);
+  flags.length = 0;
+  api.sources = async () => ({ sources: [] });
+  await ctx.panel.refreshSources(true);
+  assert.deepEqual(flags, [true], "a later silent refresh is silent again");
+});
+
+test("the sequence of the review: progress refresh fires after selectCase(B) started its own", async () => {
+  const ctx = page();
+  await ctx.panel.selectCase("A");
+  const flags = [];
+  ctx.panel.handlers.onSources = (list, quiet) => flags.push(quiet);
+  const gates = [deferred(), deferred()];
+  let n = 0;
+  api.sources = async () => { const g = gates[n]; n += 1; await g.promise; return { sources: [{ id: 5, name: "B.log" }] }; };
+  const select = ctx.panel.selectCase("B"); // refreshSources(false)
+  await tick();
+  const timer = ctx.panel.refreshSources(true); // the throttled progress refresh, for B
+  gates[0].resolve();
+  gates[1].resolve();
+  await Promise.all([select, timer]);
+  assert.deepEqual(flags, [false], "the view of B is loaded");
+  assert.equal(ctx.panel.caseId, "B");
+});
+
+test("a view load owed by an older case selection is not transferred to a silent query of a newer one", async () => {
+  const ctx = page();
+  await ctx.panel.selectCase("A");
+  const flags = [];
+  ctx.panel.handlers.onSources = (list, quiet) => flags.push(quiet);
+  const gate = deferred();
+  api.sources = async () => { await gate.promise; return { sources: [] }; };
+  const loud = ctx.panel.refreshSources(false);
+  ctx.panel.caseGen += 1; // a newer selection of the case, which only starts a silent query
+  const silent = ctx.panel.refreshSources(true);
+  gate.resolve();
+  await Promise.all([loud, silent]);
+  assert.deepEqual(flags, [true]);
+});
