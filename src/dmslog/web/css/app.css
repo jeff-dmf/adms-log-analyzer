@@ -286,6 +286,11 @@ progress {
   overflow-anchor: none; /* the grid positions its own rows; anchoring would reset scrollTop when a dock resizes it */
   border: 1px solid var(--line);
   background: var(--surface-panel);
+  /* UI-27: a wheel burst re-renders the rows only; nothing inside may invalidate layout outside. Size containment is
+     safe because the box never takes its size from its content: flex 1 1 0 plus min-height above, in a column panel
+     whose width the page grid gives (the 20000 px spacer only adds scroll travel). Paint containment clips to the
+     padding box, where overflow already clips; the focus ring of the viewport itself is its own outline, outside. */
+  contain: strict;
 }
 
 /* A view change in flight (UI-25): the old rows stay, muted; the thin bar shows up only after 400 ms of aria-busy. */
@@ -339,6 +344,10 @@ progress {
   cursor: default;
   border-bottom: 1px solid transparent;
   overflow: hidden;
+  /* UI-27: a row is laid out and painted on its own. Selection, focus and forced-colors outlines are drawn inward
+     (negative offset, inset shadow), and the hidden text is a 1 px clipped box, so paint containment cuts nothing.
+     No content-visibility here: pooled rows are rewritten in place and must always be rendered. */
+  contain: layout paint style;
 }
 
 /* Background priority: selection > user highlight (highlight.css) > abnormal row > hover. */

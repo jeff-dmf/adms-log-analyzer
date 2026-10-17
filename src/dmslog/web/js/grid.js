@@ -37,11 +37,42 @@ function fieldText(value) {
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
+// One frame of the browser. Resolved at call time (a test installs its own); a timer stands in where there is no
+// animation frame. The Grid takes both as options (requestFrame, cancelFrame) so a test can drive the frames by hand.
+function defaultRequestFrame(callback) {
+  return typeof requestAnimationFrame === "function" ? requestAnimationFrame(callback) : setTimeout(callback, 16);
+}
+
+function defaultCancelFrame(handle) {
+  if (typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(handle);
+  } else {
+    clearTimeout(handle);
+  }
+}
+
+// Wheel travel of one event, normalised from pixel (0), line (1) or page (2) units.
+//   vertical: in rows (a line is 3 rows, a page is the visible rows less one, a pixel is 1/ROW_HEIGHT row);
+//   horizontal: in px (a line is 3 rows of height, a page is the viewport width).
+export function wheelTravel(event, { visible = 1, pageWidth = 0 } = {}) {
+  const mode = event.deltaMode;
+  if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+    const raw = event.deltaX || event.deltaY || 0;
+    const px = mode === 1 ? raw * 3 * ROW_HEIGHT : mode === 2 ? raw * (pageWidth > 0 ? pageWidth : 400) : raw;
+    return { axis: "x", amount: px };
+  }
+  const raw = event.deltaY || 0;
+  const rows = mode === 1 ? raw * 3 : mode === 2 ? raw * Math.max(1, visible - 1) : raw / ROW_HEIGHT;
+  return { axis: "y", amount: rows };
+}
+
 export class Grid {
   constructor({
     viewport, rowsLayer, spacer, header, onSelect, onCount, onPosition, onError, getMark, onVisible, onView,
-    getHighlight, getRepeat, onFailure, onRecovered, onAbandon, onContextMenu,
+    getHighlight, getRepeat, onFailure, onRecovered, onAbandon, requestFrame, cancelFrame, onContextMenu,
   }) {
+    this.requestFrame = requestFrame || defaultRequestFrame;
+    this.cancelFrame = cancelFrame || defaultCancelFrame;
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
     this.spacer = spacer;
@@ -91,13 +122,30 @@ export class Grid {
     this.loading = false;
     this.controller = null;
     this.pool = [];
+    this.rowSeq = 0;      // mints the unique id of a row element (aria-activedescendant target, see render())
+    this.active = null;   // {slot, recordId}: the row aria-activedescendant points at
+    this.countFresh = false; // shownCount belongs to the view whose rows are in the window (see adopt())
     this.visible = 0;
     this.lastScroll = 0;
     this.pendingJump = null;
     this.selectTimer = null;
-    this.wheelRemainder = 0;
+    this.wheelRemainder = 0; // wheel travel in rows not applied yet (the fraction stays); applied once per frame
+    this.wheelX = 0;         // horizontal wheel travel in px not applied yet (clamped in order at every event)
+    this.wheelFrame = null;  // handle of the frame that applies it, or null
+    this.viewHeight = 0;     // viewport height from the ResizeObserver (0: not reported yet or hidden), see ensurePool()
+    this.observer = null;
+    this.listeners = new AbortController();
+    this.fontsHandler = null;
+    this.destroyed = false;
     this.knownHeight = 0; // viewport height at the last resize (ensureSelectedVisible)
     this.spacer.style.height = SCROLL_SPAN + "px";
+    // The header sits outside the scrolling viewport in the page layout; aria-owns puts it inside the grid for assistive
+    // technology (UI-26). The attributes below are set on the grid itself, so this adds no layout work.
+    this.idPrefix = viewport.id || "grid";
+    rowsLayer.setAttribute("role", "rowgroup");
+    if (header.id) {
+      viewport.setAttribute("aria-owns", header.id);
+    }
     this.resizer = new ColumnResizer({
       viewport, rowsLayer, header,
       // Every pooled slot, hidden ones included: a hidden row keeps the current widths when render() shows it again.
@@ -109,35 +157,61 @@ export class Grid {
     });
     if (typeof document !== "undefined" && document.fonts && typeof document.fonts.addEventListener === "function") {
       // A font that finished loading changes the character width: measure again (never per row or on scroll).
-      document.fonts.addEventListener("loadingdone", () => {
-        if (this.resizer.measure()) {
+      this.fontsHandler = () => {
+        if (!this.destroyed && this.resizer.measure()) {
           this.resizer.apply();
         }
-      });
+      };
+      document.fonts.addEventListener("loadingdone", this.fontsHandler);
     }
     this.bind();
     this.renderHeader();
   }
 
   bind() {
+    // The wheel only adds up: the rows move once per frame (applyWheel), so 120 events in a burst cost one render.
+    // Every listener is tied to one AbortController (destroy() removes them all); the handlers also check `destroyed`
+    // for hosts that ignore the signal.
+    const signal = this.listeners.signal;
     this.viewport.addEventListener("wheel", (event) => {
       event.preventDefault();
-      if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
-        this.viewport.scrollLeft += event.deltaX || event.deltaY; // horizontal scroll of wide columns
+      if (this.destroyed) {
         return;
       }
-      const unit = event.deltaMode === 1 ? 1 : ROW_HEIGHT;
-      this.wheelRemainder += event.deltaY / unit * (event.deltaMode === 1 ? 3 : 1);
-      const rows = Math.trunc(this.wheelRemainder);
-      if (rows !== 0) {
-        this.wheelRemainder -= rows;
-        this.scrollRows(rows);
+      const travel = wheelTravel(event, { visible: this.visible, pageWidth: this.resizer.pageWidth });
+      const w = this.window;
+      if (travel.axis === "x") {
+        // Clamped at every event, so a reversal after the edge starts from the edge (excess is dropped, not remembered).
+        // A delta, never a target: the frame adds it to the position the body has THEN (a drag of the bar in between
+        // is kept). Clamped here against the position now, so an excess at an edge is dropped in order.
+        const at = this.resizer.scrollX;
+        this.wheelX = Math.min(Math.max(this.wheelX + travel.amount, -at), this.resizer.maxScrollX - at);
+      } else {
+        this.wheelRemainder = Math.min(Math.max(this.wheelRemainder + travel.amount, -w.top), w.maxTop(this.visible) - w.top);
       }
-    }, { passive: false });
-    this.viewport.addEventListener("scroll", () => this.onScrollBar());
-    this.viewport.addEventListener("keydown", (event) => this.onKey(event));
-    this.viewport.addEventListener("contextmenu", (event) => this.onContextMenuEvent(event));
+      if (this.wheelFrame === null) {
+        this.wheelFrame = this.requestFrame(() => this.applyWheel());
+      }
+    }, { passive: false, signal });
+    this.viewport.addEventListener("scroll", () => {
+      if (!this.destroyed) {
+        this.onScrollBar();
+      }
+    }, { signal });
+    this.viewport.addEventListener("keydown", (event) => {
+      if (!this.destroyed) {
+        this.onKey(event);
+      }
+    }, { signal });
+    this.viewport.addEventListener("contextmenu", (event) => {
+      if (!this.destroyed) {
+        this.onContextMenuEvent(event);
+      }
+    }, { signal });
     this.rowsLayer.addEventListener("click", (event) => {
+      if (this.destroyed) {
+        return;
+      }
       const rowEl = event.target.closest(".grid-row");
       if (rowEl && rowEl.dataset.index !== undefined) {
         this.window.selected = Number(rowEl.dataset.index);
@@ -145,20 +219,90 @@ export class Grid {
         this.notifySelect(0);
         this.viewport.focus();
       }
-    });
+    }, { signal });
     if (typeof ResizeObserver === "function") {
       // The grid owns the rule "the selected row stays visible" (docs/notas/ui-contratos.md, 2.5): a dock opening,
       // dragging or maximizing, a drawer or a breakpoint all arrive here as a size change of the viewport.
-      new ResizeObserver((entries) => {
+      this.observer = new ResizeObserver((entries) => {
+        if (this.destroyed) {
+          return;
+        }
         const last = entries && entries.length ? entries[entries.length - 1] : null;
-        this.ensureSelectedVisible(last && last.contentRect ? last.contentRect.height : this.viewport.clientHeight);
-      }).observe(this.viewport);
+        const height = last && last.contentRect ? last.contentRect.height : this.readHeight();
+        this.resizer.measureLayout(); // bar width and horizontal range follow the viewport size, never the scroll
+        const wasHidden = !(this.viewHeight > 0);
+        this.viewHeight = height > 0 ? height : 0; // ensurePool() sizes the pool from this, with no layout read
+        this.ensureSelectedVisible(height);
+        if (wasHidden && height > 0) {
+          this.syncScroll(); // a scrollTop written while the viewport was hidden did not stick
+        }
+      });
+      this.observer.observe(this.viewport);
+    }
+  }
+
+  // The only place that reads the viewport height from the DOM: before the observer reported a height (or without a
+  // ResizeObserver) and while the viewport is hidden. Never on the scroll path once a height is known.
+  readHeight() {
+    const height = this.viewport.clientHeight;
+    return height > 0 ? height : 0;
+  }
+
+  // Applies what the wheel gathered since the last frame: one move of the rows, one render.
+  applyWheel() {
+    this.wheelFrame = null;
+    const x = this.wheelX;
+    this.wheelX = 0;
+    if (x !== 0) {
+      this.resizer.scrollTo(this.resizer.scrollX + x); // the kept position, clamped; writes only
+    }
+    const rows = Math.trunc(this.wheelRemainder);
+    if (rows !== 0) {
+      this.wheelRemainder -= rows;
+      this.moveRows(rows);
+    }
+  }
+
+  // Drops the wheel travel and the frame that would apply it: the rows it was meant for are gone (another case or
+  // view, or the grid itself).
+  cancelWheel() {
+    if (this.wheelFrame !== null) {
+      this.cancelFrame(this.wheelFrame);
+      this.wheelFrame = null;
+    }
+    this.wheelRemainder = 0;
+    this.wheelX = 0;
+  }
+
+  // The grid is dropped: no frame, observer callback or wheel event touches it afterwards.
+  destroy() {
+    if (this.destroyed) {
+      return;
+    }
+    this.destroyed = true;
+    this.cancelWheel();
+    this.cancel();           // page requests: generation bumped (a late answer is superseded) and the fetch aborted
+    this.invalidateCount();  // the same for the count
+    this.pending = null;
+    this.listeners.abort();
+    if (this.fontsHandler && document.fonts && typeof document.fonts.removeEventListener === "function") {
+      document.fonts.removeEventListener("loadingdone", this.fontsHandler);
+    }
+    this.resizer.destroy();
+    clearTimeout(this.selectTimer);
+    if (this.pendingJump !== null) {
+      clearTimeout(this.pendingJump);
+      this.pendingJump = null;
+    }
+    if (this.observer) {
+      this.observer.disconnect();
+      this.observer = null;
     }
   }
 
   // Keeps the selected row visible after the viewport changed height. Public and idempotent. Height 0 (the dock is
   // maximized and hides the grid) recalculates nothing and leaves `top` alone; the same height twice does nothing.
-  ensureSelectedVisible(height = this.viewport.clientHeight) {
+  ensureSelectedVisible(height = this.viewHeight > 0 ? this.viewHeight : this.readHeight()) {
     if (!(height > 0)) {
       this.render();
       return;
@@ -187,10 +331,17 @@ export class Grid {
 
   // -- configuration ------------------------------------------------------------------------
 
-  setColumns(keys) {
-    this.visibleColumns = COLUMNS.map((c) => c.key).filter((k) => keys.includes(k));
+  // Drops every pooled row. aria-activedescendant must not point at a removed element while the rows are rebuilt (or
+  // when the reload that follows fails), so the reference goes with the pool.
+  discardPool() {
     this.pool = [];
     this.rowsLayer.textContent = "";
+    this.viewport.removeAttribute("aria-activedescendant");
+  }
+
+  setColumns(keys) {
+    this.visibleColumns = COLUMNS.map((c) => c.key).filter((k) => keys.includes(k));
+    this.discardPool();
     this.renderHeader();
     this.render();
   }
@@ -203,8 +354,7 @@ export class Grid {
       return Promise.resolve();
     }
     this.fieldColumns = next;
-    this.pool = [];
-    this.rowsLayer.textContent = "";
+    this.discardPool();
     this.renderHeader();
     return this.caseId === null ? Promise.resolve() : this.reload();
   }
@@ -216,8 +366,7 @@ export class Grid {
       return Promise.resolve();
     }
     this.collectionColumn = next;
-    this.pool = [];
-    this.rowsLayer.textContent = "";
+    this.discardPool();
     this.renderHeader();
     return this.caseId === null || !reload ? Promise.resolve() : this.reload();
   }
@@ -336,6 +485,7 @@ export class Grid {
       this.header.appendChild(cell);
       this.resizer.decorate(cell, column);
     }
+    this.viewport.setAttribute("aria-colcount", String(this.columnDefs().length));
     this.resizer.measure(); // once per column change
     this.resizer.apply();
   }
@@ -380,6 +530,10 @@ export class Grid {
   }
 
   adopt(view) {
+    if (!view.committed) {
+      this.countFresh = false; // the count shown so far is the previous view's until its own answer is emitted
+    }
+    this.cancelWheel(); // travel gathered over the old rows does not move the new ones
     this.caseId = view.caseId;
     this.filter = view.filter;
     this.range = view.range;
@@ -435,6 +589,7 @@ export class Grid {
   // so a late answer can neither paint its rows nor register a recovery.
   closeCase() {
     this.pending = null;
+    this.cancelWheel();
     this.cancel();
     this.invalidateCount();
     if (this.pendingJump !== null) {
@@ -535,6 +690,7 @@ export class Grid {
     if (this.caseId === null) {
       this.pending = null;
       this.shownCount = null;
+      this.syncGridAria();
       this.onCount(null);
       this.onPosition(null);
       return "ok";
@@ -547,6 +703,9 @@ export class Grid {
   // The count has its own generation: navigation (jump, scroll) must not discard its answer; only a newer
   // count or a reload (new case or filter) does. `view`: the pending view change it belongs to, if any.
   async refreshCount(announce = false, view = null) {
+    if (this.destroyed) {
+      return;
+    }
     this.countGeneration += 1;
     const generation = this.countGeneration;
     if (this.countController) {
@@ -591,6 +750,8 @@ export class Grid {
 
   emitCount(value, options) {
     this.shownCount = value;
+    this.countFresh = value !== null && typeof value === "object";
+    this.syncGridAria();
     this.onCount(value, options);
   }
 
@@ -603,6 +764,10 @@ export class Grid {
   // only when its page arrives. On failure the window, the selection and the scroll position are left as they were.
   // Resolves to "ok", "failed" or "superseded".
   async jump(cursor, dir, view = null) {
+    if (this.destroyed) {
+      return "superseded";
+    }
+    this.cancelWheel(); // Home, End, a time and the scrollbar land here: older wheel travel must not move the new rows
     if (view === null) {
       this.abandonPending();
     }
@@ -626,6 +791,7 @@ export class Grid {
         view.committed = true;
         this.pending = null;
       }
+      this.cancelWheel(); // travel gathered while this page was on its way was meant for the rows it replaces
       this.window.load(page.rows, page.prev, page.next, 0);
       this.ensurePool();
       if (dir === "back") {
@@ -680,6 +846,9 @@ export class Grid {
   // Fetches more rows while the viewport is close to either end of the buffer. Stops at a failure (a scroll does not
   // hammer a server that is down); retry() or any navigation starts it again.
   async pump() {
+    if (this.destroyed) {
+      return;
+    }
     const generation = this.generation;
     while (generation === this.generation && !this.loading && this.failure === null) {
       const w = this.window;
@@ -750,7 +919,16 @@ export class Grid {
 
   // -- scrolling ----------------------------------------------------------------------------
 
+  // A programmatic move of the rows: whatever the wheel gathered was meant for the old position.
   scrollRows(delta) {
+    this.cancelWheel();
+    this.moveRows(delta);
+  }
+
+  moveRows(delta) {
+    if (this.destroyed) {
+      return;
+    }
     this.window.moveTop(delta, this.visible);
     this.render();
     this.syncScroll();
@@ -762,10 +940,17 @@ export class Grid {
     if (!row || this.pendingJump !== null) {
       return;
     }
-    this.viewport.scrollTop = tsToScroll(row.ts, this.range);
-    this.lastScroll = this.viewport.scrollTop;
+    // Write only: reading scrollTop back would force a layout on every wheel frame. The target is an integer inside
+    // the scroll travel (the rows layer fills the viewport, the spacer adds exactly SCROLL_SPAN), so it is what the
+    // browser keeps, and the scroll event it causes matches lastScroll within onScrollBar's 3 px tolerance.
+    const top = tsToScroll(row.ts, this.range);
+    this.viewport.scrollTop = top;
+    this.lastScroll = top;
   }
 
+  // The scrollbar was moved: when it is not where the rows are (3 px tolerance), the user did it, so the rows go there.
+  // Known, as on main: this reads scrollTop on every scroll event, including the echo of syncScroll(); the real cost
+  // in Chrome is measured by tools/ui_perf.mjs (follow-up).
   onScrollBar() {
     const position = this.viewport.scrollTop;
     if (Math.abs(position - this.lastScroll) < 3 || this.caseId === null) {
@@ -793,6 +978,7 @@ export class Grid {
     const moves = { ArrowDown: 1, ArrowUp: -1, PageDown: page, PageUp: -page };
     if (Object.prototype.hasOwnProperty.call(moves, event.key)) {
       event.preventDefault();
+      this.cancelWheel(); // the selection moved the rows: older wheel travel is stale
       this.window.moveSelection(moves[event.key], this.visible);
       this.render();
       this.syncScroll();
@@ -862,7 +1048,8 @@ export class Grid {
   // -- rendering ----------------------------------------------------------------------------
 
   ensurePool() {
-    const height = this.viewport.clientHeight || 400;
+    // The height the observer reported; the DOM is read only while none is known (readHeight).
+    const height = (this.viewHeight > 0 ? this.viewHeight : this.readHeight()) || 400;
     this.visible = Math.max(1, Math.ceil(height / ROW_HEIGHT) + 1);
     while (this.pool.length < this.visible) {
       this.pool.push(this.createRow());
@@ -873,6 +1060,7 @@ export class Grid {
     const rowEl = document.createElement("div");
     rowEl.className = "grid-row";
     rowEl.setAttribute("role", "row");
+    this.mintId(rowEl);
     rowEl.style.height = ROW_HEIGHT + "px";
     const cells = {};
     for (const column of this.columnDefs()) {
@@ -884,13 +1072,45 @@ export class Grid {
       cells[column.key] = cell;
     }
     this.rowsLayer.appendChild(rowEl);
-    return { el: rowEl, cells };
+    const hint = document.createElement("span"); // bookmark / highlight state as text for screen readers
+    hint.className = "visually-hidden";
+    return { el: rowEl, cells, hint };
+  }
+
+  // A new unique id for a row element. Ids are not reused: when the selected record moves into the slot the previous
+  // selection used (scrolling by one row keeps the slot), the row gets a fresh id so aria-activedescendant changes.
+  mintId(el) {
+    this.rowSeq += 1;
+    el.id = this.idPrefix + "-row-" + this.rowSeq;
+  }
+
+  // Grid-level ARIA, attributes only (no layout reads). The header is row 1. Positions are exact only while the window
+  // still starts at the first record (keyset paging has no row offsets otherwise); aria-rowcount is the total when the
+  // count is exact and at least as large as what is loaded, else -1 (unknown).
+  syncGridAria() {
+    const w = this.window;
+    const count = this.shownCount;
+    const known = this.countFresh && count !== null && typeof count === "object" && count.exact && count.n >= w.rows.length;
+    this.viewport.setAttribute("aria-rowcount", known ? String(count.n + 1) : "-1");
+    this.viewport.setAttribute("aria-colcount", String(this.columnDefs().length));
+    this.exactPositions = w.atStart;
+    if (this.header.setAttribute) {
+      if (this.exactPositions) {
+        this.header.setAttribute("aria-rowindex", "1");
+      } else {
+        this.header.removeAttribute("aria-rowindex");
+      }
+    }
   }
 
   render() {
+    if (this.destroyed) {
+      return;
+    }
     this.ensurePool();
     const w = this.window;
-    this.rowsLayer.setAttribute("aria-rowcount", String(w.rows.length));
+    this.syncGridAria();
+    let activeEl = null;
     const shown = [];
     for (let i = 0; i < this.pool.length; i += 1) {
       const slot = this.pool[i];
@@ -899,6 +1119,7 @@ export class Grid {
       if (!row || i >= this.visible) {
         slot.el.hidden = true;
         delete slot.el.dataset.index;
+        slot.el.removeAttribute("aria-rowindex");
         continue;
       }
       slot.el.hidden = false;
@@ -909,10 +1130,20 @@ export class Grid {
       const mark = this.getMark(row.id);
       const hl = this.getHighlight(row.id);
       const repeat = this.getRepeat(row.id);
-      slot.el.setAttribute("aria-label", format(S.rowLabel, { id: row.id }) + (mark ? ", " + markerLabel(mark) : "") +
-        (hl ? ", " + hl.label : "") + (repeat ? ", " + repeat.label : ""));
+      if (selected) {
+        if (this.active && this.active.slot === slot && this.active.recordId !== row.id) {
+          this.mintId(slot.el);
+        }
+        this.active = { slot, recordId: row.id };
+        activeEl = slot.el;
+      }
+      if (this.exactPositions) {
+        slot.el.setAttribute("aria-rowindex", String(index + 2));
+      } else {
+        slot.el.removeAttribute("aria-rowindex");
+      }
       if (repeat) {
-        slot.el.dataset.rp = "1"; // the glyph is CSS (css/repeats.css); the words are the tooltip and the aria-label
+        slot.el.dataset.rp = "1"; // the glyph is CSS (css/repeats.css); the words are the tooltip and the hidden text
         slot.el.title = repeat.label;
       } else {
         delete slot.el.dataset.rp;
@@ -931,10 +1162,45 @@ export class Grid {
       shown.push(row.id);
       slot.el.dataset.sev = String(row.sev);
       this.fillCells(slot, row);
+      this.fillHint(slot, mark, hl, repeat);
+    }
+    if (activeEl) {
+      this.viewport.setAttribute("aria-activedescendant", activeEl.id);
+    } else {
+      this.active = null;
+      this.viewport.removeAttribute("aria-activedescendant"); // the selection is outside the rendered rows
     }
     this.onVisible(shown);
     this.updateStatus();
     this.onView();
+  }
+
+  // Bookmark and highlight as hidden text in the row's first cell, so the row keeps its cell contents for screen readers
+  // (an aria-label on the row would replace them). fillCells() has just cleared the cell.
+  fillHint(slot, mark, hl, repeat) {
+    const parts = [];
+    if (mark) {
+      parts.push(markerLabel(mark));
+    }
+    if (hl) {
+      parts.push(hl.label);
+    }
+    if (repeat) {
+      parts.push(repeat.label);
+    }
+    if (parts.length === 0) {
+      return;
+    }
+    const text = parts.join(", ");
+    // The Source cell may carry an aria-label (sensitive files), which replaces its content in the accessible name: it
+    // does not host the hint. If it is the only column, the text goes into its label instead.
+    const key = Object.keys(slot.cells).find((k) => k !== "source");
+    if (key !== undefined) {
+      slot.hint.textContent = text;
+      slot.cells[key].appendChild(slot.hint);
+    } else if (slot.cells.source) {
+      slot.cells.source.setAttribute("aria-label", slot.cells.source.title + ", " + text);
+    }
   }
 
   fillCells(slot, row) {
