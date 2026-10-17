@@ -5,6 +5,17 @@
   color: var(--muted);
 }
 
+/* In the selected row the cell sets the colour pair (also in forced colours): the glyph follows it. */
+.grid-row.selected .col-msg::before {
+  color: inherit;
+}
+
+@media (forced-colors: active) {
+  .grid-row.selected .col-msg::before {
+    color: HighlightText;
+  }
+}
+
 .rp-title {
   margin: 0 0 4px;
   font-size: 1em;

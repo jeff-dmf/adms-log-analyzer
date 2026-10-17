@@ -687,6 +687,9 @@ function start() {
       if (repeats) {
         repeats.invalidate(); // the ids moved
       }
+      if (repeatDetail) {
+        repeatDetail.close(); // the line (and a "Go to" in flight) belong to the old ids
+      }
       loadTemplates(caseId);
       knowledge.reset(); // the ERS configuration may have been read again
       dock.notify("indexed"); // Bookmarks, Unknown message types, Effective configuration

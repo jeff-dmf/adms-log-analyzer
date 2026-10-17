@@ -99,7 +99,6 @@ export function initMissingPanel(container, { api, getCase, onShowInGrid, onRequ
   listBox.tabIndex = -1;
   const summaryHead = element("h3", "", S.msSummaryTitle);
   const summaryNote = element("div", "ev-muted ms-note");
-  summaryNote.setAttribute("role", "status");
   const summaryTable = element("table", "ui-table ms-table ms-summary-table");
   summaryTable.appendChild(element("caption", "visually-hidden", S.msSummaryCaption));
   summaryTable.appendChild(headRow([S.msColKind, S.msColFamily, S.msColName, S.msColMissing, S.msColCount, S.msColCauses, ""]));
@@ -108,7 +107,6 @@ export function initMissingPanel(container, { api, getCase, onShowInGrid, onRequ
   summaryBox.append(summaryHead, summaryNote, summaryTable);
   const listHead = element("h3", "", S.msListTitle);
   const moreNote = element("div", "ui-error ms-more-error");
-  moreNote.setAttribute("role", "alert");
   moreNote.hidden = true;
   const listTable = element("table", "ui-table ms-table ms-list-table");
   listTable.appendChild(element("caption", "visually-hidden", S.msListCaption));
@@ -159,6 +157,12 @@ export function initMissingPanel(container, { api, getCase, onShowInGrid, onRequ
 
   function renderList(state) {
     if (state.version !== renderedVersion || state.items.length < rendered) {
+      const active = document.activeElement;
+      if (within(listBody, active) && active.dataset && active.dataset.id !== undefined) {
+        wantFocus = active.dataset.id;
+      } else if (active !== listBox) {
+        wantFocus = null; // the focus is somewhere else: nothing to give back
+      }
       listBody.textContent = "";
       rowsById.clear();
       rendered = 0;
@@ -169,7 +173,22 @@ export function initMissingPanel(container, { api, getCase, onShowInGrid, onRequ
     }
     rendered = state.items.length;
     listTable.hidden = state.items.length === 0;
+    if (wantFocus !== null) {
+      // The rebuild removed the focused button: give the focus to the same event's button once it is listed again (a
+      // refresh empties the list first), meanwhile to the list itself.
+      const same = listBody.children.map((tr) => tr.children[0].children[0]).find((b) => b && b.dataset.id === wantFocus);
+      if (same) {
+        same.focus();
+        wantFocus = null;
+      } else {
+        listBox.focus();
+        if (state.status === "ready") {
+          wantFocus = null;
+        }
+      }
+    }
   }
+  let wantFocus = null;
 
   // ---- summary rows
   let summaryKey = null;
@@ -252,17 +271,30 @@ export function initMissingPanel(container, { api, getCase, onShowInGrid, onRequ
     if (hadMoreFocus && !more) {
       listBox.focus(); // the button went away (the end of the list): the focus stays in the list
     }
+    // ONE announcement path: the main status line. The summary note and the pagination alert are visible text only;
+    // their failures are said here too.
+    let text;
+    let isError = false;
     if (state.status === "nocase") {
-      setStatus(S.msNoCase, false);
+      text = S.msNoCase;
     } else if (state.status === "loading") {
-      setStatus(S.msLoading, false);
+      text = S.msLoading;
     } else if (state.status === "error") {
-      setStatus(S.msError + (state.error ? ": " + state.error : ""), true);
+      text = S.msError + (state.error ? ": " + state.error : "");
+      isError = true;
     } else if (state.items.length === 0) {
-      setStatus(state.next !== null ? S.msNoneYet : state.filters.cause || state.filters.status || state.filters.kind || state.filters.name ? S.msEmptyFiltered : S.msEmpty, false);
+      text = state.next !== null ? S.msNoneYet : state.filters.cause || state.filters.status || state.filters.kind || state.filters.name ? S.msEmptyFiltered : S.msEmpty;
     } else {
-      setStatus(countText(state.items.length, state.next !== null), false);
+      text = countText(state.items.length, state.next !== null);
     }
+    if (state.moreError) {
+      text = S.msMoreError + ": " + state.moreError;
+      isError = true;
+    } else if (state.summary.status === "error" && !isError) {
+      text += ". " + S.msSummaryError;
+      isError = true;
+    }
+    setStatus(text, isError);
   }
 
   const flow = createMissingFlow({ api, getCase, onState });

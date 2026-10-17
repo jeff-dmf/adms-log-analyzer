@@ -106,6 +106,7 @@ EXPECTED_MODULES = {
     "missing-model.js",
     "missing-panel.js",
     "repeat-detail.js",
+    "repeat-filter.js",
     "repeat-model.js",
     "alerts-model.js",
     "alerts-panel.js",

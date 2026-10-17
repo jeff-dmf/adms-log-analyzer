@@ -19,6 +19,7 @@ test("main.js loads the repeats late and retryable, feeds the grid, the detail a
   assert.match(main, /repeatDetail\.show\(entry\)/);
   assert.match(main, /import\("\.\/repeat-detail\.js"\)/);
   assert.equal((main.match(/repeats\.invalidate\(\)/g) || []).length, 2, "a new case and a new indexing");
+  assert.match(main, /repeats\.invalidate\(\); \/\/ the ids moved\s*\}\s*if \(repeatDetail\) \{\s*repeatDetail\.close\(\)/);
   assert.match(main, /repeats: \(\) => repeats,/);
   assert.match(main, /setUserFilter: \(filter\) => setUserFilter\(filter\)\.catch\(showError\)/);
 });
@@ -51,4 +52,10 @@ test("the modules write text only", () => {
   for (const file of ["repeat-model.js", "repeat-detail.js", "missing-model.js", "missing-panel.js"]) {
     assert.doesNotMatch(read("js/" + file), /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/, file);
   }
+});
+
+test("repeats.css: the glyph follows the cell colour in the selected row, with a system colour in forced colours", () => {
+  const css = read("css/repeats.css");
+  assert.match(css, /\.grid-row\.selected \.col-msg::before\s*\{\s*color: inherit;/);
+  assert.match(css, /forced-colors: active\)[^}]*\{[^}]*\.grid-row\.selected \.col-msg::before\s*\{\s*color: HighlightText;/s);
 });

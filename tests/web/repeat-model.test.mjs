@@ -490,3 +490,15 @@ test("a server that answers after the abort (it cannot be trusted to honour it):
   assert.equal(await lookup, undefined);
   assert.equal(store.get(7, "B"), null);
 });
+
+test("single lookups obey the same budget as ensure(): the store starts over instead of growing without end", async () => {
+  const { store, calls } = storeWorld();
+  for (let id = 1; id <= MAX_KNOWN + 3; id += 1) {
+    const asking = store.lookup(id);
+    calls.at(-1).d.resolve(marks(id === 1 ? { 1: { prev: 0, dt_ms: 1, earlier: 1 } } : {}));
+    await asking;
+  }
+  assert.equal(store.known(1), false, "the first one was forgotten");
+  assert.equal(store.get(1), null);
+  assert.equal(store.known(MAX_KNOWN + 3), true, "the last one is kept");
+});

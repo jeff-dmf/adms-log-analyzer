@@ -3,7 +3,7 @@
 // on the composed JSON, because the JSON forgets where a condition came from ({sev:{le:4}} can be "Hide noise"
 // or "Severity at least Warning"). No DOM. The texts come from `S` (strings.js), passed in.
 import { topNodes, wrapNodes } from "./filters.js";
-import { hideSpec, repeatSpec, spanText } from "./repeat-model.js";
+import { hideSpec, repeatSpec, spanText } from "./repeat-filter.js";
 import { format, pluralKey } from "./strings.js";
 
 export const MAX_LABEL = 32; // chip label length; the title keeps the full text

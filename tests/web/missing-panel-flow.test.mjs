@@ -311,3 +311,37 @@ test("the kind and status selectors read the list again with their values", asyn
   assert.deepEqual(w.of("list").at(-1).params, { limit: 200, kind: "map_reload", status: "truncated" });
   assert.deepEqual(w.of("summary").at(-1).params, { kind: "map_reload", status: "truncated" });
 });
+
+test("one announcement path: only the main status line is a live region; failures of the summary and of Load more are said there", async () => {
+  const w = world();
+  await loaded(w, [item(1)], "t1");
+  const live = () => w.host.all().filter((n) => n.getAttribute && (n.getAttribute("role") === "status" || n.getAttribute("role") === "alert"
+    || n.getAttribute("aria-live")));
+  assert.deepEqual(live().map((n) => n.className.split(" ").includes("ms-status")), [true]);
+  w.more().click();
+  w.of("list")[1].d.reject(new Error("net down"));
+  await tick();
+  assert.match(w.statusText(), /Could not load more: net down/);
+  assert.equal(byClass(w.host, "ms-more-error")[0].hidden, false, "still visible as text");
+  const failing = w.panel.refresh();
+  w.of("list")[2].d.resolve({ items: [item(1)], next: null });
+  w.of("summary").at(-1).d.reject(new Error("sum"));
+  await failing;
+  await tick();
+  assert.match(w.statusText(), /1 event shown\. Could not load the summary/);
+  assert.ok(cls(byClass(w.host, "ms-status")[0], "is-error"));
+});
+
+test("an automatic refresh that rebuilds the list keeps the focus on the same event, or on the list when it is gone", async () => {
+  const w = world();
+  await loaded(w, [item(1), item(2)]);
+  const second = byClass(w.host, "ms-open")[1];
+  second.focus();
+  await loaded(w, [item(1), item(2)]);
+  const now = byClass(w.host, "ms-open")[1];
+  assert.notEqual(now, second, "rebuilt");
+  assert.equal(doc.activeElement, now);
+  now.focus();
+  await loaded(w, [item(1)]);
+  assert.equal(doc.activeElement, w.section("ms-list"));
+});

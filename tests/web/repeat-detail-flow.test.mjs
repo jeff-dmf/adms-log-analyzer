@@ -192,14 +192,16 @@ test("refresh redraws only when the line changed (a focused button is not rebuil
   await refreshing;
   assert.match(w.host.textContent, /\+99 ms/);
   refreshing = w.detail.refresh();
-  const second = w.detail.refresh(); // one is in flight: no second request
-  assert.equal(w.lookups.length, 4);
-  w.lookups[3].d.resolve(null);
+  const second = w.detail.refresh(); // restarts the one in flight (it may be for an old window)
+  assert.equal(w.lookups.length, 5);
+  assert.equal(w.lookups[3].signal.aborted, true);
+  w.lookups[3].d.resolve(mark(1));
+  w.lookups[4].d.resolve(null);
   await Promise.all([refreshing, second]);
   assert.equal(w.host.hidden, true);
   w.detail.close();
   await w.detail.refresh();
-  assert.equal(w.lookups.length, 4, "a closed detail asks for nothing");
+  assert.equal(w.lookups.length, 5, "a closed detail asks for nothing");
 });
 
 test("a new window redraws the line even when the mark is the same number", async () => {
@@ -213,4 +215,60 @@ test("a new window redraws the line even when the mark is the same number", asyn
   await refreshing;
   assert.match(w.host.textContent, /window 5 s/);
   assert.ok(S.repeatTitle);
+});
+
+test("new marks while Go to is working do not cancel it nor leave the button disabled", async () => {
+  const w = world();
+  const showing = w.detail.show({ id: 9 });
+  w.lookups[0].d.resolve(mark(5));
+  await showing;
+  const go = byClass(w.host, "rp-go")[0];
+  go.click();
+  assert.equal(go.getAttribute("aria-disabled"), "true");
+  const refreshing = w.detail.refresh(); // the grid looked up more rows
+  w.lookups[1].d.resolve(mark(5)); // same line: the button is kept
+  await refreshing;
+  assert.equal(byClass(w.host, "rp-go")[0], go);
+  assert.equal(w.entries[0].signal.aborted, false, "the navigation goes on");
+  w.entries[0].d.resolve({ id: 5, ts: 3 });
+  await tick();
+  assert.deepEqual(w.reveals, [{ id: 5, ts: 3 }]);
+  assert.equal(go.getAttribute("aria-disabled"), null);
+});
+
+test("cancelling the navigation (a new record, a reindexing) gives the button back", async () => {
+  const w = world();
+  const showing = w.detail.show({ id: 9 });
+  w.lookups[0].d.resolve(mark(5));
+  await showing;
+  const go = byClass(w.host, "rp-go")[0];
+  go.click();
+  w.detail.close();
+  assert.equal(go.getAttribute("aria-disabled"), null);
+  assert.equal(w.entries[0].signal.aborted, true);
+  assert.equal(w.host.hidden, true);
+  // a refresh that finds no mark any more cancels it too
+  const again = w.detail.show({ id: 9 });
+  w.lookups[1].d.resolve(mark(5));
+  await again;
+  const go2 = byClass(w.host, "rp-go")[0];
+  go2.click();
+  const refreshing = w.detail.refresh();
+  w.lookups[2].d.resolve(null);
+  await refreshing;
+  assert.equal(go2.getAttribute("aria-disabled"), null);
+  assert.equal(w.entries[1].signal.aborted, true);
+});
+
+test("a window changed while a lookup is on the way: the refresh asks again with the new window and draws it", async () => {
+  const w = world();
+  const showing = w.detail.show({ id: 9 });
+  w.state.window = 5000;
+  const refreshing = w.detail.refresh();
+  assert.equal(w.lookups.length, 2, "a new lookup starts");
+  w.lookups[0].d.resolve(mark(1)); // the old window's answer: dropped
+  w.lookups[1].d.resolve(mark(2));
+  await Promise.all([showing, refreshing]);
+  assert.match(w.host.textContent, /#2/);
+  assert.match(w.host.textContent, /window 5 s/);
 });

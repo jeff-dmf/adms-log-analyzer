@@ -1,7 +1,7 @@
 // "Repeated record" line of the record detail (ROADMAP 9.12): "Repeat of #12, +340 ms", how many earlier occurrences
 // the window holds, and a button that goes to the record repeated. Hidden when the record repeats nothing, when marks
 // are off or while the answer is not in. Text only. The answers carry the ticket of the record that asked: a record
-// shown later, a case change or a window change drops the ones in flight, so a late answer never draws over a newer one.
+// shown later, a case change or a window change drops the ones in flight (and asks again), so a late answer never draws over a newer one.
 import { earlierLabel, spanText } from "./repeat-model.js";
 import { S, format } from "./strings.js";
 
@@ -29,19 +29,28 @@ export function initRepeatDetail(host, { repeats, api, getCase, onReveal, onErro
   let controller = null;
   let revealTicket = 0;
   let revealController = null;
+  let revealButton = null; // the button of the navigation in flight (aria-disabled while it works)
   let current = null; // { id, caseId } of the record shown
 
-  function cancel() {
-    pending = false;
+  // The lookup of the mark and the navigation to the record repeated are separate operations: new marks cancel the
+  // first only; a new record, a case change or a reindexing cancel both.
+  function cancelLookup() {
     ticket += 1;
     if (controller) {
       controller.abort();
       controller = null;
     }
+  }
+
+  function cancelReveal() {
     revealTicket += 1;
     if (revealController) {
       revealController.abort();
       revealController = null;
+    }
+    if (revealButton) {
+      revealButton.removeAttribute("aria-disabled"); // the button may outlive the operation: it must work again
+      revealButton = null;
     }
   }
 
@@ -79,47 +88,48 @@ export function initRepeatDetail(host, { repeats, api, getCase, onReveal, onErro
     host.hidden = false;
   }
 
-  let pending = false; // a lookup is in flight for the record shown
-
   // Looks the mark of `entry` up and draws it. keep = the same record again (marks changed): the line stays as it is
   // until the answer differs, so a focused button is not rebuilt for nothing.
   async function load(entry, keep) {
-    cancel();
+    cancelLookup();
     if (!keep) {
+      cancelReveal();
       clear();
     }
     if (!entry || !Number.isSafeInteger(entry.id)) {
       current = null;
+      cancelReveal();
       clear();
       return;
     }
     const caseId = getCase();
     if (caseId === null || caseId === undefined) {
       current = null;
+      cancelReveal();
       clear();
       return;
     }
     current = { id: entry.id, caseId };
     const mine = ticket;
     controller = new AbortController();
-    pending = true;
     try {
       const mark = await repeats.lookup(entry.id, controller.signal);
       if (mine !== ticket || getCase() !== caseId) {
         return;
       }
       if (!mark) {
+        cancelReveal();
         clear();
       } else if (host.dataset.signature !== signatureOf(mark)) {
         draw(mark);
       }
     } catch (err) {
       if (mine === ticket && !isAbort(err)) {
+        cancelReveal();
         clear(); // a hint: nothing to say when it cannot be had
       }
     } finally {
       if (mine === ticket) {
-        pending = false;
       }
     }
   }
@@ -136,12 +146,10 @@ export function initRepeatDetail(host, { repeats, api, getCase, onReveal, onErro
     if (!Number.isSafeInteger(prev) || getCase() !== caseId) {
       return;
     }
-    revealTicket += 1;
+    cancelReveal();
     const mine = revealTicket;
-    if (revealController) {
-      revealController.abort();
-    }
     revealController = new AbortController();
+    revealButton = button;
     button.setAttribute("aria-disabled", "true"); // aria-disabled, not disabled: the focus stays on the button
     try {
       const entry = await api.entry(caseId, prev, revealController.signal);
@@ -155,6 +163,8 @@ export function initRepeatDetail(host, { repeats, api, getCase, onReveal, onErro
     } finally {
       if (mine === revealTicket) {
         button.removeAttribute("aria-disabled");
+        revealButton = null;
+        revealController = null;
       }
     }
   });
@@ -164,10 +174,11 @@ export function initRepeatDetail(host, { repeats, api, getCase, onReveal, onErro
     show,
     // The marks changed (the grid looked up more rows, the window changed): draw the record shown again.
     refresh() {
-      return current === null || pending ? Promise.resolve() : load({ id: current.id }, true);
+      return current === null ? Promise.resolve() : load({ id: current.id }, true); // restarts a lookup in flight: it may be for the old window
     },
     close() {
-      cancel();
+      cancelLookup();
+      cancelReveal();
       current = null;
       clear();
     },
