@@ -40,10 +40,11 @@ test("highlighted rows get data-hl and a label; others lose it", async () => {
   const [first, second] = rowsLayer.children;
   assert.equal(first.dataset.hl, undefined);
   assert.equal(second.dataset.hl, "pink");
-  assert.match(second.attrs["aria-label"], /, highlighted by <b>x<\/b>$/);
+  assert.equal(second.attrs["aria-label"], undefined, "UI-26: no aria-label on the row, it would replace the cells");
+  assert.equal(second.children[0].children.at(-1).textContent, "highlighted by <b>x</b>", "the rule name is hidden text in the first cell");
   assert.deepEqual(visible.at(-1), [1, 2]);
   colors = {};
   grid.render();
   assert.equal(second.dataset.hl, undefined);
-  assert.doesNotMatch(second.attrs["aria-label"], /highlighted/);
+  assert.doesNotMatch(second.children[0].textContent, /highlighted/);
 });

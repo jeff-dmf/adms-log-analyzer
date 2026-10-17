@@ -7,7 +7,7 @@ function fakeElement() {
     style: {}, dataset: {}, children: [], hidden: false, clientHeight: 440, scrollTop: 0, className: "",
     classList: { toggle() {} },
     addEventListener() {}, appendChild(c) { this.children.push(c); return c; },
-    setAttribute() {}, focus() {},
+    setAttribute() {}, removeAttribute() {}, focus() {},
     set textContent(v) { this.children = []; this._t = v; }, get textContent() { return this._t || ""; },
   };
 }

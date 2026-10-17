@@ -199,7 +199,6 @@ export const S = {
   gridPosition: "Showing from {time}",
   extraLinesOne: "+{count} line",
   extraLinesOther: "+{count} lines",
-  rowLabel: "Record {id}",
 
   // Follow tail
   followNewOne: "{count} new record",
