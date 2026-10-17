@@ -158,3 +158,27 @@
     border: 1px solid CanvasText;
   }
 }
+
+/* ---- Resume indexing: the offer under the case header when a partial opening left work (M9 9.9) ---------------- */
+.resume-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.resume-banner[hidden],
+.resume-banner [hidden] {
+  display: none;
+}
+
+.resume-banner-text {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
