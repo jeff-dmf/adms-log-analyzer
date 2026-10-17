@@ -362,7 +362,7 @@ class IngestJobs:
         self._watched: dict[str, str] = {}  # case -> resolved folder followed by ``serve --watch``
         self._watch_enabled = False  # set when ``serve --watch`` starts; kept while serving
         self.alerts = alerts.AlertState()  # cooldowns, alerted operations and history of the local alerts
-        self.panel_watch = panelrun.PanelWatch()  # frequency limit of the ``panels`` refresh events
+        self.panel_watch = panelrun.PanelWatch()  # sequence and frequency limit of the ``panels`` notices
 
     def _describe(self, error: BaseException) -> str:
         """Safe error text (fixed description plus alias-normalized components)."""
@@ -576,22 +576,17 @@ class IngestJobs:
         except Exception:  # noqa: BLE001 - alerts must not stop the follow mode
             return []
 
-    def _panel_refresh(self, cid: str, baseline: int | None, report: CycleReport) -> dict[str, Any] | None:
-        """Body of the ``panels`` event for a follow cycle. Never raises; a cycle that cannot be analysed
-        stays pending as a full refresh and is announced as ``failed``."""
-        result = report.result
-        events_changed = None if result is None else (result.events_derived > 0 or result.links_created > 0)
+    def _panel_notice(self, cid: str, report: CycleReport) -> dict[str, Any] | None:
+        """Body of the ``panels`` event for a follow cycle with news (best effort: never raises)."""
         try:
-            with self._store.reader(cid) as conn:
-                until = alerts.max_entry_id(conn)
-                body = self.panel_watch.process_cycle(
-                    conn, self._store.data_dir, cid, baseline, until, events_changed=events_changed
-                )
-        except Exception:  # noqa: BLE001 - panels must not stop the follow mode
             try:
-                body = self.panel_watch.note_failure(cid, baseline)
-            except Exception:  # noqa: BLE001
-                return None
+                with self._store.reader(cid) as conn:
+                    to_id: int | None = alerts.max_entry_id(conn)
+            except Exception:  # noqa: BLE001 - the id is informative only
+                to_id = None
+            body = self.panel_watch.notice(self._store.data_dir, cid, to_id)
+        except Exception:  # noqa: BLE001 - panels must not stop the follow mode
+            return None
         return None if body is None else {"cycle": report.cycle, **body}
 
     def _watch_cycle(self, cid: str, watcher: Watcher, hub: ProgressHub) -> CycleReport | None:
@@ -652,7 +647,7 @@ class IngestJobs:
             try:
                 found = self._evaluate_alerts(cid, baseline) if news else []
                 if news and report is not None:
-                    panel_body = self._panel_refresh(cid, baseline, report)
+                    panel_body = self._panel_notice(cid, report)
             finally:
                 hub.finish(done)
             if news and report is not None:
@@ -660,7 +655,7 @@ class IngestJobs:
                 for body in found:
                     hub.publish("alert", body)
                 if panel_body is not None:
-                    hub.publish("panels", panel_body)  # not coalesced: each carries its own id range
+                    hub.publish("panels", panel_body)  # not coalesced: a notice per cycle
         return report
 
 
@@ -1099,7 +1094,6 @@ class Api:
             ("PUT", re.compile(r"/api/panels\Z"), self.update_panel),
             ("DELETE", re.compile(r"/api/panels\Z"), self.delete_panel),
             ("POST", re.compile(r"/api/panels/run\Z"), self.run_panel),
-            ("POST", re.compile(r"/api/panels/changes\Z"), self.panel_changes),
         ]
         self._routes += [("POST", re.compile(r"/api/entries/aggregate\Z"), self.entries_aggregate)]
         self._routes += [("POST", re.compile(r"/api/entries/compare\Z"), self.entries_compare)]
@@ -2546,17 +2540,6 @@ class Api:
                     else (lambda: self._knowledge(conn, cid, with_ers=True))
                 )
                 return panelrun.run_panel(conn, panel, widget_ids=wanted, knowledge=know)
-
-        return Response(200, _panel_call(call))
-
-    def panel_changes(self, request: Request) -> Response:
-        """Body: ``{case, since_id}``: widgets to run again for the records above ``since_id``."""
-        body = request.read_body()
-        cid = _case_from_body(self.store, body)
-
-        def call() -> dict[str, Any]:
-            with self.store.reader(cid) as conn:
-                return panelrun.changes_since(conn, self.data_dir, body.get("since_id"))
 
         return Response(200, _panel_call(call))
 

@@ -1,12 +1,10 @@
 """Property tests of the panels (ROADMAP 9.11): validation never fails any other way than PanelError and is
 idempotent, the file round-trips, and the refresh plan equals a Python reference of "a new record matches"."""
 
-import atexit
 import json
 import shutil
 import sys
 import tempfile
-from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -17,8 +15,6 @@ from hypothesis import strategies as st  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unit"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from query_helpers import build_case, open_ro, py_match  # noqa: E402
-from test_filters_properties import _compile, leaf, trees  # noqa: E402
 
 from dmslog.store import panelrun as R  # noqa: E402
 from dmslog.store import panels as P  # noqa: E402
@@ -113,40 +109,6 @@ def test_valid_panels_are_idempotent_and_roundtrip_through_the_file(raw):
         shutil.rmtree(folder, ignore_errors=True)
 
 
-@lru_cache(maxsize=1)
-def _case():
-    folder = Path(tempfile.mkdtemp(prefix="dmslog-panels-case-"))
-    atexit.register(shutil.rmtree, folder, True)
-    rows = build_case(folder / "index.sqlite")
-    return open_ro(folder / "index.sqlite"), rows
-
-
-@SETTINGS
-@given(trees(leaf), st.integers(0, 260), st.booleans())
-def test_the_refresh_plan_equals_the_reference(tree, since, events_changed):
-    if _compile(tree) is None:
-        return
-    conn, rows = _case()
-    until = max(r["id"] for r in rows)
-    w_rows = {"id": "r", "title": "", "query": {"filter": tree}, "chart": "table", "options": {}}
-    w_events = {
-        "id": "e",
-        "title": "",
-        "query": {"rows": "events", "filter": tree},
-        "chart": "table",
-        "options": {},
-    }
-    panel = {"id": "a" * 12, "rev": 1, "name": "p", "widgets": [w_rows, w_events]}
-    plan = R.refresh_plan(conn, [panel], since_id=since, until_id=until, events_changed=events_changed)
-    named = {w for p in plan["panels"] for w in p["widgets"]}
-    fresh = any(since < r["id"] <= until and py_match(tree, r) for r in rows)
-    if plan["conservative"]:  # only a timeout may widen the plan, never narrow it
-        assert ("r" in named) or not fresh
-        return
-    assert ("r" in named) == (fresh or (events_changed and R.depends_on_derived(w_rows["query"])))
-    assert ("e" in named) == (events_changed or fresh)
-
-
 class _Clock:
     t = 0.0
 
@@ -155,52 +117,47 @@ class _Clock:
 
 
 steps = st.lists(
-    st.tuples(st.sampled_from(["cycle", "fail", "unknown"]), st.floats(0, 8), st.integers(0, 40)),
-    min_size=1, max_size=25,
+    st.tuples(st.sampled_from(["notice", "forget", "nopanels"]), st.floats(0, 8), st.integers(0, 12)),
+    min_size=1, max_size=40,
 )  # fmt: skip
 
 
 @SETTINGS
-@given(steps, st.integers(1, 6))
-def test_no_range_is_ever_lost_between_cycles_failures_and_eviction(plan, table):
-    """Oracle: ``unreported`` is the lowest id not yet covered by an UNTHROTTLED event, tracked from the steps
-    alone. Every unthrottled event must start at or below it (a full refresh covers everything)."""
-    from dmslog.store import panelrun
-
+@given(steps, st.integers(1, 6), st.booleans())
+def test_seq_is_strictly_increasing_per_case_and_the_notice_is_idempotent(plan, table, same_to_id):
+    """Oracle: a dict of the last seq seen per case. Whatever happens (throttling, forgetting, eviction of the
+    bounded table), a published notice has a larger seq than any earlier one of its case, and apart from
+    seq/throttle fields it depends only on the arguments, so repeating a notice changes nothing else."""
     folder = Path(tempfile.mkdtemp(prefix="dmslog-panels-watch-"))
+    empty = Path(tempfile.mkdtemp(prefix="dmslog-panels-none-"))
     try:
-        conn, rows = _case()
         P.create(folder, {"name": "p", "widgets": [{"id": "w", "query": {}, "chart": "table"}]})
         clock = _Clock()
-        watch = R.PanelWatch(clock, 5.0)
-        old = panelrun.MAX_THROTTLE_CASES
-        panelrun.MAX_THROTTLE_CASES = table
+        old = R.MAX_THROTTLE_CASES
+        R.MAX_THROTTLE_CASES = table
         try:
-            unreported: dict[str, int | None] = {}
-            seen: set[str] = set()
-            top = 0
+            watch = R.PanelWatch(clock, 5.0)
+            last: dict[str, int] = {}
+            core: dict[tuple[str, int], dict] = {}
             for kind, dt, extra in plan:
                 clock.t += dt
                 case = f"c{extra % 8}"
-                baseline = top
-                top += 1 + extra % 5
-                if kind == "fail":
-                    watch.note_failure(case, baseline)
-                    unreported[case] = min(unreported.get(case, baseline), baseline)
+                if kind == "forget":
+                    watch.forget_case(case)
                     continue
-                known = None if kind == "unknown" else baseline
-                low = 0 if known is None else known
-                before = unreported.get(case)
-                body = watch.process_cycle(conn, folder, case, known, top, events_changed=False)
-                want = low if before is None else min(low, before)
-                if body["throttled"]:
-                    assert body["from_id"] <= want
-                    unreported[case] = want
-                else:
-                    assert body["full"] or (body["from_id"] is not None and body["from_id"] <= want)
-                    unreported.pop(case, None)
-                seen.add(case)
+                to_id = 7 if same_to_id else extra
+                if kind == "nopanels":
+                    assert watch.notice(empty, case, to_id) is None
+                    continue
+                body = watch.notice(folder, case, to_id)
+                assert body["seq"] > last.get(case, 0)
+                last[case] = body["seq"]
+                assert len(watch._last) <= table
+                assert body["throttled"] == (body["retry_after_ms"] > 0)
+                stable = {k: v for k, v in body.items() if k not in ("seq", "throttled", "retry_after_ms")}
+                assert core.setdefault((case, to_id), stable) == stable
         finally:
-            panelrun.MAX_THROTTLE_CASES = old
+            R.MAX_THROTTLE_CASES = old
     finally:
         shutil.rmtree(folder, ignore_errors=True)
+        shutil.rmtree(empty, ignore_errors=True)

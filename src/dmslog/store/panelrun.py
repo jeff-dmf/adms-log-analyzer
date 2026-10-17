@@ -1,4 +1,4 @@
-"""Running panels and refreshing them as the follow mode brings records (ROADMAP 9.11, ARQUITETURA 10.14).
+"""Running panels and the follow-mode notice (ROADMAP 9.11, ARQUITETURA 10.14).
 
 :func:`run_panel` runs the widgets of one panel (``store/panels.py``) with :func:`aggregate.aggregate`
 under one total time budget. A widget that fails or times out is reported on its own (static code and
@@ -6,17 +6,11 @@ text, never the query or any log text) and never stops the others; widgets the b
 ``skipped``. Results come in panel order whatever order the caller asked for, and depend only on the
 case's data, so they do not depend on the order in which it was indexed.
 
-:func:`refresh_plan` answers "which widgets must be run again because records ``since_id < id <=
-until_id`` arrived": a widget needs a new run only when one of the new records matches its filter (a
-probe with ``LIMIT 1`` on the primary key range, the same keyset the alerts use), or, for widgets over
-events, when the cycle derived events. Anything that cannot be decided in time (probe timeout, error,
-probe budget spent) is reported as needing a refresh: the plan may name too many widgets, never too few.
-
-:class:`PanelWatch` is the follow-mode hook: after a cycle it builds the body of the ``panels`` SSE
-event. It limits the frequency per case: inside ``min_interval_s`` of the last evaluation it only
-remembers the earliest unreported id and answers ``throttled`` with ``retry_after_ms``; the client then
-asks ``POST /api/panels/changes`` with ``since_id = from_id`` (or just waits for the next event, whose
-``from_id`` covers it).
+:class:`PanelWatch` is the follow-mode hook. It does NOT decide which widgets changed: after a cycle that
+brought news it only says "something may have changed" (``panels`` SSE event with a strictly increasing
+``seq``), at most once per ``min_interval_s`` per case without ``throttled``. The client re-runs every
+widget of the open panel on any ``panels`` event and on (re)connecting, so a lost or repeated event is
+harmless: the next event, or the reconnection, reloads everything.
 """
 
 from __future__ import annotations
@@ -26,17 +20,15 @@ import sqlite3
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
 from .. import messages
 from . import aggregate
 from . import query as Q
-from .filters import INT64_MAX, QueryInputError, compile_filter
-from .panels import PanelError, _json_text, load
-from .presets import _walk_leaves
+from .filters import QueryInputError
+from .panels import PanelError, load
 
 PANEL_BUDGET_S = 15.0
 MIN_WIDGET_S = 0.05  # below this a widget is not started
@@ -130,124 +122,17 @@ def run_panel(
     }
 
 
-# --------------------------------------------------------------------------- refresh plan
-
-
-# Filter leaves whose truth for an EXISTING record is derived later (an operation ends, a correlation links
-# the record): the records of old cycles can start or stop matching without any new record matching.
-DERIVED_LEAVES = frozenset({"event", "event_status", "event_name", "event_kind", "key"})
-
-
-def depends_on_derived(query: dict[str, Any]) -> bool:
-    """True when the widget's result can change although no new record matches its filter: it works on
-    events, filters by derived leaves (event_status, event_name, event_kind, event, key) or groups/counts
-    by correlation keys or event columns."""
-    if query.get("rows", "entries") == "events":
-        return True
-    tree = query.get("filter")
-    if tree is not None and any(leaf in DERIVED_LEAVES for leaf in _walk_leaves(tree)):
-        return True
-    names = [*query.get("group_by", ()), *query.get("measures", ())]
-    return any(isinstance(n, str) and "key." in n for n in names)
-
-
-def _widget_key(widget: dict[str, Any]) -> tuple[str, str]:
-    return widget["query"].get("rows", "entries"), _json_text(widget["query"].get("filter"))
-
-
-def refresh_plan(
-    conn: sqlite3.Connection | None,
-    panels: Sequence[dict[str, Any]],
-    *,
-    since_id: int,
-    until_id: int,
-    events_changed: bool | None,
-    clock: Callable[[], float] = time.monotonic,
-    budget_s: float = PROBE_BUDGET_S,
-    probe_timeout_s: float = PROBE_TIMEOUT_S,
-) -> dict[str, Any]:
-    """Widgets that must run again after records ``since_id < id <= until_id`` arrived.
-
-    ``events_changed``: the cycle derived events (True), did not (False) or it is unknown (None; handled
-    as True). ``conn`` None means the data cannot be probed: every widget is named. Returns
-    ``{"panels": [{"panel", "widgets": [ids]}], "probed", "conservative"}`` in panel and widget order;
-    panels with nothing to refresh are left out.
-    """
-    deadline = clock() + budget_s
-    memo: dict[tuple[str, str], bool] = {}
-    probed = conservative = 0
-    out: list[dict[str, Any]] = []
-    has_new = until_id > since_id
-    for panel in panels:
-        ids: list[str] = []
-        for widget in panel["widgets"]:
-            key = _widget_key(widget)
-            if events_changed is not False and depends_on_derived(widget["query"]):
-                need = True
-            elif not has_new:
-                need = False
-            elif key in memo:
-                need = memo[key]
-            else:
-                need = _probe(
-                    conn,
-                    widget["query"].get("filter"),
-                    since_id,
-                    until_id,
-                    deadline - clock(),
-                    probe_timeout_s,
-                )
-                if need is None:
-                    conservative += 1
-                    need = True
-                else:
-                    probed += 1
-                memo[key] = need
-            if need:
-                ids.append(widget["id"])
-        if ids:
-            out.append({"panel": panel["id"], "widgets": ids})
-    return {"panels": out, "probed": probed, "conservative": conservative}
-
-
-def _probe(
-    conn: sqlite3.Connection | None, tree: Any, since_id: int, until_id: int, left_s: float, timeout_s: float
-) -> bool | None:
-    """True/False: some new record matches the filter; None: could not be decided."""
-    if conn is None or left_s < MIN_WIDGET_S:
-        return None
-    if tree is None:
-        return True  # no filter: any new record counts
-    try:
-        cf = compile_filter(tree, rowwise=True)
-        with Q.read_guard(conn, min(timeout_s, left_s)):
-            row = conn.execute(
-                f"SELECT 1 FROM entry e WHERE e.id > ? AND e.id <= ? AND ({cf.sql}) LIMIT 1",
-                (since_id, until_id, *cf.params),
-            ).fetchone()
-        return row is not None
-    except (Q.QueryTimeout, QueryInputError, sqlite3.Error, ValueError, RecursionError):
-        return None
-
-
-# --------------------------------------------------------------------------- follow-mode hook
-
-
-@dataclass
-class _CaseState:
-    last: float | None = None  # clock of the last evaluation that was not throttled
-    pending_from: int | None = None  # earliest id not yet reported (None: nothing pending)
-    pending_events: bool | None = False  # events may have changed in the pending stretch (None: unknown)
-    pending_full: bool = False  # the pending stretch could not be analysed: refresh everything
-    prev_to: int | None = None  # ``to_id`` of the previous event published for the case
+# --------------------------------------------------------------------------- follow-mode notice
 
 
 class PanelWatch:
-    """Per-case frequency limit, pending ranges and event body of the ``panels`` SSE event.
+    """Builds the body of the ``panels`` SSE event and limits its frequency per case.
 
-    One table holds everything (bounded to ``MAX_THROTTLE_CASES`` cases, least recently used first out). A
-    case without state (first cycle of the process, or evicted) is answered with a FULL refresh, so
-    forgetting a case can only cost one extra refresh, never a lost change.
+    ``seq`` comes from one counter of the whole watcher, seeded from the wall clock in milliseconds, so it
+    is strictly increasing for every case across publications, evictions of the state table and server
+    restarts. The only per-case state is the instant of the last non-throttled notice (table bounded to
+    ``MAX_THROTTLE_CASES``, least recently used first out; forgetting a case just lets its next notice
+    through).
     """
 
     def __init__(
@@ -258,124 +143,37 @@ class PanelWatch:
         self._clock = clock
         self._interval = min_interval_s
         self._lock = threading.Lock()
-        self._cases: OrderedDict[str, _CaseState] = OrderedDict()
+        self._last: OrderedDict[str, float] = OrderedDict()
+        self._seq = time.time_ns() // 1_000_000
 
     def forget_case(self, case_id: str) -> None:
         with self._lock:
-            self._cases.pop(case_id, None)
+            self._last.pop(case_id, None)
 
-    def _state(self, case_id: str) -> tuple[_CaseState, bool]:
-        """(state, existed); marks the case most recently used and evicts beyond the bound."""
-        state = self._cases.get(case_id)
-        existed = state is not None
-        if state is None:
-            state = self._cases[case_id] = _CaseState()
-        self._cases.move_to_end(case_id)
-        while len(self._cases) > MAX_THROTTLE_CASES:
-            self._cases.popitem(last=False)
-        return state, existed
-
-    def note_failure(self, case_id: str, baseline: int | None) -> dict[str, Any]:
-        """A cycle could not be analysed: keep its range pending as a full refresh and return a ``failed``
-        event body (the client refreshes everything it shows)."""
-        with self._lock:
-            state, _ = self._state(case_id)
-            lo = 0 if baseline is None else baseline
-            state.pending_from = lo if state.pending_from is None else min(state.pending_from, lo)
-            state.pending_full = True
-            body = self._body(state, None, None, throttled=False, full=True, refresh=[])
-            body["failed"] = True
-            state.prev_to = None
-            return body
-
-    def _body(
-        self, state: _CaseState, lo: int | None, until: int | None, *, throttled: bool, full: bool,
-        refresh: list[dict[str, Any]], wait_ms: int = 0,
-    ) -> dict[str, Any]:  # fmt: skip
-        return {
-            "from_id": lo, "to_id": until, "prev_to_id": state.prev_to, "throttled": throttled,
-            "retry_after_ms": wait_ms, "min_interval_ms": round(self._interval * 1000), "full": full,
-            "refresh": refresh,
-        }  # fmt: skip
-
-    def process_cycle(
-        self,
-        conn: sqlite3.Connection | None,
-        data_dir: str | Path,
-        case_id: str,
-        baseline: int | None,
-        until_id: int,
-        *,
-        events_changed: bool | None,
-    ) -> dict[str, Any] | None:
-        """Body of the ``panels`` event for one follow cycle, or None when the user has no panels.
-
-        ``baseline`` is the highest record id before the cycle (None: unknown, so everything refreshes).
-        """
+    def notice(self, data_dir: str | Path, case_id: str, to_id: int | None) -> dict[str, Any] | None:
+        """Body of the ``panels`` event for a cycle that brought news, or None when the user has no panels
+        (or the file is unusable): ``{seq, to_id, throttled, retry_after_ms, min_interval_ms}``."""
         doc = load(data_dir)
         if doc.invalid or not doc.panels:
             self.forget_case(case_id)
             return None
         now = self._clock()
         with self._lock:
-            state, existed = self._state(case_id)
-            lo = baseline
-            if state.pending_from is not None:
-                lo = state.pending_from if lo is None else min(lo, state.pending_from)
-            full = baseline is None or state.pending_full or not existed
-            if state.pending_events is None or events_changed is None:
-                events_changed = None
+            self._seq += 1
+            last = self._last.get(case_id)
+            wait_ms = 0
+            if last is not None and now - last < self._interval:
+                wait_ms = max(1, math.ceil((self._interval - (now - last)) * 1000))
             else:
-                events_changed = events_changed or state.pending_events
-            if state.last is not None and now - state.last < self._interval:
-                # an unknown stretch is "everything since 0"
-                state.pending_from = 0 if baseline is None or lo is None else lo
-                state.pending_events = events_changed
-                state.pending_full = full
-                wait_ms = max(1, math.ceil((self._interval - (now - state.last)) * 1000))
-                body = self._body(
-                    state,
-                    state.pending_from,
-                    until_id,
-                    throttled=True,
-                    full=full,
-                    refresh=[],
-                    wait_ms=wait_ms,
-                )
-                state.prev_to = until_id
-                return body
-            state.last = now
-        everything = [{"panel": p["id"], "widgets": [w["id"] for w in p["widgets"]]} for p in doc.panels]
-        everything = [r for r in everything if r["widgets"]]
-        probed = conservative = 0
-        if full:
-            refresh = everything
-        else:
-            try:
-                plan = refresh_plan(
-                    conn, doc.panels, since_id=lo or 0, until_id=until_id, events_changed=events_changed
-                )
-                refresh, probed, conservative = plan["panels"], plan["probed"], plan["conservative"]
-            except Exception:  # noqa: BLE001 - never lose the range: refresh everything instead
-                refresh, full = everything, True
-        with self._lock:
-            state, _ = self._state(case_id)
-            state.pending_from, state.pending_events, state.pending_full = None, False, False
-            body = self._body(state, None if baseline is None and lo is None else lo, until_id,
-                              throttled=False, full=full, refresh=refresh)  # fmt: skip
-            body.update(probed=probed, conservative=conservative)
-            state.prev_to = until_id
-        return body
-
-
-def changes_since(conn: sqlite3.Connection, data_dir: str | Path, since_id: Any) -> dict[str, Any]:
-    """The pull form of the event (``POST /api/panels/changes``): the plan for ids above ``since_id``."""
-    if isinstance(since_id, bool) or not isinstance(since_id, int) or not 0 <= since_id <= INT64_MAX:
-        raise PanelError("bad_since", limit=INT64_MAX)
-    doc = load(data_dir)
-    if doc.invalid:
-        raise PanelError("file_invalid")
-    until_id = conn.execute("SELECT coalesce(max(id), 0) FROM entry").fetchone()[0]
-    plan = refresh_plan(conn, doc.panels, since_id=since_id, until_id=until_id, events_changed=None)
-    return {"from_id": since_id, "to_id": until_id, "refresh": plan["panels"],
-            "probed": plan["probed"], "conservative": plan["conservative"]}  # fmt: skip
+                self._last[case_id] = now
+            if case_id in self._last:
+                self._last.move_to_end(case_id)
+            while len(self._last) > MAX_THROTTLE_CASES:
+                self._last.popitem(last=False)
+            return {
+                "seq": self._seq,
+                "to_id": to_id,
+                "throttled": wait_ms > 0,
+                "retry_after_ms": wait_ms,
+                "min_interval_ms": round(self._interval * 1000),
+            }

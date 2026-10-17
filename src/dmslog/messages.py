@@ -500,7 +500,6 @@ PANEL_ERRORS = {
     "unknown_widget": "the panel has no such widget",
     "rev_conflict": "the panel was changed meanwhile; reload it and apply the change again",
     "bad_id": "the panel id is missing or malformed",
-    "bad_since": "since_id must be an integer from 0 to {limit}",
     "file_invalid": "the panels file is not valid and was left untouched; fix or remove it first",
     "file_too_large": "the panels file would be larger than {limit} bytes; delete some panels",
     "save_failed": "the panels file could not be written",

@@ -457,8 +457,6 @@ def _exclusive(data_dir: str | Path, timeout_s: float | None = None) -> Iterator
         try:
             private_mkdir(Path(data_dir))
             fd = os.open(Path(data_dir) / LOCK_FILENAME, os.O_RDWR | os.O_CREAT, 0o600)
-            if os.name == "nt":
-                os.write(fd, b"\0")  # msvcrt locks a byte range: make sure the byte exists
         except OSError:
             raise PanelError("save_failed") from None
         while not _try_lock(fd):
