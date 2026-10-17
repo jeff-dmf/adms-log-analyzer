@@ -125,8 +125,6 @@ export class Grid {
     this.countFresh = false; // shownCount belongs to the view whose rows are in the window (see adopt())
     this.visible = 0;
     this.lastScroll = 0;
-    this.settleTimer = null;
-    this.selfScroll = false; // syncScroll() moved the bar and its scroll event has not arrived yet
     this.pendingJump = null;
     this.selectTimer = null;
     this.wheelRemainder = 0; // wheel travel in rows not applied yet (the fraction stays); applied once per frame
@@ -247,7 +245,6 @@ export class Grid {
     const x = this.wheelX;
     this.wheelX = null;
     if (x !== null && x !== this.resizer.scrollX) {
-      this.selfScroll = true; // the write below makes a scroll event on the viewport too
       this.resizer.scrollTo(x); // writes only
     }
     const rows = Math.trunc(this.wheelRemainder);
@@ -279,8 +276,6 @@ export class Grid {
     this.invalidateCount();  // the same for the count
     this.pending = null;
     this.listeners.abort();
-    clearTimeout(this.settleTimer);
-    this.settleTimer = null;
     if (this.fontsHandler && document.fonts && typeof document.fonts.removeEventListener === "function") {
       document.fonts.removeEventListener("loadingdone", this.fontsHandler);
     }
@@ -764,6 +759,10 @@ export class Grid {
       return "superseded";
     }
     this.cancelWheel(); // Home, End, a time and the scrollbar land here: older wheel travel must not move the new rows
+    if (this.pendingJump !== null) {
+      clearTimeout(this.pendingJump); // a scrollbar jump still waiting its 80 ms must not run after this navigation
+      this.pendingJump = null;
+    }
     if (view === null) {
       this.abandonPending();
     }
@@ -938,40 +937,21 @@ export class Grid {
     }
     // Write only: reading scrollTop back would force a layout on every wheel frame. The target is an integer inside
     // the scroll travel (the rows layer fills the viewport, the spacer adds exactly SCROLL_SPAN), so it is what the
-    // browser keeps, and the scroll event it causes is below onScrollBar's 3 px threshold.
+    // browser keeps, and the scroll event it causes matches lastScroll within followBar's 3 px tolerance.
     const top = tsToScroll(row.ts, this.range);
-    // A write that moves the bar makes one scroll event; onScrollBar skips that one without reading scrollTop.
-    if (top !== this.lastScroll) {
-      this.selfScroll = true;
-    }
     this.viewport.scrollTop = top;
     this.lastScroll = top;
   }
 
-  // The scroll event of the viewport. The echo of a write made here (syncScroll, resizer.scrollTo) is not read: the
-  // wheel path stays free of layout reads. But an echo can hide a user drag that the browser coalesced with it, so one
-  // check is scheduled for when the events stop (settleScroll). Any other event is the user's: both positions are read.
+  // The scroll event of the viewport: one read of each position, compared with what this code last wrote (lastScroll for
+  // the rows, resizer.scrollX for the sideways travel). Equal is the echo of our own write; different is the user (a
+  // drag of either bar, however many events the browser coalesced) and is adopted: the header and the kept position
+  // follow, and the rows go where the vertical bar points. No timer, no "ignore the next event": nothing to go stale.
   onScrollBar() {
-    if (this.selfScroll) {
-      this.selfScroll = false;
-      clearTimeout(this.settleTimer);
-      this.settleTimer = setTimeout(() => this.settleScroll(), 100);
-      return;
+    if (this.resizer.adoptScrollLeft(this.viewport.scrollLeft)) {
+      this.wheelX = null; // sideways wheel travel was added to a position the user has left
     }
-    this.readNativeScroll();
-  }
-
-  // One read of each position, only for input that did not come from this code: a drag of either scrollbar.
-  readNativeScroll() {
-    this.resizer.adoptScrollLeft(this.viewport.scrollLeft); // header and kept position follow a sideways drag
     this.followBar(this.viewport.scrollTop);
-  }
-
-  settleScroll() {
-    this.settleTimer = null;
-    if (!this.destroyed) {
-      this.readNativeScroll();
-    }
   }
 
   // The scrollbar is at `position`: when it is not where the rows are, the user moved it, so the rows go there.

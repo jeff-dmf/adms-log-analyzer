@@ -36,13 +36,15 @@ export class ColumnResizer {
     this.headerCells.clear();
   }
 
-  // The body was scrolled sideways by the browser (not by scrollTo()): the header and the kept position follow.
+  // `x` is the body's scrollLeft read by a scroll event. Within 2 px of what scrollTo() wrote it is the echo of that
+  // write; otherwise the user moved it (a drag of the bar): the header and the kept position follow. True when adopted.
   adoptScrollLeft(x) {
-    if (this.destroyed || typeof x !== "number" || Math.abs(x - this.scrollX) < 1) {
-      return;
+    if (this.destroyed || typeof x !== "number" || Math.abs(x - this.scrollX) < 2) {
+      return false;
     }
     this.scrollX = x;
     this.header.scrollLeft = x;
+    return true;
   }
 
   // Measures the width of one character of the grid font and applies it to the default widths. Called once at the start
@@ -131,7 +133,7 @@ export class ColumnResizer {
       event.preventDefault();
       event.stopPropagation();
       this.fit(key);
-    });
+    }, { signal });
     handle.addEventListener("keydown", (event) => {
       if (this.destroyed) {
         return;

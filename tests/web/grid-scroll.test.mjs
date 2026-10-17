@@ -193,26 +193,30 @@ test("wheel units are normalised on both axes: pixel, line and page", () => {
   assert.equal(grid.window.top, grid.visible - 1);
 });
 
-test("a wheel burst, its frame and the scroll sync read no layout", () => {
+test("a wheel burst, its frame and the scroll sync read no layout; each scroll event reads one position of each axis", () => {
   const { grid, vp, runFrames } = setup();
   const before = vp.reads.total;
   for (let i = 0; i < 120; i += 1) {
     wheel(vp, ROW_HEIGHT);
     if (i % 30 === 29) {
       runFrames();
-      vp.el.dispatch("scroll"); // the echo of syncScroll(), through the real listeners of the grid and its resizer
     }
   }
   runFrames();
   wheel(vp, 0, { deltaX: 40 });
   runFrames();
-  vp.el.dispatch("scroll");
   grid.scrollRows(-7);
   grid.syncScroll();
   grid.render();
-  vp.el.dispatch("scroll");
-  assert.equal(vp.reads.total, before, JSON.stringify(vp.reads));
+  assert.equal(vp.reads.total, before, "the wheel, the frames, scrollRows, syncScroll and render read nothing: " + JSON.stringify(vp.reads));
   assert.equal(vp.values.scrollTop, Math.round((grid.window.topRow().ts - 1000) / (grid.range.max - 1000) * SCROLL_SPAN));
+  // The events these writes cause: one scroll event, one read of each position, and they match what was written.
+  for (let i = 0; i < 5; i += 1) {
+    vp.el.dispatch("scroll");
+  }
+  assert.equal(vp.reads.total - before, 10);
+  assert.equal(grid.pendingJump, null, "an echo is not a drag");
+  assert.equal(grid.header.scrollLeft, 40);
 });
 
 test("syncScroll writes the target and remembers it: the scroll event it causes is not a drag", () => {
@@ -222,10 +226,8 @@ test("syncScroll writes the target and remembers it: the scroll event it causes 
   const target = vp.values.scrollTop;
   assert.ok(target > 0);
   assert.equal(grid.lastScroll, target);
-  const reads = vp.reads.total;
   vp.el.dispatch("scroll");
   assert.equal(grid.pendingJump, null, "the programmatic scroll does not start a jump");
-  assert.equal(vp.reads.total, reads, "and its echo is not even read");
   vp.values.scrollTop = target + 1; // sub-pixel snapping of the browser stays below the threshold
   vp.el.dispatch("scroll");
   assert.equal(grid.pendingJump, null);
@@ -385,10 +387,9 @@ test("the hot scroll and render paths read no geometry (static): only readHeight
   const reads = source.split("\n").filter((l) => /clientHeight|\.scrollTop\b(?!\s*=)/.test(l) && !/^\s*\/\//.test(l));
   assert.equal(reads.length, 2, reads.join("\n"));
   assert.ok(/readHeight\(\) \{/.test(method("readHeight")) && /clientHeight/.test(method("readHeight")));
-  assert.ok(!/scrollTop|scrollLeft/.test(method("onScrollBar")), "the echo path of the scroll event reads nothing");
-  assert.ok(/scrollTop/.test(method("readNativeScroll")) && /scrollLeft/.test(method("readNativeScroll")));
-  // Only the user's input and the settle check reach readNativeScroll.
-  assert.deepEqual(source.split("\n").filter((l) => /readNativeScroll\(\)/.test(l) && !/^\s*readNativeScroll|^\s*\/\//.test(l)).length, 2);
+  const bar = method("onScrollBar");
+  assert.ok(/scrollTop/.test(bar) && /scrollLeft/.test(bar), "the one read of each position is in the scroll listener");
+  assert.ok(!/setTimeout|selfScroll|settle/.test(bar) && !/selfScroll|settleScroll|settleTimer/.test(source), "no timer, no ignore-the-next-event state");
 });
 
 test("syncScroll never reads scrollTop back (static)", () => {
@@ -552,54 +553,6 @@ test("a native sideways drag moves the header and the kept position; the next wh
   assert.equal(grid.header.scrollLeft, 630);
 });
 
-test("the native path reads each position once per event; the echo of the grid's own writes reads nothing", () => {
-  const { grid, vp, runFrames } = setup();
-  grid.window.top = 120;
-  grid.syncScroll();
-  const before = { ...vp.reads };
-  vp.el.dispatch("scroll"); // echo
-  assert.equal(vp.reads.total, before.total);
-  vp.values.scrollLeft = 200;
-  vp.el.dispatch("scroll"); // not an echo
-  assert.equal((vp.reads.scrollLeft || 0) - (before.scrollLeft || 0), 1);
-  assert.equal((vp.reads.scrollTop || 0) - (before.scrollTop || 0), 1);
-  void runFrames;
-});
-
-test("a drag coalesced with an echo is found by the settle check, once the events stop", async () => {
-  const { grid, vp } = setup();
-  grid.pump = () => {};
-  grid.window.top = 150;
-  grid.syncScroll();
-  const written = grid.lastScroll;
-  vp.values.scrollTop = written + 500; // the browser delivered one event for the write and the drag
-  vp.values.scrollLeft = 70;
-  const before = vp.reads.total;
-  vp.el.dispatch("scroll");
-  assert.equal(vp.reads.total, before, "the echo itself is not read");
-  assert.equal(grid.pendingJump, null);
-  await new Promise((r) => setTimeout(r, 160));
-  assert.notEqual(grid.pendingJump, null, "the position the user left the bar at is followed");
-  assert.equal(grid.lastScroll, written + 500);
-  assert.equal(grid.header.scrollLeft, 70);
-  grid.destroy();
-});
-
-test("a real echo settles without a jump, and a burst of echoes costs one check", async () => {
-  const { grid, vp, runFrames } = setup();
-  for (let i = 0; i < 20; i += 1) {
-    wheel(vp, 3 * ROW_HEIGHT);
-    runFrames();
-    vp.el.dispatch("scroll");
-  }
-  const before0 = { ...vp.reads };
-  await new Promise((r) => setTimeout(r, 160));
-  assert.equal(vp.reads.scrollTop - (before0.scrollTop || 0), 1, "one read of each position for the whole burst");
-  assert.equal(vp.reads.scrollLeft - (before0.scrollLeft || 0), 1);
-  assert.equal(grid.pendingJump, null, "the bar is where the rows are");
-  grid.destroy();
-});
-
 test("wheel travel gathered while a jump is on its way is dropped when the page arrives", async () => {
   const { grid, vp, pages, runFrames } = withApi();
   grid.window.top = 100;
@@ -642,17 +595,93 @@ test("the resizer takes no input after destroy: handles, keys, double click, fit
   assert.equal(resizer.scrollX, 0);
 });
 
-test("a settle check pending at destroy never runs", async () => {
+
+test("a drag coalesced with our own write is adopted at once: the next wheel goes on from where the user left it", () => {
+  const { grid, vp, runFrames } = setup();
+  wheel(vp, 0, { deltaX: 100 });
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 100);
+  vp.values.scrollLeft = 600; // the user dragged on, in the same event as the write above
+  vp.el.dispatch("scroll");
+  assert.equal(grid.header.scrollLeft, 600);
+  assert.equal(grid.resizer.scrollX, 600);
+  wheel(vp, 0, { deltaX: 30 });
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 630);
+  assert.equal(grid.header.scrollLeft, 630);
+});
+
+test("sideways wheel travel gathered before a native drag is dropped, not added to the old position", () => {
+  const { grid, vp, runFrames } = setup();
+  wheel(vp, 0, { deltaX: 100 });
+  vp.values.scrollLeft = 600;
+  vp.el.dispatch("scroll");
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 600);
+  assert.equal(grid.header.scrollLeft, 600);
+});
+
+test("a vertical drag coalesced with our write is followed at once, wherever it ended", () => {
   const { grid, vp } = setup();
   grid.window.top = 150;
   grid.syncScroll();
-  vp.values.scrollTop = grid.lastScroll + 500;
-  vp.el.dispatch("scroll"); // echo: the check is scheduled
+  const written = grid.lastScroll;
+  vp.values.scrollTop = written + 500;
+  vp.el.dispatch("scroll");
+  assert.notEqual(grid.pendingJump, null);
+  assert.equal(grid.lastScroll, written + 500);
   grid.destroy();
-  await new Promise((r) => setTimeout(r, 160));
+});
+
+test("Home right after a coalesced drag runs alone: the drag's own jump is dropped, not fired later", async () => {
+  const { grid, vp, pages } = withApi();
+  grid.window.top = 150;
+  grid.syncScroll();
+  vp.values.scrollTop = grid.lastScroll + 500;
+  vp.el.dispatch("scroll");
+  assert.notEqual(grid.pendingJump, null);
+  const home = grid.goHome();
   assert.equal(grid.pendingJump, null);
-  assert.equal(grid.settleTimer, null);
-  const reads = vp.reads.total;
-  grid.settleScroll(); // even called by hand
-  assert.equal(vp.reads.total, reads);
+  await new Promise((r) => setTimeout(r, 160));
+  assert.equal(pages.length, 1, "one request: Home, not Home aborted by the drag's jump");
+  assert.equal(pages[0].signal.aborted, false);
+  pages[0].resolve({ rows: makeRows(300), prev: null, next: null });
+  assert.equal(await home, "ok");
+});
+
+test("every listener of a separator is registered with the abort signal, and the dblclick is gone after destroy", () => {
+  const { grid } = setup();
+  const resizer = grid.resizer;
+  const registered = [];
+  const target = new EventTarget();
+  const add = target.addEventListener.bind(target);
+  target.addEventListener = (type, fn, options) => { registered.push([type, options && options.signal]); add(type, fn, options); };
+  target.classList = { add() {}, remove() {} };
+  target.setPointerCapture = () => {};
+  let fits = 0;
+  resizer.prepareFit = () => { fits += 1; return null; };
+  resizer.bindHandle(target, "msg");
+  assert.deepEqual(registered.map((r) => r[0]).sort(), ["click", "dblclick", "keydown", "pointerdown"]);
+  assert.ok(registered.every((r) => r[1] === resizer.listeners.signal), "each one has the signal");
+  target.dispatchEvent(new Event("dblclick"));
+  assert.equal(fits, 1, "it works before destroy");
+  resizer.destroy();
+  target.dispatchEvent(new Event("dblclick"));
+  assert.equal(fits, 1, "removed by the signal, not only ignored");
+});
+
+test("sideways travel continues from the last write, and an echo of it keeps pending travel", () => {
+  const { grid, vp, runFrames } = setup();
+  wheel(vp, 0, { deltaX: 100 });
+  runFrames();
+  wheel(vp, 0, { deltaX: 30 });
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 130);
+  wheel(vp, 0, { deltaX: 20 }); // pending
+  vp.el.dispatch("scroll"); // the echo of the write at 130 (within the tolerance): not the user
+  vp.values.scrollLeft = 131;
+  vp.el.dispatch("scroll");
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 150);
+  assert.equal(grid.header.scrollLeft, 150);
 });
