@@ -2,10 +2,9 @@
 // icon buttons and the trail (nav > ol, the active view with aria-current="page"). Right: "Narrow this view" and the
 // "..." menu (Rename, Show in parent, Show in root). The chips and the "Filters" popover are filter-chips.js. The
 // model is views-stack-model.js; everything written to the page is text (names may contain user text).
-import { ignoresShortcut } from "./filters.js";
 import { S, format, pluralKey } from "./strings.js";
 import { createMenu } from "./ui-menu.js";
-import { MAX_NAME, loadStack, saveStack, viewsKey } from "./views-stack-model.js";
+import { MAX_NAME, loadStack, saveStack } from "./views-stack-model.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -209,18 +208,7 @@ export function mountViewsStack(options) {
     }
   });
 
-  document.addEventListener("keydown", (event) => {
-    const action = viewsKey(event);
-    if (!action || ignoresShortcut(event) || getCase() === null) {
-      return;
-    }
-    event.preventDefault(); // Alt+Left/Right would otherwise leave the app (browser history)
-    if (action === "back") {
-      back();
-    } else {
-      forward();
-    }
-  });
+  // Alt+Left / Alt+Right belong to the action registry (views.back / views.forward, shortcuts.js).
 
   paint();
   return {

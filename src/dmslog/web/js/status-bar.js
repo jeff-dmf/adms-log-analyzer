@@ -9,10 +9,11 @@ import { formatTs } from "./time.js";
 
 // root: the #status-bar footer. Options:
 //   S                  the string catalog
-//   helpText()         the text shown by the "?" button until the shortcuts dialog exists (UI-28)
+//   helpText()         the text shown by the "?" button when there is no onHelp
+//   onHelp()           what the "?" button does instead (UI-28: opens the shortcuts dialog); the button then announces a dialog
 //   now, setTimer, clearTimer   injected clock and timers (tests)
 //   focusFallback()    where the focus goes when the control that had it (Retry, Dismiss) disappears
-export function createStatusBar(root, { S, helpText = () => "", now = () => Date.now(), setTimer, clearTimer, focusFallback } = {}) {
+export function createStatusBar(root, { S, helpText = () => "", onHelp = null, now = () => Date.now(), setTimer, clearTimer, focusFallback } = {}) {
   const doc = root.ownerDocument;
   const arm = setTimer || ((fn, ms) => setTimeout(fn, ms));
   const disarm = clearTimer || ((id) => clearTimeout(id));
@@ -80,6 +81,11 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
   helpButton.setAttribute("aria-label", S.actShortcuts);
   helpButton.setAttribute("aria-expanded", "false");
   helpButton.setAttribute("aria-controls", "sb-help-pop");
+  if (typeof onHelp === "function") {
+    helpButton.removeAttribute("aria-expanded");
+    helpButton.removeAttribute("aria-controls");
+    helpButton.setAttribute("aria-haspopup", "dialog");
+  }
   const helpPop = make("div", "sb-help-pop");
   helpPop.id = "sb-help-pop";
   helpPop.hidden = true;
@@ -259,7 +265,7 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     helpPop.hidden = !on;
     helpButton.setAttribute("aria-expanded", String(on));
   }
-  helpButton.addEventListener("click", () => setHelp());
+  helpButton.addEventListener("click", () => (typeof onHelp === "function" ? onHelp() : setHelp()));
   doc.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !helpPop.hidden) {
       setHelp(false);

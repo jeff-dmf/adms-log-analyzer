@@ -128,7 +128,7 @@ test("narrow builds the stack, breadcrumbs show it and the effective filter is t
   assert.equal(t.calls.apply.at(-1).and.length, 2);
 });
 
-test("back/forward by buttons, crumbs and Alt+Left/Right; typing targets are left alone", async () => {
+test("back/forward by buttons, crumbs and the back()/forward() the keyboard layer runs; no key listener of its own", async () => {
   const t = setup();
   t.setLive({ userFilter: { tid: [1] } });
   t.btn("vs-narrow").click();
@@ -139,20 +139,17 @@ test("back/forward by buttons, crumbs and Alt+Left/Right; typing targets are lef
   assert.equal(t.btn("vs-forward").disabled, false);
   assert.equal(t.crumbs()[1].className.includes("is-future"), true);
   assert.deepEqual(t.calls.apply.at(-1), { and: [{ tid: [1] }] });
-  const forward = t.key({ key: "ArrowRight", altKey: true });
-  assert.equal(forward.prevented, true);
+  t.ui.forward(); // views.forward (Alt+Right) of the action registry
   assert.equal(t.stack.index, 1);
   assert.deepEqual(t.calls.apply.at(-1), { and: [{ tid: [1] }, { tid: [2] }] });
-  t.key({ key: "ArrowLeft", altKey: true });
+  t.ui.back(); // views.back (Alt+Left)
   assert.equal(t.stack.index, 0);
   t.crumbs()[1].click();
   assert.equal(t.stack.index, 1);
-  const input = new FakeElement("input");
-  const typed = t.key({ key: "ArrowLeft", altKey: true, target: input });
-  assert.equal(typed.prevented, undefined);
-  assert.equal(t.stack.index, 1);
-  t.ctx.caseId = null;
+  // UI-28: Alt+Left/Right are dispatched by shortcuts.js; this module must not also listen (never two dispatchers).
+  assert.deepEqual(docListeners.keydown || [], []);
   assert.equal(t.key({ key: "ArrowLeft", altKey: true }).prevented, undefined);
+  assert.equal(t.stack.index, 1);
 });
 
 test("show in parent / root keeps the selected record and reveals it after the reload", async () => {

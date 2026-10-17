@@ -3,10 +3,8 @@
 // and the ]/[ navigation between highlighted records of the view. Rule names, conditions and key values
 // are user or log text: only textContent, attribute values and class names are written.
 import {
-  MAX_RULES, PALETTE, QUICK_KINDS, buildCondition, colorLabel, defaultName, describeCondition, highlightNavKey,
-  nextColor,
+  MAX_RULES, PALETTE, QUICK_KINDS, buildCondition, colorLabel, defaultName, describeCondition, nextColor,
 } from "./highlight-model.js";
-import { ignoresShortcut } from "./filters.js";
 import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
@@ -340,14 +338,14 @@ export function mountHighlights(options) {
     }).then(() => showMessage("", false), (error) => showMessage(errorText(error), true));
   }
 
-  // -- ]/[ navigation: next/previous record of the view that any enabled rule highlights
+  // -- ]/[ navigation: next/previous record of the view that any enabled rule highlights. The keys belong to the
+  // action registry (navigate.nextHighlight / prevHighlight, shortcuts.js); this is what they run.
   let navSeq = 0;
-  document.addEventListener("keydown", async (event) => {
-    const dir = highlightNavKey(event);
-    if (!dir || ignoresShortcut(event) || !getCase()) {
+  async function navigate(dir) {
+    const forCase = getCase();
+    if (!forCase) {
       return;
     }
-    event.preventDefault();
     const row = getSelectedRow();
     if (!row) {
       showMessage(S.navNoSelection, false);
@@ -359,7 +357,6 @@ export function mountHighlights(options) {
     }
     navSeq += 1;
     const seq = navSeq;
-    const forCase = getCase();
     try {
       const found = await store.next(getFilter(), row, dir);
       if (seq !== navSeq || forCase !== getCase()) {
@@ -376,7 +373,7 @@ export function mountHighlights(options) {
         showMessage(errorText(error), true);
       }
     }
-  });
+  }
 
   return {
     // The store changed ("rules" or "marks"): repaint what depends on it.
@@ -388,5 +385,6 @@ export function mountHighlights(options) {
       renderDetail();
     },
     highlightType,
+    navigate,
   };
 }

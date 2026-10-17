@@ -183,6 +183,39 @@ export function navRequest(filter, extra, row, dir) {
   return { filter: andFilters(filter, extra), cursor, dir, limit: 1 };
 }
 
+// Where the keyboard navigation starts: the selected row, or (UI-28) with nothing selected the first visible record for
+// forward and the last for backward. The anchor sits one id outside that edge record, so the edge record itself is
+// the first candidate (records are ordered by time, then id). null = no row to start from (an empty grid): the search
+// then runs over the whole view. rows: the rendered records, top to bottom.
+export function navAnchor(selected, visibleRows, dir) {
+  if (selected) {
+    return selected;
+  }
+  const rows = (Array.isArray(visibleRows) ? visibleRows : []).filter((row) => row && Number.isFinite(row.id));
+  if (rows.length === 0) {
+    return null;
+  }
+  const back = dir === "back";
+  const edge = back ? rows[rows.length - 1] : rows[0];
+  return { ...edge, id: edge.id + (back ? 1 : -1) };
+}
+
+// What n/N (kind "error") and t/T (kind "template") do: {problem: string key of strings.js} when there is nothing to start
+// from, else {request} for api.page. Errors need no selection (they start at the visible edge); a message type needs a
+// selected record that has one.
+export function navPlan(kind, dir, selected, visibleRows, filter) {
+  if (kind !== "error") {
+    if (!selected) {
+      return { problem: "navNoSelection" };
+    }
+    if (!(selected.tpl_id > 0)) {
+      return { problem: "navNoTemplate" };
+    }
+  }
+  const extra = kind === "error" ? NAV_ERROR_FILTER : { tpl: [selected.tpl_id] };
+  return { request: navRequest(filter, extra, navAnchor(selected, visibleRows, dir), dir) };
+}
+
 // Latest-request guard for the keyboard navigation: begin() aborts the previous request and
 // returns {seq, signal}; invalidate() (a view change) aborts it and makes its answer stale.
 export function createLatestRequest() {
@@ -207,26 +240,6 @@ export function createLatestRequest() {
     },
     isCurrent: (mine) => mine === seq,
   };
-}
-
-// "n"/"N"/"t"/"T" -> {kind: "error"|"template", dir} | null. Ignores modified keys.
-export function navKey(event) {
-  if (event.ctrlKey || event.metaKey || event.altKey) {
-    return null;
-  }
-  const map = { n: ["error", "fwd"], N: ["error", "back"], t: ["template", "fwd"], T: ["template", "back"] };
-  const hit = map[event.key];
-  return hit ? { kind: hit[0], dir: hit[1] } : null;
-}
-
-// "b" toggles the bookmark of the selected record, "B" opens the bookmarks panel, "c" starts or
-// finishes comparing two records. Returns "toggle" | "panel" | "compare" | null. Ignores modified keys.
-export function bookmarkKey(event) {
-  if (event.ctrlKey || event.metaKey || event.altKey) {
-    return null;
-  }
-  const map = { b: "toggle", B: "panel", c: "compare" };
-  return Object.prototype.hasOwnProperty.call(map, event.key) ? map[event.key] : null;
 }
 
 // True when the key event comes from a control where typing must not trigger shortcuts.

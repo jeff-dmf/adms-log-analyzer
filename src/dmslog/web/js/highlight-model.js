@@ -126,18 +126,6 @@ export function defaultName(kind, value, extra) {
   return compact(name, MAX_NAME);
 }
 
-// "]" next highlighted record, "[" previous (layout-independent `key`; no modifier). n/N, t/T, b/B, c are
-// taken (filters.js navKey/bookmarkKey).
-export function highlightNavKey(event) {
-  if (event.ctrlKey || event.metaKey || event.altKey) {
-    return null;
-  }
-  if (event.key === "]") {
-    return "fwd";
-  }
-  return event.key === "[" ? "back" : null;
-}
-
 export function cursorOf(row) {
   if (!row) {
     return null;
