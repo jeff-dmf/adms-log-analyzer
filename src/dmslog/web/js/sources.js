@@ -46,6 +46,7 @@ export class SourcesPanel {
     this.loadEmpty = () => import("./case-empty.js"); // replaced by tests
     this.menuReady = null; // promise of the case menu (ui-menu.js loads on first use)
     this.loadMenu = () => import("./ui-menu.js"); // replaced by tests
+    this.sourcesSeq = 0; // one per /sources query: only the latest one may publish (an older answer is stale data)
     this.caseGen = 0; // counts the case selections (A -> B -> A is three): a late window of an earlier one is dropped
     this.opSeq = 0; // ids of the operations (an opening or a resume) the panel runs: this.waiter is the current one
     this.addSession = 0; // counts the openings of the Add files dialog and the case switches: an operation started in an
@@ -532,6 +533,7 @@ export class SourcesPanel {
 
   async refreshSources(quiet = false) {
     if (this.caseId === null) {
+      this.sourcesSeq += 1;
       this.sources = [];
       this.renderSources();
       this.handlers.onSources(this.sources, quiet);
@@ -541,6 +543,7 @@ export class SourcesPanel {
     // was on the way, it touches nothing, neither this.sources, nor the list, nor onSources, nor the message.
     const caseId = this.caseId;
     const gen = this.caseGen;
+    const seq = ++this.sourcesSeq;
     let sources;
     let failure = null;
     try {
@@ -549,8 +552,8 @@ export class SourcesPanel {
     } catch (err) {
       failure = err;
     }
-    if (this.caseId !== caseId || this.caseGen !== gen) {
-      return;
+    if (this.caseId !== caseId || this.caseGen !== gen || seq !== this.sourcesSeq) {
+      return; // another case, or a newer query of this one is (or was) in charge: its answer is the one that counts
     }
     if (failure) {
       this.sources = [];

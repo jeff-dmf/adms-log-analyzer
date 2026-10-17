@@ -1642,3 +1642,33 @@ test("a file that starts, ends or fails is spoken through the dialog's region ev
   live().emit("done", { job_id: ctx.panel.waiter.jobId, status: "ok", records: 1 });
   await run;
 });
+
+test("two /sources queries of the same case: only the latest publishes, even if the older answers last", async () => {
+  const ctx = page();
+  await ctx.panel.selectCase("A");
+  const published = [];
+  ctx.panel.handlers.onSources = (list) => published.push(list.map((s) => s.name));
+  const slowOld = deferred();
+  api.sources = async () => { await slowOld.promise; return { sources: [{ id: 1, name: "first.log" }] }; };
+  const older = ctx.panel.refreshSources(true); // started at first_ready
+  api.sources = async () => ({ sources: [{ id: 1, name: "first.log" }, { id: 2, name: "rest.log" }] });
+  ctx.panel.selected = new Set([1, 2]);
+  const newer = ctx.panel.refreshSources(); // started at done: the complete list
+  await newer;
+  assert.deepEqual(published.at(-1), ["first.log", "rest.log"]);
+  slowOld.resolve();
+  await older;
+  assert.deepEqual(ctx.panel.sources.map((s) => s.name), ["first.log", "rest.log"], "the old answer did not replace the list");
+  assert.deepEqual([...ctx.panel.selected].sort(), [1, 2], "the selection of rest.log is kept");
+  assert.equal(published.length, 1);
+  // an old failure is silent too
+  const slowFail = deferred();
+  api.sources = async () => { await slowFail.promise; throw new ApiError(500, "boom", "old broke"); };
+  const failing = ctx.panel.refreshSources(true);
+  api.sources = async () => ({ sources: [{ id: 2, name: "rest.log" }] });
+  await ctx.panel.refreshSources(true);
+  slowFail.resolve();
+  await failing;
+  assert.deepEqual(ctx.panel.sources.map((s) => s.name), ["rest.log"]);
+  assert.equal(ctx.calls.messages.some(([t]) => t === "old broke"), false);
+});
