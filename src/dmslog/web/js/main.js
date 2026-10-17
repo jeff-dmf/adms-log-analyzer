@@ -29,7 +29,7 @@ import { mountMenubar } from "./menubar.js";
 import { searchTerms } from "./search.js";
 import { SourceFilter } from "./source-filter.js";
 import { SourcesPanel } from "./sources.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { applyTheme, setThemePreference, themePreference } from "./theme.js";
 import { formatTs, parseTs } from "./time.js";
 
@@ -184,6 +184,7 @@ function start() {
   let toggles = { hideNoise: false, unclassified: false };
   let currentFilter = null; // what the grid and the timeline use: the ONE composed filter
   let templateLabels = new Map(); // template id -> readable title (code when the catalogue has none)
+  let templateTitles = new Map(); // template id -> title only (no fallback to the code): the same-key panel
   let filterTree = null;
   let timeline = null;
   let followTail = null;
@@ -265,17 +266,65 @@ function start() {
     }
     return applyView();
   };
+  // "Show in grid" of the same-key panel: a chained view (a chip in the strip) with the key filter. A view with its own
+  // conditions is narrowed first; an empty one just gets the chip; a full stack says so and changes nothing.
+  const loadKeyModel = retryable(() => import("./key-panel-model.js"));
+  let childFilter = null; // set only while viewsUi.narrow() runs: the new child view starts holding it (one reload)
+  const showKeyInGrid = async (arg) => {
+    const forCase = caseId;
+    if (forCase === null) {
+      return;
+    }
+    try {
+      const model = await loadKeyModel();
+      if (caseId !== forCase) {
+        return; // the case changed while the module loaded
+      }
+      await model.createShowKeyInGrid({
+        getCase: () => caseId,
+        getUserFilter: () => userFilter,
+        getParentsFilter: () => (viewsStack ? viewsStack.parentsFilter() : null),
+        state: () => {
+          const chained = viewsStack !== null && viewsUi !== null;
+          return {
+            chained,
+            ownEmpty: ownFilterOf(captureLive()) === null,
+            depth: chained ? viewsStack.depth : 0,
+            maxDepth: chained ? viewsStack.maxDepth : 0,
+          };
+        },
+        narrowWith: (filter) => {
+          const before = viewsStack.depth;
+          childFilter = filter;
+          try {
+            viewsUi.narrow(); // restoreLive() gives the child its filter; the single reload of narrow() loads the final state
+          } finally {
+            childFilter = null;
+          }
+          return viewsStack.depth !== before;
+        },
+        applyHere: (filter) => setUserFilter(andFilters(userFilter, filter)),
+        message: showMessage,
+        onError: showError,
+      })(arg);
+    } catch (err) {
+      showError(err);
+    }
+  };
   const addTemplateFilter = (tplId) => setUserFilter(withTemplate(userFilter, tplId));
 
   const loadTemplates = async (forCase) => {
     if (forCase === null) {
       templateLabels = new Map();
+      templateTitles = new Map();
       return;
     }
+    templateTitles = new Map(); // titles of another case never show while this one loads
     try {
       const data = await api.templates(forCase, null);
       if (forCase === caseId) {
         templateLabels = new Map((data.templates || []).map((t) => [t.id, t.title || t.code]));
+        templateTitles = new Map((data.templates || []).filter((t) => t.title).map((t) => [t.id, t.title]));
         if (detail.entry) {
           detail.renderTemplate(detail.entry);
         }
@@ -400,7 +449,7 @@ function start() {
     toggles = { ...state.toggles };
     byId("hide-noise").checked = toggles.hideNoise;
     byId("unclassified-only").checked = toggles.unclassified;
-    userFilter = state.userFilter;
+    userFilter = childFilter !== null ? childFilter : state.userFilter;
     if (filterTree) {
       filterTree.setFilter(userFilter);
     }
@@ -460,6 +509,7 @@ function start() {
     caseAddFiles: byId("case-add-files"),
     caseMenu: byId("case-header-menu"),
     addFilesHost: byId("add-files-host"),
+    emptyHost: byId("grid-panel"), // the empty state without a case (case-empty.js, loaded on demand)
   }, {
     onCase: (id) => {
       caseId = id;
@@ -1161,6 +1211,8 @@ function start() {
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
     sourceName: (id) => sourceNames.get(id) || String(id),
+    typeLabel: (id) => templateTitles.get(id) || "",
+    showKeyInGrid,
     showEntry: (id) => detail.show(id),
     reveal: (row) => revealEntry(row),
     showEventInGrid,
@@ -1199,8 +1251,16 @@ function start() {
       return panel.selectCase(id);
     },
     closeCase: () => deps.selectCase(null),
-    focusNewCase: () => withSources(() => panel.revealNewCase()),
-    focusAddFiles: () => withSources(() => panel.revealAddFiles()),
+    // The opener is read before the drawer opens: opening it moves the focus into the sources panel, and the dialog must
+    // give the focus back to the control the user used (the menu item's trigger), not to the panel.
+    focusNewCase: () => {
+      const opener = document.activeElement;
+      return withSources(() => panel.revealNewCase(opener));
+    },
+    focusAddFiles: () => {
+      const opener = document.activeElement;
+      return withSources(() => panel.revealAddFiles(false, opener));
+    },
     drawerOpen: (id) => (drawers ? drawers.isOpen(id) : false),
     toggleDrawer: async (id) => {
       try {

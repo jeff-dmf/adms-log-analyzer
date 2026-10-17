@@ -1,7 +1,11 @@
-// Built-in folder browser: an accessible modal that lists folders and ZIPs through /api/fs/list
-// and resolves to the chosen ZIPs. File names are untrusted data: textContent only.
-import { FolderBrowser, breadcrumbs, restoreFocusKey, trapTarget } from "./folder-browser-model.js";
-import { formatSize } from "./case-files-model.js";
+// Built-in folder browser (UI-22): a native modal <dialog> (the common dialog frame of panel-shell.js: focus trap, Escape,
+// focus back to the opener) that lists folders and ZIPs through /api/fs/list and resolves to the chosen ZIPs. It is a
+// <dialog> because it opens on top of the New case / Add files dialogs, and a modal <dialog> makes everything outside
+// itself inert: a plain element appended to the body could not be used there. File names are untrusted data:
+// textContent only; long names are cut in the middle (the full name is the tooltip) and ERS ZIPs carry a kind badge.
+import { FolderBrowser, breadcrumbs, entryKind, entryLabel, restoreFocusKey, trapTarget } from "./folder-browser-model.js";
+import { KIND_ENTERPRISE, formatSize } from "./case-files-model.js";
+import { createDialogShell } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
 
 const SHORTCUT_LABELS = {
@@ -46,24 +50,36 @@ const FOCUSABLE = "button:not([disabled]), input:not([disabled]), [tabindex='0']
 
 // Opens the browser; resolves to [{path, size}] (possibly empty) or null when closed without adding.
 export function openFolderBrowser({ fs, storage, host }) {
-  const parentNode = host || document.body;
-  const previousFocus = document.activeElement;
+  const doc = (host && host.ownerDocument) || document;
+  const parentNode = host || doc.body;
+  const previousFocus = doc.activeElement;
   return new Promise((resolve) => {
     const model = new FolderBrowser({ fs, storage, onChange: () => render() });
     let active = 0; // index in the rendered rows
     let rows = [];
+    let settled = false;
+    const settle = (result) => {
+      if (!settled) {
+        settled = true;
+        resolve(result);
+      }
+    };
 
-    const backdrop = el("div", "fb-backdrop");
-    const dialog = el("div", "fb-dialog");
-    dialog.setAttribute("role", "dialog");
-    dialog.setAttribute("aria-modal", "true");
-    dialog.setAttribute("aria-labelledby", "fb-title");
-    const title = el("h2", "fb-title", S.fbTitle);
-    title.id = "fb-title";
+    // Any close (button, Escape, Cancel, the native event) ends here: the result is whatever settled first, else null.
+    const shell = createDialogShell(doc, {
+      title: S.fbTitle,
+      className: "fb-dialog",
+      onClose() {
+        document.removeEventListener("keydown", onKey, true);
+        dialog.remove();
+        settle(null);
+      },
+    });
+    const dialog = shell.dialog;
 
     const bar = el("div", "fb-bar");
-    const upButton = button(S.fbUp, () => goUp(), "fb-up");
-    const pathInput = el("input", "fb-path");
+    const upButton = button(S.fbUp, () => goUp(), "ui-button fb-up");
+    const pathInput = el("input", "ui-input fb-path");
     pathInput.type = "text";
     pathInput.autocomplete = "off";
     pathInput.setAttribute("aria-label", S.fbPathLabel);
@@ -107,21 +123,20 @@ export function openFolderBrowser({ fs, storage, host }) {
     const errorBox = el("div", "fb-error");
     errorBox.setAttribute("role", "alert");
 
-    const footer = el("div", "fb-footer");
+    // The main action is fixed in the foot; the count sits at its left.
     const count = el("span", "fb-count");
     count.setAttribute("aria-live", "polite");
-    const selectAll = button(S.fbSelectAll, () => model.selectAllVisible());
-    const addButton = button(S.fbAddSelected, () => close(model.selectedEntries()), "primary");
-    const cancelButton = button(S.cfCancel, () => close(null));
-    footer.appendChild(count);
-    footer.appendChild(selectAll);
-    footer.appendChild(cancelButton);
-    footer.appendChild(addButton);
+    const selectAll = button(S.fbSelectAll, () => model.selectAllVisible(), "ui-button is-ghost");
+    const addButton = button(S.fbAddSelected, () => close(model.selectedEntries()), "ui-button is-primary fb-add");
+    const cancelButton = button(S.cfCancel, () => close(null), "ui-button");
 
-    for (const node of [title, bar, crumbs, body, hint, status, errorBox, footer]) {
-      dialog.appendChild(node);
+    for (const node of [bar, crumbs, body, hint, status, errorBox]) {
+      shell.body.appendChild(node);
     }
-    backdrop.appendChild(dialog);
+    for (const node of [count, selectAll, cancelButton, addButton]) {
+      shell.foot.appendChild(node);
+    }
+    parentNode.appendChild(dialog);
 
     function goUp() {
       if (model.parent !== null) {
@@ -136,29 +151,21 @@ export function openFolderBrowser({ fs, storage, host }) {
     }
 
     function close(result) {
-      document.removeEventListener("keydown", onKey, true);
-      backdrop.remove();
-      if (previousFocus && typeof previousFocus.focus === "function") {
-        previousFocus.focus();
-      }
-      resolve(result);
+      settle(result);
+      shell.close();
     }
 
+    // Without a native modal <dialog> nothing traps the Tab key: the same trap as before keeps it inside.
     function onKey(event) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        close(null);
+      if (event.key !== "Tab" || typeof dialog.showModal === "function" || !shell.isOpen()) {
         return;
       }
-      if (event.key === "Tab") {
-        const nodes = [...dialog.querySelectorAll(FOCUSABLE)].filter((n) => !n.hidden);
-        const current = document.activeElement;
-        const target = trapTarget(nodes.length, nodes.indexOf(current), Boolean(current) && dialog.contains(current), event.shiftKey);
-        if (target !== null) {
-          event.preventDefault();
-          (target === "first" ? nodes[0] : nodes[nodes.length - 1]).focus();
-        }
+      const nodes = [...dialog.querySelectorAll(FOCUSABLE)].filter((n) => !n.hidden);
+      const current = document.activeElement;
+      const target = trapTarget(nodes.length, nodes.indexOf(current), Boolean(current) && dialog.contains(current), event.shiftKey);
+      if (target !== null) {
+        event.preventDefault();
+        (target === "first" ? nodes[0] : nodes[nodes.length - 1]).focus();
       }
     }
 
@@ -245,11 +252,17 @@ export function openFolderBrowser({ fs, storage, host }) {
       } else {
         node.appendChild(el("span", "fb-icon", "▸"));
       }
-      let name = entry.name;
+      let name = entryLabel(entry.name);
       if (entry.link) {
         name += " ↪";
       }
-      node.appendChild(el("span", "fb-name", name));
+      const nameNode = el("span", "fb-name", name);
+      nameNode.title = entry.name; // the full name, because a long one is cut in the middle
+      node.appendChild(nameNode);
+      const kind = entryKind(entry);
+      if (kind !== null) {
+        node.appendChild(el("span", "ui-badge fb-kind" + (kind === KIND_ENTERPRISE ? "" : " is-sensitive"), kind === KIND_ENTERPRISE ? S.cfKindEnterprise : S.cfKindSensitive));
+      }
       if (entry.broken) {
         node.appendChild(el("span", "fb-meta", S.fbBroken));
       } else if (isZip) {
@@ -367,14 +380,9 @@ export function openFolderBrowser({ fs, storage, host }) {
       restoreFocus(previousKey, hadFocus && !dialog.contains(document.activeElement));
     }
 
-    backdrop.addEventListener("mousedown", (event) => {
-      if (event.target === backdrop) {
-        close(null);
-      }
-    });
     document.addEventListener("keydown", onKey, true);
-    parentNode.appendChild(backdrop);
     render();
+    shell.open(previousFocus);
     list.focus();
     model.open();
   });

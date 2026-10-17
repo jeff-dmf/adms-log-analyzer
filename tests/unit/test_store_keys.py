@@ -110,6 +110,9 @@ def test_records_fields_and_msg_cut(conn):
     assert rec["id"] == 1 and rec["member"] == "Log/a.log" and rec["family"] == "AWFM"
     assert rec["process"] == "WfmAdapter" and rec["sensitive"] is False and rec["tpl_code"] == "TST-001"
     assert rec["tid"] == 7 and len(rec["msg"]) == keys.MSG_CHARS
+    assert rec["tpl_id"] == 1  # the viewer shows the readable title of the type, not the code
+    unmatched, _ = keys.records_with_key(conn, "errcode", "50%/ \u00e9")
+    assert unmatched[0]["tpl_id"] is None  # tpl_id 0 (no template) is reported as null
 
 
 def test_records_unknown_stream_and_null_ts(conn):

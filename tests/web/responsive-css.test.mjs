@@ -106,8 +106,9 @@ test("the page carries the rail, the buttons and the stylesheet, last; the modul
   const links = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
   assert.equal(links.at(-1), "/css/responsive.css");
   assert.match(main, /const loadDrawers = retryable\(\(\) => import\("\.\/drawers\.js"\)/, "a failed import is forgotten and tried again");
-  assert.match(main, /focusNewCase: \(\) => withSources\(\(\) => panel\.revealNewCase\(\)\)/);
-  assert.match(main, /focusAddFiles: \(\) => withSources\(\(\) => panel\.revealAddFiles\(\)\)/);
+  // UI-22: the opener is read before the drawer opens (it moves the focus), then passed to the dialog.
+  assert.match(main, /focusNewCase: \(\) => \{\s*const opener = document\.activeElement;\s*return withSources\(\(\) => panel\.revealNewCase\(opener\)\);/);
+  assert.match(main, /focusAddFiles: \(\) => \{\s*const opener = document\.activeElement;\s*return withSources\(\(\) => panel\.revealAddFiles\(false, opener\)\);/);
   assert.match(main, /openWhenLoaded\(\{ current: \(\) => drawers, load: loadDrawers/);
   assert.doesNotMatch(html, /id="detail-toggle"[^>]*\bhidden\b/, "visible from the first paint where CSS shows it, so a failed module leaves no dead end");
   assert.match(css, /#detail-toggle \{\s*display: var\(--detail-toggle-display\)/);

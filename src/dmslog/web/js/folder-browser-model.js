@@ -1,6 +1,7 @@
 // Pure model of the built-in folder browser (GET /api/fs/list): current folder, entries, the
 // selection of ZIPs (kept while navigating), and the remembered start folder.
-import { pathKey } from "./case-files-model.js";
+import { ersKind, pathKey } from "./case-files-model.js";
+import { middleEllipsis } from "./grid-model.js";
 
 export const STORAGE_KEY = "dmslog.browseDir";
 
@@ -224,4 +225,22 @@ export function trapTarget(count, index, inside, shift) {
     return "first";
   }
   return null;
+}
+
+// Longest ZIP/folder name shown whole in a row; longer ones are cut in the middle so the end (".zip") stays readable.
+export const NAME_CHARS = 44;
+
+// Display text of an entry name (the full name goes in the tooltip). The ".zip" ending is never cut off.
+export function entryLabel(name, maxChars = NAME_CHARS) {
+  const text = name === null || name === undefined ? "" : String(name);
+  if (/\.zip$/i.test(text) && text.length > 4) {
+    const cut = middleEllipsis(text.slice(0, -4), typeof maxChars === "number" ? maxChars - 4 : maxChars);
+    return cut + text.slice(-4);
+  }
+  return middleEllipsis(text, maxChars);
+}
+
+// "enterprise", "sensitive" or null: the badge of a ZIP row (ersKind of case-files-model.js; folders have none).
+export function entryKind(entry) {
+  return entry && entry.type === "zip" ? ersKind(entry.name) : null;
 }
