@@ -393,7 +393,7 @@ test("html: the DOM order of the detail panel is the reading order and CSS does 
   const aside = html.slice(start, html.indexOf("</aside>", start));
   const ids = [...aside.matchAll(/^ {8}<[a-z0-9]+\b[^>]*\bid="([^"]+)"/gm)].map((m) => m[1]);
   assert.deepEqual(ids, ["detail-title", "detail-empty", "detail-meta", "detail-actions", "detail-template", "detail-text",
-    "detail-knowledge", "detail-fields", "detail-keys", "detail-links", "detail-payload", "detail-bookmark", "context-box"]);
+    "detail-repeat", "detail-knowledge", "detail-fields", "detail-keys", "detail-links", "detail-payload", "detail-bookmark", "context-box"]);
   for (const name of ["knowledge.css", "links.css", "payload.css", "bookmarks.css", "app.css"]) {
     assert.equal(/(^|[\s;{])order:\s*\d/m.test(CSS(name)), false, name + " must not reorder with `order`");
   }
