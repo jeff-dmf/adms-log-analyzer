@@ -3,6 +3,7 @@
 // on the composed JSON, because the JSON forgets where a condition came from ({sev:{le:4}} can be "Hide noise"
 // or "Severity at least Warning"). No DOM. The texts come from `S` (strings.js), passed in.
 import { topNodes, wrapNodes } from "./filters.js";
+import { hideSpec, repeatSpec, spanText } from "./repeat-model.js";
 import { format, pluralKey } from "./strings.js";
 
 export const MAX_LABEL = 32; // chip label length; the title keeps the full text
@@ -58,6 +59,10 @@ export function chipLabel(node, lookups, S) {
   const kind = keys[0];
   const arg = node[kind];
   if (kind === "not") {
+    const hide = hideSpec(node); // {"not": {"repeat": {...}}}: the "Hide repeated records" chip (9.12)
+    if (hide !== null) {
+      return format(S.chipRepeatHide, { span: spanText(hide.ms) });
+    }
     const inner = chipLabel(arg, lookups, S);
     return inner === null ? null : format(S.chipNot, { label: inner });
   }
@@ -75,6 +80,10 @@ export function chipLabel(node, lookups, S) {
       const [mode] = Object.keys(arg);
       const key = { fts: "chipText", substr: "chipTextSubstr", regex: "chipTextRegex" }[mode];
       return key && typeof arg[mode] === "string" && Object.keys(arg).length === 1 ? format(S[key], { text: arg[mode] }) : null;
+    }
+    case "repeat": {
+      const spec = repeatSpec(node);
+      return spec === null ? null : format(S.chipRepeat, { span: spanText(spec.ms) });
     }
     case "sensitive":
       return typeof arg === "boolean" ? S[arg ? "chipSensitiveOn" : "chipSensitiveOff"] : null;

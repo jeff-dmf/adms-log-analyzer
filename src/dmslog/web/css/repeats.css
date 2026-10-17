@@ -1,0 +1,108 @@
+/* Repeated records and missing steps (9.12). The grid marker is a glyph (the words are the tooltip and the aria-label of
+   the row); status colours come from events.css. Only tokens of tokens.css and app.css. */
+.grid-row[data-rp] .col-msg::before {
+  content: "\21BA\00a0";
+  color: var(--muted);
+}
+
+.rp-title {
+  margin: 0 0 4px;
+  font-size: 1em;
+}
+
+.detail-repeat {
+  margin-top: var(--space-3);
+}
+
+.rp-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.rp-label {
+  font-family: ui-monospace, monospace;
+}
+
+.rp-go {
+  min-height: 0;
+  padding: 0 6px;
+}
+
+.rp-more {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.ms-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ms-toolbar label {
+  white-space: nowrap;
+}
+
+.ms-name-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ms-name-clear,
+.ms-pick {
+  min-height: 0;
+  padding: 0 6px;
+}
+
+.ms-mono {
+  font-family: ui-monospace, monospace;
+}
+
+.ms-summary,
+.ms-list {
+  margin-bottom: var(--space-3);
+  overflow-x: auto;
+}
+
+.ms-summary h3,
+.ms-list h3 {
+  margin: 0 0 4px;
+  font-size: 1em;
+}
+
+.ms-note {
+  margin-bottom: 4px;
+}
+
+.ms-open {
+  min-height: 0;
+  padding: 0 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+  text-decoration: underline;
+}
+
+.ms-open[aria-disabled="true"],
+.ms-pick[aria-disabled="true"],
+.ms-more[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ms-proof {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.ms-proof.is-proven {
+  color: inherit;
+  font-weight: 600;
+}

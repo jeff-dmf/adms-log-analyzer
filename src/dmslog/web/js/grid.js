@@ -40,7 +40,7 @@ function fieldText(value) {
 export class Grid {
   constructor({
     viewport, rowsLayer, spacer, header, onSelect, onCount, onPosition, onError, getMark, onVisible, onView,
-    getHighlight,
+    getHighlight, getRepeat,
   }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
@@ -52,6 +52,7 @@ export class Grid {
     this.onError = onError;
     this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
     this.getHighlight = getHighlight || (() => null); // highlight rule of a record id: {color, label} | null
+    this.getRepeat = getRepeat || (() => null); // repeat mark of a record id: {label} | null (repeat-model.js, 9.12)
     this.onVisible = onVisible || (() => {}); // ids of the rendered rows (bookmark lookup)
     this.onView = onView || (() => {});
     this.countGeneration = 0;
@@ -622,8 +623,16 @@ export class Grid {
       slot.el.setAttribute("aria-selected", selected ? "true" : "false");
       const mark = this.getMark(row.id);
       const hl = this.getHighlight(row.id);
+      const repeat = this.getRepeat(row.id);
       slot.el.setAttribute("aria-label", format(S.rowLabel, { id: row.id }) + (mark ? ", " + markerLabel(mark) : "") +
-        (hl ? ", " + hl.label : ""));
+        (hl ? ", " + hl.label : "") + (repeat ? ", " + repeat.label : ""));
+      if (repeat) {
+        slot.el.dataset.rp = "1"; // the glyph is CSS (css/repeats.css); the words are the tooltip and the aria-label
+        slot.el.title = repeat.label;
+      } else {
+        delete slot.el.dataset.rp;
+        slot.el.removeAttribute("title");
+      }
       if (mark) {
         slot.el.dataset.bm = mark.color;
       } else {
