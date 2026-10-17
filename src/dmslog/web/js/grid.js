@@ -91,6 +91,7 @@ export class Grid {
     this.pool = [];
     this.rowSeq = 0;      // mints the unique id of a row element (aria-activedescendant target, see render())
     this.active = null;   // {slot, recordId}: the row aria-activedescendant points at
+    this.countFresh = false; // shownCount belongs to the view whose rows are in the window (see adopt())
     this.visible = 0;
     this.lastScroll = 0;
     this.pendingJump = null;
@@ -193,10 +194,17 @@ export class Grid {
 
   // -- configuration ------------------------------------------------------------------------
 
-  setColumns(keys) {
-    this.visibleColumns = COLUMNS.map((c) => c.key).filter((k) => keys.includes(k));
+  // Drops every pooled row. aria-activedescendant must not point at a removed element while the rows are rebuilt (or
+  // when the reload that follows fails), so the reference goes with the pool.
+  discardPool() {
     this.pool = [];
     this.rowsLayer.textContent = "";
+    this.viewport.removeAttribute("aria-activedescendant");
+  }
+
+  setColumns(keys) {
+    this.visibleColumns = COLUMNS.map((c) => c.key).filter((k) => keys.includes(k));
+    this.discardPool();
     this.renderHeader();
     this.render();
   }
@@ -209,8 +217,7 @@ export class Grid {
       return Promise.resolve();
     }
     this.fieldColumns = next;
-    this.pool = [];
-    this.rowsLayer.textContent = "";
+    this.discardPool();
     this.renderHeader();
     return this.caseId === null ? Promise.resolve() : this.reload();
   }
@@ -222,8 +229,7 @@ export class Grid {
       return Promise.resolve();
     }
     this.collectionColumn = next;
-    this.pool = [];
-    this.rowsLayer.textContent = "";
+    this.discardPool();
     this.renderHeader();
     return this.caseId === null || !reload ? Promise.resolve() : this.reload();
   }
@@ -387,6 +393,9 @@ export class Grid {
   }
 
   adopt(view) {
+    if (!view.committed) {
+      this.countFresh = false; // the count shown so far is the previous view's until its own answer is emitted
+    }
     this.caseId = view.caseId;
     this.filter = view.filter;
     this.range = view.range;
@@ -599,6 +608,7 @@ export class Grid {
 
   emitCount(value, options) {
     this.shownCount = value;
+    this.countFresh = value !== null && typeof value === "object";
     this.syncGridAria();
     this.onCount(value, options);
   }
@@ -873,7 +883,7 @@ export class Grid {
   syncGridAria() {
     const w = this.window;
     const count = this.shownCount;
-    const known = count !== null && typeof count === "object" && count.exact && count.n >= w.rows.length;
+    const known = this.countFresh && count !== null && typeof count === "object" && count.exact && count.n >= w.rows.length;
     this.viewport.setAttribute("aria-rowcount", known ? String(count.n + 1) : "-1");
     this.viewport.setAttribute("aria-colcount", String(this.columnDefs().length));
     this.exactPositions = w.atStart;
@@ -971,10 +981,15 @@ export class Grid {
     if (parts.length === 0) {
       return;
     }
-    const first = slot.cells[Object.keys(slot.cells)[0]];
-    if (first) {
-      slot.hint.textContent = parts.join(", ");
-      first.appendChild(slot.hint);
+    const text = parts.join(", ");
+    // The Source cell may carry an aria-label (sensitive files), which replaces its content in the accessible name: it
+    // does not host the hint. If it is the only column, the text goes into its label instead.
+    const key = Object.keys(slot.cells).find((k) => k !== "source");
+    if (key !== undefined) {
+      slot.hint.textContent = text;
+      slot.cells[key].appendChild(slot.hint);
+    } else if (slot.cells.source) {
+      slot.cells.source.setAttribute("aria-label", slot.cells.source.title + ", " + text);
     }
   }
 

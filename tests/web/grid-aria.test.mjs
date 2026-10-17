@@ -176,3 +176,65 @@ test("a repeat mark (9.12) is hidden text in the first cell, with data-rp and th
   assert.deepEqual(hidden(r2), ["bookmarked (Blue)"]);
   assert.equal(r2.dataset.rp, undefined);
 });
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+test("dropping the pool for a reload clears activedescendant, also when the reload fails", async () => {
+  const { grid, viewport } = setup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  await settle();
+  grid.window.selected = 1;
+  grid.render();
+  assert.ok(viewport.attrs["aria-activedescendant"]);
+  let release;
+  api.page = () => new Promise((_, reject) => { release = reject; });
+  const done = grid.setFieldColumns(["f1"]);
+  assert.equal(viewport.attrs["aria-activedescendant"], undefined, "no reference to a removed row while the request runs");
+  release(new Error("boom"));
+  await done.catch(() => {});
+  await settle();
+  assert.equal(viewport.attrs["aria-activedescendant"], undefined, "nor after the failure");
+  // The collection column takes the same path.
+  api.page = async () => ({ rows: makeRows(1, 200), prev: null, next: "n" });
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  await settle();
+  grid.window.selected = 1;
+  grid.render();
+  assert.ok(viewport.attrs["aria-activedescendant"]);
+  api.page = () => new Promise(() => {});
+  grid.setCollectionColumn(true);
+  assert.equal(viewport.attrs["aria-activedescendant"], undefined);
+});
+
+test("marks stay in the accessible name when Source is the first column and has its own label", async () => {
+  const { grid, rowsLayer } = setup({ marks: { 1: { color: "blue" } } });
+  grid.setColumns(["source", "msg"]);
+  grid.sourceNames.set(1, "a.sensitive.log");
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  await settle();
+  const [r1] = shown(rowsLayer);
+  const [source, msg] = r1.children;
+  assert.ok(source.attrs["aria-label"], "the sensitive source keeps its label");
+  assert.doesNotMatch(source.attrs["aria-label"], /bookmarked/);
+  assert.deepEqual(msg.children.filter((c) => c.className === "visually-hidden").map((c) => c.textContent), ["bookmarked (Blue)"]);
+  // Source as the only column: the text goes into its label.
+  grid.setColumns(["source"]);
+  grid.render();
+  const [only] = shown(rowsLayer)[0].children;
+  assert.match(only.attrs["aria-label"], /, bookmarked \(Blue\)$/);
+});
+
+test("aria-rowcount does not carry the previous filter's count once the new rows are in", async () => {
+  const { grid, viewport } = setup({ count: { count: 400, exact: true } });
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  await settle();
+  assert.equal(viewport.attrs["aria-rowcount"], "401");
+  let answer;
+  api.count = () => new Promise((resolve) => { answer = resolve; });
+  await grid.setView({ caseId: "A", filter: { q: "x" }, range: null });
+  await settle();
+  assert.equal(viewport.attrs["aria-rowcount"], "-1", "the new view's count is still pending");
+  answer({ count: 300, exact: true });
+  await settle();
+  assert.equal(viewport.attrs["aria-rowcount"], "301");
+});
