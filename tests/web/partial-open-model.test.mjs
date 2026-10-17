@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  MAX_FIRST_SOURCES, MAX_PLAN_SOURCES, buildFirst, canChoose, captureTs, chosenSources, defaultChecked, mergePeriods,
+  MAX_FIRST_SOURCES, MAX_PLAN_SOURCES, buildFirst, canChoose, captureTs, chainKey, chainMembers, chosenSources, defaultChecked, mergePeriods,
   normalizePending, normalizePlan, parseInstant, parseWindow, partialLeft, pendingTotals, periodOf, safeCount,
   unmatchedNames, windowTouchesPeriod,
 } from "../../src/dmslog/web/js/partial-open-model.js";
@@ -99,15 +99,15 @@ test("the capture time of an ERS name, and the period of the previewed sources",
     src("b", { first_ts: T("2026-10-09T09:00:00"), last_ts: T("2026-10-09T11:00:00") }),
     src("out", { selected: false, first_ts: 0, last_ts: T("2030-01-01T00:00:00") }),
   ] }).sources;
-  assert.deepEqual(periodOf(list, name), { from: T("2026-10-09T09:00:00"), to: T("2026-10-09T12:00:00"), approx: false });
+  assert.deepEqual(periodOf(list, name), { from: T("2026-10-09T09:00:00"), to: T("2026-10-09T12:00:00"), approx: false, end: "read" });
   const noLast = normalizePlan({ sources: [src("a", { first_ts: T("2026-10-09T10:00:00") }), src("b", { first_ts: T("2026-10-09T10:30:00") })] }).sources;
-  assert.deepEqual(periodOf(noLast, name), { from: T("2026-10-09T10:00:00"), to: T("2026-10-09T14:30:00"), approx: true }, "the capture time ends it");
-  assert.deepEqual(periodOf(noLast, "plain.zip"), { from: T("2026-10-09T10:00:00"), to: T("2026-10-09T10:30:00"), approx: true });
+  assert.deepEqual(periodOf(noLast, name), { from: T("2026-10-09T10:00:00"), to: T("2026-10-09T14:30:00"), approx: true, end: "capture" }, "the capture time ends it");
+  assert.deepEqual(periodOf(noLast, "plain.zip"), { from: T("2026-10-09T10:00:00"), to: T("2026-10-09T10:30:00"), approx: true, end: "latest" });
   const early = periodOf(noLast, "x_20200101000000_y.zip");
   assert.equal(early.to, T("2026-10-09T10:30:00"), "a capture time before the first record is not an end");
   assert.equal(periodOf([], name), null);
   assert.equal(periodOf(normalizePlan({ sources: [src("a")] }).sources, name), null, "no time at all");
-  assert.deepEqual(mergePeriods([null, { from: 5, to: 9, approx: false }, { from: 2, to: 7, approx: true }]), { from: 2, to: 9, approx: true });
+  assert.deepEqual(mergePeriods([null, { from: 5, to: 9, approx: false, end: "read" }, { from: 2, to: 7, approx: true, end: "latest" }]), { from: 2, to: 9, approx: true, end: "latest" });
   assert.equal(mergePeriods([null, null]), null);
 });
 
@@ -167,4 +167,27 @@ test("pending work: garbage in, safe numbers out", () => {
   assert.equal(partialLeft({ partial_left: "3" }), 3);
   assert.equal(partialLeft({ partial_left: -2 }), 0);
   assert.equal(partialLeft(null), 0);
+});
+
+test("rotation chains: same stream and name without .N; choosing one source chooses the chain", () => {
+  const list = normalizePlan({ sources: [
+    src("a", { name: "core.log", family: "Wfm", pid: 7 }),
+    src("b", { name: "core.log.1", family: "Wfm", pid: 7 }),
+    src("c", { name: "core.log.12", family: "Wfm", pid: 7 }),
+    src("d", { name: "core.log", family: "Wfm", pid: 8 }),
+    src("e", { name: "core.log", family: "Wfm", pid: 7, sensitive: true }),
+    src("f", { name: "core.log.1", family: "Wfm", pid: 7, selected: false }),
+  ] }).sources;
+  assert.equal(chainKey(list[0]), chainKey(list[1]));
+  assert.equal(chainKey(list[0]), chainKey(list[2]));
+  assert.notEqual(chainKey(list[0]), chainKey(list[3]), "another pid is another stream");
+  assert.notEqual(chainKey(list[0]), chainKey(list[4]), "sensitive is another stream");
+  assert.deepEqual(chainMembers(list, "b"), ["a", "b", "c"], "the member outside the scope is not part of the choice");
+  assert.deepEqual(chainMembers(list, "f"), [], "not choosable");
+  assert.deepEqual(chainMembers(list, "zzz"), []);
+  const one = chosenSources(list, new Set(["b"]));
+  assert.deepEqual(one.names, ["a", "b", "c"]);
+  assert.equal(one.count, 3);
+  assert.equal(one.total, 5);
+  assert.equal(chosenSources(list, new Set(["a", "d", "e"])).names, null, "all chains: no restriction");
 });

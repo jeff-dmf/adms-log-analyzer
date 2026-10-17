@@ -124,8 +124,9 @@ export function captureTs(name) {
 }
 
 // The period the choosable sources cover: the earliest first_ts to the latest last_ts; when no last_ts is known
-// (zip members are not read to the end) the capture time of the file name; else the latest first_ts. `approx` is true
-// when the end is not a time read from a log. null when there is no time at all.
+// (zip members are not read to the end) the capture time of the file name; else the latest first_ts. `end` says which:
+// "read" (a last_ts of a log), "capture" (the capture time of the name) or "latest" (only the latest first_ts: the real
+// end is later). `approx` = end is not "read". null when there is no time at all.
 export function periodOf(sources, fileName = "") {
   let from = null;
   let last = null;
@@ -146,14 +147,16 @@ export function periodOf(sources, fileName = "") {
     return null;
   }
   if (last !== null) {
-    return { from, to: Math.max(last, from), approx: false };
+    return { from, to: Math.max(last, from), approx: false, end: "read" };
   }
   const capture = captureTs(fileName);
   if (capture !== null && capture >= from) {
-    return { from, to: capture, approx: true };
+    return { from, to: capture, approx: true, end: "capture" };
   }
-  return { from, to: Math.max(latestFirst, from), approx: true };
+  return { from, to: Math.max(latestFirst, from), approx: true, end: "latest" };
 }
+
+const PERIOD_END_ORDER = ["read", "capture", "latest"]; // the vaguest end wins in a union
 
 // The union of several periods, or null.
 export function mergePeriods(periods) {
@@ -164,21 +167,46 @@ export function mergePeriods(periods) {
     }
     result = result === null
       ? { ...period }
-      : { from: Math.min(result.from, period.from), to: Math.max(result.to, period.to), approx: result.approx || period.approx };
+      : {
+        from: Math.min(result.from, period.from),
+        to: Math.max(result.to, period.to),
+        approx: result.approx || period.approx,
+        end: PERIOD_END_ORDER.indexOf(period.end) > PERIOD_END_ORDER.indexOf(result.end) ? period.end : result.end,
+      };
   }
   return result;
 }
 
-// What the checked boxes mean for one previewed path: {names, none, tooMany, total, count}.
-// names === null: every choosable source is checked (no restriction); none: nothing choosable is checked.
+// The rotation chain a source belongs to, as the server groups them (stream = family, process, pid, sensitive; chain =
+// file name without a trailing ".N"): the first pass always takes a chain whole, so choosing core.log.1 means choosing
+// core.log too.
+export function chainKey(source) {
+  return [source.family, source.process, source.pid === null ? "" : source.pid, source.sensitive ? 1 : 0,
+    String(source.name).replace(/\.\d+$/, "")].join("\u0000");
+}
+
+// What the checked boxes mean for one previewed path, with chains expanded as the server will: {names, none, tooMany,
+// total, count}. names === null: every choosable source is chosen (no restriction); none: nothing choosable is checked.
+// `count` is the number of sources that really go first (the checked ones plus the rest of their chains).
 export function chosenSources(sources, checked) {
   const eligible = sources.filter(canChoose);
-  const names = eligible.filter((s) => checked.has(s.member)).map((s) => s.member);
+  const chains = new Set(eligible.filter((s) => checked.has(s.member)).map(chainKey));
+  const names = eligible.filter((s) => chains.has(chainKey(s))).map((s) => s.member);
   const total = eligible.length;
   if (total === 0 || names.length === total) {
     return { names: null, none: false, tooMany: false, total, count: names.length };
   }
-  return { names: names.length > 0 ? names : [], none: names.length === 0, tooMany: names.length > MAX_FIRST_SOURCES, total, count: names.length };
+  return { names, none: names.length === 0, tooMany: names.length > MAX_FIRST_SOURCES, total, count: names.length };
+}
+
+// The members of the chain of `member` among the choosable sources (the box and its siblings change together).
+export function chainMembers(sources, member) {
+  const found = sources.find((s) => s.member === member);
+  if (!found || !canChoose(found)) {
+    return [];
+  }
+  const key = chainKey(found);
+  return sources.filter((s) => canChoose(s) && chainKey(s) === key).map((s) => s.member);
 }
 
 // The `first` object of POST .../collections, or null when nothing narrows the opening. Keys that are not set are left

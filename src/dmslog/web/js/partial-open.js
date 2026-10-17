@@ -6,8 +6,8 @@ import { api as defaultApi } from "./api.js";
 import { pathKey, formatSize, splitPath } from "./case-files-model.js";
 import { setFieldError } from "./field-error.js";
 import {
-  MAX_FIRST_SOURCES, buildFirst, canChoose, chosenSources, defaultChecked, mergePeriods, normalizePlan, parseWindow,
-  periodOf, windowTouchesPeriod,
+  MAX_FIRST_SOURCES, buildFirst, canChoose, chainMembers, chosenSources, defaultChecked, mergePeriods, normalizePlan,
+  parseWindow, periodOf, windowTouchesPeriod,
 } from "./partial-open-model.js";
 import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
@@ -67,10 +67,13 @@ function sourceMetaText(source) {
   return parts.join(" · ");
 }
 
-// Options: host (element that receives the body), getCaseId(), getPaths() (the files that will be opened: list items
-// and typed paths), getScope() ("default" | "all"), api (default: the app's), onChange() after the choice changed.
-// Returns { snapshot(), validate(), reset(), invalidate(), showServerError(text), hasPreview() }.
-export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = defaultApi, onChange = null }) {
+// Options: host (element that receives the body), getCaseId(), getPaths() (every file shown in the dialog: list items and
+// typed paths; the preview covers them all), getScope() ("default" | "all"), api (default: the app's), onChange() after
+// the choice changed, announce(text) (the dialog's one live region: status and errors are spoken through it, nothing
+// here is a live region of its own). validate(paths, scope) and snapshot(paths, scope) take the files and the scope the
+// action will really use. Returns { snapshot, validate, reset, invalidate, refresh, showServerError, hasPreview,
+// focusFirst }.
+export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = defaultApi, onChange = null, announce = null }) {
   const doc = host.ownerDocument || document;
   const id = String(++uid);
   host.textContent = "";
@@ -128,22 +131,16 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
   uncheckAll.hidden = true;
   actions.append(previewButton, checkAll, uncheckAll);
   const status = el(doc, "p", "po-status");
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
   const periodLine = el(doc, "p", "po-period");
   const groupsBox = el(doc, "div", "po-groups");
   const sourcesError = el(doc, "p", "ui-field-error po-error");
   sourcesError.id = "po-sources-error-" + id;
-  sourcesError.setAttribute("role", "alert");
   sourcesError.hidden = true;
   sourcesBox.append(sourcesHelp, actions, status, periodLine, groupsBox, sourcesError);
 
   // -- summary and server refusal
   const summary = el(doc, "p", "po-summary");
-  summary.setAttribute("role", "status");
-  summary.setAttribute("aria-live", "polite");
   const serverError = el(doc, "p", "ui-field-error po-error");
-  serverError.setAttribute("role", "alert");
   serverError.hidden = true;
 
   host.append(help, windowBox, sourcesBox, summary, serverError);
@@ -152,6 +149,18 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
   let token = 0; // one per preview run (and per reset/invalidate): an older answer is dropped
   let previewing = false;
   let plans = new Map(); // pathKey -> {path, name, scope, sources, truncated, checked, node, boxes, count, error}
+
+  // The dialog's single live region speaks; the paragraphs on the page only show.
+  function say(text) {
+    if (typeof announce === "function") {
+      announce(text);
+    }
+  }
+
+  function setStatus(text) {
+    status.textContent = text;
+    say(text);
+  }
 
   function changed() {
     if (typeof onChange === "function") {
@@ -162,11 +171,17 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
   function setServerError(text) {
     serverError.textContent = text;
     serverError.hidden = text === "";
+    if (text !== "") {
+      say(text);
+    }
   }
 
   function setSourcesError(text) {
     sourcesError.textContent = text;
     sourcesError.hidden = text === "";
+    if (text !== "") {
+      say(text);
+    }
     if (text === "") {
       sourcesBox.removeAttribute("aria-describedby");
       sourcesBox.removeAttribute("aria-invalid");
@@ -191,11 +206,11 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
   }
 
   // The previewed entries that belong to the files that will be opened now.
-  function activePlans(paths = currentPaths()) {
+  function activePlans(paths = currentPaths(), scope = getScope()) {
     const out = [];
     for (const path of paths) {
       const entry = plans.get(pathKey(path));
-      if (entry && entry.scope === getScope() && !entry.error) {
+      if (entry && entry.scope === scope && !entry.error) {
         out.push(entry);
       }
     }
@@ -231,9 +246,39 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
     }
     const unpreviewed = paths.length - entries.length;
     if (entries.length > 0 && unpreviewed > 0) {
-      lines.push(format(S[pluralKey("poUnpreviewed", unpreviewed)], { count: unpreviewed }));
+      const key = window.valid && !window.empty ? "poUnpreviewedWindow" : "poUnpreviewed";
+      lines.push(format(S[pluralKey(key, unpreviewed)], { count: unpreviewed }));
     }
     summary.textContent = lines.join(" ");
+  }
+
+  // A preview whose file is no longer in the dialog (removed from the list, or the typed path changed) is marked and
+  // never used; it stays visible only so the user sees why its sources are gone from the choice.
+  function markStale() {
+    const current = new Set(currentPaths().map(pathKey));
+    for (const [key, entry] of plans) {
+      const stale = !current.has(key);
+      if (!entry.node || Boolean(entry.stale) === stale) {
+        continue;
+      }
+      entry.stale = stale;
+      entry.node.classList.toggle("po-stale", stale);
+      if (stale) {
+        entry.staleNote = el(doc, "p", "po-note", S.poStale);
+        entry.node.insertBefore(entry.staleNote, entry.node.children[1] || null);
+      } else if (entry.staleNote) {
+        entry.staleNote.remove();
+        entry.staleNote = null;
+      }
+      if (entry.boxes) {
+        for (const source of entry.sources) {
+          const box = entry.boxes.get(source.member);
+          if (box) {
+            box.disabled = stale || !canChoose(source);
+          }
+        }
+      }
+    }
   }
 
   // -- preview
@@ -262,10 +307,17 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
         box.disabled = !canChoose(source);
         label.title = !source.indexable ? S.poNotIndexable : (!source.selected ? S.poOutOfScope : "");
         box.addEventListener("change", () => {
-          if (box.checked) {
-            entry.checked.add(source.member);
-          } else {
-            entry.checked.delete(source.member);
+          // A rotation chain goes together (the first pass takes it whole): its boxes change as one.
+          for (const member of chainMembers(entry.sources, source.member)) {
+            if (box.checked) {
+              entry.checked.add(member);
+            } else {
+              entry.checked.delete(member);
+            }
+            const sibling = entry.boxes.get(member);
+            if (sibling) {
+              sibling.checked = box.checked;
+            }
           }
           afterCheckChange(entry);
         });
@@ -342,7 +394,8 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
       periodLine.textContent = "";
       return;
     }
-    periodLine.textContent = format(period.approx ? S.poPeriodApprox : S.poPeriod, { from: timeText(period.from), to: timeText(period.to) });
+    const key = period.end === "capture" ? "poPeriodCapture" : (period.end === "latest" ? "poPeriodLatest" : "poPeriod");
+    periodLine.textContent = format(S[key], { from: timeText(period.from), to: timeText(period.to) });
   }
 
   async function preview() {
@@ -351,12 +404,12 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
     }
     const caseId = getCaseId();
     if (caseId === null || caseId === undefined) {
-      status.textContent = S.needCase;
+      setStatus(S.needCase);
       return;
     }
     const paths = currentPaths();
     if (paths.length === 0) {
-      status.textContent = S.poNeedPath;
+      setStatus(S.poNeedPath);
       return;
     }
     const mine = ++token;
@@ -370,7 +423,7 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
       for (let index = 0; index < total; index += 1) {
         const path = paths[index];
         const name = splitPath(path).name || path;
-        status.textContent = format(S.poReading, { name, index: index + 1, total });
+        setStatus(format(S.poReading, { name, index: index + 1, total }));
         const entry = { path, name, scope, sources: [], truncated: false, checked: new Set(), node: null, boxes: null, count: null, error: "" };
         try {
           const data = await api.partial.plan(caseId, path, scope);
@@ -395,7 +448,7 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
         showPeriod();
         refreshSummary();
       }
-      status.textContent = format(S[pluralKey("poPreviewed", total)], { count: total });
+      setStatus(format(S[pluralKey("poPreviewed", total)], { count: total }));
       const any = [...plans.values()].some((entry) => entry.boxes);
       checkAll.hidden = !any;
       uncheckAll.hidden = !any;
@@ -420,7 +473,7 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
   }
 
   // {ok: true} | {ok: false, message}. Errors are shown next to the field; the first wrong one takes the focus.
-  function validate() {
+  function validate(paths = currentPaths(), scope = getScope()) {
     const window = parseWindow(fromField.input.value, toField.input.value);
     setFieldError(fromField.input, window.errors.from ? S.poBadTime : null);
     setFieldError(toField.input, window.errors.to === "bad" ? S.poBadTime : (window.errors.to === "order" ? S.poOrder : null));
@@ -431,7 +484,7 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
       return { ok: false, message: window.errors.from ? S.poBadTime : (window.errors.to === "order" ? S.poOrder : S.poBadTime) };
     }
     let narrowed = !window.empty;
-    for (const entry of activePlans()) {
+    for (const entry of activePlans(paths, scope)) {
       const chosen = chosenSources(entry.sources, entry.checked);
       if (chosen.none || chosen.tooMany) {
         const message = chosen.none
@@ -454,12 +507,12 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
     return { ok: true };
   }
 
-  // Freezes the choice at the moment the queue starts; later edits do not change the files already queued.
-  function snapshot() {
+  // Freezes the choice at the moment the queue starts; later edits do not change the files already queued. `paths` are
+  // the files the action will open and `scope` the scope it will use for all of them.
+  function snapshot(paths = currentPaths(), scope = getScope()) {
     const window = parseWindow(fromField.input.value, toField.input.value);
-    const scope = getScope();
     const names = new Map();
-    for (const entry of activePlans()) {
+    for (const entry of activePlans(paths, scope)) {
       names.set(pathKey(entry.path), chosenSources(entry.sources, entry.checked).names);
     }
     const from = window.valid ? window.from : null;
@@ -481,7 +534,7 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
     previewing = false;
     previewButton.disabled = false;
     clearPreview();
-    status.textContent = message;
+    setStatus(message);
     refreshSummary();
     changed();
   }
@@ -499,6 +552,12 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
     refreshSummary();
   }
 
+  // The files of the dialog changed (list edited, a path typed): the previews of files that left are marked.
+  function refresh() {
+    markStale();
+    refreshSummary();
+  }
+
   refreshSummary();
 
   return {
@@ -506,7 +565,7 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
     validate,
     reset,
     invalidate,
-    refresh: refreshSummary,
+    refresh,
     showServerError(text) {
       setServerError(text === "" ? "" : format(S.poServerRefused, { message: text }));
     },

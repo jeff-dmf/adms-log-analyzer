@@ -23,8 +23,6 @@ export function mountResumeBanner({ parent, before = null, onResume }) {
   const doc = parent.ownerDocument || document;
   const root = doc.createElement("div");
   root.className = "resume-banner";
-  root.setAttribute("role", "status");
-  root.setAttribute("aria-live", "polite");
   root.hidden = true;
   const text = doc.createElement("span");
   text.className = "resume-banner-text";

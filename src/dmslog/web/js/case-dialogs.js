@@ -61,7 +61,9 @@ function showLabels(root) {
 // on demand (import(); a failed load shows Try again and is tried again, never a dead end) and shows its body. While it
 // is off, or not loaded, nothing narrows the opening. Options: getPaths(), getCaseId(), getScope(), loadModule() (default:
 // import("./partial-open.js")), scopeSelect (a change of scope invalidates the preview).
-// Returns { node, wanted(), ready() -> Promise<boolean>, validate(), snapshot(), reset(), showServerError(text) }.
+// The slot owns the dialog's one live region (the status and the errors of the section are spoken through it).
+// Returns { node, wanted(), ready() -> Promise<boolean>, validate(paths, scope), snapshot(paths, scope), refresh(),
+// reset(), showServerError(text) }: `paths`/`scope` are the files and the scope of the action being started.
 function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, scopeSelect, onMessage }) {
   const node = doc.createElement("div");
   node.className = "po-slot";
@@ -82,13 +84,19 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
   toggle.setAttribute("aria-expanded", "false");
   const note = doc.createElement("p");
   note.className = "po-load-note";
-  note.setAttribute("role", "status");
+  const live = doc.createElement("p");
+  live.className = "po-live visually-hidden";
+  live.setAttribute("role", "status");
+  live.setAttribute("aria-live", "polite");
+  const announce = (text) => {
+    live.textContent = String(text || "");
+  };
   const retry = button(doc, S.poRetry, "ui-button po-retry", () => load());
   retry.hidden = true;
   const content = doc.createElement("div");
   content.className = "po-content";
   body.append(note, retry, content);
-  node.append(row, body);
+  node.append(row, body, live);
 
   let controller = null;
   let loading = null; // shared promise of the load; reset by a failure so the next try imports again
@@ -101,12 +109,14 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
     if (!loading) {
       const mine = generation;
       note.textContent = S.poLoading;
+      announce(S.poLoading);
       retry.hidden = true;
       const attempt = Promise.resolve().then(() => loadModule()).then((mod) => {
         if (mine !== generation) {
           return false;
         }
-        controller = mod.mountPartialBody({ host: content, getCaseId, getPaths, getScope });
+        controller = mod.mountPartialBody({ host: content, getCaseId, getPaths, getScope, announce });
+        controller.refresh();
         note.textContent = "";
         const wasOnRetry = doc.activeElement === retry;
         retry.hidden = true;
@@ -122,6 +132,7 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
         }
         if (mine === generation) {
           note.textContent = S.poLoadFailed;
+          announce(S.poLoadFailed);
           retry.hidden = false;
         }
       });
@@ -148,14 +159,19 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
     node,
     wanted: () => toggle.checked,
     ready: () => (toggle.checked ? load() : Promise.resolve(true)),
-    validate() {
+    validate(paths, scope) {
       if (!controller) {
         onMessage(S.poNotReady, true);
         return { ok: false, message: S.poNotReady };
       }
-      return controller.validate();
+      return controller.validate(paths, scope);
     },
-    snapshot: () => (controller && toggle.checked ? controller.snapshot() : null),
+    snapshot: (paths, scope) => (controller && toggle.checked ? controller.snapshot(paths, scope) : null),
+    refresh() {
+      if (controller) {
+        controller.refresh();
+      }
+    },
     showServerError(text) {
       if (controller) {
         controller.showServerError(text);
@@ -176,6 +192,7 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
         toggle.focus();
       }
       note.textContent = "";
+      announce("");
       retry.hidden = true;
     },
   };
@@ -229,6 +246,15 @@ export function mountCaseDialogs({
     onMessage,
   });
   addForm.appendChild(partial.node);
+  // The files of the dialog change (list edited, a path typed): the section marks previews of files that left.
+  for (const input of [addFiles.pathInput, refs.pathInput]) {
+    input.addEventListener("input", () => partial.refresh());
+  }
+  const listChanged = addFiles.state.onChange;
+  addFiles.state.onChange = (state) => {
+    listChanged(state);
+    partial.refresh();
+  };
   addShell.foot.appendChild(button(doc, S.cfCancel, "ui-button case-dialog-cancel", () => addShell.close()));
   addFiles.placeAction(addShell.foot);
   parent.appendChild(addShell.dialog);

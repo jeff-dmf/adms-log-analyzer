@@ -241,6 +241,8 @@ test("only an end, or only a start, is a window; with the option off nothing nar
   ctx.refs.openForm.dispatch("submit");
   await settle();
   assert.deepEqual(seen[0], { to: T("2026-10-09T10:00:00") });
+  live().emit("done", { job_id: 1, status: "ok", records: 0 });
+  await settle();
   await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
   toggle.checked = true;
   toggle.dispatch("change");
@@ -250,6 +252,8 @@ test("only an end, or only a start, is a window; with the option off nothing nar
   ctx.refs.openForm.dispatch("submit");
   await settle();
   assert.deepEqual(seen[1], { from: T("2026-10-09T10:00:00") });
+  live().emit("done", { job_id: 1, status: "ok", records: 0 });
+  await settle();
   await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
   ctx.refs.pathInput.value = "/data/z";
   ctx.refs.openForm.dispatch("submit");
@@ -354,6 +358,8 @@ test("choosing sources sends their member names; all checked sends none; none ch
   ctx.refs.openForm.dispatch("submit");
   await settle();
   assert.deepEqual(sent, [{ sources: ["m0", "m2"] }]);
+  live().emit("done", { job_id: 1, status: "ok", records: 0 });
+  await settle();
 
   await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
   q(dlg, "po-toggle-box")[0].checked = true;
@@ -644,7 +650,7 @@ test("a first_ready of another job, or after the case changed, does nothing; one
   await run;
 });
 
-test("first_ready whose reload ends after the job did, or after a case switch, leaves the viewer alone", async () => {
+test("first_ready whose reload ends after the job did still applies the window; after a case switch it does not", async () => {
   const ctx = page();
   const { dlg } = await openAdd(ctx);
   const { run } = await startedJob(ctx, dlg);
@@ -657,8 +663,12 @@ test("first_ready whose reload ends after the job did, or after a case switch, l
   slow.resolve();
   await run;
   await settle();
-  assert.equal(ctx.calls.first.length, 0, "done reloads everything; first_ready must not apply a window after it");
+  await settle();
+  assert.equal(ctx.calls.first.length, 1, "the window of this operation is applied even though the job ended first");
+  assert.deepEqual([ctx.calls.first[0].from, ctx.calls.first[0].to], [T("2026-10-09T10:00:00"), T("2026-10-09T10:30:00")]);
   assert.equal(ctx.calls.done, 1);
+  assert.notEqual(ctx.calls.messages.at(-1)[0], S.poFirstShown);
+  assert.equal(ctx.calls.progress.at(-1), null, "the progress bar is not brought back after the job ended");
 });
 
 test("a viewer handler that throws is reported, not left unhandled", async () => {
@@ -728,7 +738,7 @@ test("a case with pending work shows the offer once, announced in the status bar
   assert.equal(ctx.loads.resume, 1);
   const node = banner();
   assert.equal(node.hidden, false);
-  assert.equal(node.getAttribute("role"), "status");
+  assert.equal(node.getAttribute("role"), null, "not a live region of its own: the status bar announces it");
   assert.equal(q(node, "resume-banner-text")[0].textContent, "Indexing is incomplete: 3 sources are not fully indexed.");
   const button = q(node, "resume-banner-button")[0];
   assert.equal(button.textContent, S.poResumeNow);
@@ -1050,4 +1060,363 @@ test("a start request that throws synchronously frees the queue with a failed re
   assert.equal(result.status, "failed");
   assert.equal(result.message, "no way");
   assert.equal(ctx.panel.waiter, null);
+});
+
+// ---- review round: one operation at a time, identity of the operation, what each action opens --------------------------
+
+test("Resume then Add: the add is refused and the resume keeps its stream, waiter and busy offer", async () => {
+  const ctx = page();
+  api.partial.pending = async () => PENDING;
+  await ctx.panel.selectCase("A");
+  await settle();
+  api.partial.resume = async () => ({ job_id: "R" });
+  q(banner(), "resume-banner-button")[0].dispatch("click");
+  await settle();
+  const stream = live();
+  const waiter = ctx.panel.waiter;
+  let sent = 0;
+  api.addCollection = async () => { sent += 1; return { job_id: "X" }; };
+  ctx.panel.addFiles.state.add([ENT]);
+  await ctx.panel.addFilesToCase();
+  const direct = await ctx.panel.runCollection(ENT, "default", "A");
+  assert.equal(sent, 0, "nothing was posted");
+  assert.equal(direct.status, "refused");
+  assert.equal(direct.code, "job_running");
+  assert.equal(live(), stream, "the resume's stream was not replaced or closed");
+  assert.equal(ctx.panel.waiter, waiter);
+  assert.equal(ctx.panel.resuming, true);
+  assert.equal(q(banner(), "resume-banner-button")[0].disabled, true);
+  assert.deepEqual(ctx.calls.messages.at(-1), [S.cfBusy, true]);
+  api.partial.pending = async () => ({ pending: [] });
+  stream.emit("done", { job_id: "R", status: "ok", records: 1 });
+  await settle();
+  assert.equal(ctx.panel.resuming, false);
+  assert.equal(banner().hidden, true);
+});
+
+test("Add then Resume: the resume is refused and the queue is untouched", async () => {
+  const ctx = page();
+  api.partial.pending = async () => PENDING;
+  await ctx.panel.selectCase("A");
+  await settle();
+  const { dlg } = await openAdd(ctx);
+  const { run } = await startedJob(ctx, dlg);
+  const stream = live();
+  let posts = 0;
+  api.partial.resume = async () => { posts += 1; return { job_id: "R" }; };
+  await ctx.panel.resumeIndexing();
+  assert.equal(posts, 0);
+  assert.equal(live(), stream);
+  assert.deepEqual(ctx.calls.messages.at(-1), [S.poResumeBusy, true]);
+  stream.emit("done", { job_id: "J", status: "ok", records: 1 });
+  await run;
+});
+
+test("an answer from an earlier case or dialog session never touches the current dialog", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const gate = deferred();
+  api.addCollection = async () => { await gate.promise; return { job_id: "J" }; };
+  ctx.refs.pathInput.value = "/data/a";
+  fill(dlg, "2026-10-09 10:00:00", "");
+  ctx.refs.openForm.dispatch("submit");
+  await settle();
+  await ctx.panel.selectCase("B");
+  await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
+  const toggle = q(dlg, "po-toggle-box")[0];
+  toggle.checked = true;
+  toggle.dispatch("change");
+  await settle();
+  ctx.refs.pathInput.value = "/data/b";
+  fill(dlg, "2026-10-09 11:00:00", "");
+  gate.resolve();
+  await settle();
+  assert.ok(isOpen(dlg), "the dialog of case B stays");
+  assert.equal(ctx.refs.pathInput.value, "/data/b");
+  assert.equal(field(dlg, "from").value, "2026-10-09 11:00:00");
+  assert.equal(toggle.checked, true);
+  assert.equal(ctx.panel.waiter, null);
+  assert.equal(ctx.panel.starting, false);
+});
+
+test("a late refusal from an earlier case leaves the current field, dialog and stream alone", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const gate = deferred();
+  api.addCollection = async () => { await gate.promise; };
+  ctx.refs.pathInput.value = "/data/a";
+  fill(dlg, "2026-10-09 10:00:00", "");
+  ctx.refs.openForm.dispatch("submit");
+  await settle();
+  await ctx.panel.selectCase("B");
+  await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
+  api.progressUrl = () => "/p-b";
+  const mine = ctx.panel.watchProgress("B"); // a stream of the current case
+  void mine;
+  const stream = live();
+  gate.reject(new ApiError(404, "path_not_found", "Path does not exist: /data/a"));
+  await settle();
+  assert.equal(ctx.refs.pathInput.getAttribute("aria-invalid"), null);
+  assert.equal(live(), stream, "the current stream stays open");
+  assert.ok(isOpen(dialogOf("case-dialog-add")));
+});
+
+test("closing and reopening the dialog in the same case also retires the earlier submit", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const gate = deferred();
+  api.addCollection = async () => { await gate.promise; return { job_id: "J" }; };
+  ctx.refs.pathInput.value = "/data/a";
+  fill(dlg, "2026-10-09 10:00:00", "");
+  ctx.refs.openForm.dispatch("submit");
+  await settle();
+  dlg.dispatch("keydown", { key: "Escape" });
+  await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
+  ctx.refs.pathInput.value = "/data/second";
+  gate.resolve();
+  await settle();
+  assert.ok(isOpen(dlg), "the reopened dialog is not closed by the old answer");
+  assert.equal(ctx.refs.pathInput.value, "/data/second");
+  assert.ok(ctx.panel.waiter, "the job itself goes on");
+});
+
+test("the Add action validates only the files it opens; the folder field is the other action's", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  api.partial.plan = async () => planOf([{}, {}]);
+  const sent = [];
+  api.addCollection = async (...a) => { sent.push([a[1], a[3]]); return { job_id: "J" }; };
+  ctx.panel.addFiles.state.add([ENT]);
+  ctx.refs.pathInput.value = SENS;
+  previewButton(dlg).dispatch("click");
+  await settle();
+  const groups = q(dlg, "po-group");
+  assert.equal(groups.length, 2);
+  const box = q(groups[1], "po-check")[1];
+  box.checked = false;
+  box.dispatch("change"); // restrict only the file of the folder field
+  await ctx.panel.addFilesToCase();
+  assert.equal(sent.length, 0, "ENT would have opened whole: refused");
+  assert.equal(q(dlg, "po-error").find((n) => !n.hidden).textContent, S.poErrNothing);
+  ctx.refs.openForm.dispatch("submit");
+  await settle();
+  assert.deepEqual(sent, [[SENS, { sources: ["m0"] }]], "the folder field action opens its own file with its choice");
+});
+
+test("the scope is frozen with the queue", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const calls = [];
+  api.addCollection = async (...a) => { calls.push([a[2], a[3]]); return { job_id: "J" + calls.length }; };
+  ctx.panel.addFiles.state.add([ENT, SENS]);
+  fill(dlg, "2026-10-09 10:00:00", "");
+  const run = ctx.panel.addFilesToCase();
+  await settle();
+  ctx.refs.scopeSelect.value = "all";
+  ctx.refs.scopeSelect.dispatch("change");
+  live().emit("done", { job_id: "J1", status: "ok", records: 1 });
+  await settle();
+  live().emit("done", { job_id: "J2", status: "ok", records: 1 });
+  await run;
+  const win = { from: T("2026-10-09T10:00:00") };
+  assert.deepEqual(calls, [["default", win], ["default", win]]);
+});
+
+test("the typed path is bound to its job like the queue: a replay of another job changes nothing", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  api.addCollection = async () => ({ job_id: "NEW" });
+  ctx.refs.pathInput.value = "/data/x";
+  fill(dlg, "2026-10-09 10:00:00", "2026-10-09 11:00:00");
+  ctx.refs.openForm.dispatch("submit");
+  await settle();
+  const stream = live();
+  stream.emit("progress", { job_id: "OLD", status: "first_ready", stage: "first", records: 1 });
+  stream.emit("done", { job_id: "OLD", status: "ok", records: 99 });
+  await settle();
+  assert.equal(ctx.calls.first.length, 0, "the window of NEW is not applied for OLD");
+  assert.ok(ctx.panel.waiter, "OLD's done did not finish NEW");
+  assert.equal(ctx.calls.messages.some(([t]) => t.startsWith("Indexed 99")), false);
+  stream.emit("progress", { job_id: "NEW", status: "first_ready", stage: "first", records: 2 });
+  await settle();
+  assert.equal(ctx.calls.first.length, 1);
+  assert.equal(ctx.calls.first[0].from, T("2026-10-09T10:00:00"));
+  stream.emit("done", { job_id: "NEW", status: "ok", records: 5 });
+  await settle();
+  assert.equal(ctx.panel.waiter, null);
+});
+
+test("a first_ready kept before the start answered and replayed after it runs once", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const gate = deferred();
+  api.addCollection = async () => { await gate.promise; return { job_id: "J" }; };
+  ctx.panel.addFiles.state.add([ENT]);
+  fill(dlg, "2026-10-09 10:00:00", "");
+  const run = ctx.panel.addFilesToCase();
+  await settle();
+  const stream = live();
+  stream.emit("progress", { job_id: "J", status: "first_ready", stage: "first", records: 2 });
+  stream.emit("progress", { job_id: "J", status: "first_ready", stage: "first", records: 2 });
+  gate.resolve();
+  await settle();
+  stream.emit("progress", { job_id: "J", status: "first_ready", stage: "first", records: 2 }); // replay after a reconnection
+  await settle();
+  assert.equal(ctx.calls.first.length, 1);
+  stream.emit("done", { job_id: "J", status: "ok", records: 2 });
+  await run;
+});
+
+test("a fast job under a case switch does not apply its window to the other case", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const { run } = await startedJob(ctx, dlg);
+  const slow = deferred();
+  api.sources = async () => { await slow.promise; return { sources: [] }; };
+  live().emit("progress", { job_id: "J", status: "first_ready", stage: "first", records: 1 });
+  await settle();
+  const switching = ctx.panel.selectCase("B");
+  slow.resolve();
+  await switching;
+  await run;
+  await settle();
+  assert.equal(ctx.calls.first.length, 0);
+});
+
+test("Resume failing with /pending also failing leaves an actionable offer", async () => {
+  const ctx = page();
+  api.partial.pending = async () => PENDING;
+  await ctx.panel.selectCase("A");
+  await settle();
+  const button = q(banner(), "resume-banner-button")[0];
+  api.partial.resume = async () => { throw new ApiError(0, "network", "down"); };
+  api.partial.pending = async () => { throw new ApiError(0, "network", "down"); };
+  button.dispatch("click");
+  await settle();
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, S.poResumeNow);
+  assert.equal(ctx.panel.resuming, false);
+  // and a resume that worked, followed by a /pending that fails, is not left busy either
+  api.partial.resume = async () => ({ job_id: "R" });
+  button.dispatch("click");
+  await settle();
+  live().emit("done", { job_id: "R", status: "ok", records: 1 });
+  await settle();
+  assert.equal(button.disabled, false);
+  assert.equal(button.hidden, false);
+});
+
+test("an offer left running while a job ended and /pending fails acts again", async () => {
+  const ctx = page();
+  api.partial.pending = async () => ({ ...PENDING, running: true });
+  await ctx.panel.selectCase("A");
+  await settle();
+  assert.equal(q(banner(), "resume-banner-button")[0].hidden, true);
+  api.partial.pending = async () => { throw new ApiError(0, "network", "down"); };
+  live().emit("done", { job_id: "x", status: "ok", records: 1 });
+  await settle();
+  assert.equal(q(banner(), "resume-banner-button")[0].hidden, false);
+});
+
+// ---- review round, P2 ------------------------------------------------------------------------------------------------
+
+test("a rotation chain is chosen whole: its boxes move together and the count and the names say so", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  api.partial.plan = async () => planOf([
+    { name: "core.log", pid: 7 }, { name: "core.log.1", pid: 7 }, { name: "other.log", pid: 7 },
+  ]);
+  const sent = [];
+  api.addCollection = async (...a) => { sent.push(a[3]); return { job_id: "J" }; };
+  ctx.refs.pathInput.value = ENT;
+  previewButton(dlg).dispatch("click");
+  await settle();
+  const boxes = q(dlg, "po-check");
+  boxes[1].checked = false; // core.log.1
+  boxes[1].dispatch("change");
+  assert.equal(boxes[0].checked, false, "core.log follows core.log.1");
+  assert.equal(boxes[2].checked, true);
+  assert.match(q(dlg, "po-summary")[0].textContent, /1 of 3 sources first/);
+  boxes[1].checked = true;
+  boxes[1].dispatch("change");
+  boxes[2].checked = false;
+  boxes[2].dispatch("change");
+  assert.match(q(dlg, "po-summary")[0].textContent, /2 of 3 sources first/);
+  ctx.refs.openForm.dispatch("submit");
+  await settle();
+  assert.deepEqual(sent, [{ sources: ["m0", "m1"] }], "the whole chain goes");
+  assert.match(S.poSourcesHelp, /Rotated files .* together/);
+});
+
+test("a preview of a file that left the dialog is marked and never used", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  api.partial.plan = async () => planOf([{}, {}]);
+  ctx.panel.addFiles.state.add([ENT]);
+  previewButton(dlg).dispatch("click");
+  await settle();
+  const box = q(dlg, "po-check")[1];
+  box.checked = false;
+  box.dispatch("change");
+  assert.match(q(dlg, "po-summary")[0].textContent, /1 of 2 sources first|first/);
+  ctx.panel.addFiles.state.remove(ctx.panel.addFiles.state.items[0].id);
+  const group = q(dlg, "po-group")[0];
+  assert.ok(has(group, "po-stale"));
+  assert.match(group.textContent, /No longer in the list/);
+  assert.equal(q(group, "po-check").every((b) => b.disabled), true);
+  assert.doesNotMatch(q(dlg, "po-summary")[0].textContent, /sources first/);
+  ctx.panel.addFiles.state.add([ENT]);
+  assert.equal(has(q(dlg, "po-group")[0], "po-stale"), false, "back in the list: current again");
+});
+
+test("the section has no live region of its own: the dialog has one", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  api.partial.plan = async () => planOf([{}]);
+  ctx.panel.addFiles.state.add([ENT]);
+  previewButton(dlg).dispatch("click");
+  await settle();
+  const slot = q(dlg, "po-slot")[0];
+  const regions = slot.all().filter((n) => ["status", "alert"].includes(n.getAttribute("role")) || n.getAttribute("aria-live") !== null);
+  assert.deepEqual(regions.map((n) => n.className), ["po-live visually-hidden"], "one live region in the whole section");
+  const spoken = q(dlg, "po-live")[0].textContent;
+  assert.equal(spoken, "Previewed 1 file.");
+});
+
+test("the period says what its end is, and unpreviewed files say what applies to them", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  api.partial.plan = async () => planOf([{ last_ts: null }]);
+  ctx.panel.addFiles.state.add([ENT, SENS]);
+  ctx.refs.pathInput.value = "";
+  previewButton(dlg).dispatch("click");
+  await settle();
+  assert.match(q(dlg, "po-period")[0].textContent, /to about 2026-10-09 14:30:00 \(capture time of the file name\)/);
+  ctx.panel.addFiles.state.add(["/data/plain-a.zip"]);
+  api.partial.plan = async (c, path) => planOf([{ last_ts: null, first_ts: T("2026-10-09T10:00:00") }]);
+  ctx.panel.addFiles.state.clear();
+  ctx.panel.addFiles.state.add(["/data/plain.zip"]);
+  previewButton(dlg).dispatch("click");
+  await settle();
+  assert.match(q(dlg, "po-period")[0].textContent, /to at least 2026-10-09 10:00:00 \(the end is not known\)/);
+  ctx.panel.addFiles.state.add([ENT]);
+  assert.match(q(dlg, "po-summary")[0].textContent, /1 file was not previewed and opens normally/);
+  fill(dlg, "2026-10-09 10:00:00", "");
+  field(dlg, "from").dispatch("input");
+  assert.match(q(dlg, "po-summary")[0].textContent, /1 file was not previewed: only the time window applies to it/);
+});
+
+test("the first part of a queue started in an earlier dialog session does not close the reopened dialog", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const { run } = await startedJob(ctx, dlg);
+  dlg.dispatch("keydown", { key: "Escape" });
+  await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
+  assert.ok(isOpen(dlg));
+  live().emit("progress", { job_id: "J", status: "first_ready", stage: "first", records: 1 });
+  await settle();
+  assert.ok(isOpen(dlg), "the new session of the dialog stays");
+  live().emit("done", { job_id: "J", status: "ok", records: 1 });
+  await run;
+  assert.ok(isOpen(dlg), "and the old queue's end does not reset or close it either");
 });

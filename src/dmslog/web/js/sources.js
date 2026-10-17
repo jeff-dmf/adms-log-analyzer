@@ -46,7 +46,9 @@ export class SourcesPanel {
     this.loadEmpty = () => import("./case-empty.js"); // replaced by tests
     this.menuReady = null; // promise of the case menu (ui-menu.js loads on first use)
     this.loadMenu = () => import("./ui-menu.js"); // replaced by tests
-    this.run = null; // {caseId, first, resume} of the job whose progress is watched (the window of first_ready, the follow-up)
+    this.opSeq = 0; // ids of the operations (an opening or a resume) the panel runs: this.waiter is the current one
+    this.addSession = 0; // counts the openings of the Add files dialog and the case switches: an operation started in an
+    // earlier session must not touch the dialog (or the fields) of a later one
     this.starting = false; // the typed path is being validated/started: a second submit is ignored
     this.resuming = false; // Resume now was pressed and its job has not ended
     this.pendingToken = 0; // one per pending check (and per case switch): an older answer is dropped
@@ -232,6 +234,9 @@ export class SourcesPanel {
         this.handlers.onMessage(S.needCase, true);
         return;
       }
+      if (kind === "add") {
+        this.addSession += 1; // a new session of the dialog: answers to an older one are dropped
+      }
       dialogs.open(kind, request.opener, { focusPath: request.focusPath });
     });
   }
@@ -345,6 +350,7 @@ export class SourcesPanel {
     this.closeEvents();
     if (caseId !== this.caseId) {
       this.pendingToken += 1; // a pending answer of the old case must not show in the new one
+      this.addSession += 1;
       this.hideResume();
       if (this.partialSlot()) {
         this.partialSlot().reset(); // the window, the preview and the chosen sources belong to the case
@@ -381,12 +387,13 @@ export class SourcesPanel {
 
   async createCase() {
     if (this.caseFiles) {
-      if (this.queueBusy) {
-        this.handlers.onMessage(S.cfQueueBusy, true);
+      if (this.entryBusy()) {
+        this.handlers.onMessage(this.queueBusy ? S.cfQueueBusy : S.cfBusy, true);
         return;
       }
       let boundCase = null;
       let result = null;
+      const scope = this.currentScope(); // one scope for the whole queue, whatever the select says meanwhile
       this.setQueueBusy(true); // the dialog holds the progress, the per-file results and Retry: it stays open
       try {
         result = await this.caseFiles.submit({
@@ -395,7 +402,7 @@ export class SourcesPanel {
             await this.loadCases(id);
             boundCase = id;
           },
-          openPath: (path) => this.runCollection(path, this.currentScope(), boundCase),
+          openPath: (path) => this.runCollection(path, scope, boundCase),
         });
       } finally {
         this.setQueueBusy(false);
@@ -421,13 +428,19 @@ export class SourcesPanel {
     }
   }
 
+  // True while an opening, a queue of openings or a resume owns the panel: a second one must wait (one job per case, and
+  // an operation never takes the progress stream of another).
+  entryBusy() {
+    return this.queueBusy || this.starting || this.resuming || Boolean(this.waiter);
+  }
+
   // Opens every file of the "add files" list in the open case, one after the other.
   async addFilesToCase() {
     if (!this.addFiles) {
       return;
     }
-    if (this.queueBusy) {
-      this.handlers.onMessage(S.cfQueueBusy, true);
+    if (this.entryBusy()) {
+      this.handlers.onMessage(this.queueBusy ? S.cfQueueBusy : S.cfBusy, true);
       return;
     }
     if (this.caseId === null) {
@@ -435,25 +448,31 @@ export class SourcesPanel {
       return;
     }
     const boundCase = this.caseId;
+    const session = this.addSession;
+    const scope = this.currentScope(); // frozen with the selection: every file of the queue opens with it
+    // The files this action opens: the list (not those already opened) and the path typed in the list's field. The
+    // path of the "Folder or single file" field belongs to the other action.
+    const paths = this.addFiles.state.items.filter((item) => item.status !== "ok").map((item) => item.path);
+    const typed = this.addFiles.pathInput ? this.addFiles.pathInput.value.trim() : "";
+    if (typed !== "") {
+      paths.push(typed);
+    }
     this.setQueueBusy(true);
     let result = null;
     try {
-      const partial = await this.preparePartial();
-      if (partial === null || this.caseId !== boundCase) {
-        return; // a field to fix (reported), or the case changed while the options were checked
+      const partial = await this.preparePartial(paths, scope);
+      if (partial === null || this.caseId !== boundCase || session !== this.addSession) {
+        return; // a field to fix (reported), or the case or the dialog changed while the options were checked
       }
       result = await this.addFiles.submitAdd({
-        openPath: (path) => {
-          const scope = this.currentScope();
-          return this.runCollection(path, scope, boundCase, partial.firstFor(path, scope), {
-            onFirstReady: () => this.afterFirstReady(boundCase),
-          });
-        },
+        openPath: (path) => this.runCollection(path, scope, boundCase, partial.firstFor(path), {
+          onFirstReady: () => this.afterFirstReady(boundCase, session),
+        }),
       }, boundCase);
     } finally {
       this.setQueueBusy(false);
     }
-    if (result && result.state === "ok" && this.caseId === boundCase) {
+    if (result && result.state === "ok" && this.caseId === boundCase && session === this.addSession) {
       this.closeDialog("add");
       if (this.partialSlot()) {
         this.partialSlot().reset();
@@ -467,31 +486,34 @@ export class SourcesPanel {
     return this.dialogs && this.dialogs.partial ? this.dialogs.partial : null;
   }
 
-  // Open only part first: resolves to {firstFor(path, scope)} (null when nothing narrows that file), or to null when the
-  // user has to fix something first (shown next to the field and in the status bar). Without the option: no narrowing.
-  async preparePartial() {
+  // Open only part first, for the files `paths` that the action about to start will open, with `scope` (frozen by the
+  // action). Resolves to {scope, firstFor(path)} (null when nothing narrows that file), or to null when the user has to
+  // fix something first (shown next to the field and in the status bar). Without the option: no narrowing.
+  async preparePartial(paths, scope) {
     const slot = this.partialSlot();
+    const none = { scope, firstFor: () => null };
     if (!slot || !slot.wanted()) {
-      return NO_PARTIAL;
+      return none;
     }
     const ready = await slot.ready();
     if (!ready) {
       this.handlers.onMessage(S.poNotReady, true);
       return null;
     }
-    const check = slot.validate();
+    const check = slot.validate(paths, scope);
     if (!check.ok) {
       this.handlers.onMessage(check.message, true);
       return null;
     }
-    return slot.snapshot() || NO_PARTIAL;
+    const snapshot = slot.snapshot(paths, scope);
+    return snapshot ? { scope, firstFor: (path) => snapshot.firstFor(path, scope) } : none;
   }
 
   // The first part of the last file of a queue is ready: the dialog gets out of the way so the viewer can be used while
-  // the rest indexes. With more files still to open it stays, showing their progress.
-  afterFirstReady(caseId) {
+  // the rest indexes. With more files still to open it stays, showing their progress. Only the session that started it.
+  afterFirstReady(caseId, session) {
     const more = this.addFiles && this.addFiles.state.items.some((item) => item.status === "pending");
-    if (!more && this.caseId === caseId) {
+    if (!more && this.caseId === caseId && session === this.addSession) {
       this.closeDialog("add");
     }
   }
@@ -831,13 +853,15 @@ export class SourcesPanel {
   // Opens one path in the current case and resolves when its job ends (one job per case at a time):
   // {status: "ok"|"failed"|"refused", code?, message?}.
   // expectedCaseId (optional) ties the run to the case it was created for. `first` (optional): open only part first
-  // ({from, to, sources}, see partial-open-model.js); hooks.onFirstReady(data) runs when its first part is ready.
+  // ({from, to, sources}, see partial-open-model.js); hooks: onFirstReady(data) when its first part is ready,
+  // onStarted() when the server accepted the job (only if this operation is still the current one).
   runCollection(path, scope, expectedCaseId, first = null, hooks = null) {
     return this.runJob((caseId) => api.addCollection(caseId, path, scope, first), expectedCaseId, { first, hooks });
   }
 
-  // One job of the open case, from its start request to its done event. `start(caseId)` posts it and resolves to
-  // {job_id}; a null job_id means there was nothing to run. options: {first, hooks, resume}.
+  // One operation of the open case (an opening or a resume), from its start request to its done event. It owns this.waiter
+  // and the progress stream until it ends; a second one is refused, never allowed to replace them. `start(caseId)` posts
+  // it and resolves to {job_id}; a null job_id means there was nothing to run. options: {first, hooks, resume}.
   runJob(start, expectedCaseId, { first = null, hooks = null, resume = false } = {}) {
     return new Promise((resolve) => {
       if (this.caseId === null) {
@@ -848,9 +872,17 @@ export class SourcesPanel {
         resolve({ status: "failed", message: S.cfCaseChanged });
         return;
       }
-      const waiter = { jobId: null, caseId: this.caseId, resolve, seen: new Map(), firstSeen: new Map(), hooks, first, resume };
+      if (this.waiter) {
+        resolve({ status: "refused", code: "job_running", message: S.cfBusy });
+        return;
+      }
+      const waiter = {
+        id: ++this.opSeq, jobId: null, caseId: this.caseId, resolve, seen: new Map(), firstSeen: new Map(), hooks, first,
+        resume, stream: null,
+      };
       this.waiter = waiter;
-      this.watchProgress(this.caseId, { first, resume });
+      waiter.stream = this.watchProgress(this.caseId);
+      const current = () => !waiter.cancelled && this.waiter === waiter;
       let request;
       try {
         request = Promise.resolve(start(waiter.caseId));
@@ -858,8 +890,8 @@ export class SourcesPanel {
         request = Promise.reject(err); // a start that throws is a refused start, never an unhandled rejection
       }
       request.then((started) => {
-        if (waiter.cancelled) {
-          return;
+        if (!current()) {
+          return; // the case changed (or the operation ended) while the server was answering
         }
         waiter.jobId = started ? started.job_id : null;
         if (waiter.jobId === null && resume) {
@@ -871,14 +903,17 @@ export class SourcesPanel {
           return;
         }
         this.handlers.onMessage(resume ? S.poResumeStarted : S.collectionStarted, false);
+        if (hooks && typeof hooks.onStarted === "function") {
+          hooks.onStarted();
+        }
         if (waiter.jobId !== null && waiter.firstSeen.has(waiter.jobId)) {
-          this.handleFirstReady(waiter.firstSeen.get(waiter.jobId), waiter);
+          this.acceptFirstReady(waiter.stream, waiter.firstSeen.get(waiter.jobId), waiter);
         }
         if (waiter.jobId !== null && waiter.seen.has(waiter.jobId)) {
           this.finishJob(waiter.seen.get(waiter.jobId));
         }
       }).catch((err) => {
-        if (waiter.cancelled) {
+        if (!current()) {
           return;
         }
         this.waiter = null;
@@ -886,16 +921,17 @@ export class SourcesPanel {
         if (err && err.code === "bad_first" && this.partialSlot()) {
           this.partialSlot().showServerError(err.message); // the server refused the window or the sources
         }
-        resolve(refusalResult(err, {
+        const result = refusalResult(err, {
           duplicate: S.cfDuplicateCollection, busy: S.cfBusy,
-        }));
+        });
+        result.error = err; // the opener of a path shows some refusals in its own field
+        resolve(result);
       });
     });
   }
 
   async finishJob(data) {
     const waiter = this.waiter;
-    const run = this.run;
     this.waiter = null;
     this.closeEvents();
     const left = data.status === "error" ? 0 : partialLeftOf(data);
@@ -916,8 +952,12 @@ export class SourcesPanel {
     await this.refreshSources();
     this.handlers.onDone();
     // A partial opening or a resume may leave work: ask the server (the banner follows the answer).
-    if (caseId !== null && this.caseId === caseId && (left > 0 || (this.resumeUi && this.resumeUi.isVisible()) || (run && (run.first || run.resume)) || (waiter && (waiter.first || waiter.resume)))) {
-      this.checkPending(caseId);
+    if (caseId !== null && this.caseId === caseId && (left > 0 || (this.resumeUi && this.resumeUi.isVisible()) || (waiter && (waiter.first || waiter.resume)))) {
+      this.checkPending(caseId).then((answered) => {
+        if (!answered) {
+          this.restoreOffer(caseId, ["busy", "running"]); // the job is over: an offer left waiting for it must act again
+        }
+      });
     }
     if (waiter) {
       const note = notes.join(" ");
@@ -931,17 +971,17 @@ export class SourcesPanel {
 
   // -- collections and progress -------------------------------------------------------------
 
+  // The "Folder or single file" form: opens the typed path as an operation like any other (same waiter, same job binding,
+  // same first_ready and done handling). The dialog closes and the field clears when the server accepts the job, but only
+  // if the dialog is still the one the user submitted from.
   async openCollection() {
-    if (this.queueBusy) {
-      this.handlers.onMessage(S.cfQueueBusy, true);
+    if (this.entryBusy()) {
+      this.handlers.onMessage(this.queueBusy ? S.cfQueueBusy : S.cfBusy, true);
       return;
     }
     if (this.caseId === null) {
       this.handlers.onMessage(S.needCase, true);
       return;
-    }
-    if (this.starting) {
-      return; // a second submit while the first one is still being checked or posted
     }
     const path = this.refs.pathInput.value.trim();
     if (path === "") {
@@ -950,59 +990,68 @@ export class SourcesPanel {
     }
     setFieldError(this.refs.pathInput, null);
     const caseId = this.caseId;
+    const session = this.addSession;
     const scope = this.refs.scopeSelect.value === "all" ? "all" : "default";
+    const still = () => this.caseId === caseId && session === this.addSession;
     this.starting = true;
+    let started = false;
+    let result;
     try {
-      const partial = await this.preparePartial();
-      if (partial === null || this.caseId !== caseId) {
-        return; // a field to fix (reported), or the case changed while the options were checked
+      const partial = await this.preparePartial([path], scope);
+      if (partial === null || !still()) {
+        return; // a field to fix (reported), or the case or the dialog changed while the options were checked
       }
-      const first = partial.firstFor(path, scope);
-      this.watchProgress(caseId, { first, resume: false });
-      try {
-        await api.addCollection(caseId, path, scope, first);
-        this.handlers.onMessage(S.collectionStarted, false);
-        this.refs.pathInput.value = "";
-        this.closeDialog("add"); // the job runs on; its progress is in the status bar
-        if (this.partialSlot()) {
-          this.partialSlot().reset();
-        }
-      } catch (err) {
-        this.closeEvents();
-        if (err instanceof ApiError && err.code === "bad_first" && this.partialSlot()) {
-          this.partialSlot().showServerError(err.message);
-          this.handlers.onMessage(err.message, true);
-        } else if (err instanceof ApiError && err.status === 409) {
-          this.handlers.onMessage(conflictMessage(err), true);
-        } else if (err instanceof ApiError && PATH_FIELD_ERRORS.has(err.code)) {
-          setFieldError(this.refs.pathInput, err.message); // "Path does not exist: ..." under the field
-        } else {
-          this.handlers.onMessage(err.message, true);
-        }
-      }
+      result = await this.runCollection(path, scope, caseId, partial.firstFor(path), {
+        onStarted: () => {
+          started = true;
+          if (still()) {
+            this.refs.pathInput.value = "";
+            this.closeDialog("add"); // the job runs on; its progress is in the status bar
+            if (this.partialSlot()) {
+              this.partialSlot().reset();
+            }
+          }
+        },
+        onFirstReady: () => this.afterFirstReady(caseId, session),
+      });
     } finally {
       this.starting = false;
     }
+    if (started || !still() || result.status === "ok") {
+      return; // the job's own end is reported by finishJob; an old session shows nothing in the current dialog
+    }
+    const err = result.error;
+    if (err instanceof ApiError && err.code === "bad_first" && this.partialSlot()) {
+      this.handlers.onMessage(err.message, true); // the section already shows it (runJob)
+    } else if (err instanceof ApiError && err.status === 409) {
+      this.handlers.onMessage(conflictMessage(err), true);
+    } else if (err instanceof ApiError && PATH_FIELD_ERRORS.has(err.code)) {
+      setFieldError(this.refs.pathInput, err.message); // "Path does not exist: ..." under the field
+    } else {
+      this.handlers.onMessage(result.message || S.progressFailed, true);
+    }
   }
 
-  // run: {first, resume} of the job being watched (the window of first_ready, the follow-up after done).
-  watchProgress(caseId, run = null) {
+  // Watches the progress of the open case. Returns the state of this stream (the jobs whose first_ready it handled).
+  watchProgress(caseId) {
     this.closeEvents();
     if (typeof EventSource !== "function") {
-      return;
+      return null;
     }
-    this.run = run ? { caseId, first: run.first || null, resume: Boolean(run.resume) } : null;
     this.reportProgress({ value: null, max: null, text: "" });
     const events = new EventSource(api.progressUrl(caseId));
     this.events = events;
-    const shown = { firstJob: undefined }; // the job whose first_ready was already handled on this stream
+    const stream = { firstJobs: new Set() };
     events.addEventListener("progress", (event) => {
+      if (this.events !== events) {
+        return; // a stream that was replaced or closed
+      }
       const data = parseEvent(event);
       if (!data) {
         return;
       }
       if (data.status === "first_ready") {
-        this.onFirstReadyEvent(data, events, caseId, shown);
+        this.onFirstReadyEvent(data, events, caseId, stream);
         return;
       }
       const total = safeCount(data.bytes_total);
@@ -1014,6 +1063,9 @@ export class SourcesPanel {
       this.refreshThrottled();
     });
     events.addEventListener("done", async (event) => {
+      if (this.events !== events) {
+        return;
+      }
       const data = parseEvent(event) || {};
       if (this.waiter) {
         // A replayed done of the previous job may arrive first: only this job's counts.
@@ -1036,11 +1088,12 @@ export class SourcesPanel {
         }
       }
     });
+    return stream;
   }
 
   // progress with status "first_ready": the first part is indexed, derived and correlated. Only the current stream and
-  // this run's job count (a replay of an earlier job is ignored), and each job once.
-  onFirstReadyEvent(data, events, caseId, shown) {
+  // this operation's job count (a replay of an earlier job is ignored), and each job once.
+  onFirstReadyEvent(data, events, caseId, stream) {
     if (this.events !== events || this.caseId !== caseId) {
       return;
     }
@@ -1054,28 +1107,44 @@ export class SourcesPanel {
         return;
       }
     }
-    if (shown.firstJob !== undefined && shown.firstJob === data.job_id) {
-      return;
+    this.acceptFirstReady(stream, data, waiter);
+  }
+
+  // The one place where a first_ready is accepted, whichever way it arrived (live, or kept until the start answered):
+  // a job's first_ready runs once per stream, so a reconnection that replays it does not reload twice.
+  acceptFirstReady(stream, data, waiter) {
+    if (stream) {
+      if (stream.firstJobs.has(data.job_id)) {
+        return;
+      }
+      stream.firstJobs.add(data.job_id);
+    } else if (waiter) {
+      if (waiter.firstHandled) {
+        return;
+      }
+      waiter.firstHandled = true;
     }
-    shown.firstJob = data.job_id;
     this.handleFirstReady(data, waiter);
   }
 
   // The status bar says the rest goes on in the background; sources, grid, timeline and panels reload as at the end of a
-  // job (main.js narrows the view to the window); the dialog of the last file steps aside.
+  // job (main.js narrows the view to the window); the dialog of the last file steps aside. The window belongs to this
+  // operation, so it is applied even when the job is already over by the time the reload ends (a fast job): the case
+  // having changed is the only reason to skip it.
   async handleFirstReady(data, waiter) {
     const caseId = this.caseId;
-    const events = this.events;
-    const run = this.run;
     const records = safeCount(data.records);
+    const active = waiter ? this.waiter === waiter : this.events !== null; // false when the job already ended
     try {
-      this.reportProgress({ value: null, max: null, text: S.poStatusRestBare });
-      this.handlers.onMessage(format(S[pluralKey("poFirstReady", records)], { records: records.toLocaleString("en-US") }), false);
-      await this.refreshSources(true);
-      if (this.caseId !== caseId || this.events !== events) {
-        return; // the case changed, or the job ended meanwhile (done reloads everything)
+      if (active) {
+        this.reportProgress({ value: null, max: null, text: S.poStatusRestBare });
+        this.handlers.onMessage(format(S[pluralKey("poFirstReady", records)], { records: records.toLocaleString("en-US") }), false);
       }
-      const first = (waiter && waiter.first) || (run && run.first) || null;
+      await this.refreshSources(true);
+      if (this.caseId !== caseId) {
+        return; // the case changed: the window belongs to the old one
+      }
+      const first = (waiter && waiter.first) || null;
       const info = {
         from: first && Number.isSafeInteger(first.from) ? first.from : null,
         to: first && Number.isSafeInteger(first.to) ? first.to : null,
@@ -1098,29 +1167,30 @@ export class SourcesPanel {
   // -- pending work of earlier partial openings (GET .../pending) and Resume now -----------------------------------
 
   // Asks the server what an earlier partial opening left. Best effort: a failure shows nothing. Only the latest check
-  // counts (token) and only for the case that is still open.
+  // counts (token) and only for the case that is still open. Resolves to false only when the request itself failed (the
+  // caller must then restore the offer on its own); true for any answer, including one that is no longer current.
   async checkPending(caseId) {
     if (caseId === null || caseId === undefined) {
-      return;
+      return true;
     }
     const token = ++this.pendingToken;
     let data;
     try {
       data = await api.partial.pending(caseId);
     } catch (err) {
-      return;
+      return false;
     }
     if (token !== this.pendingToken || this.caseId !== caseId) {
-      return;
+      return true;
     }
     const list = data && Array.isArray(data.pending) ? data.pending : [];
     if (list.length === 0) {
       this.hideResume();
-      return;
+      return true;
     }
     const ui = await this.ensureResume();
     if (!ui || token !== this.pendingToken || this.caseId !== caseId) {
-      return;
+      return true;
     }
     this.pendingItems = this.resumeMod.normalizePending(data).items;
     const busy = Boolean(this.waiter) || this.resuming;
@@ -1130,7 +1200,7 @@ export class SourcesPanel {
     } else if (running) {
       ui.setState("running", this.pendingItems, () => this.resumeFallback());
       if (!this.events) {
-        this.watchProgress(caseId, { first: null, resume: true }); // a job runs: show its progress, end with its done
+        this.watchProgress(caseId); // a job runs: show its progress, end with its done
       }
     } else {
       ui.setState("ready", this.pendingItems, () => this.resumeFallback());
@@ -1139,6 +1209,7 @@ export class SourcesPanel {
       this.pendingAnnounced = caseId;
       this.handlers.onMessage(S.poPendingMessage, false);
     }
+    return true;
   }
 
   // Loads resume-banner.js once and mounts the banner; a failed load is reported and tried again at the next check.
@@ -1188,13 +1259,20 @@ export class SourcesPanel {
     return null;
   }
 
-  // Resume now: POST .../resume, then follow the job like any other. One at a time.
+  // The offer goes back to "ready" (button on) when it was left in "busy" and nothing else will settle it.
+  restoreOffer(caseId, from = ["busy"]) {
+    if (this.caseId === caseId && this.resumeUi && from.includes(this.resumeUi.getState())) {
+      this.resumeUi.setState("ready", this.pendingItems, () => this.resumeFallback());
+    }
+  }
+
+  // Resume now: POST .../resume, then follow the job like any other. One operation at a time (entryBusy).
   async resumeIndexing() {
     const caseId = this.caseId;
     if (caseId === null || this.resuming) {
       return;
     }
-    if (this.queueBusy || this.waiter) {
+    if (this.entryBusy()) {
       this.handlers.onMessage(S.poResumeBusy, true);
       return;
     }
@@ -1212,11 +1290,15 @@ export class SourcesPanel {
     if (this.caseId !== caseId) {
       return; // another case is open now: its own check decides what to show
     }
+    if (result.status === "ok" && result.nothing) {
+      this.hideResume(); // the server said nothing is pending: no further question needed
+      return;
+    }
     if (result.status !== "ok") {
       if (result.code === "job_running") {
         this.handlers.onMessage(S.poResumeBusy, true);
         if (!this.events) {
-          this.watchProgress(caseId, { first: null, resume: true });
+          this.watchProgress(caseId);
         }
         if (this.resumeUi) {
           this.resumeUi.setState("running", this.pendingItems, () => this.resumeFallback());
@@ -1224,8 +1306,12 @@ export class SourcesPanel {
         return;
       }
       this.handlers.onMessage(format(S.poResumeFailed, { message: result.message || S.progressFailed }), true);
+      this.restoreOffer(caseId); // retry stays possible whatever the next /pending says
     }
-    this.checkPending(caseId); // the banner goes away when nothing is left, or comes back with what is
+    const answered = await this.checkPending(caseId); // the banner goes away when nothing is left, or comes back with what is
+    if (!answered) {
+      this.restoreOffer(caseId);
+    }
   }
 
   refreshThrottled() {
