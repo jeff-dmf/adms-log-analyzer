@@ -836,9 +836,85 @@ test("one live region per context: the panel announces through the run status, t
   const w = await withResult();
   const live = (root) => root.all().filter((n) => n.getAttribute("role") === "status" || n.getAttribute("aria-live"));
   assert.equal(live(w.host).length, 1);
-  assert.equal(live(w.host)[0], w.status);
+  assert.equal(live(w.host)[0], find(w.host, "ext-live"));
+  assert.equal(live(w.host).includes(w.status), false, "the visible status is static");
   w.promote.click();
   const dialog = lastDialog();
   assert.equal(live(dialog).length, 1);
-  assert.equal(live(dialog)[0], find(dialog, "ext-dialog-status"));
+  assert.equal(live(dialog)[0], find(dialog, "ext-dialog-live"));
+});
+
+// ---- second review of PR #217 --------------------------------------------------------------------------------------
+
+test("a cancelled run gives back the request of the result that stays: Promote and the truncation notice use it", async () => {
+  const w = world({ filter: { source: [1] } });
+  await w.typeChecked("^(?P<id>\\d+)", ID);
+  w.limit.value = "50";
+  w.limit.dispatch("input");
+  await w.runWith(result({ truncated: true, columns: [column("id", [["1", 3]])], rows: [{ id: 11 }, { id: 12 }] }));
+  assert.match(findAll(w.host, "ext-note")[0].textContent, /\b50\b/);
+  // B: another regex, another limit, started and then cancelled by closing the tab
+  await w.typeChecked("^(?P<id>\\d+)x", ID);
+  w.limit.value = "700";
+  w.limit.dispatch("input");
+  w.run.click();
+  await tick();
+  w.panel.closed();
+  w.calls.run[1].resolve(result({ rows: [{ id: 99 }], columns: [column("id", [["B", 1]])] }));
+  await tick();
+  // the result of A is back, with the notice of A's limit and a promotion of A's regex and ids
+  assert.match(findAll(w.host, "ext-note")[0].textContent, /\b50\b/);
+  w.promote.click();
+  const [, body] = w.calls.promote[0].args;
+  assert.deepEqual([body.regex, body.ids], ["^(?P<id>\\d+)", [11, 12]]);
+});
+
+test("Records and Top keep their own verdict without a case: valid numbers are not marked invalid after reset()", async () => {
+  const w = world();
+  await w.typeChecked("(?P<id>\\d+)", ID);
+  w.state.caseId = null;
+  w.panel.reset();
+  assert.equal(w.limit.getAttribute("aria-invalid"), "false");
+  assert.equal(w.top.getAttribute("aria-invalid"), "false");
+  assert.equal(find(w.host, "ext-limit-msg").hidden, true);
+  assert.equal(find(w.host, "ext-top-msg").hidden, true);
+  assert.equal(w.run.disabled, true);
+  assert.equal(w.run.title, S.exNoCase);
+  w.limit.value = "0";
+  w.limit.dispatch("input");
+  assert.equal(w.limit.getAttribute("aria-invalid"), "true", "an invalid number is still reported without a case");
+});
+
+test("verdicts are announced through the one live region of each context, once per outcome", async () => {
+  const w = world();
+  const live = find(w.host, "ext-live");
+  w.type("(?P<id>[");
+  w.delays[0].resolve();
+  await tick();
+  w.calls.check[0].reject(Object.assign(new Error("invalid regex: unclosed class (at offset 7)"), { code: "bad_regex" }));
+  await tick();
+  assert.equal(live.textContent, "invalid regex: unclosed class (at offset 7)", "the regex error is announced");
+  assert.ok(cls(live, "ui-error"));
+  await w.typeChecked("(?P<id>\\d+)", ID);
+  assert.equal(live.textContent, format(S.exCheckOkOne, { window: "2,889" }), "the error announcement is replaced by the verdict");
+  w.run.click();
+  await tick();
+  assert.equal(live.textContent, S.exRunning);
+  w.calls.run[0].resolve(result({ columns: [column("id", [["1", 3]])], rows: [{ id: 1 }] }));
+  await tick();
+  assert.equal(live.textContent, format(S.exSummary, { matched: "3", scanned: "10" }));
+  // editing the limit changes only the stale note: nothing is announced again
+  live.textContent = "";
+  w.limit.value = "10";
+  w.limit.dispatch("input");
+  assert.equal(live.textContent, "");
+  // the dialog
+  w.promote.click();
+  const dialog = lastDialog();
+  const dialogLive = find(dialog, "ext-dialog-live");
+  assert.equal(dialogLive.textContent, S.exPromoteLoading);
+  w.calls.promote[0].resolve({ toml: "[[template]]\n", file: "f", check: { loads: true }, warnings: [] });
+  await tick();
+  assert.equal(dialogLive.textContent, S.exCheckLoads, "the verdict of the promotion is announced");
+  assert.equal(find(dialog, "ext-dialog-check").textContent, S.exCheckLoads, "and stays as static text");
 });

@@ -107,11 +107,12 @@ export function reconcileChoices(previous, columns) {
 // The state of the inputs: { ok, problem } where problem is a key of S (or null). `check` is the state of the
 // live validation: only a regex the server accepted for these very inputs can run (a check in progress waits).
 export function inputState({ caseId, regex, check, limit, top }) {
-  if (!caseId) {
-    return { ok: false, problem: "exNoCase", limit: null, top: null };
-  }
+  // The numbers are judged on their own: a missing case does not make a valid Records or Top look invalid.
   const limitValue = parseBounded(limit, MAX_LIMIT);
   const topValue = parseBounded(top, MAX_TOP);
+  if (!caseId) {
+    return { ok: false, problem: "exNoCase", limit: limitValue, top: topValue };
+  }
   if (String(regex || "") === "") {
     return { ok: false, problem: "exNeedRegex", limit: limitValue, top: topValue };
   }
@@ -373,10 +374,10 @@ export function createCheckFlow({ api, onState, delay = realDelay }) {
 // The extraction itself: one request counts, a new run or cancel() drops the older answer, and an answer that
 // arrives after the case changed is dropped too. States: idle | loading | done { data } | error { error }.
 export function createRunFlow({ api, getCase, onState }) {
-  const state = { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null };
+  const state = { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null, body: null };
   let seq = 0;
   let controller = null;
-  let before = null; // what was shown when the pending run started
+  let before = null; // what was shown when the pending run started (a cancelled run gives it back)
   const emit = () => onState && onState(state);
 
   function abort() {
@@ -392,15 +393,15 @@ export function createRunFlow({ api, getCase, onState }) {
     abort();
     const caseId = getCase();
     if (!caseId) {
-      Object.assign(state, { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null });
+      Object.assign(state, { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null, body: null });
       emit();
       return;
     }
     controller = typeof AbortController === "function" ? new AbortController() : null;
     if (state.status !== "loading") {
-      before = { status: state.status, error: state.error, errorKey: state.errorKey };
+      before = { status: state.status, error: state.error, errorKey: state.errorKey, body: state.body };
     }
-    Object.assign(state, { status: "loading", error: null, errorKey: null, caseId });
+    Object.assign(state, { status: "loading", error: null, errorKey: null, caseId, body });
     emit();
     try {
       const data = await api.extract.run(caseId, body, controller ? controller.signal : undefined);
@@ -413,6 +414,8 @@ export function createRunFlow({ api, getCase, onState }) {
         return;
       }
       Object.assign(state, { status: "error", error: classifyError(err), errorKey: key });
+      // the data (if any) still belongs to the request before this one
+      state.body = before ? before.body : null;
     }
     emit();
   }
@@ -424,7 +427,7 @@ export function createRunFlow({ api, getCase, onState }) {
       seq += 1;
       abort();
       before = null;
-      Object.assign(state, { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null });
+      Object.assign(state, { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null, body: null });
       emit();
     },
     // Drops only a run in progress (the tab was closed): what was already shown stays.
@@ -437,7 +440,7 @@ export function createRunFlow({ api, getCase, onState }) {
       const back = before || { status: "idle", error: null, errorKey: null };
       before = null;
       const status = back.status === "done" && state.data ? "done" : back.status === "error" ? "error" : "idle";
-      Object.assign(state, { status, error: back.error, errorKey: back.errorKey });
+      Object.assign(state, { status, error: back.error, errorKey: back.errorKey, body: back.body });
       emit();
     },
   };

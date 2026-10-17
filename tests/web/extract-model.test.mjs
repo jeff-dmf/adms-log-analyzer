@@ -377,3 +377,37 @@ test("run flow: cancelPending drops a run in progress but keeps what was shown; 
   fresh.cancelPending();
   assert.equal(fresh.state.status, "idle");
 });
+
+test("inputState judges Records and Top even without a case", () => {
+  const base = { caseId: null, regex: "x", check: { status: "ok" } };
+  const valid = inputState({ ...base, limit: "1000", top: "20" });
+  assert.deepEqual([valid.problem, valid.limit, valid.top], ["exNoCase", 1000, 20]);
+  const bad = inputState({ ...base, limit: "0", top: "x" });
+  assert.deepEqual([bad.limit, bad.top], [null, null]);
+});
+
+test("run flow: the request of the shown data comes back with it after a cancelled or failed run", async () => {
+  const calls = [];
+  const flow = createRunFlow({
+    api: { extract: { run: () => { const d = defer(); calls.push(d); return d.promise; } } },
+    getCase: () => "A",
+    onState: () => {},
+  });
+  const a = flow.run({ regex: "A" }, "ka");
+  calls[0].resolve({ matched: 1, scanned: 1, columns: [], rows: [] });
+  await a;
+  assert.equal(flow.state.body.regex, "A");
+  const b = flow.run({ regex: "B" }, "kb");
+  assert.equal(flow.state.body.regex, "B");
+  flow.cancelPending();
+  assert.equal(flow.state.body.regex, "A");
+  calls[1].resolve({ matched: 5, scanned: 5, columns: [], rows: [] });
+  await b;
+  assert.equal(flow.state.body.regex, "A");
+  const c = flow.run({ regex: "C" }, "kc");
+  calls[2].reject(new Error("boom"));
+  await c;
+  assert.equal(flow.state.body.regex, "A", "the data still shown belongs to A");
+  flow.cancel();
+  assert.equal(flow.state.body, null);
+});
