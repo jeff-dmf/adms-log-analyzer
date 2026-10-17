@@ -463,6 +463,61 @@ export function registerAppActions(actions, deps) {
     run: () => deps.highlightType(),
   });
 
+  // ---- Record menu and palette (UI-29)
+  //   deps.showSameKey({type, value})   opens the same-key panel         deps.openRecordMenu()   Shift+F10: the menu of the selected record
+  //   deps.openPalette()                Ctrl+K and View > Command palette…; the opener is read before the module loads
+  // The choices of "Same key" are the key chips of the detail (links-model.js), which loads with the action.
+  let keyModel = null;
+  recordAction({
+    id: "record.sameKey",
+    labelKey: "actSameKey",
+    emptyKey: "actSameKeyNone",
+    load: () => import("./links-model.js").then((module) => {
+      keyModel = module;
+    }),
+    children: (ctx) => (keyModel === null ? [] : keyModel.buildKeyChips(ctx.entry()).map((chip) => ({
+      label: chip.label, args: { type: chip.type, value: chip.value },
+    }))),
+    run: (ctx, key) => deps.showSameKey(key),
+  });
+  recordAction({
+    id: "record.onlySource",
+    labelKey: "actOnlySource",
+    enabled: (ctx) => ctx.entry() !== null && Number.isFinite(ctx.entry().source_id),
+    load: () => import("./commands-model.js"),
+    run: async (ctx) => {
+      const module = await import("./commands-model.js");
+      const entry = ctx.entry();
+      if (entry) {
+        await ctx.setUserFilter(module.onlySourceFilter(ctx.userFilter(), entry.source_id));
+      }
+    },
+  });
+  recordAction({
+    id: "record.hideType",
+    labelKey: "actHideType",
+    enabled: (ctx) => ctx.entry() !== null && ctx.entry().tpl_id > 0,
+    load: () => import("./commands-model.js"),
+    run: async (ctx) => {
+      const module = await import("./commands-model.js");
+      const entry = ctx.entry();
+      if (entry && entry.tpl_id > 0) {
+        await ctx.setUserFilter(module.hideTypeFilter(ctx.userFilter(), entry.tpl_id));
+      }
+    },
+  });
+  // Shift+F10 in the grid (the Menu key and the right click reach the menu through the grid's contextmenu event).
+  actions.register({
+    id: "record.contextMenu",
+    labelKey: "actContextMenu",
+    group: "record",
+    shortcut: "Shift+F10",
+    scope: "grid",
+    enabled: (ctx) => ctx.selectedRow() !== null,
+    disabledKey: "cmpNeedRecord",
+    run: () => deps.openRecordMenu(),
+  });
+
   // ---- Keys (UI-28). shortcuts.js is the only dispatcher: it matches the KeySpec below, checks enabled() and calls run().
   //   deps.navigateRecord(kind, dir)  "error" | "template", "fwd" | "back"      deps.navigateHighlight(dir)
   //   deps.toggleBookmark(), deps.compareSelected(), deps.viewsBack(), deps.viewsForward(), deps.focusSearch()
@@ -493,6 +548,7 @@ export function registerAppActions(actions, deps) {
     enabled: always,
     run: () => deps.openShortcuts(),
   });
+  actions.register({ id: "help.palette", labelKey: "actPalette", group: "help", shortcut: "Ctrl+k", enabled: always, run: () => deps.openPalette() });
 
   return {
     // A case change (also back to a case seen before): the export dialog forgets its report, open or not.

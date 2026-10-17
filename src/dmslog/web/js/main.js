@@ -183,6 +183,14 @@ function start() {
   // The keyboard layer (shortcuts.js: the one keydown listener, F6 regions, the shortcuts dialog) loads after the first
   // view; until then the single-key preference is not known and the keys do nothing.
   let shortcuts = null;
+  // The record context menu (context-menu.js) and the command palette (commands.js) load on their first use.
+  let rowMenu = null;
+  let palette = null;
+  const closeRowMenu = () => {
+    if (rowMenu !== null) {
+      rowMenu.close();
+    }
+  };
   const actions = createActionRegistry({
     onError: (err) => showError(err),
     singleKeysOn: () => (shortcuts === null ? true : shortcuts.singleKeys()),
@@ -386,7 +394,14 @@ function start() {
     rowsLayer: byId("grid-rows"),
     spacer: byId("grid-spacer"),
     header: byId("grid-header"),
-    onSelect: (row) => detail.show(row.id),
+    onSelect: (row) => {
+      closeRowMenu();
+      return detail.show(row.id);
+    },
+    // Right click, Menu key or Shift+F10 on a record (UI-29): the grid selected it; the menu opens once the detail shows it.
+    onContextMenu: (request) => {
+      openRowMenu(request).catch(showError);
+    },
     onCount: (value, options) => status.count(value, options),
     onPosition: (ts) => status.position(ts),
     onError: showError,
@@ -562,6 +577,7 @@ function start() {
   const retryView = () => (viewFlow.retryState(caseId) === null ? Promise.resolve() : applyView());
 
   const applyView = () => {
+    closeRowMenu(); // the record the menu was opened on may not be in the new view
     const { attempt, token } = viewFlow.begin(); // replaces the failed view change, if any
     const { ids, groups } = attempt.selection;
     failures.viewApplied();
@@ -611,6 +627,10 @@ function start() {
   }, {
     onCase: (id) => {
       caseId = id;
+      closeRowMenu();
+      if (palette !== null) {
+        palette.close();
+      }
       failures.caseChanged(); // nothing of the old case is repeated, and its requests are cancelled now
       applyPending = true; // refreshSources() follows and rebuilds the view
       if (collectionsPanel) {
@@ -1460,7 +1480,56 @@ function start() {
       const opener = document.activeElement;
       (await loadShortcuts()).openDialog(opener);
     },
+    // Record menu and palette (UI-29).
+    showSameKey: ({ type, value }) => dock.open("sameKey", { type, value }),
+    openRecordMenu: async () => {
+      (await loadRowMenu()).openForSelection();
+    },
+    openPalette: async () => {
+      const opener = document.activeElement;
+      (await loadPalette()).open(opener);
+    },
   };
+  const singleKeysOn = () => (shortcuts === null ? true : shortcuts.singleKeys());
+  // The record actions work on the shown record: a menu opened on another row makes the detail show it first.
+  const showRecordFor = async (row) => {
+    const same = () => detail.entry !== null && String(detail.entry.id) === String(row.id);
+    if (!same()) {
+      await detail.show(row.id);
+    }
+    return same();
+  };
+  const loadRowMenu = retryable(() => import("./context-menu.js").then((module) => {
+    if (rowMenu === null) {
+      rowMenu = module.createContextMenu({
+        actions,
+        ctx,
+        singleKeysOn,
+        prepare: showRecordFor,
+        focusRow: () => {
+          const viewport = byId("grid-viewport");
+          viewport.focus();
+          return document.activeElement === viewport;
+        },
+        anchorFor: () => grid.selectedAnchor(),
+      });
+    }
+    return rowMenu;
+  }));
+  const openRowMenu = async (request) => (await loadRowMenu()).open(request);
+  const loadPalette = retryable(() => import("./commands.js").then((module) => {
+    if (palette === null) {
+      palette = module.createPalette({
+        actions,
+        ctx,
+        singleKeysOn,
+        // The keyboard layer knows the regions: the opener if it still takes the focus, else the region it was in.
+        restoreFocus: (el) => (shortcuts === null ? false : shortcuts.regions.restore(el, shortcuts.regions.regionOf(el))),
+        onError: showError,
+      });
+    }
+    return palette;
+  }));
   // import() with a retry: a failed load is forgotten, the next use (a key, the "?" button) tries again.
   const loadShortcuts = retryable(() => import("./shortcuts.js").then((module) => {
     if (shortcuts === null) {

@@ -40,13 +40,15 @@ function fieldText(value) {
 export class Grid {
   constructor({
     viewport, rowsLayer, spacer, header, onSelect, onCount, onPosition, onError, getMark, onVisible, onView,
-    getHighlight, getRepeat, onFailure, onRecovered, onAbandon,
+    getHighlight, getRepeat, onFailure, onRecovered, onAbandon, onContextMenu,
   }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
     this.spacer = spacer;
     this.header = header;
     this.onSelect = onSelect;
+    // Right click on a record, Menu key or Shift+F10 on the grid (UI-29): ({row, x, y, keyboard}), the record is selected.
+    this.onContextMenu = onContextMenu || null;
     this.onCount = onCount || (() => {}); // ({n, exact} | "loading" | null, {announce}) -> status bar (UI-13)
     this.onPosition = onPosition || (() => {}); // (ts | null): first visible record's time; never announced
     this.onError = onError;
@@ -134,6 +136,7 @@ export class Grid {
     }, { passive: false });
     this.viewport.addEventListener("scroll", () => this.onScrollBar());
     this.viewport.addEventListener("keydown", (event) => this.onKey(event));
+    this.viewport.addEventListener("contextmenu", (event) => this.onContextMenuEvent(event));
     this.rowsLayer.addEventListener("click", (event) => {
       const rowEl = event.target.closest(".grid-row");
       if (rowEl && rowEl.dataset.index !== undefined) {
@@ -805,6 +808,45 @@ export class Grid {
       event.preventDefault();
       this.notifySelect(0);
     }
+  }
+
+  // The only layout read of the record menu, once per gesture: a pointer gives the record under it (it is selected like a
+  // click does, without asking for its detail: the owner shows it); the keyboard (the event is not a right click and
+  // targets the grid itself) gives the selected record.
+  onContextMenuEvent(event) {
+    if (this.onContextMenu === null) {
+      return;
+    }
+    const rowEl = event.target && typeof event.target.closest === "function" ? event.target.closest(".grid-row") : null;
+    if (rowEl && rowEl.dataset.index !== undefined) {
+      const index = Number(rowEl.dataset.index);
+      const row = this.window.rows[index];
+      if (!row) {
+        return;
+      }
+      event.preventDefault();
+      if (this.window.selected !== index) {
+        this.window.selected = index;
+        this.render();
+      }
+      this.viewport.focus();
+      this.onContextMenu({ row, x: event.clientX, y: event.clientY, keyboard: false });
+      return;
+    }
+    const row = this.selectedRow();
+    if (event.button === 2 || !row) {
+      return; // a right click outside the records, or nothing selected: the browser's own menu
+    }
+    event.preventDefault();
+    const at = this.selectedAnchor();
+    this.onContextMenu({ row, x: at.x, y: at.y, keyboard: true });
+  }
+
+  // Where a menu opened from the keyboard goes: under the selected row, a little to the right of its left edge.
+  selectedAnchor() {
+    const slot = this.pool.find((s) => !s.el.hidden && s.el.dataset.index === String(this.window.selected));
+    const box = (slot ? slot.el : this.viewport).getBoundingClientRect();
+    return { x: box.left + 24, y: slot ? box.bottom : box.top };
   }
 
   notifySelect(delay) {
