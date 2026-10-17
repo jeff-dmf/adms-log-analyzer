@@ -694,3 +694,134 @@ test("folder browser: opened from the New case dialog it stacks on top and gives
   assert.equal(doc.activeElement, browse);
   assert.ok(isOpen(dialogOf("case-dialog-new")), "closing the browser does not close the dialog below");
 });
+
+// ---- review of PR 207 --------------------------------------------------------------------------------------------
+
+// A click as a browser does it: nothing on a disabled button; a submit button submits its form.
+function realClick(button, form) {
+  if (button.disabled) {
+    return false;
+  }
+  button.dispatch("click");
+  if (button.type === "submit") {
+    form.dispatch("submit");
+  }
+  return true;
+}
+
+test("a path typed in New case alone enables Create case, and the real click creates the case with it", async () => {
+  const { refs, panel } = page();
+  api.cases = async () => ({ cases: [{ id: "N", name: "new" }] });
+  api.createCase = async () => ({ id: "N" });
+  let opened = [];
+  panel.runCollection = async (path) => { opened.push(path); return { status: "ok" }; };
+  await panel.selectCase(null);
+  await panel.revealNewCase(refs.caseMenu);
+  const create = q(dialogOf("case-dialog-new"), "cf-create")[0];
+  const typed = q(dialogOf("case-dialog-new"), "cf-path")[0];
+  assert.equal(create.disabled, true, "nothing typed, nothing chosen");
+  typed.value = ENT;
+  typed.dispatch("input");
+  assert.equal(create.disabled, false, "the pending path counts");
+  typed.value = "   ";
+  typed.dispatch("input");
+  assert.equal(create.disabled, true, "blank text does not");
+  typed.value = ENT;
+  typed.dispatch("input");
+  refs.newCaseName.value = "new";
+  assert.equal(realClick(create, refs.newCaseForm), true);
+  await settle();
+  assert.deepEqual(opened, [ENT]);
+  assert.equal(panel.caseId, "N");
+});
+
+test("a path typed in Add files alone enables Add files, and the real click adds it", async () => {
+  const { refs, panel } = page();
+  await panel.selectCase("A");
+  await panel.revealAddFiles(false, refs.caseAddFiles);
+  const add = q(dialogOf("case-dialog-add"), "cf-create")[0];
+  const typed = q(dialogOf("case-dialog-add"), "cf-path")[0];
+  assert.equal(add.disabled, true);
+  typed.value = ENT;
+  typed.dispatch("input");
+  assert.equal(add.disabled, false);
+  const opened = [];
+  panel.runCollection = async (path) => { opened.push(path); return { status: "ok" }; };
+  realClick(add, refs.openForm);
+  await settle();
+  assert.deepEqual(opened, [ENT]);
+  assert.equal(isOpen(dialogOf("case-dialog-add")), false);
+});
+
+test("a busy queue keeps the action disabled even with a typed path", async () => {
+  const { refs, panel } = page();
+  await panel.selectCase("A");
+  await panel.revealAddFiles(false, refs.caseAddFiles);
+  const add = q(dialogOf("case-dialog-add"), "cf-create")[0];
+  const typed = q(dialogOf("case-dialog-add"), "cf-path")[0];
+  panel.addFiles.state.add([ENT]);
+  panel.addFiles.state.busy = true;
+  panel.addFiles.render();
+  typed.value = "/x";
+  typed.dispatch("input");
+  assert.equal(add.disabled, true);
+});
+
+test("every case switch closes Add files, even while a queue runs; only the New case being created stays", async () => {
+  const { refs, panel } = page();
+  await panel.selectCase("A");
+  await panel.revealAddFiles(false, refs.caseAddFiles);
+  await panel.revealNewCase(refs.caseMenu); // New case replaces Add files on screen
+  assert.equal(isOpen(dialogOf("case-dialog-add")), false);
+  await panel.revealAddFiles(false, refs.caseAddFiles);
+  panel.setQueueBusy(true);
+  await panel.selectCase("B");
+  assert.equal(isOpen(dialogOf("case-dialog-add")), false, "Add files of case A is gone although the queue is busy");
+  panel.setQueueBusy(false);
+  await panel.revealNewCase(refs.caseMenu);
+  panel.setQueueBusy(true);
+  await panel.selectCase("C");
+  assert.ok(isOpen(dialogOf("case-dialog-new")), "the New case being created stays");
+});
+
+test("a late-loading Add files request is dropped by a case switch with a busy queue; a New case request is kept", async () => {
+  const { refs, panel } = page();
+  await panel.selectCase("A");
+  const gate = deferred();
+  const real = panel.loadDialogs;
+  panel.loadDialogs = async () => { await gate.promise; return real(); };
+  const adding = panel.revealAddFiles(false, refs.caseAddFiles);
+  panel.setQueueBusy(true);
+  await panel.selectCase("B");
+  gate.resolve();
+  await adding;
+  assert.equal(dialogOf("case-dialog-add") && isOpen(dialogOf("case-dialog-add")), false, "dropped");
+  // a New case request pending while the queue is busy survives the switch
+  panel.dialogs = null;
+  panel.dialogsReady = null;
+  doc.body.children = doc.body.children.filter((n) => n.tagName !== "DIALOG");
+  const gate2 = deferred();
+  panel.loadDialogs = async () => { await gate2.promise; return real(); };
+  const making = panel.revealNewCase(refs.caseMenu);
+  await panel.selectCase("C");
+  gate2.resolve();
+  await making;
+  assert.ok(isOpen(dialogOf("case-dialog-new")));
+});
+
+test("the opener read before a drawer opens gets the focus back (the drawer moves the focus into the sources panel)", async () => {
+  const { refs, panel, aside } = page();
+  const { afterDrawerOpen } = await import("../../src/dmslog/web/js/late-init.js");
+  await panel.selectCase("A");
+  const barButton = doc.createElement("button");
+  doc.body.appendChild(barButton);
+  barButton.focus();
+  aside.tabIndex = -1;
+  const drawers = { open() { aside.focus(); } }; // what drawers.js does: the focus moves into the panel
+  const withSources = (action) => afterDrawerOpen({ current: () => drawers, load: async () => drawers, which: "side", action, onError() {} });
+  const opener = doc.activeElement; // as main.js focusNewCase does, before withSources
+  await withSources(() => panel.revealNewCase(opener));
+  assert.equal(doc.activeElement, refs.newCaseName);
+  dialogOf("case-dialog-new").dispatch("cancel");
+  assert.equal(doc.activeElement, barButton, "back to the bar button, not to the sources panel");
+});

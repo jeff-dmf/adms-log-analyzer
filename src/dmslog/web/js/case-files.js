@@ -85,6 +85,7 @@ export class CaseFiles {
     this.pathInput.autocomplete = "off";
     this.pathInput.setAttribute("aria-label", S.cfPathLabel);
     this.pathInput.placeholder = S.cfPathPlaceholder;
+    this.pathInput.addEventListener("input", () => this.updateAction()); // a typed path alone enables the main action
     this.pathInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault(); // the field is inside the case form: Enter adds, never submits
@@ -148,6 +149,11 @@ export class CaseFiles {
       return true;
     }
     return false;
+  }
+
+  // The main action is on when the list has files, or a path is typed that the action will add first (flushTyped).
+  updateAction() {
+    this.createButton.disabled = this.state.busy || (this.state.items.length === 0 && this.pathInput.value.trim() === "");
   }
 
   // A path typed and not yet added with Enter counts when the main action is pressed (it would otherwise be lost
@@ -303,7 +309,7 @@ export class CaseFiles {
     this.browseButton.disabled = state.busy || this.waiting;
     this.clearButton.disabled = state.busy || state.items.length === 0;
     this.clearButton.hidden = state.items.length === 0;
-    this.createButton.disabled = !state.canCreate;
+    this.updateAction();
     const adding = this.mode === "add";
     if (adding) {
       this.createButton.textContent = state.items.length > 0

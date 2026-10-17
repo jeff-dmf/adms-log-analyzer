@@ -333,8 +333,17 @@ export class SourcesPanel {
         this.addFiles.state.resetResults(); // results belong to the case they were opened in
       }
       this.resetRows(); // source ids are per case: no row of the old case is reused
-      if (!this.queueBusy) {
-        this.closeDialogs(); // a case being created keeps its dialog (and its results) in view
+      // Every switch drops the pending requests and closes Add files (it belongs to the case it was opened in). Only the
+      // New case dialog of a case being created stays: its progress, results and Retry must remain in view.
+      const keepNew = this.queueBusy;
+      if (!(keepNew && this.dialogWanted && this.dialogWanted.kind === "new")) {
+        this.dialogWanted = null;
+      }
+      if (this.dialogs) {
+        this.dialogs.close("add");
+        if (!keepNew) {
+          this.dialogs.close("new");
+        }
       }
       this.focusEmpty = caseId === null && this.caseId !== null; // a case was closed: the empty state takes the focus
     }

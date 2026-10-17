@@ -2,14 +2,31 @@
    `no-case` is on the body while no case is open (sources.js); it does not touch the layout files: it only overrides
    what the three-column grid would show. */
 
-/* ---- Without a case: the side column and the detail take 0 px; filters, trail, timeline and grid are hidden ------- */
-body.no-case #panels {
+/* ---- Without a case: the side column, the rail and the detail take 0 px; filters, trail, timeline and grid are hidden --
+   responsive.css (UI-17) loads later and sets the layout from the width, from the collapse classes and from the open
+   drawer classes with selectors of the form `#panels > #sources-panel`, so every selector here carries `body.no-case`
+   (one more class) and wins at any width, collapsed or not, drawer open or not. The grid takes the one column. */
+body.no-case #panels,
+body.no-case #panels.is-side-collapsed,
+body.no-case #panels.is-detail-collapsed {
+  --side-col: 0px;
+  --detail-col: 0px;
+  --rail-display: none;
+  --detail-toggle-display: none;
   grid-template-columns: minmax(0, 1fr);
 }
 
-body.no-case #sources-panel,
-body.no-case #detail-panel {
+body.no-case #panels > #sources-panel,
+body.no-case #panels > #detail-panel,
+body.no-case #panels.is-side-open > #sources-panel,
+body.no-case #panels.is-detail-open > #detail-panel,
+body.no-case #panels > #side-rail,
+body.no-case #detail-toggle {
   display: none;
+}
+
+body.no-case #panels > #grid-panel {
+  grid-area: 1 / 1;
 }
 
 body.no-case #grid-panel > :not(.case-empty):not(h2) {
