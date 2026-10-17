@@ -9,7 +9,7 @@ import { S } from "../../src/dmslog/web/js/strings.js";
 import { createStatusBar } from "../../src/dmslog/web/js/status-bar.js";
 import { makeDoc } from "./fixtures/fake-dom.mjs";
 
-function setup() {
+function setup(options = {}) {
   const doc = makeDoc();
   const root = doc.createElement("footer");
   doc.body.appendChild(root);
@@ -18,6 +18,7 @@ function setup() {
   const bar = createStatusBar(root, {
     S,
     helpText: () => "help text",
+    ...options,
     now: () => clock,
     setTimer: (fn, ms) => { timers.push({ fn, at: clock + ms }); return timers.length; },
     clearTimer: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
@@ -163,6 +164,20 @@ test("the ? button shows the current help text in a popover and Escape closes it
   assert.equal(pop.hidden, true);
   bar.help();
   assert.equal(pop.hidden, false);
+});
+
+test("with onHelp (UI-28) the ? button opens the shortcuts dialog instead of the popover", () => {
+  let opened = 0;
+  const { pick } = setup({ onHelp: () => { opened += 1; } });
+  const button = pick("sb-help");
+  button.click();
+  button.click();
+  assert.equal(opened, 2, "every click asks for the dialog; the dialog itself ignores a second open");
+  assert.equal(pick("sb-help-pop").hidden, true);
+  assert.equal(button.attrs["aria-haspopup"], "dialog");
+  assert.equal(button.getAttribute("aria-expanded"), null);
+  assert.equal(button.getAttribute("aria-controls"), null);
+  assert.equal(button.attrs["aria-label"], S.actShortcuts);
 });
 
 test("a field error sits with the field: aria-invalid, aria-describedby and a .ui-field-error note", () => {

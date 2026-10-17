@@ -11,7 +11,7 @@ import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
 import { Detail, adoptHeading } from "./detail.js";
 import {
-  NAV_ERROR_FILTER, andFilters, bookmarkKey, composeFilter, createLatestRequest, ignoresShortcut, navKey, navRequest, stateFromForm,
+  andFilters, composeFilter, createLatestRequest, navPlan, stateFromForm,
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { initTimeline } from "./timeline.js";
@@ -122,7 +122,6 @@ function start() {
   // The status bar (UI-13). showMessage stays as the adapter the modules already call.
   const status = createStatusBar(byId("status-bar"), {
     S,
-    helpText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp, S.timelineHint].join(" "),
     // Retry / Dismiss disappeared while focused: a shown target (the grid; with no case, the empty state's button).
     focusFallback: () => {
       const target = fallbackTarget({
@@ -133,6 +132,8 @@ function start() {
         target.focus();
       }
     },
+    // The "?" button opens the shortcuts dialog (help.shortcuts); actions and ctx exist by the time it is clicked.
+    onHelp: () => actions.invoke("help.shortcuts", ctx),
   });
   const showMessage = (text, isError) => status.message(text, { kind: isError ? "error" : "info" });
   // Connection errors already own the bar: do not repeat them as a message.
@@ -179,7 +180,13 @@ function start() {
   onForbidden(() => status.connection("forbidden"));
   onNetworkError(() => failures.goOffline());
 
-  const actions = createActionRegistry({ onError: (err) => showError(err), singleKeysOn: () => true });
+  // The keyboard layer (shortcuts.js: the one keydown listener, F6 regions, the shortcuts dialog) loads after the first
+  // view; until then the single-key preference is not known and the keys do nothing.
+  let shortcuts = null;
+  const actions = createActionRegistry({
+    onError: (err) => showError(err),
+    singleKeysOn: () => (shortcuts === null ? true : shortcuts.singleKeys()),
+  });
   // Step 1 of the dock: it exists before the context that holds it; bind(ctx) is step 2.
   const dock = createDock({
     root: byId("dock"),
@@ -1093,35 +1100,31 @@ function start() {
   };
   compareButton.addEventListener("click", compareCurrent);
 
-  // Shortcuts: b toggles the bookmark of the selected record, B opens the panel, c compares.
-  document.addEventListener("keydown", async (event) => {
-    const action = bookmarkKey(event);
-    if (!action || ignoresShortcut(event) || caseId === null) {
-      return;
-    }
-    if (action === "panel") {
-      event.preventDefault();
-      actions.invoke("toggle.bookmarks", ctx);
-      return;
-    }
+  // b / c (record.bookmark, record.compare; the keys are dispatched by shortcuts.js).
+  const toggleBookmark = async () => {
     const row = grid.selectedRow();
     if (!row) {
       showMessage(S.navNoSelection, false);
       return;
     }
-    event.preventDefault();
-    if (action === "toggle") {
-      try {
-        await bookmarkStore.toggle(row.id);
-      } catch (err) {
-        showError(err);
-      }
-    } else if (detail.entry && detail.entry.id === row.id) {
-      compareCurrent();
-    } else {
-      detail.show(row.id).then(() => compareCurrent());
+    try {
+      await bookmarkStore.toggle(row.id);
+    } catch (err) {
+      showError(err);
     }
-  });
+  };
+  const compareSelected = () => {
+    const row = grid.selectedRow();
+    if (!row) {
+      showMessage(S.navNoSelection, false);
+      return undefined;
+    }
+    if (detail.entry && detail.entry.id === row.id) {
+      compareCurrent();
+      return undefined;
+    }
+    return detail.show(row.id).then(() => compareCurrent());
+  };
 
   // retryable(): a failed import() is forgotten, so the next use of a control tries again (the rail never stays dead).
   const loadDrawers = retryable(() => import("./drawers.js").then((module) => {
@@ -1234,24 +1237,19 @@ function start() {
     // Module missing or failing: no banner.
   });
 
-  // Shortcuts: n/N next/previous error, t/T next/previous entry of the selected row's template.
-  document.addEventListener("keydown", async (event) => {
-    const nav = navKey(event);
-    if (!nav || ignoresShortcut(event) || caseId === null) {
+  // n/N next/previous error, t/T next/previous entry of the selected row's message type (navigate.* actions). Without a
+  // selected record n/N start at the first/last visible record.
+  const visibleRows = () => {
+    const w = grid.window;
+    return w && Array.isArray(w.rows) ? w.rows.slice(w.top, w.top + Math.max(1, Number(grid.visible) || 1)) : [];
+  };
+  const navigateRecord = async (kind, dir) => {
+    const plan = navPlan(kind, dir, grid.selectedRow(), visibleRows(), currentFilter);
+    if (plan.problem) {
+      showMessage(S[plan.problem], false);
       return;
     }
-    const row = grid.selectedRow();
-    if (!row) {
-      showMessage(S.navNoSelection, false);
-      return;
-    }
-    if (nav.kind === "template" && !(row.tpl_id > 0)) {
-      showMessage(S.navNoTemplate, false);
-      return;
-    }
-    event.preventDefault();
-    const extra = nav.kind === "error" ? NAV_ERROR_FILTER : { tpl: [row.tpl_id] };
-    const request = navRequest(currentFilter, extra, row, nav.dir);
+    const { request } = plan;
     const { seq, signal } = navRequests.begin();
     const forCase = caseId;
     try {
@@ -1271,7 +1269,7 @@ function start() {
         showError(err);
       }
     }
-  });
+  };
 
   // ---- The action registry, the dock and the top bar. Everything is registered here, synchronously, so every
   // item of every menu exists from the first paint (see app-actions.js).
@@ -1380,8 +1378,46 @@ function start() {
       }
       return highlightUi.highlightType();
     },
-    shortcutsText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp].join(" "),
+    // Keyboard (UI-28).
+    navigateRecord,
+    navigateHighlight: (dir) => (highlightUi === null ? showMessage(S.navNoSelection, false) : highlightUi.navigate(dir)),
+    toggleBookmark,
+    compareSelected,
+    viewsBack: () => (viewsUi === null ? undefined : viewsUi.back()),
+    viewsForward: () => (viewsUi === null ? undefined : viewsUi.forward()),
+    focusSearch: () => {
+      const input = byId("search-input");
+      if (!input.disabled) {
+        input.focus();
+        input.select();
+      }
+    },
+    moveRegion: async (dir) => (await loadShortcuts()).regions.move(dir),
+    // The opener is read before the module loads: the dialog gives the focus back to the control the user used.
+    openShortcuts: async () => {
+      const opener = document.activeElement;
+      (await loadShortcuts()).openDialog(opener);
+    },
   };
+  // import() with a retry: a failed load is forgotten, the next use (a key, the "?" button) tries again.
+  const loadShortcuts = retryable(() => import("./shortcuts.js").then((module) => {
+    if (shortcuts === null) {
+      shortcuts = module.createShortcuts({
+        actions, ctx, getCase: () => caseId, drawers: () => drawers, storage: safeLocalStorage(),
+      });
+    }
+    return shortcuts;
+  }));
+  let shortcutsFailureShown = false;
+  const startShortcuts = () => loadShortcuts().catch((err) => {
+    if (!shortcutsFailureShown) {
+      shortcutsFailureShown = true;
+      showError(err);
+    }
+    // Until it loads the keys do nothing (the controls still work); the next key press tries again.
+    document.addEventListener("keydown", () => { startShortcuts(); }, { once: true, capture: true });
+  });
+  afterFirstView.then(startShortcuts);
   registerAppPanels(dock, deps);
   appActions = registerAppActions(actions, deps);
   const toggleButtons = Array.from(document.querySelectorAll("#toolbar [data-action]"));

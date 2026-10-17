@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  bookmarkKey,
-  NAV_ERROR_FILTER, TPL_LEAF, andFilters, buildFilter, composeFilter, ignoresShortcut, isInMenu, isTypingTarget, navKey, navRequest,
+  NAV_ERROR_FILTER, TPL_LEAF, andFilters, buildFilter, composeFilter, ignoresShortcut, isInMenu, isTypingTarget, navRequest,
   parseTplList, stateFromForm, timeSpan, withTemplate, withTsRange,
 } from "../../src/dmslog/web/js/filters.js";
 
@@ -93,13 +92,7 @@ test("navRequest builds a one-row keyset query from the selected row", () => {
   assert.deepEqual(navRequest(null, { tpl: [5] }, row, "back").filter, { and: [{ tpl: [5] }] });
 });
 
-test("navKey maps n/N/t/T and ignores modified keys; typing targets are skipped", () => {
-  assert.deepEqual(navKey({ key: "n" }), { kind: "error", dir: "fwd" });
-  assert.deepEqual(navKey({ key: "N" }), { kind: "error", dir: "back" });
-  assert.deepEqual(navKey({ key: "t" }), { kind: "template", dir: "fwd" });
-  assert.deepEqual(navKey({ key: "T" }), { kind: "template", dir: "back" });
-  assert.equal(navKey({ key: "n", ctrlKey: true }), null);
-  assert.equal(navKey({ key: "x" }), null);
+test("isTypingTarget: fields, selects and editable nodes", () => {
   assert.equal(isTypingTarget({ tagName: "input" }), true);
   assert.equal(isTypingTarget({ tagName: "DIV", isContentEditable: true }), true);
   assert.equal(isTypingTarget({ tagName: "DIV" }), false);
@@ -114,16 +107,6 @@ test("template leaf validates and round-trips ids and codes", () => {
   assert.equal(TPL_LEAF.fromJson({ tpl: [{}] }), null);
   assert.deepEqual(parseTplList("12, ABC_1,,"), [12, "ABC_1"]);
   assert.deepEqual(parseTplList("a b"), [-1]);
-});
-
-test("bookmarkKey maps b, B and c and ignores modified keys", () => {
-  assert.equal(bookmarkKey({ key: "b" }), "toggle");
-  assert.equal(bookmarkKey({ key: "B" }), "panel");
-  assert.equal(bookmarkKey({ key: "c" }), "compare");
-  assert.equal(bookmarkKey({ key: "b", ctrlKey: true }), null);
-  assert.equal(bookmarkKey({ key: "c", metaKey: true }), null);
-  assert.equal(bookmarkKey({ key: "constructor" }), null);
-  assert.equal(bookmarkKey({ key: "x" }), null);
 });
 
 // A tiny node with a role and a parent, like the elements of ui-menu.js.
