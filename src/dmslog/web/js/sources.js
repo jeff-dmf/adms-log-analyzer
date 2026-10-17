@@ -28,7 +28,14 @@ export class SourcesPanel {
     this.caseFiles = null; // set by main.js: the "files of the new case" list (case-files.js)
     this.addFiles = null; // set by main.js: the "add files to this case" list (case-files.js, mode "add")
     this.queueBusy = false; // the files of a new case are being opened: case switch and Open form are blocked
-    this.progressStopped = false; // the progress stream gave up and nobody follows the running job (until Retry)
+    // One owner per job (UI-25). `jobs` holds every job this panel started and has not seen end, {id, state}: "following"
+    // (a progress stream is open) or "stopped" (the stream gave up; Retry reopens it). A refused (409) file never
+    // had a running job: it only removes its OWN entry and never touches the stream or the state of another job. The
+    // stream is closed only when no job is left. `finished` holds the ids already handled (a done can arrive twice).
+    this.jobs = new Set();
+    this.finished = new Set();
+    this.eventsCase = null; // the case the open stream belongs to
+    this.progressStopped = false; // at least one job (or an unknown running one) lost its stream: Retry reopens it
     this.waiter = null; // {jobId, caseId, resolve, seen}: a runCollection() waiting for its job's done event
     this.caseNames = new Map(); // case id -> name, for the fixed case header
     this.rows = new Map(); // source id -> {li, box, label, text, name, meta, mark, badge, sig}: the rows on screen
@@ -321,6 +328,7 @@ export class SourcesPanel {
       return;
     }
     this.waiter = null;
+    this.jobs.delete(waiter.job);
     waiter.cancelled = true;
     waiter.resolve({ status: "failed", message });
   }
@@ -331,7 +339,9 @@ export class SourcesPanel {
     }
     this.closeEvents();
     if (caseId !== this.caseId) {
-      this.progressStopped = false; // the stopped stream belonged to the old case
+      this.progressStopped = false; // what was stopped belonged to the old case
+      this.jobs.clear();
+      this.finished.clear();
       if (this.addFiles) {
         this.addFiles.state.resetResults(); // results belong to the case they were opened in
       }
@@ -774,24 +784,31 @@ export class SourcesPanel {
         resolve({ status: "failed", message: S.cfCaseChanged });
         return;
       }
-      const waiter = { jobId: null, caseId: this.caseId, resolve, seen: new Map() };
+      const job = this.startJob();
+      const waiter = { jobId: null, caseId: this.caseId, resolve, seen: new Map(), job };
       this.waiter = waiter;
-      const opened = this.watchProgress(this.caseId);
+      this.watchProgress(this.caseId);
       api.addCollection(waiter.caseId, path, scope).then((started) => {
         if (waiter.cancelled) {
+          this.closeIfIdle();
           return;
         }
         this.handlers.onMessage(S.collectionStarted, false);
         waiter.jobId = started ? started.job_id : null;
+        job.id = waiter.jobId;
+        this.drainSeen(waiter); // the done of ANOTHER job that arrived while this one had no id yet
         if (waiter.jobId !== null && waiter.seen.has(waiter.jobId)) {
           this.finishJob(waiter.seen.get(waiter.jobId));
         }
       }).catch((err) => {
         if (waiter.cancelled) {
+          this.closeIfIdle();
           return;
         }
         this.waiter = null;
-        this.closeEvents(opened);
+        this.jobs.delete(job); // refused: it never ran; only its own entry goes
+        this.drainSeen(waiter); // what ended meanwhile (the job another file was already running) is not lost
+        this.closeIfIdle();
         resolve(refusalResult(err, {
           duplicate: S.cfDuplicateCollection, busy: S.cfBusy,
         }));
@@ -799,11 +816,58 @@ export class SourcesPanel {
     });
   }
 
+  // A job of this panel that has not ended: its entry exists from the request on and is removed by its done event
+  // (or by its refusal). The id arrives with the answer.
+  startJob() {
+    const job = { id: null, state: "following" };
+    this.jobs.add(job);
+    return job;
+  }
+
+  isTracked(id) {
+    return id !== undefined && id !== null && [...this.jobs].some((job) => job.id === id);
+  }
+
+  // The done events kept while a waiting file had no job id yet: those of OTHER jobs this panel tracks are processed
+  // now (the file may have been refused, and its refusal must not swallow the end of a job that was running).
+  drainSeen(waiter) {
+    for (const [id, data] of [...waiter.seen]) {
+      if (id !== waiter.jobId && this.isTracked(id)) {
+        waiter.seen.delete(id);
+        this.finishJob(data);
+      }
+    }
+  }
+
+  // No job is left to follow and nobody waits: the stream is not needed.
+  closeIfIdle() {
+    if (this.jobs.size === 0 && this.waiter === null) {
+      this.progressStopped = false; // nothing tracked is waiting for a stream
+      this.closeEvents();
+    }
+  }
+
   async finishJob(data) {
-    this.progressStopped = false; // a job finished: its progress was seen to the end
-    const waiter = this.waiter;
-    this.waiter = null;
-    this.closeEvents();
+    const id = data.job_id;
+    if (id !== undefined && id !== null) {
+      if (this.finished.has(id)) {
+        return; // the same done seen by two streams
+      }
+      this.finished.add(id);
+    }
+    for (const job of [...this.jobs]) {
+      if (id !== undefined && id !== null && job.id === id) {
+        this.jobs.delete(job);
+      }
+    }
+    if (this.jobs.size === 0) {
+      this.progressStopped = false; // every job was seen to the end
+    }
+    const waiter = this.waiter !== null && this.waiter.jobId !== null && this.waiter.jobId === id ? this.waiter : null;
+    if (waiter) {
+      this.waiter = null;
+    }
+    this.closeIfIdle();
     if (data.status === "error") {
       this.handlers.onMessage(S.progressFailed + (data.message ? ": " + data.message : ""), true);
     } else {
@@ -836,14 +900,20 @@ export class SourcesPanel {
     }
     setFieldError(this.refs.pathInput, null);
     const scope = this.refs.scopeSelect.value === "all" ? "all" : "default";
-    const opened = this.watchProgress(this.caseId);
+    const job = this.startJob();
+    this.watchProgress(this.caseId);
     try {
-      await api.addCollection(this.caseId, path, scope);
+      const started = await api.addCollection(this.caseId, path, scope);
+      job.id = started && started.job_id !== undefined ? started.job_id : null;
+      if (job.id !== null && this.finished.has(job.id)) {
+        this.jobs.delete(job); // its done came before the answer
+      }
       this.handlers.onMessage(S.collectionStarted, false);
       this.refs.pathInput.value = "";
       this.closeDialog("add"); // the job runs on; its progress is in the status bar
     } catch (err) {
-      this.closeEvents(opened);
+      this.jobs.delete(job); // refused: only its own entry goes, never the stream or the state of another job
+      this.closeIfIdle();
       if (err instanceof ApiError && err.status === 409) {
         this.handlers.onMessage(conflictMessage(err), true);
       } else if (err instanceof ApiError && PATH_FIELD_ERRORS.has(err.code)) {
@@ -854,9 +924,12 @@ export class SourcesPanel {
     }
   }
 
-  // Opens the progress stream and returns it (null without EventSource). Whoever opens one closes only that one
-  // (closeEvents(opened)): a stream opened since, by a Retry for instance, is not theirs to close.
+  // The case's progress stream: a live one is reused (it carries every job of the case), otherwise one is opened and
+  // every job goes back to "following".
   watchProgress(caseId) {
+    if (this.events !== null && this.eventsCase === caseId) {
+      return this.events;
+    }
     this.closeEvents();
     if (typeof EventSource !== "function") {
       return null;
@@ -864,6 +937,11 @@ export class SourcesPanel {
     this.reportProgress({ value: null, max: null, text: "" });
     const events = new EventSource(api.progressUrl(caseId));
     this.events = events;
+    this.eventsCase = caseId;
+    this.progressStopped = false;
+    for (const job of this.jobs) {
+      job.state = "following";
+    }
     const guard = createStreamGuard();
     this.progressGuard = guard;
     events.addEventListener("open", () => guard.opened());
@@ -882,15 +960,14 @@ export class SourcesPanel {
     });
     events.addEventListener("done", async (event) => {
       const data = parseEvent(event) || {};
-      if (this.waiter) {
-        // A replayed done of the previous job may arrive first: only this job's counts.
-        this.waiter.seen.set(data.job_id, data);
-        if (this.waiter.jobId !== null && this.waiter.jobId === data.job_id) {
-          await this.finishJob(data);
-        }
+      if (this.waiter && this.waiter.jobId === null) {
+        this.waiter.seen.set(data.job_id, data); // whose is it? known when the answer brings the id
         return;
       }
-      await this.finishJob(data);
+      if (this.waiter && !this.isTracked(data.job_id)) {
+        return; // a replayed done of an older job while a file waits: not ours
+      }
+      await this.finishJob(data); // the waiting file's job, or another job of this panel: either way it ended
     });
     events.addEventListener("error", () => {
       // The stream stops for good after 3 failures in a row (the server is down) or at once when the browser gave up
@@ -903,7 +980,10 @@ export class SourcesPanel {
       if (this.events === events && (closed ? guard.stop() : guard.failed())) {
         events.close();
         this.events = null;
-        this.progressStopped = true; // survives other streams: it is cleared by a Retry, a finished job or a case change
+        this.progressStopped = true; // cleared by a Retry, a new stream, the end of every job or a case change
+        for (const job of this.jobs) {
+          job.state = "stopped";
+        }
         this.cancelWaiter(S.cfStreamClosed);
         this.reportProgress(null);
         if (this.handlers.onStreamStopped) {
@@ -926,29 +1006,19 @@ export class SourcesPanel {
 
   // Opens the progress stream again after it stopped (Retry). True only when a stream was really opened.
   resumeProgress() {
-    // The pending recovery is the panel's, not the last stream's: another file opened and refused (409) in between
-    // replaces and closes the stream, but the job that was being followed still has nobody following it.
+    // Only jobs in "stopped" are reopened. A stream opened since (by another file) already follows them all.
     if (!this.progressStopped || this.caseId === null) {
       return false;
     }
-    this.progressStopped = false;
     this.watchProgress(this.caseId);
     return this.events !== null;
   }
 
-  closeEvents(only) {
-    if (only !== undefined) {
-      if (only === null) {
-        return;
-      }
-      only.close();
-      if (this.events !== only) {
-        return; // already replaced: the current stream and its progress stay
-      }
-    }
+  closeEvents() {
     if (this.events) {
       this.events.close();
       this.events = null;
+      this.eventsCase = null;
     }
     this.reportProgress(null);
   }

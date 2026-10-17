@@ -330,7 +330,7 @@ test("an old stream closing does not affect the waiter of the current job", asyn
   api.progressUrl = () => "/p";
   api.addCollection = async () => ({ job_id: "j" });
   const { panel } = panelSetup();
-  panel.watchProgress("C"); // an older stream
+  panel.watchProgress("X"); // an older stream, of another case
   const old = FakeEventSource.instances[0];
   const pending = panel.runCollection(ENT, "default", "C"); // closes the old one, opens a new one
   await new Promise((r) => setTimeout(r, 0));
@@ -432,95 +432,217 @@ test("the indexing progress stream stops after 3 failures in a row and Retry ope
   assert.equal(FakeEventSource.instances.length, 2);
 });
 
-test("a progress stream the browser closed (HTTP error) is a recoverable stop at once, and survives another file opening and being refused", async () => {
+// ---- file A is indexing; the progress stream can be lost, Retried, file B opened and refused (409), A's done arrives ----
+
+function permutations(items) {
+  if (items.length <= 1) return [items];
+  return items.flatMap((item, i) => permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest]));
+}
+
+async function scenario(order, secondFile) {
   globalThis.EventSource = FakeEventSource;
   FakeEventSource.instances = [];
   api.progressUrl = () => "/p";
-  const stopped = [];
+  api.sources = async () => ({ sources: [] });
+  const counts = { done: 0, stopped: 0 };
   const refs = {
     caseSelect: new FakeNode("select"), newCaseForm: new FakeNode("form"), newCaseName: new FakeNode("input"),
-    openForm: new FakeNode("form"), pathInput: new FakeNode("input"), scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
+    openForm: new FakeNode("form"), pathInput: Object.assign(new FakeNode("input"), { value: "/a" }),
+    scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
     progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), sourceList: new FakeNode("ul"),
   };
   const panel = new SourcesPanel(refs, {
-    onCase() {}, onSources() {}, onSelection() {}, onDone() {}, onMessage() {}, onStreamStopped: () => stopped.push(1),
+    onCase() {}, onSources() {}, onSelection() {}, onDone: () => { counts.done += 1; }, onMessage() {},
+    onStreamStopped: () => { counts.stopped += 1; },
   });
   panel.caseId = "C";
-  panel.watchProgress("C"); // file A is indexing
-  const a = FakeEventSource.instances[0];
-  a.readyState = 2; // CLOSED: no more events will come to reach a limit of 3
-  a.listeners.error({});
-  assert.deepEqual(stopped, [1]);
-  assert.equal(a.closed, true);
-  // file B opens its own stream and is refused with 409: the stream is closed again
-  panel.watchProgress("C");
-  panel.closeEvents();
-  // Retry: A still has nobody following it
-  assert.equal(panel.resumeProgress(), true);
-  assert.equal(FakeEventSource.instances.length, 3);
-  assert.equal(panel.resumeProgress(), false); // one Retry, one stream
-  // the pending recovery ends with a finished job and with a case change
-  panel.watchProgress("C");
-  FakeEventSource.instances.at(-1).readyState = 2;
-  FakeEventSource.instances.at(-1).listeners.error({});
-  assert.equal(stopped.length, 2);
-  await panel.finishJob({ status: "ok", records: 1 });
-  assert.equal(panel.resumeProgress(), false);
-  // and a case change: the stopped stream belonged to the old case
-  api.sources = async () => ({ sources: [] });
-  panel.watchProgress("C");
-  FakeEventSource.instances.at(-1).readyState = 2;
-  FakeEventSource.instances.at(-1).listeners.error({});
-  assert.equal(stopped.length, 3);
-  await panel.selectCase("D");
-  assert.equal(panel.resumeProgress(), false);
+  api.addCollection = async () => ({ job_id: "A" });
+  await panel.openCollection(); // A started: followed
+  assert.equal(panel.events !== null, true);
+  let refuse = null;
+  let second = null;
+  let deferredDone = false;
+  const live = () => (panel.events !== null && !panel.events.closed ? panel.events : null);
+  const deliverDone = () => {
+    const stream = live();
+    if (stream) {
+      stream.emit("done", { job_id: "A", status: "ok", records: 1 });
+      return true;
+    }
+    return false;
+  };
+  for (const step of order) {
+    if (step === "L") {
+      const stream = live();
+      if (stream) {
+        stream.readyState = 2;
+        stream.listeners.error({});
+      }
+    } else if (step === "R") {
+      panel.resumeProgress();
+    } else if (step === "B") {
+      api.addCollection = () => new Promise((_, reject) => { refuse = reject; });
+      refs.pathInput.value = "/b";
+      second = secondFile === "run" ? panel.runCollection(ENT, "default", "C") : panel.openCollection();
+    } else if (step === "X") {
+      await new Promise((r) => setTimeout(r, 0));
+      refuse(Object.assign(new Error("busy"), { status: 409, code: "job_running" }));
+      await second;
+    } else if (step === "D") {
+      if (!deliverDone()) deferredDone = true;
+    }
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  if (deferredDone) deliverDone(); // the server replays it to whoever listens next
+  await new Promise((r) => setTimeout(r, 0));
+  return { panel, counts, live };
+}
+
+for (const secondFile of ["run", "open"]) {
+  test(`file A is never lost, in any order of [stream lost, Retry, B opens, B refused 409, A done] (B via ${secondFile})`, async () => {
+    const orders = permutations(["L", "R", "B", "X", "D"]).filter((o) => o.indexOf("B") < o.indexOf("X"));
+    assert.equal(orders.length, 60);
+    for (const order of orders) {
+      const { panel, counts, live } = await scenario(order, secondFile);
+      const label = order.join(" ");
+      if (panel.finished.has("A")) {
+        assert.equal(counts.done, 1, label + ": A's end handled exactly once");
+        assert.equal(panel.jobs.size, 0, label + ": nothing left to follow");
+        assert.equal(panel.events, null, label + ": the stream is closed when no job is left");
+      } else {
+        const followed = live() !== null && [...panel.jobs].some((job) => job.id === "A");
+        assert.ok(followed || (panel.progressStopped && panel.resumeProgress() === true),
+          label + ": A is neither followed, nor done, nor recoverable");
+      }
+    }
+  });
+}
+
+test("B refused while A's stream is healthy neither closes it nor loses A's end; the done is handled once", async () => {
+  const { panel, counts } = await scenario(["B", "D", "X"], "run");
+  assert.equal(counts.done, 1);
+  assert.equal(panel.finished.has("A"), true);
+  assert.equal(panel.events, null);
 });
 
-test("a refused (409) file closes only the stream IT opened: the stream a Retry opened meanwhile keeps running", async () => {
+test("A's done that arrived while B waited for its id is processed when B is refused (refresh and onDone run)", async () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.progressUrl = () => "/p";
+  let refreshes = 0;
+  api.sources = async () => { refreshes += 1; return { sources: [] }; };
+  let done = 0;
+  const refs = {
+    caseSelect: new FakeNode("select"), newCaseForm: new FakeNode("form"), newCaseName: new FakeNode("input"),
+    openForm: new FakeNode("form"), pathInput: Object.assign(new FakeNode("input"), { value: "/a" }),
+    scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
+    progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), sourceList: new FakeNode("ul"),
+  };
+  const panel = new SourcesPanel(refs, { onCase() {}, onSources() {}, onSelection() {}, onDone: () => { done += 1; }, onMessage() {} });
+  panel.caseId = "C";
+  api.addCollection = async () => ({ job_id: "A" });
+  await panel.openCollection();
+  let refuse = null;
+  api.addCollection = () => new Promise((_, reject) => { refuse = reject; });
+  const b = panel.runCollection(ENT, "default", "C");
+  await new Promise((r) => setTimeout(r, 0));
+  panel.events.emit("done", { job_id: "A", status: "ok", records: 3 }); // B has no id yet: kept
+  assert.equal(done, 0);
+  refuse(Object.assign(new Error("busy"), { status: 409, code: "job_running" }));
+  assert.equal((await b).status, "refused");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(done, 1);
+  assert.ok(refreshes >= 1);
+});
+
+test("a done of an older job (a replay) while a file waits is ignored; the file's own done resolves it", async () => {
   globalThis.EventSource = FakeEventSource;
   FakeEventSource.instances = [];
   api.progressUrl = () => "/p";
   api.sources = async () => ({ sources: [] });
+  api.addCollection = async () => ({ job_id: "new" });
+  const { panel } = panelSetup();
+  const pending = panel.runCollection(ENT, "default");
+  await new Promise((r) => setTimeout(r, 0));
+  panel.events.emit("done", { job_id: "old", status: "ok" });
+  assert.equal(panel.finished.has("old"), false);
+  panel.events.emit("done", { job_id: "new", status: "ok" });
+  assert.deepEqual(await pending, { status: "ok" });
+});
+
+function jobsRig() {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.progressUrl = () => "/p";
+  api.sources = async () => ({ sources: [] });
+  const counts = { done: 0 };
   const refs = {
     caseSelect: new FakeNode("select"), newCaseForm: new FakeNode("form"), newCaseName: new FakeNode("input"),
-    openForm: new FakeNode("form"), pathInput: Object.assign(new FakeNode("input"), { value: "/x" }), scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
+    openForm: new FakeNode("form"), pathInput: Object.assign(new FakeNode("input"), { value: "/a" }),
+    scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
     progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), sourceList: new FakeNode("ul"),
   };
-  const stopped = [];
-  const panel = new SourcesPanel(refs, {
-    onCase() {}, onSources() {}, onSelection() {}, onDone() {}, onMessage() {}, onStreamStopped: () => stopped.push(1),
-  });
+  const panel = new SourcesPanel(refs, { onCase() {}, onSources() {}, onSelection() {}, onDone: () => { counts.done += 1; }, onMessage() {} });
   panel.caseId = "C";
-  panel.watchProgress("C"); // file A indexing
-  FakeEventSource.instances[0].readyState = 2;
-  FakeEventSource.instances[0].listeners.error({}); // A's stream stopped
-  assert.equal(stopped.length, 1);
-  // file B starts: its own stream, and its request is still in flight
-  let refuse = null;
-  api.addCollection = () => new Promise((_, reject) => { refuse = reject; });
-  const b = panel.runCollection(ENT, "default");
-  await new Promise((r) => setTimeout(r, 0));
-  const streamB = FakeEventSource.instances.at(-1);
-  // the Retry opens the progress stream again meanwhile
-  assert.equal(panel.resumeProgress(), true);
-  const resumed = FakeEventSource.instances.at(-1);
-  assert.notEqual(resumed, streamB);
-  // B is refused: it closes its own stream and nothing else
-  refuse(Object.assign(new Error("busy"), { status: 409, code: "job_running" }));
-  assert.equal((await b).status, "refused");
-  assert.equal(resumed.closed, undefined);
-  assert.equal(panel.events, resumed);
-  // and the same for the Add dialog's own path (openCollection)
-  panel.refs.pathInput.value = "/y";
-  panel.progressStopped = true; // stopped again
-  let refuse2 = null;
-  api.addCollection = () => new Promise((_, reject) => { refuse2 = reject; });
-  const opening = panel.openCollection();
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(panel.resumeProgress(), true);
-  const resumedAgain = FakeEventSource.instances.at(-1);
-  refuse2(Object.assign(new Error("busy"), { status: 409, code: "job_running" }));
-  await opening;
-  assert.equal(resumedAgain.closed, undefined);
-  assert.equal(panel.events, resumedAgain);
+  return { panel, counts };
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+test("a second file reuses the live progress stream (it carries every job of the case)", async () => {
+  const { panel } = jobsRig();
+  api.addCollection = async () => ({ job_id: "A" });
+  await panel.openCollection();
+  const stream = panel.events;
+  api.addCollection = () => new Promise(() => {});
+  panel.runCollection(ENT, "default", "C");
+  await tick();
+  assert.equal(FakeEventSource.instances.length, 1);
+  assert.equal(panel.events, stream);
+});
+
+test("while B waits with its id known, A's done ends A only and B still waits for its own", async () => {
+  const { panel, counts } = jobsRig();
+  api.addCollection = async () => ({ job_id: "A" });
+  await panel.openCollection();
+  api.addCollection = async () => ({ job_id: "B" });
+  const b = panel.runCollection(ENT, "default", "C");
+  await tick();
+  let settled = false;
+  b.then(() => { settled = true; });
+  panel.events.emit("done", { job_id: "A", status: "ok", records: 1 });
+  await tick();
+  assert.equal(counts.done, 1);
+  assert.equal(settled, false); // A's end did not resolve B
+  assert.notEqual(panel.events, null); // and B's job is still followed
+  panel.events.emit("done", { job_id: "B", status: "ok", records: 2 });
+  assert.deepEqual(await b, { status: "ok" });
+  assert.equal(counts.done, 2);
+});
+
+test("the same done seen twice (two streams, a replay) is handled once", async () => {
+  const { panel, counts } = jobsRig();
+  api.addCollection = async () => ({ job_id: "A" });
+  await panel.openCollection();
+  const stream = panel.events;
+  stream.emit("done", { job_id: "A", status: "ok", records: 1 });
+  stream.emit("done", { job_id: "A", status: "ok", records: 1 });
+  await tick();
+  assert.equal(counts.done, 1);
+});
+
+test("A's done kept while B had no id is processed when B's answer arrives with its id (B accepted)", async () => {
+  const { panel, counts } = jobsRig();
+  api.addCollection = async () => ({ job_id: "A" });
+  await panel.openCollection();
+  let answer = null;
+  api.addCollection = () => new Promise((resolve) => { answer = resolve; });
+  const b = panel.runCollection(ENT, "default", "C");
+  await tick();
+  panel.events.emit("done", { job_id: "A", status: "ok", records: 1 }); // kept: whose is it?
+  assert.equal(counts.done, 0);
+  answer({ job_id: "B" });
+  await tick();
+  assert.equal(counts.done, 1); // it was A's
+  panel.events.emit("done", { job_id: "B", status: "ok", records: 1 });
+  assert.deepEqual(await b, { status: "ok" });
 });
