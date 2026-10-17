@@ -126,8 +126,6 @@ export class Grid {
     this.visible = 0;
     this.lastScroll = 0;
     this.pendingJump = null;
-    this.ownV = false; // syncScroll() wrote scrollTop and the scroll event it causes has not arrived
-    this.ownH = false; // resizer.scrollTo() wrote scrollLeft, same
     this.selectTimer = null;
     this.wheelRemainder = 0; // wheel travel in rows not applied yet (the fraction stays); applied once per frame
     this.wheelX = null;      // horizontal scroll target (px, clamped at every event) not applied yet, or null
@@ -247,7 +245,6 @@ export class Grid {
     const x = this.wheelX;
     this.wheelX = null;
     if (x !== null && x !== this.resizer.scrollX) {
-      this.ownH = true;
       this.resizer.scrollTo(x); // writes only
     }
     const rows = Math.trunc(this.wheelRemainder);
@@ -762,10 +759,6 @@ export class Grid {
       return "superseded";
     }
     this.cancelWheel(); // Home, End, a time and the scrollbar land here: older wheel travel must not move the new rows
-    if (this.pendingJump !== null) {
-      clearTimeout(this.pendingJump); // a scrollbar jump still waiting its 80 ms must not run after this navigation
-      this.pendingJump = null;
-    }
     if (view === null) {
       this.abandonPending();
     }
@@ -813,7 +806,8 @@ export class Grid {
       }
     } finally {
       if (generation === this.generation) {
-        this.loading = false; // pendingJump is left alone: it is a drag made while this loaded, and its timer is its own
+        this.loading = false;
+        this.pendingJump = null;
         this.setBusy(false);
       }
     }
@@ -939,44 +933,17 @@ export class Grid {
     }
     // Write only: reading scrollTop back would force a layout on every wheel frame. The target is an integer inside
     // the scroll travel (the rows layer fills the viewport, the spacer adds exactly SCROLL_SPAN), so it is what the
-    // browser keeps, and the scroll event it causes matches lastScroll within followBar's 3 px tolerance.
+    // browser keeps, and the scroll event it causes matches lastScroll within onScrollBar's 3 px tolerance.
     const top = tsToScroll(row.ts, this.range);
-    this.ownV = true;
     this.viewport.scrollTop = top;
     this.lastScroll = top;
   }
 
-  // The scroll event of the viewport, the only place that reads the native position: at most ONE read per event caused
-  // by our own writes (scroll events run at the start of the frame, before style and layout, so the read forces none).
-  // The position is compared with what this code last wrote (lastScroll for the rows, resizer.scrollX for the sideways
-  // travel): equal is the echo, different is the user (a drag of either bar, however many events the browser coalesced)
-  // and is adopted. Which axis to read follows our own write: scrollTop after a vertical write (the wheel), scrollLeft
-  // after a sideways one; the other axis is compared at the next event, because the expected values are absolute and
-  // nothing is forgotten. An event we did not cause reads scrollTop and, when that is where we left it, scrollLeft.
+  // The scrollbar was moved: when it is not where the rows are (3 px tolerance), the user did it, so the rows go there.
+  // Known, as on main: this reads scrollTop on every scroll event, including the echo of syncScroll(); the real cost
+  // in Chrome is measured by tools/ui_perf.mjs (follow-up).
   onScrollBar() {
-    const ownV = this.ownV;
-    const ownH = this.ownH;
-    this.ownV = false;
-    this.ownH = false;
-    if (ownH && !ownV) {
-      this.followSideways();
-      return;
-    }
-    const top = this.viewport.scrollTop;
-    if (!ownV && !ownH && Math.abs(top - this.lastScroll) < 3) {
-      this.followSideways();
-    }
-    this.followBar(top);
-  }
-
-  followSideways() {
-    if (this.resizer.adoptScrollLeft(this.viewport.scrollLeft)) {
-      this.wheelX = null; // sideways wheel travel was added to a position the user has left
-    }
-  }
-
-  // The scrollbar is at `position`: when it is not where the rows are, the user moved it, so the rows go there.
-  followBar(position) {
+    const position = this.viewport.scrollTop;
     if (Math.abs(position - this.lastScroll) < 3 || this.caseId === null) {
       return;
     }
