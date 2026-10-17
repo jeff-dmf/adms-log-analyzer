@@ -1434,8 +1434,7 @@ class Api:
         cid = _case_from_body(self.store, body)
         args = _page_args(body)
         _check_scan_filter(args["filter"])
-        with self.store.reader(cid) as conn:
-            clock = clock_store.load(conn)
+        with self.store.reader(cid) as conn, clock_store.snapshot(conn) as clock:  # one clock state per read
             page = clock_store.page(
                 conn, args["filter"], args["cursor"], args["dir"], args["limit"], args["columns"], clock=clock
             )
@@ -1460,8 +1459,8 @@ class Api:
         if flt is not None and not isinstance(flt, dict):
             raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
         _check_scan_filter(flt)
-        with self.store.reader(cid) as conn:
-            result = clock_store.count(conn, flt, clock=clock_store.load(conn))
+        with self.store.reader(cid) as conn, clock_store.snapshot(conn) as clock:
+            result = clock_store.count(conn, flt, clock=clock)
         return Response(200, {"count": result.n, "exact": result.exact})
 
     def histogram(self, request: Request) -> Response:
@@ -1471,8 +1470,7 @@ class Api:
         if flt is not None and not isinstance(flt, dict):
             raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="filter"))
         _check_scan_filter(flt)
-        with self.store.reader(cid) as conn:
-            clock = clock_store.load(conn)
+        with self.store.reader(cid) as conn, clock_store.snapshot(conn) as clock:
             result = clock_store.histogram(
                 conn, flt, body.get("bucket_ms"), body.get("split", "sev"), clock=clock
             )
@@ -1501,11 +1499,11 @@ class Api:
         entry_id = self._entry_id(request)
         cid = _case_from_query(self.store, request)
         max_lines = _cont_lines_param(request)
-        with self.store.reader(cid) as conn:
+        with self.store.reader(cid) as conn, clock_store.snapshot(conn) as clock:
             entry = query.get_entry(conn, entry_id, max_cont_lines=max_lines)
             n_payloads = payloads.payload_count(conn, entry_id) if entry is not None else 0
             if entry is not None:
-                clock_store.decorate_entry(conn, entry, clock_store.load(conn))
+                clock_store.decorate_entry(conn, entry, clock)
         if entry is None:
             raise ApiError(
                 404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
@@ -1525,8 +1523,8 @@ class Api:
         before = _query_int(request, "before", 50)
         after = _query_int(request, "after", 50)
         same = request.query.get("same", "source")
-        with self.store.reader(cid) as conn:
-            ctx = clock_store.context(conn, entry_id, before, after, same, clock=clock_store.load(conn))
+        with self.store.reader(cid) as conn, clock_store.snapshot(conn) as clock:
+            ctx = clock_store.context(conn, entry_id, before, after, same, clock=clock)
         if ctx is None:
             raise ApiError(
                 404, "entry_not_found", messages.API_ENTRY_NOT_FOUND.format(entry_id=entry_id, case=cid)
@@ -2417,10 +2415,12 @@ class Api:
         if direction not in ("fwd", "back"):
             raise query.ColumnError("bad_direction", "$.dir")
         try:
-            with self._highlight_errors(), self.store.reader(cid) as conn:
-                found = highlights.next_match(
-                    conn, flt, body.get("rules"), cursor, direction, clock=clock_store.load(conn)
-                )
+            with (
+                self._highlight_errors(),
+                self.store.reader(cid) as conn,
+                clock_store.snapshot(conn) as clock,
+            ):
+                found = highlights.next_match(conn, flt, body.get("rules"), cursor, direction, clock=clock)
         except query.QueryTimeout:
             raise ApiError(408, "query_timeout", messages.API_HIGHLIGHT_NEXT_TIMEOUT) from None
         return Response(200, {"row": found.row, "rule": found.rule})

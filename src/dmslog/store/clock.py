@@ -14,7 +14,8 @@ of 0 everywhere is the behavior before 9.15, byte for byte (the read functions b
 :mod:`query` unchanged).
 
 How the reads apply it (only when some group has a non-zero offset): groups are split into CLASSES of equal
-offset, each read with the ``collection`` leaf of its groups (one class alone needs no restriction). Inside
+offset, each read with the ``collection`` leaf of its groups (always, so a group unknown to the map takes no
+offset). A read uses ONE map and one database snapshot from start to end (:func:`snapshot`). Inside
 a class adjusted time is raw time plus a constant, so the class can be read in ``(ts, id)`` order on the
 usual indexes; time conditions (``ts`` leaves) are shifted by ``-offset`` per class in the filter TREE
 (:func:`shift_tree`), never by adding the offset in SQL. Grid pages merge the classes by
@@ -28,7 +29,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -52,6 +54,10 @@ META_PREFIX = "clock."  # meta['clock.<group>']: how the offset was obtained (wr
 MAX_CLOCK_PARAMS = 30_000
 _FALSE: dict[str, Any] = {"or": []}
 _ANY_TIME: dict[str, Any] = {"ts": {"ge": INT64_MIN}}  # every record that has a time
+
+# Records that have a time, whatever their adjusted value (never shifted: the leaf above, shifted, would drop
+# adjusted values below INT64_MIN).
+_HAS_TIME = CompiledFilter("e.ts IS NOT NULL", ())
 
 Shifted = Callable[[int], CompiledFilter]  # delta -> the filter compiled with its times moved by delta
 
@@ -86,13 +92,11 @@ class ClockMap:
         return any(self.offsets.values())
 
     def classes(self) -> list[tuple[int, tuple[int, ...] | None]]:
-        """``[(offset, groups)]`` in ascending offset, groups ascending. A single class has ``groups`` None:
-        every record of the case (no restriction, the plain query plan)."""
+        """``[(offset, groups)]`` in ascending offset, groups ascending. Every class is restricted to its
+        groups, even a single class: a group the map does not know never takes another group's offset."""
         by_offset: dict[int, list[int]] = {}
         for group, offset in self.offsets.items():
             by_offset.setdefault(offset, []).append(group)
-        if len(by_offset) == 1:
-            return [(next(iter(by_offset)), None)]
         return [(o, tuple(sorted(by_offset[o]))) for o in sorted(by_offset)]
 
     def offset_of(self, group: int) -> int:
@@ -112,23 +116,40 @@ def _as_offset(value: Any) -> int | None:
 def load(conn: sqlite3.Connection) -> ClockMap:
     """The offset of every group of the case (one small query on ``collection``, head rows only).
 
-    Records of a group added after this read belong to no class until the next request."""
+    A read must use ONE map from start to end (:func:`snapshot`): records of a group the map does not hold
+    belong to no class, and an offset set meanwhile is not seen."""
     offsets: dict[int, int] = {}
     for group, value in conn.execute("SELECT id, clock_offset_ms FROM collection WHERE id = ers_group"):
         offsets[int(group)] = _as_offset(value) or 0  # invalid value: no offset
     return ClockMap(offsets)
 
 
-def entry_offset(conn: sqlite3.Connection, entry_id: int) -> tuple[int, int] | None:
-    """``(group, offset)`` of an entry, or None when it does not exist."""
+@contextmanager
+def snapshot(conn: sqlite3.Connection) -> Iterator[ClockMap]:
+    """The clock map of the case and ONE read snapshot of the database for the whole read.
+
+    Opens a read transaction (WAL: every statement until the end sees the same database, so an offset set or
+    a collection added meanwhile is invisible to this read) and ends it on exit. A connection already in a
+    transaction keeps its own."""
+    began = not conn.in_transaction
+    if began:
+        conn.execute("BEGIN")
+    try:
+        yield load(conn)
+    finally:
+        if began and conn.in_transaction:
+            conn.rollback()
+
+
+def entry_group(conn: sqlite3.Connection, entry_id: int) -> int | None:
+    """The collection group of an entry, or None when it does not exist. Its offset comes from the map of
+    the read (:meth:`ClockMap.offset_of`), never from a second read of ``collection``."""
     row = conn.execute(
-        "SELECT h.id, h.clock_offset_ms FROM entry e JOIN source s ON s.id = e.source_id"
-        " JOIN collection c ON c.id = s.collection_id JOIN collection h ON h.id = c.ers_group WHERE e.id = ?",
+        "SELECT c.ers_group FROM entry e JOIN source s ON s.id = e.source_id"
+        " JOIN collection c ON c.id = s.collection_id WHERE e.id = ?",
         (entry_id,),
     ).fetchone()
-    if row is None:
-        return None
-    return int(row[0]), _as_offset(row[1]) or 0
+    return None if row is None else int(row[0])
 
 
 def adjusted(ts: int | None, offset: int) -> int | None:
@@ -394,6 +415,11 @@ def context(
     """:func:`query.context`; ``merge`` follows adjusted time and every row has ``ts_adjusted``."""
     if not clock.active:
         return query.context(conn, entry_id, before, after, same, timeout_s=timeout_s)
+    for v in (before, after):  # the contract of query.context, on the values asked for
+        if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= query.MAX_CONTEXT:
+            raise query.ColumnError("bad_context", "$", limit=query.MAX_CONTEXT)
+    if same not in ("tid", "source", "merge"):
+        raise query.ColumnError("bad_same", "$.same")
     deadline = None if timeout_s is None else time.monotonic() + timeout_s
     merge = same == "merge"
     ctx = query.context(conn, entry_id, 0 if merge else before, 0 if merge else after, same,
@@ -401,8 +427,8 @@ def context(
     if ctx is None:
         return None
     with query.read_guard(conn, _remaining(deadline)):
-        found = entry_offset(conn, entry_id)
-    offset = found[1] if found else 0
+        group = entry_group(conn, entry_id)
+    offset = 0 if group is None else clock.offset_of(group)  # the map of the read, like the neighbors
     anchor = ctx.rows[ctx.anchor]
     if not merge or anchor["ts"] is None:
         if merge:  # no time: the source neighbors, as query.context does
@@ -414,7 +440,7 @@ def context(
         return query.Context(ctx.rows, ctx.anchor, same)
     anchor["ts_adjusted"] = adjusted(anchor["ts"], offset)
     at = query.Cursor(anchor["ts_adjusted"], anchor["id"])
-    timed = _ANY_TIME  # merge leaves records without time out, as before
+    timed = _HAS_TIME  # merge leaves records without time out, as before (raw presence, not adjusted)
     prev = (
         page(conn, timed, at, "back", before, clock=clock, timeout_s=_remaining(deadline)).rows
         if before
@@ -429,8 +455,8 @@ def context(
 def decorate_entry(conn: sqlite3.Connection, entry: dict[str, Any], clock: ClockMap) -> dict[str, Any]:
     """Add ``ts_adjusted`` and ``clock_offset_ms`` to a full record when the case has offsets."""
     if clock.active:
-        found = entry_offset(conn, entry["id"])
-        offset = found[1] if found else 0
+        group = entry_group(conn, entry["id"])
+        offset = 0 if group is None else clock.offset_of(group)
         entry["clock_offset_ms"] = offset
         entry["ts_adjusted"] = adjusted(entry.get("ts"), offset)
     return entry
@@ -781,6 +807,7 @@ __all__ = [
     "count",
     "decorate_entry",
     "describe",
+    "entry_group",
     "histogram",
     "load",
     "page",
@@ -788,5 +815,6 @@ __all__ = [
     "reset_offset",
     "set_offset",
     "shift_tree",
+    "snapshot",
     "uses_ts",
 ]

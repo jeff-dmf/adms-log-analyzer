@@ -507,3 +507,120 @@ def test_histogram_windows_at_the_int64_limits(case, edge):
         for a in timed:
             per_bucket[(a - h.start) // h.bucket_ms] += 1
         assert [sum(s["counts"][i] for s in h.series) for i in range(h.n_buckets)] == per_bucket
+
+
+# ------------------------------------------------------------------------- one clock state per read
+
+
+def _writer_of(conn):
+    return connect(conn.execute("PRAGMA database_list").fetchone()[2])
+
+
+def _assert_context_sound(ctx, offsets_by_id):
+    ids_ = [r["id"] for r in ctx.rows]
+    assert len(ids_) == len(set(ids_))  # never the anchor (or anything) twice
+    keys = [(r["ts_adjusted"], r["id"]) for r in ctx.rows]
+    assert keys == sorted(keys)
+    for r in ctx.rows:
+        assert r["ts_adjusted"] == r["ts"] + offsets_by_id[r["id"]]
+
+
+@pytest.mark.parametrize("new_offset", [-150, 150, 0])
+def test_an_offset_set_during_a_read_is_not_seen_by_it(case, new_offset):
+    rows = [(1, 1000, 4), (5, 1000, 4), (1, 1100, 4), (5, 900, 4), (7, 1050, 4)]
+    conn, model, _clock = case(rows, {3: 100})
+    rw = _writer_of(conn)
+    try:
+        with C.snapshot(conn) as clock:
+            assert clock.offset_of(3) == 100
+            C.set_offset(rw, 3, {"offset_ms": new_offset})  # a concurrent PUT, committed
+            offsets = {r.id: clock.offset_of(H.group_of_source(r.source)) for r in model}
+            for anchor in (1, 2, 4):
+                _assert_context_sound(C.context(conn, anchor, 5, 5, "merge", clock=clock), offsets)
+            got = H.walk(lambda c, d, n: C.page(conn, None, c, d, n, clock=clock), "fwd", 2)
+            assert got == H.expected(model, {3: 100})
+            assert C.decorate_entry(conn, dict(query.get_entry(conn, 2)), clock)["ts_adjusted"] == 1100
+        assert C.load(conn).offset_of(3) == new_offset  # the next read sees it
+    finally:
+        rw.close()
+
+
+def test_a_stale_map_is_used_for_the_anchor_too(case):
+    """Without a snapshot the reads may see a newer database, but every offset comes from the one map."""
+    rows = [(1, 1000, 4), (5, 1000, 4), (1, 1100, 4), (5, 900, 4)]
+    conn, model, clock = case(rows, {3: 100})
+    rw = _writer_of(conn)
+    try:
+        C.set_offset(rw, 3, {"offset_ms": -100})
+        offsets = {r.id: clock.offset_of(H.group_of_source(r.source)) for r in model}
+        for anchor in (1, 2, 3, 4):
+            _assert_context_sound(C.context(conn, anchor, 5, 5, "merge", clock=clock), offsets)
+    finally:
+        rw.close()
+
+
+def test_a_collection_added_after_the_map_never_takes_an_offset(case):
+    rows = [(1, 1000, 4), (5, 1001, 4), (7, 1002, 4)]
+    conn, _model, _clock = case(rows, {1: 50, 3: 50, 4: 50})  # one class only
+    rw = _writer_of(conn)
+    try:
+        with C.snapshot(conn) as clock:
+            assert [g for _o, g in clock.classes()] == [(1, 3, 4)]
+            with rw:  # a new collection group (id 9) with one record, committed during the read
+                rw.execute(
+                    "INSERT INTO collection(id, kind, path, ers_group, added_at)"
+                    " VALUES (9, 'file', '/n', 9, '2030')"
+                )
+                rw.execute(
+                    "INSERT INTO source(id, collection_id, member, file_name, envelope, status)"
+                    " VALUES (9, 9, 'n.log', 'n.log', 'adms', 'ready')"
+                )
+                rw.execute(
+                    "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, sev, tpl_id, flags, msg)"
+                    " VALUES (9, 9, 1, 0, 1, 1000, 4, 0, 0, 'new')"
+                )
+            page = C.page(conn, None, None, "fwd", 50, clock=clock)
+            assert [r["id"] for r in page.rows] == [1, 2, 3]  # the snapshot does not see it
+        stale = clock
+        page = C.page(conn, None, None, "fwd", 50, clock=stale)  # the database has it, the map does not
+        assert 9 not in [r["id"] for r in page.rows]  # left out rather than shifted by the other offset
+        fresh = C.load(conn)
+        rows_ = {r["id"]: r["ts_adjusted"] for r in C.page(conn, None, None, "fwd", 50, clock=fresh).rows}
+        assert rows_[9] == 1000 and rows_[1] == 1050
+    finally:
+        rw.close()
+
+
+def test_the_snapshot_ends_its_transaction_and_keeps_a_callers_one(case):
+    conn, _model, _clock = case(rows_for(14, n=10), {3: 5})
+    with C.snapshot(conn):
+        assert conn.in_transaction
+    assert not conn.in_transaction
+    conn.execute("BEGIN")
+    with C.snapshot(conn):
+        pass
+    assert conn.in_transaction
+    conn.rollback()
+
+
+@pytest.mark.parametrize("same", ["merge", "source", "tid"])
+@pytest.mark.parametrize(("before", "after"), [(501, 0), (0, 501), (-1, 0), (True, 1)])
+def test_context_limits_hold_with_offsets(case, same, before, after):
+    conn, _model, clock = case(rows_for(15, n=40, nulls=0), {3: 5})
+    assert clock.active
+    with pytest.raises(query.ColumnError):
+        C.context(conn, 1, before, after, same, clock=clock)
+    with pytest.raises(query.ColumnError):
+        C.context(conn, 1, 1, 1, "nope", clock=clock)
+
+
+def test_context_keeps_records_adjusted_below_int64(case):
+    rows = [(5, INT64_MIN, 4), (5, INT64_MIN + 1, 4), (1, INT64_MIN, 4), (1, 0, 4), (3, None, 4)]
+    offsets = {3: -1}
+    conn, model, clock = case(rows, offsets)
+    order = [x for x in H.expected(model, offsets) if x[1] is not None]
+    assert order[0] == (1, INT64_MIN - 1)  # in the grid
+    for anchor_pos, (anchor, _adj) in enumerate(order):
+        ctx = C.context(conn, anchor, 5, 5, "merge", clock=clock)
+        assert [(r["id"], r["ts_adjusted"]) for r in ctx.rows] == order  # every timed record, in order
+        assert ctx.anchor == anchor_pos
