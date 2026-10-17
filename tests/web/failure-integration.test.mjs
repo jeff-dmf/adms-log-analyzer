@@ -424,10 +424,10 @@ test("any live stream that gives up is repeated by the same Retry, each by name"
   const r = rig();
   const opened = [];
   r.failures.streamStopped("alerts", () => { opened.push("alerts"); return true; });
-  r.failures.streamStopped("progress", () => { opened.push("progress"); return true; });
+  r.failures.streamStopped("stream", () => { opened.push("stream"); return true; });
   assert.equal(r.log.offline, 2);
   await r.failures.retry();
-  assert.deepEqual(opened.sort(), ["alerts", "progress"]);
+  assert.deepEqual(opened.sort(), ["alerts", "stream"]);
   assert.equal(r.failures.recovery.size, 0);
 });
 

@@ -657,7 +657,6 @@ function start() {
     },
     onSelection: () => (removingChip ? undefined : applyView()),
     onProgress: (value) => status.progress(value),
-    onStreamStopped: () => failures.streamStopped("progress", () => panel.resumeProgress()),
     onWatching: (on) => {
       if (menubar) {
         menubar.setWatching(on);
