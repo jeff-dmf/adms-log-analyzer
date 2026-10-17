@@ -270,6 +270,9 @@ def test_the_file_is_ascii_json_with_the_schema(tmp_path):
     [b"not json", b"[]", b'{"schema": 2, "panels": []}', b'{"schema": true}', b'{"schema": "1"}',
      b'{"schema": 0}', b'{"panels": {}}', b'{"panels": [1], "x": NaN}', b"\xff\xfe\x00", b"[" * 200_000,
      b'{"schema": 1, "panels": [' + b"{}," * 41 + b"{}]}"],
+    # A 200 000-byte value would be a 200 000-character test id; on Windows pytest keeps the id in an
+    # environment variable (limit 32 767 characters) and the run aborts.
+    ids=lambda value: value.decode("latin-1") if len(value) <= 40 else f"bytes-{len(value)}",
 )  # fmt: skip
 def test_an_unusable_file_is_never_overwritten(tmp_path, content):
     P.panels_path(tmp_path).write_bytes(content)
