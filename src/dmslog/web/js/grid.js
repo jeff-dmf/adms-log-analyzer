@@ -88,6 +88,8 @@ export class Grid {
     this.loading = false;
     this.controller = null;
     this.pool = [];
+    this.rowSeq = 0;      // mints the unique id of a row element (aria-activedescendant target, see render())
+    this.active = null;   // {slot, recordId}: the row aria-activedescendant points at
     this.visible = 0;
     this.lastScroll = 0;
     this.pendingJump = null;
@@ -95,6 +97,13 @@ export class Grid {
     this.wheelRemainder = 0;
     this.knownHeight = 0; // viewport height at the last resize (ensureSelectedVisible)
     this.spacer.style.height = SCROLL_SPAN + "px";
+    // The header sits outside the scrolling viewport in the page layout; aria-owns puts it inside the grid for assistive
+    // technology (UI-26). The attributes below are set on the grid itself, so this adds no layout work.
+    this.idPrefix = viewport.id || "grid";
+    rowsLayer.setAttribute("role", "rowgroup");
+    if (header.id) {
+      viewport.setAttribute("aria-owns", header.id);
+    }
     this.resizer = new ColumnResizer({
       viewport, rowsLayer, header,
       // Every pooled slot, hidden ones included: a hidden row keeps the current widths when render() shows it again.
@@ -332,6 +341,7 @@ export class Grid {
       this.header.appendChild(cell);
       this.resizer.decorate(cell, column);
     }
+    this.viewport.setAttribute("aria-colcount", String(this.columnDefs().length));
     this.resizer.measure(); // once per column change
     this.resizer.apply();
   }
@@ -531,6 +541,7 @@ export class Grid {
     if (this.caseId === null) {
       this.pending = null;
       this.shownCount = null;
+      this.syncGridAria();
       this.onCount(null);
       this.onPosition(null);
       return "ok";
@@ -587,6 +598,7 @@ export class Grid {
 
   emitCount(value, options) {
     this.shownCount = value;
+    this.syncGridAria();
     this.onCount(value, options);
   }
 
@@ -830,6 +842,7 @@ export class Grid {
     const rowEl = document.createElement("div");
     rowEl.className = "grid-row";
     rowEl.setAttribute("role", "row");
+    this.mintId(rowEl);
     rowEl.style.height = ROW_HEIGHT + "px";
     const cells = {};
     for (const column of this.columnDefs()) {
@@ -841,13 +854,42 @@ export class Grid {
       cells[column.key] = cell;
     }
     this.rowsLayer.appendChild(rowEl);
-    return { el: rowEl, cells };
+    const hint = document.createElement("span"); // bookmark / highlight state as text for screen readers
+    hint.className = "visually-hidden";
+    return { el: rowEl, cells, hint };
+  }
+
+  // A new unique id for a row element. Ids are not reused: when the selected record moves into the slot the previous
+  // selection used (scrolling by one row keeps the slot), the row gets a fresh id so aria-activedescendant changes.
+  mintId(el) {
+    this.rowSeq += 1;
+    el.id = this.idPrefix + "-row-" + this.rowSeq;
+  }
+
+  // Grid-level ARIA, attributes only (no layout reads). The header is row 1. Positions are exact only while the window
+  // still starts at the first record (keyset paging has no row offsets otherwise); aria-rowcount is the total when the
+  // count is exact and at least as large as what is loaded, else -1 (unknown).
+  syncGridAria() {
+    const w = this.window;
+    const count = this.shownCount;
+    const known = count !== null && typeof count === "object" && count.exact && count.n >= w.rows.length;
+    this.viewport.setAttribute("aria-rowcount", known ? String(count.n + 1) : "-1");
+    this.viewport.setAttribute("aria-colcount", String(this.columnDefs().length));
+    this.exactPositions = w.atStart;
+    if (this.header.setAttribute) {
+      if (this.exactPositions) {
+        this.header.setAttribute("aria-rowindex", "1");
+      } else {
+        this.header.removeAttribute("aria-rowindex");
+      }
+    }
   }
 
   render() {
     this.ensurePool();
     const w = this.window;
-    this.rowsLayer.setAttribute("aria-rowcount", String(w.rows.length));
+    this.syncGridAria();
+    let activeEl = null;
     const shown = [];
     for (let i = 0; i < this.pool.length; i += 1) {
       const slot = this.pool[i];
@@ -856,6 +898,7 @@ export class Grid {
       if (!row || i >= this.visible) {
         slot.el.hidden = true;
         delete slot.el.dataset.index;
+        slot.el.removeAttribute("aria-rowindex");
         continue;
       }
       slot.el.hidden = false;
@@ -865,8 +908,18 @@ export class Grid {
       slot.el.setAttribute("aria-selected", selected ? "true" : "false");
       const mark = this.getMark(row.id);
       const hl = this.getHighlight(row.id);
-      slot.el.setAttribute("aria-label", format(S.rowLabel, { id: row.id }) + (mark ? ", " + markerLabel(mark) : "") +
-        (hl ? ", " + hl.label : ""));
+      if (selected) {
+        if (this.active && this.active.slot === slot && this.active.recordId !== row.id) {
+          this.mintId(slot.el);
+        }
+        this.active = { slot, recordId: row.id };
+        activeEl = slot.el;
+      }
+      if (this.exactPositions) {
+        slot.el.setAttribute("aria-rowindex", String(index + 2));
+      } else {
+        slot.el.removeAttribute("aria-rowindex");
+      }
       if (mark) {
         slot.el.dataset.bm = mark.color;
       } else {
@@ -880,10 +933,37 @@ export class Grid {
       shown.push(row.id);
       slot.el.dataset.sev = String(row.sev);
       this.fillCells(slot, row);
+      this.fillHint(slot, mark, hl);
+    }
+    if (activeEl) {
+      this.viewport.setAttribute("aria-activedescendant", activeEl.id);
+    } else {
+      this.active = null;
+      this.viewport.removeAttribute("aria-activedescendant"); // the selection is outside the rendered rows
     }
     this.onVisible(shown);
     this.updateStatus();
     this.onView();
+  }
+
+  // Bookmark and highlight as hidden text in the row's first cell, so the row keeps its cell contents for screen readers
+  // (an aria-label on the row would replace them). fillCells() has just cleared the cell.
+  fillHint(slot, mark, hl) {
+    const parts = [];
+    if (mark) {
+      parts.push(markerLabel(mark));
+    }
+    if (hl) {
+      parts.push(hl.label);
+    }
+    if (parts.length === 0) {
+      return;
+    }
+    const first = slot.cells[Object.keys(slot.cells)[0]];
+    if (first) {
+      slot.hint.textContent = parts.join(", ");
+      first.appendChild(slot.hint);
+    }
   }
 
   fillCells(slot, row) {
