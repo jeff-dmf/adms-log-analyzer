@@ -4,12 +4,14 @@
 import { api } from "./api.js";
 import {
   DEBOUNCE_MS, DERIVED_DEBOUNCE_MS, DERIVED_MAX_WAIT_MS, MAX_WAIT_MS, createDebounce, createFollowFlow,
-  parseWatchEvent,
+  createStreamGuard, parseWatchEvent,
 } from "./follow-tail-model.js";
 import { S, format, pluralKey } from "./strings.js";
 
-export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, onChanged, onError }) {
+// onStreamStopped(): the stream failed 3 times in a row and was closed (the server is down); resume() starts it again.
+export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, onChanged, onError, onStreamStopped }) {
   let events = null;
+  const guard = createStreamGuard();
   const refreshDebounce = createDebounce({
     wait: DEBOUNCE_MS,
     maxWait: MAX_WAIT_MS,
@@ -57,17 +59,32 @@ export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, on
 
   function connect() {
     close();
+    guard.reset(); // a new stream, a new case or no case: a stop does not outlive them
     const caseId = getCase();
     if (!flow.state.on || caseId === null || typeof EventSource !== "function") {
       return;
     }
-    events = new EventSource(api.progressUrl(caseId));
-    events.addEventListener("watch", (event) => {
-      if (parseWatchEvent(event.data) !== null) {
+    const stream = new EventSource(api.progressUrl(caseId));
+    events = stream;
+    stream.addEventListener("watch", (event) => {
+      if (events === stream && parseWatchEvent(event.data) !== null) {
         schedule();
       }
     });
-    // The browser reconnects by itself after a dropped stream.
+    stream.addEventListener("open", () => {
+      if (events === stream) {
+        guard.opened();
+      }
+    });
+    // The browser reconnects by itself after a dropped stream; after 3 failures in a row we stop it.
+    stream.addEventListener("error", () => {
+      if (events === stream && (stream.readyState === 2 ? guard.stop() : guard.failed())) {
+        close();
+        if (typeof onStreamStopped === "function") {
+          onStreamStopped();
+        }
+      }
+    });
   }
 
   toggle.addEventListener("change", () => {
@@ -91,6 +108,15 @@ export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, on
       flow.reset();
       connect();
     },
+    // Starts the stream again after it stopped (Retry). True when it did something, false when there was nothing to resume.
+    resume() {
+      if (!guard.stopped || !flow.state.on) {
+        return false;
+      }
+      connect();
+      return events !== null; // true only when a stream was really opened
+    },
+    stopped: () => guard.stopped,
     // The grid moved or reloaded.
     viewChanged: () => flow.viewChanged(),
     flow,

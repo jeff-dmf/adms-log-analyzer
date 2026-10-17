@@ -2,6 +2,8 @@
 // shows an alert's records, the browser-notification wrapper and the flow behind the panel and the banner.
 // The server (store/alerts.py) is the authority; this only avoids round trips. Alert events carry ids,
 // counts and the rule name only; the rule name is user text and only ever reaches the page as text.
+import { createStreamGuard } from "./status-bar-model.js";
+
 
 export const KINDS = ["match", "threshold", "open_operation"];
 export const SEVERITIES = ["info", "warning", "critical"];
@@ -356,19 +358,33 @@ export function createAlertsFlow({ api, getCase, notifier, describe, onChange })
 
 // Listens to the case's progress stream for `alert` events. The browser reconnects by itself after a dropped
 // stream. Returns {close()}; without EventSource support it returns a no-op handle.
-export function connectAlertStream({ EventSourceImpl, url, onAlert }) {
+export function connectAlertStream({ EventSourceImpl, url, onAlert, onStopped }) {
   const Impl = EventSourceImpl === undefined && typeof EventSource === "function" ? EventSource : EventSourceImpl;
   if (!Impl) {
-    return { close() {} };
+    return { close() {}, stopped: () => false };
   }
+  const guard = createStreamGuard();
   let source = null;
   try {
     source = new Impl(url);
+    const mine = source;
     source.addEventListener("alert", (event) => onAlert(event.data));
+    source.addEventListener("open", () => guard.opened());
+    // After 3 failures in a row the stream stops (the server is down); the owner starts it again on Retry.
+    source.addEventListener("error", () => {
+      if (source === mine && (mine.readyState === 2 ? guard.stop() : guard.failed())) {
+        mine.close();
+        source = null;
+        if (typeof onStopped === "function") {
+          onStopped();
+        }
+      }
+    });
   } catch {
     source = null;
   }
   return {
+    stopped: () => guard.stopped,
     close() {
       if (source) {
         source.close();

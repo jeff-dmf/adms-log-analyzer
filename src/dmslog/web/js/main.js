@@ -2,7 +2,7 @@
 // and reaches the page through textContent / DOM nodes only.
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
-import { api, onForbidden, onNetworkError } from "./api.js";
+import { api, isRetryable, onForbidden, onNetworkError } from "./api.js";
 import { afterDrawerOpen, createButtonGate, loadSections, mountLate, openWhenLoaded, retryable } from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
@@ -17,13 +17,14 @@ import {
 import { initTimeline } from "./timeline.js";
 import { createDock } from "./dock.js";
 import { COLUMNS, Grid } from "./grid.js";
+import { createViewController } from "./grid-model.js";
 import { CollectionsPanel } from "./collections-panel.js";
 import {
   columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi, tagMap,
 } from "./collections-model.js";
 import { resetFormWithErrors, setFieldError } from "./field-error.js";
 import { createStatusBar } from "./status-bar.js";
-import { createConnectionRetry } from "./status-bar-model.js";
+import { createFailureCenter, fallbackTarget } from "./status-bar-model.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { mountMenubar } from "./menubar.js";
 import { searchTerms } from "./search.js";
@@ -122,6 +123,16 @@ function start() {
   const status = createStatusBar(byId("status-bar"), {
     S,
     helpText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp, S.timelineHint].join(" "),
+    // Retry / Dismiss disappeared while focused: a shown target (the grid; with no case, the empty state's button).
+    focusFallback: () => {
+      const target = fallbackTarget({
+        query: (selector) => document.querySelector(selector),
+        noCase: document.body.classList.contains("no-case"),
+      });
+      if (target) {
+        target.focus();
+      }
+    },
   });
   const showMessage = (text, isError) => status.message(text, { kind: isError ? "error" : "info" });
   // Connection errors already own the bar: do not repeat them as a message.
@@ -131,17 +142,42 @@ function start() {
     }
     showMessage(err && err.message ? err.message : S.errorGeneric, true);
   };
+  // UI-25: a failed request never empties the screen. The grid keeps its rows; the notice (with Retry, unless repeating
+  // the request cannot help) sits in the status bar; a view change that did not load goes back to the last view that did.
+  // The decisions live in status-bar-model.js (createFailureCenter) and grid-model.js (createViewController); here
+  // they are only connected to the page.
   let casesLoaded = false; // the opening (GET /api/cases) finished: until then Retry reloads the cases
-  const retryConnection = createConnectionRetry({
+  const failures = createFailureCenter({
+    status,
+    retryLabel: S.sbRetry,
+    genericMessage: S.errorGeneric,
+    pageHint: S.gridPageHint,
+    goOffline: (onRetry) => status.connection("offline", { onRetry }),
     health: () => api.health(),
     setOnline: () => status.connection("online"),
     openingPending: () => !casesLoaded,
     reloadCases: () => panel.loadCases(null).then(() => { casesLoaded = true; }),
-    refreshView: () => (caseId !== null ? applyView() : Promise.resolve()),
+    fallback: () => (caseId !== null ? applyView() : Promise.resolve()),
     onError: (err) => showError(err),
+    retryView: () => retryView(),
+    hasViewRetry: () => viewFlow.retryTarget() !== null,
+    dropViewRetry: () => viewFlow.dropRetry(),
+    retryGrid: () => grid.retry(),
+    retryCount: () => grid.retryCount(),
+    refreshTimeline: () => (timeline ? timeline.refreshNow() : Promise.resolve()),
+    resumeStream: () => (followTail ? followTail.resume() : false),
+    // Another case: the requests of the old one (rows, count, histogram) are cancelled now, not when the new sources
+    // arrive; the stream is closed and reopened by followTail.onCase() further down.
+    cancelRequests: () => {
+      viewFlow.caseChanged();
+      grid.closeCase();
+      if (timeline) {
+        timeline.invalidate();
+      }
+    },
   });
   onForbidden(() => status.connection("forbidden"));
-  onNetworkError(() => status.connection("offline", { onRetry: retryConnection }));
+  onNetworkError(() => failures.goOffline());
 
   const actions = createActionRegistry({ onError: (err) => showError(err), singleKeysOn: () => true });
   // Step 1 of the dock: it exists before the context that holds it; bind(ctx) is step 2.
@@ -345,6 +381,10 @@ function start() {
     onCount: (value, options) => status.count(value, options),
     onPosition: (ts) => status.position(ts),
     onError: showError,
+    onFailure: (err, info) => failures.gridFailure(err, info),
+    onRecovered: (scope) => failures.gridRecovered(scope),
+    // The user navigated before the new view's first page: the controls go back to the view the rows belong to.
+    onAbandon: () => viewFlow.abandon(),
     getMark: (id) => bookmarkStore.get(id),
     getHighlight: (id) => highlightStore.get(id),
     onVisible: (ids) => {
@@ -465,23 +505,65 @@ function start() {
     setTimeout(resolve, FIRST_VIEW_GRACE_MS);
   });
 
-  const applyView = () => {
-    const ids = panel.selectedIds();
+  // The view change did not load: the toolbar, the filter and the trail go back to the last view that did (the grid
+  // still shows it); the attempt is kept for Retry unless the request itself is wrong (a 4xx cannot succeed twice).
+  // The side panel's selection is part of the view: sources and collections go back with the toolbar.
+  const restoreSelection = (selection) => {
+    panel.restoreSelection(selection.ids);
+    if (collectionsPanel) {
+      collectionsPanel.restoreSelection(selection.groups);
+    }
     updateRail();
-    const groups = collectionsPanel ? collectionsPanel.selectedGroups() : [];
-    const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
+  };
+  // Which view the screen shows (grid-model.js createViewFlow): a change that does not load goes back to the last one
+  // that did (toolbar, selection, trail, filter), the detail pane is cleared only when the new page is confirmed.
+  const viewFlow = createViewController({
+    getCase: () => caseId,
+    captureLive,
+    restoreLive,
+    getSelection: () => ({ ids: panel.selectedIds(), groups: collectionsPanel ? collectionsPanel.selectedGroups() : [] }),
+    setSelection: restoreSelection,
+    getStack: () => viewsStack,
+    refreshDerived, // Operations, Dashboard and the clock banner follow the restored collection too
+    afterRollback: (to) => {
+      currentFilter = to.filter;
+      const terms = searchTerms(searchText);
+      grid.setTerms(terms);
+      detail.setTerms(terms); // the detail pane was kept: it still shows the record of the view that is back
+      if (timeline) {
+        timeline.refresh();
+      }
+      dock.notify("view");
+      if (viewsUi) {
+        viewsUi.changed();
+      }
+      if (filterChips) {
+        filterChips.refresh();
+      }
+    },
+    onConfirm: () => detail.clear(),
+  });
+  const retryView = () => (viewFlow.retryState(caseId) === null ? Promise.resolve() : applyView());
+
+  const applyView = () => {
+    const { attempt, token } = viewFlow.begin(); // replaces the failed view change, if any
+    const { ids, groups } = attempt.selection;
+    failures.viewApplied();
+    updateRail();
     // The effective view: the ancestors' filters AND the active view's own.
+    const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
     const filter = viewsStack ? andFilters(viewsStack.parentsFilter(), own) : own;
     currentFilter = filter;
+    attempt.filter = filter;
     navRequests.invalidate();
     const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
-    detail.setTerms(terms);
-    detail.clear();
+    detail.setTerms(terms); // the detail pane stays until the new page is confirmed (a failure must not blank it)
     const caseRange = timeSpan(sources, [], null, null); // the whole case: decides the date in the time column
     const loaded = grid.setView({ caseId, filter, range, caseRange });
     loaded.then(firstViewDone, firstViewDone);
+    viewFlow.track(token, loaded, () => (grid.failure ? grid.failure.kind : "unknown"), isRetryable);
     if (timeline) {
       timeline.refresh();
     }
@@ -513,6 +595,7 @@ function start() {
   }, {
     onCase: (id) => {
       caseId = id;
+      failures.caseChanged(); // nothing of the old case is repeated, and its requests are cancelled now
       applyPending = true; // refreshSources() follows and rebuilds the view
       if (collectionsPanel) {
         collectionsPanel.setCase();
@@ -806,6 +889,9 @@ function start() {
     getSourceName: (id) => sourceNames.get(id) || String(id),
     getFilter: () => (caseId === null ? null : { caseId, filter: currentFilter }),
     onRangeSelected: (range) => setUserFilter(withTsRange(userFilter, range)),
+    // A histogram that failed (also the first one, with no chart yet) is repeated by Retry, alone.
+    onFailure: (err) => failures.timelineFailure(err),
+    onRecovered: () => failures.timelineRecovered(),
   });
 
   // The panels (filter tree, Analyze, Export, ...) mount in the dock the first time they open; see app-actions.js.
@@ -1073,6 +1159,8 @@ function start() {
           panel.refreshSources(true).catch(showError);
         },
         onError: showError,
+        // The watch stream gave up after 3 failures in a row: say so in the bar; Retry starts it again.
+        onStreamStopped: () => failures.streamStopped("stream", () => followTail.resume()),
       });
       return followTail;
     },
@@ -1085,6 +1173,7 @@ function start() {
     alertsUi = module.startAlerts({
       slot: status.slot("alerts"),
       onAnnounce: (text) => status.message(text, { kind: "warning" }),
+      onStreamStopped: () => failures.streamStopped("alerts", () => alertsUi.resumeStream()),
       getCase: () => caseId,
       onShowRecords: (filter) => setUserFilter(filter).catch(showError),
     });
