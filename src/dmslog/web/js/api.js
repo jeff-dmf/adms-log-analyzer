@@ -270,6 +270,14 @@ export const api = {
     request("GET", "/api/events" + query({ ...params, case: caseId }), undefined, signal),
   event: (caseId, id, signal) =>
     request("GET", "/api/events/" + encodeURIComponent(id) + query({ case: caseId }), undefined, signal),
+  // Events whose expected sequence did not close (kind, status, name, ..., after) and their summary; repeated records
+  // (ARQUITETURA 10.9): which of `ids` (up to 1000) repeat an earlier one, with the spec {window_ms, fields, tid}.
+  missingEvents: (caseId, params, signal) =>
+    request("GET", "/api/events/missing" + query({ ...params, case: caseId }), undefined, signal),
+  missingSummary: (caseId, params, signal) =>
+    request("GET", "/api/events/missing/summary" + query({ ...params, case: caseId }), undefined, signal),
+  repeatMarks: (caseId, ids, repeat, signal) =>
+    request("POST", "/api/entries/repeats", { case: caseId, ids, repeat }, signal),
   eventStats: (caseId, params, signal) =>
     request("GET", "/api/events/stats" + query({ ...params, case: caseId }), undefined, signal),
   eventHistogram: (caseId, params, signal) =>

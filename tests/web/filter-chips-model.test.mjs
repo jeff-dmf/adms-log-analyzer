@@ -330,3 +330,32 @@ test("an error while restoring still releases the busy flag", async () => {
   assert.equal(busy, false);
   assert.equal(removal.isBusy(), false);
 });
+
+// ---- repeated records (9.12) -----------------------------------------------------------------------------------------
+
+test("the hide-repeats filter is a removable chip with the window in words; other repeat leaves are left to the tree chip", () => {
+  const hide = { not: { repeat: { window_ms: 1000 } } };
+  assert.equal(chipLabel(hide, lookups, REAL), "Hide repeats within 1 s");
+  assert.equal(chipLabel({ not: { repeat: { window_ms: 250 } } }, lookups, REAL), "Hide repeats within 250 ms");
+  assert.equal(chipLabel({ not: { repeat: {} } }, lookups, REAL), "Hide repeats within 1 s");
+  assert.equal(chipLabel({ not: { repeat: { window_ms: 0 } } }, lookups, REAL), "Hide repeats within 0 ms");
+  assert.equal(chipLabel({ repeat: { window_ms: 5000 } }, lookups, REAL), "Repeats within 5 s");
+  assert.equal(chipLabel({ not: { repeat: { window_ms: 5, fields: ["id"] } } }, lookups, REAL), null);
+  assert.equal(chipLabel({ not: { repeat: { window_ms: -1 } } }, lookups, REAL), null);
+  assert.equal(chipLabel({ repeat: { tid: true } }, lookups, REAL), null);
+  const state = live({ userFilter: { and: [{ sev: { le: 3 } }, hide] } });
+  const chips = chipsFromState(state, none, lookups, REAL);
+  assert.deepEqual(chips.map((c) => [c.id, c.label, c.removable]), [
+    ["node:0", "Severity at least Warning", true],
+    ["node:1", "Hide repeats within 1 s", true],
+  ]);
+});
+
+test("removing the hide-repeats chip takes only that node out and the composed filter loses it", () => {
+  const hide = { not: { repeat: { window_ms: 1000 } } };
+  const state = live({ userFilter: { and: [hide, { sev: { le: 3 } }] } });
+  const result = removeChip(state, none, "node:0");
+  assert.deepEqual(result.live.userFilter, { and: [{ sev: { le: 3 } }] });
+  assert.equal(removeChip(live({ userFilter: { and: [hide] } }), none, "node:0").live.userFilter, null);
+  assert.equal(JSON.stringify(composeFilter({ sourceIds: [], text: "" }, result.live.userFilter, { hideNoise: false, unclassified: false })).includes("repeat"), false);
+});

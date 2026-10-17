@@ -38,6 +38,7 @@ const NOT_AT_OPENING = [
   "config-panel", "key-panel", "payload-list", "side-by-side", "compare", "export-panel", "redaction-panel",
   "alerts-panel", "follow-tail", "clock-banner", "dock-model", "case-dialogs", "case-empty", "shortcuts", "shortcuts-model",
   "partial-open", "partial-open-model", "resume-banner",
+  "missing-panel", "missing-model", "repeat-model", "repeat-detail",
 ];
 const MAX_STATIC_MODULES = 40; // main.js + boot.js, uPlot included; the budget on open is 40 with everything else
 
@@ -226,4 +227,14 @@ test("a failure to load main.js shows an alert, reveals the bar and leaves no un
   const alerts = bar.all().filter((n) => n.attrs && n.attrs.role === "alert");
   assert.equal(alerts.length, 1, "main.js and boot.js must not both show the startup alert");
   assert.match(alerts[0].textContent, /could not start/);
+});
+
+// The filter chips load with the first view (main.js starts them at once): what they import must not drag in the late
+// modules of the repeat features, or the controller would load before afterFirstView and escape the budget above.
+test("the filter chips reach the repeat helpers but never the late repeat/missing modules", () => {
+  const graph = [...staticGraph(["/js/filter-chips.js", "/js/filter-chips-model.js"])].map((web) => path.posix.basename(web, ".js"));
+  assert.ok(graph.includes("repeat-filter"));
+  for (const late of ["repeat-model", "repeat-detail", "missing-panel", "missing-model"]) {
+    assert.ok(!graph.includes(late), late + " is pulled in by the filter chips");
+  }
 });

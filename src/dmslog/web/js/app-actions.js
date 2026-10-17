@@ -155,6 +155,21 @@ export function registerAppPanels(dock, deps) {
   });
 
   dock.register({
+    id: "missingSteps",
+    titleKey: "actMissingSteps",
+    listens: ["derived"],
+    mount: async (host, ctx) => {
+      const module = await import("./missing-panel.js");
+      const guard = withoutCase(ctx.caseId);
+      const panel = module.initMissingPanel(host, {
+        api: derivedApi, getCase: guard.getCase, onShowInGrid: deps.showEventInGrid,
+        onRequestClose: () => ctx.dock.close("missingSteps"),
+      });
+      return { refresh: () => panel.refresh(), reset: () => guard.clear(() => panel.reset()) };
+    },
+  });
+
+  dock.register({
     id: "sideBySide",
     titleKey: "actSideBySide",
     closeOnCase: true,
@@ -351,6 +366,7 @@ export function registerAppActions(actions, deps) {
   analyze("analyze.extract", "actExtract", "extract", "./extract-panel.js");
   analyze("analyze.operations", "actOperations", "operations", "./events-panel.js");
   analyze("analyze.dashboard", "actDashboard", "dashboard", "./dashboard.js");
+  analyze("analyze.missingSteps", "actMissingSteps", "missingSteps", "./missing-panel.js");
   analyze("analyze.payloads", "actPayloads", "payloads", "./payload-list.js");
   analyze("analyze.unknownTypes", "actUnknownTypes", "unknownTypes", "./unknown-panel.js");
   analyze("analyze.config", "actConfig", "config", "./config-panel.js");
@@ -392,6 +408,21 @@ export function registerAppActions(actions, deps) {
     pressed: () => deps.followTailOn(),
     load: () => deps.ready.followTail,
     run: () => deps.toggleFollowTail(),
+  });
+  // Repeated records (9.12): the marker of the rows and of the detail, the "Hide repeated records" chip, and the window
+  // both use. deps.repeats() is the controller of repeat-model.js (null until it loaded, after the first view).
+  const repeatsOf = () => deps.repeats();
+  const repeatsReady = () => repeatsOf() !== null;
+  const repeatDef = (def) => actions.register({ group: "view", load: () => deps.ready.repeats, ...def });
+  repeatDef({ id: "view.markRepeats", labelKey: "actMarkRepeats", pressed: () => repeatsReady() && repeatsOf().marking(), run: () => repeatsOf().toggleMarks() });
+  repeatDef({ id: "view.hideRepeats", labelKey: "actHideRepeats", pressed: () => repeatsReady() && repeatsOf().hidden(), run: () => repeatsOf().toggleHide() });
+  repeatDef({
+    id: "view.repeatWindow",
+    labelKey: "actRepeatWindow",
+    children: () => (repeatsReady() ? repeatsOf().windows().map((ms) => ({
+      label: repeatsOf().windowLabel(ms), args: ms, checked: repeatsOf().window() === ms,
+    })) : []),
+    run: (ctx, ms) => repeatsOf().setWindow(ms),
   });
   actions.register({
     id: "view.theme",

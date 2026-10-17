@@ -183,7 +183,7 @@ export function collectionParam(groups, params) {
 // A copy of `api` whose event and stats queries follow the chosen collection; getGroups() is read per call.
 export function scopeApi(api, getGroups) {
   const scoped = { ...api };
-  for (const name of ["events", "eventStats", "eventHistogram", "statsMethods", "statsSeries"]) {
+  for (const name of ["events", "eventStats", "eventHistogram", "statsMethods", "statsSeries", "missingEvents", "missingSummary"]) {
     if (typeof api[name] === "function") {
       scoped[name] = (caseId, params, signal) => api[name](caseId, collectionParam(getGroups(), params || {}), signal);
     }

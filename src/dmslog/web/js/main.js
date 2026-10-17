@@ -198,7 +198,7 @@ function start() {
     promise.catch(() => {}); // the registry reports the failure; this only avoids an unhandled rejection
     return promise;
   };
-  const ready = { alerts: null, followTail: null, drawers: null };
+  const ready = { alerts: null, followTail: null, drawers: null, repeats: null };
   // Sources rail and drawers (UI-17): the layout is CSS (css/responsive.css); drawers.js adds the open state, the focus,
   // Escape and the "selected/total" count on the rail. It loads at once (not after the first view): below 1600 px it is
   // the only way to the sources panel.
@@ -231,6 +231,8 @@ function start() {
   let filterTree = null;
   let timeline = null;
   let followTail = null;
+  let repeats = null; // repeated records: marks, hide chip, window (repeat-model.js, loaded after the first view)
+  let repeatDetail = null; // the "Repeat of #N" line of the detail
   let clockBanner = null;
   let knowledge = null;
   let linksSection = null;
@@ -394,9 +396,13 @@ function start() {
     onAbandon: () => viewFlow.abandon(),
     getMark: (id) => bookmarkStore.get(id),
     getHighlight: (id) => highlightStore.get(id),
+    getRepeat: (id) => (repeats ? repeats.get(id, grid.caseId) : null), // the grid's rows belong to ITS case
     onVisible: (ids) => {
       bookmarkStore.ensure(ids);
       highlightStore.ensure(ids);
+      if (repeats) {
+        repeats.ensure(ids, grid.caseId);
+      }
     },
     onView: () => followTail && followTail.viewChanged(),
   });
@@ -436,6 +442,9 @@ function start() {
       }
       if (highlightUi) {
         highlightUi.showEntry(entry);
+      }
+      if (repeatDetail) {
+        repeatDetail.show(entry);
       }
     },
     getCompareLabel: (entry) => compareButtonLabel(compareSelection.first, entry ? entry.id : null),
@@ -610,6 +619,9 @@ function start() {
       byId("add-files-host").hidden = id === null;
       detail.clear(); // drop the old case's entry right away, before /sources answers
       bookmarkStore.reset();
+      if (repeats) {
+        repeats.invalidate();
+      }
       compareSelection.reset();
       dock.caseChanged(); // every mounted panel forgets the old case; the ones tied to it close
       userFilter = null; // conditions of the old case do not carry over
@@ -672,6 +684,12 @@ function start() {
     onDone: () => {
       bookmarkStore.invalidate(); // the records were (re)indexed: markers are looked up again
       highlightStore.invalidateMarks();
+      if (repeats) {
+        repeats.invalidate(); // the ids moved
+      }
+      if (repeatDetail) {
+        repeatDetail.close(); // the line (and a "Go to" in flight) belong to the old ids
+      }
       loadTemplates(caseId);
       knowledge.reset(); // the ERS configuration may have been read again
       dock.notify("indexed"); // Bookmarks, Unknown message types, Effective configuration
@@ -999,6 +1017,15 @@ function start() {
     })),
     // Highlight rules: the button stays disabled (with its reason) while the module loads or after it failed.
     () => highlightGate.track(loadHighlights()),
+    // "Repeat of #N, +Δ ms" (9.12): needs the repeats controller above.
+    retryable(() => loadRepeats().then((controller) => import("./repeat-detail.js").then((module) => {
+      repeatDetail = module.initRepeatDetail(byId("detail-repeat"), {
+        repeats: controller, api, getCase: () => caseId, onReveal: revealEntry, onError: showError,
+      });
+      if (detail.entry) {
+        repeatDetail.show(detail.entry);
+      }
+    }))),
     // Bookmarks (detail section; the shortcuts use the store and the panel is a dock panel).
     retryable(() => import("./bookmarks-panel.js").then((module) => {
       detailBookmark = module.initDetailBookmark(byId("detail-bookmark"), { store: bookmarkStore, onError: showError });
@@ -1182,6 +1209,29 @@ function start() {
     onCaseOpen: (instance) => instance.onCase(), // a case was already open when the module arrived
   }));
 
+  // Repeated records (9.12): loaded once the first view has answered; a failure is forgotten (retryable), so the next
+  // record shown tries again. The controller owns the marks, the "Hide repeated records" chip and the window.
+  const loadRepeats = retryable(() => import("./repeat-model.js").then((module) => {
+    if (repeats === null) {
+      repeats = module.createRepeats({
+        api,
+        getCase: () => caseId,
+        getUserFilter: () => userFilter,
+        setUserFilter: (filter) => setUserFilter(filter).catch(showError),
+        storage: safeLocalStorage(),
+        onChange: () => {
+          grid.render();
+          if (repeatDetail) {
+            repeatDetail.refresh();
+          }
+        },
+      });
+      grid.render(); // the rows on screen ask for their marks
+    }
+    return repeats;
+  }));
+  ready.repeats = settled(afterFirstView.then(() => loadRepeats()));
+
   // Local alerts (9.13): banner, stream and counter run from the opening; the panel is a dock panel.
   ready.alerts = settled(afterFirstView.then(() => import("./alerts-panel.js")).then((module) => {
     alertsUi = module.startAlerts({
@@ -1304,6 +1354,7 @@ function start() {
     highlightStore,
     bookmarkStore,
     ready,
+    repeats: () => repeats,
     loadCopyExport,
     onError: showError,
     fieldNames: () => Array.from(seenFields),

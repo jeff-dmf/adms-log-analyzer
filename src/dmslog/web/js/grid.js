@@ -40,7 +40,7 @@ function fieldText(value) {
 export class Grid {
   constructor({
     viewport, rowsLayer, spacer, header, onSelect, onCount, onPosition, onError, getMark, onVisible, onView,
-    getHighlight, onFailure, onRecovered, onAbandon,
+    getHighlight, getRepeat, onFailure, onRecovered, onAbandon,
   }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
@@ -61,6 +61,7 @@ export class Grid {
     this.countFailureShown = false;
     this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
     this.getHighlight = getHighlight || (() => null); // highlight rule of a record id: {color, label} | null
+    this.getRepeat = getRepeat || (() => null); // repeat mark of a record id: {label} | null (repeat-model.js, 9.12)
     this.onVisible = onVisible || (() => {}); // ids of the rendered rows (bookmark lookup)
     this.onView = onView || (() => {});
     this.failure = null; // {kind, error, op}: what failed last and can be repeated (retry())
@@ -908,6 +909,7 @@ export class Grid {
       slot.el.setAttribute("aria-selected", selected ? "true" : "false");
       const mark = this.getMark(row.id);
       const hl = this.getHighlight(row.id);
+      const repeat = this.getRepeat(row.id);
       if (selected) {
         if (this.active && this.active.slot === slot && this.active.recordId !== row.id) {
           this.mintId(slot.el);
@@ -919,6 +921,13 @@ export class Grid {
         slot.el.setAttribute("aria-rowindex", String(index + 2));
       } else {
         slot.el.removeAttribute("aria-rowindex");
+      }
+      if (repeat) {
+        slot.el.dataset.rp = "1"; // the glyph is CSS (css/repeats.css); the words are the tooltip and the hidden text
+        slot.el.title = repeat.label;
+      } else {
+        delete slot.el.dataset.rp;
+        slot.el.removeAttribute("title");
       }
       if (mark) {
         slot.el.dataset.bm = mark.color;
@@ -933,7 +942,7 @@ export class Grid {
       shown.push(row.id);
       slot.el.dataset.sev = String(row.sev);
       this.fillCells(slot, row);
-      this.fillHint(slot, mark, hl);
+      this.fillHint(slot, mark, hl, repeat);
     }
     if (activeEl) {
       this.viewport.setAttribute("aria-activedescendant", activeEl.id);
@@ -948,13 +957,16 @@ export class Grid {
 
   // Bookmark and highlight as hidden text in the row's first cell, so the row keeps its cell contents for screen readers
   // (an aria-label on the row would replace them). fillCells() has just cleared the cell.
-  fillHint(slot, mark, hl) {
+  fillHint(slot, mark, hl, repeat) {
     const parts = [];
     if (mark) {
       parts.push(markerLabel(mark));
     }
     if (hl) {
       parts.push(hl.label);
+    }
+    if (repeat) {
+      parts.push(repeat.label);
     }
     if (parts.length === 0) {
       return;

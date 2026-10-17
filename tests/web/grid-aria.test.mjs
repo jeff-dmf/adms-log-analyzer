@@ -23,7 +23,7 @@ function makeRows(from, to) {
   return Array.from({ length: to - from + 1 }, (_, i) => ({ id: from + i, ts: 1000 + from + i, sev: 1, level: 3, pid: 1, tid: 1, source_id: 1, msg: "m" + (from + i), nlines: 1 }));
 }
 
-function setup({ marks = {}, highlights = {}, count = { count: 500, exact: true } } = {}) {
+function setup({ marks = {}, highlights = {}, repeats = {}, count = { count: 500, exact: true } } = {}) {
   api.count = async () => count;
   api.page = async () => ({ rows: makeRows(1, 200), prev: null, next: "n" });
   const header = node("grid-header");
@@ -31,7 +31,7 @@ function setup({ marks = {}, highlights = {}, count = { count: 500, exact: true 
   const rowsLayer = node("grid-rows");
   const grid = new Grid({
     viewport, rowsLayer, spacer: node("s"), header, onSelect() {}, onCount() {}, onPosition() {}, onError(err) { throw err; },
-    getMark: (id) => marks[id] || null, getHighlight: (id) => highlights[id] || null,
+    getMark: (id) => marks[id] || null, getHighlight: (id) => highlights[id] || null, getRepeat: (id) => repeats[id] || null,
   });
   grid.pump = () => {};
   return { grid, viewport, header, rowsLayer };
@@ -158,4 +158,21 @@ test("hidden pool rows carry no rowindex", async () => {
   const hiddenRows = rowsLayer.children.filter((r) => r.hidden);
   assert.ok(hiddenRows.length > 0);
   assert.ok(hiddenRows.every((r) => r.attrs["aria-rowindex"] === undefined));
+});
+
+test("a repeat mark (9.12) is hidden text in the first cell, with data-rp and the tooltip, and no row label", async () => {
+  const { grid, rowsLayer } = setup({ repeats: { 2: { label: "Repeat of #1, +1 ms" } }, marks: { 2: { color: "blue" } } });
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  await new Promise((r) => setTimeout(r, 0));
+  const [r1, r2] = shown(rowsLayer);
+  const hidden = (row) => row.children[0].children.filter((c) => c.className === "visually-hidden").map((c) => c.textContent);
+  assert.deepEqual(hidden(r1), []);
+  assert.deepEqual(hidden(r2), ["bookmarked (Blue), Repeat of #1, +1 ms"]);
+  assert.equal(r2.dataset.rp, "1");
+  assert.equal(r2.title, "Repeat of #1, +1 ms");
+  assert.equal(r2.attrs["aria-label"], undefined);
+  grid.getRepeat = () => null;
+  grid.render();
+  assert.deepEqual(hidden(r2), ["bookmarked (Blue)"]);
+  assert.equal(r2.dataset.rp, undefined);
 });
