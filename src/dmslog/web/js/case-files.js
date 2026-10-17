@@ -3,7 +3,7 @@
 import { api } from "./api.js";
 import {
   CaseFilesState, KIND_ENTERPRISE, KIND_SENSITIVE, PickFlow, STATUS_FAILED, STATUS_OK, STATUS_REFUSED,
-  STATUS_WORKING, formatSize,
+  STATUS_PENDING, STATUS_WORKING, formatSize,
 } from "./case-files-model.js";
 import { setFieldError } from "./field-error.js";
 import { S, format, pluralKey } from "./strings.js";
@@ -54,7 +54,7 @@ export class CaseFiles {
     // The dialog that holds the list owns its one live region (case-dialogs.js sets this.announce); nothing here is a
     // live region of its own. What changes is spoken through it: the wait text, new notices and the count.
     this.announce = typeof announce === "function" ? announce : null;
-    this.spoken = { wait: "", notices: 0, count: "" };
+    this.spoken = { wait: "", notices: 0, count: "", items: new Map() };
     this.host = host;
     this.mode = mode === "add" ? "add" : "create";
     this.onAdd = onAdd || (() => {});
@@ -367,6 +367,17 @@ export class CaseFiles {
       parts.push(count);
     }
     this.spoken.count = count;
+    // A file that starts, ends or fails is spoken (its row is a plain note, not a region of its own).
+    const seen = new Map();
+    for (const item of this.state.items) {
+      const key = item.status + "|" + item.message;
+      seen.set(item.id, key);
+      if (item.status !== STATUS_PENDING && this.spoken.items.get(item.id) !== key) {
+        const label = statusLabel(item);
+        parts.push(format(S.cfItemError, { name: item.name, message: label + (item.message ? ": " + item.message : "") }));
+      }
+    }
+    this.spoken.items = seen;
     if (parts.length > 0 && this.announce) {
       this.announce(parts.join(" "));
     }

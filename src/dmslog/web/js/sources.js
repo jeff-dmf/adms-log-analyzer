@@ -537,12 +537,26 @@ export class SourcesPanel {
       this.handlers.onSources(this.sources, quiet);
       return;
     }
+    // The answer belongs to the case selection that asked: if another one (or the same case again) was selected while it
+    // was on the way, it touches nothing, neither this.sources, nor the list, nor onSources, nor the message.
+    const caseId = this.caseId;
+    const gen = this.caseGen;
+    let sources;
+    let failure = null;
     try {
-      const data = await (takeSources(this.caseId, () => api.sources(this.caseId)) || api.sources(this.caseId));
-      this.sources = data.sources;
+      const data = await (takeSources(caseId, () => api.sources(caseId)) || api.sources(caseId));
+      sources = data.sources;
     } catch (err) {
+      failure = err;
+    }
+    if (this.caseId !== caseId || this.caseGen !== gen) {
+      return;
+    }
+    if (failure) {
       this.sources = [];
-      this.handlers.onMessage(err.message, true);
+      this.handlers.onMessage(failure.message, true);
+    } else {
+      this.sources = sources;
     }
     this.selected = new Set([...this.selected].filter((id) => this.sources.some((s) => s.id === id)));
     this.renderSources();

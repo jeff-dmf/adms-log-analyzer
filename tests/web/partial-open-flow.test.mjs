@@ -1578,3 +1578,67 @@ test("progress of another job does not move the bar of this operation, nor does 
   stream.emit("done", { job_id: "NEW", status: "ok", records: 3 });
   await run;
 });
+
+// ---- third review round ----------------------------------------------------------------------------------------------
+
+test("a slow sources answer of case A that arrives after B was opened touches nothing of B", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const seen = [];
+  ctx.panel.handlers.onSources = (list) => seen.push(list.map((s) => s.name));
+  const { run } = await startedJob(ctx, dlg);
+  const slowA = deferred();
+  api.sources = async (caseId) => (caseId === "A" ? (await slowA.promise, { sources: [{ id: 1, name: "from-A.log" }] }) : { sources: [{ id: 9, name: "from-B.log" }] });
+  live().emit("progress", { job_id: "J", status: "first_ready", stage: "first", records: 1 });
+  await settle();
+  await ctx.panel.selectCase("B");
+  assert.deepEqual(ctx.panel.sources.map((s) => s.name), ["from-B.log"]);
+  seen.length = 0;
+  const messagesBefore = ctx.calls.messages.length;
+  slowA.resolve();
+  await run;
+  await settle();
+  assert.deepEqual(ctx.panel.sources.map((s) => s.name), ["from-B.log"], "B keeps its own sources");
+  assert.deepEqual(seen, [], "onSources was not called with A's list");
+  assert.equal(ctx.panel.caseId, "B");
+  assert.equal(ctx.calls.first.length, 0);
+  void messagesBefore;
+});
+
+test("a failing sources answer of an earlier selection says nothing and clears nothing", async () => {
+  const ctx = page();
+  await ctx.panel.selectCase("A");
+  api.sources = async (caseId) => ({ sources: [{ id: 9, name: caseId + ".log" }] });
+  await ctx.panel.selectCase("B");
+  const slow = deferred();
+  api.sources = async () => { await slow.promise; throw new ApiError(500, "boom", "A broke"); };
+  const refresh = ctx.panel.refreshSources(true); // B asks
+  api.sources = async () => ({ sources: [{ id: 3, name: "B2.log" }] });
+  const again = ctx.panel.selectCase("B"); // the same case selected again: a newer selection
+  await again;
+  slow.resolve();
+  await refresh;
+  assert.deepEqual(ctx.panel.sources.map((s) => s.name), ["B2.log"]);
+  assert.equal(ctx.calls.messages.some(([t]) => t === "A broke"), false);
+});
+
+test("a file that starts, ends or fails is spoken through the dialog's region even when the count is unchanged", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const spoken = [];
+  const original = ctx.panel.addFiles.announce;
+  ctx.panel.addFiles.announce = (text) => { spoken.push(text); original(text); };
+  api.addCollection = async () => ({ job_id: "J" + (spoken.length + 1) });
+  ctx.panel.addFiles.state.add([ENT, SENS]);
+  fill(dlg, "2026-10-09 10:00:00", "");
+  const run = ctx.panel.addFilesToCase();
+  await settle();
+  assert.ok(spoken.some((t) => t.includes("Enterprise.zip: Opening…")), "the first file starts");
+  const before = spoken.length;
+  live().emit("done", { job_id: live() ? ctx.panel.waiter.jobId : "", status: "error", message: "bad zip", code: "x" });
+  await settle();
+  assert.ok(spoken.slice(before).some((t) => /Enterprise\.zip: Failed: bad zip/.test(t)), "the first fails");
+  assert.ok(spoken.slice(before).some((t) => /Sensitive_Enterprise\.zip: Opening…/.test(t)), "the second starts, same count");
+  live().emit("done", { job_id: ctx.panel.waiter.jobId, status: "ok", records: 1 });
+  await run;
+});
