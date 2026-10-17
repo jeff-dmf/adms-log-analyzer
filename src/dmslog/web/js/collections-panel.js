@@ -217,6 +217,12 @@ export class CollectionsPanel {
     this.onSelection(this.selectedGroups());
   }
 
+  // Puts a selection back without telling the owner (a failed view change goes back to the last one that loaded).
+  restoreSelection(groups) {
+    this.selected = new Set((groups || []).filter((g) => this.collections.some((c) => c.group === g)));
+    this.render();
+  }
+
   clearSelection() {
     if (this.selected.size === 0) {
       return;
