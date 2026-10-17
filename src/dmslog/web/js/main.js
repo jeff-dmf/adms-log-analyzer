@@ -29,7 +29,7 @@ import { mountMenubar } from "./menubar.js";
 import { searchTerms } from "./search.js";
 import { SourceFilter } from "./source-filter.js";
 import { SourcesPanel } from "./sources.js";
-import { S, format } from "./strings.js";
+import { S, format, pluralKey } from "./strings.js";
 import { applyTheme, setThemePreference, themePreference } from "./theme.js";
 import { formatTs, parseTs } from "./time.js";
 
@@ -264,6 +264,48 @@ function start() {
       filterTree.setFilter(userFilter);
     }
     return applyView();
+  };
+  // "Show in grid" of the same-key panel: a chained view (a chip in the strip) with the key filter. A view with its own
+  // conditions is narrowed first; an empty one just gets the chip; a full stack says so and changes nothing.
+  const loadKeyModel = retryable(() => import("./key-panel-model.js"));
+  const showKeyInGrid = async ({ filter }) => {
+    if (caseId === null || !filter) {
+      return;
+    }
+    const forCase = caseId;
+    try {
+      const model = await loadKeyModel();
+      if (caseId !== forCase) {
+        return; // the case changed while the module loaded
+      }
+      const chained = viewsStack !== null && viewsUi !== null;
+      const plan = model.planShowInGrid({
+        chained,
+        ownEmpty: ownFilterOf(captureLive()) === null,
+        alreadyShown: userFilter !== null && JSON.stringify(userFilter) === JSON.stringify(filter),
+        depth: chained ? viewsStack.depth : 0,
+        maxDepth: chained ? viewsStack.maxDepth : 0,
+      });
+      if (plan === "none") {
+        return;
+      }
+      if (plan === "full") {
+        showMessage(format(S[pluralKey("vsFull", viewsStack.maxDepth)], { n: viewsStack.maxDepth }), true);
+        return;
+      }
+      if (plan === "narrow") {
+        const before = viewsStack.depth;
+        viewsUi.narrow();
+        if (viewsStack.depth === before) {
+          return; // it did not narrow (it said why): never replace the conditions of this view
+        }
+        await setUserFilter(filter);
+      } else {
+        await setUserFilter(andFilters(userFilter, filter));
+      }
+    } catch (err) {
+      showError(err);
+    }
   };
   const addTemplateFilter = (tplId) => setUserFilter(withTemplate(userFilter, tplId));
 
@@ -1161,6 +1203,8 @@ function start() {
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
     sourceName: (id) => sourceNames.get(id) || String(id),
+    typeLabel: (id) => templateLabels.get(id) || "",
+    showKeyInGrid,
     showEntry: (id) => detail.show(id),
     reveal: (row) => revealEntry(row),
     showEventInGrid,

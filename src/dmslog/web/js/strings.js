@@ -622,11 +622,12 @@ export const S = {
   keyTableCaption: "Records that carry the key",
   keyColTime: "Time",
   keyColSource: "Source",
-  keyColTid: "TID",
+  keyColLevel: "Level",
   keyColTemplate: "Message type",
-  keyColText: "Text",
+  keyColText: "Message",
+  keyShowInGrid: "Show in grid",
+  keyShowInGridTitle: "Open a view of the grid with only the records that carry this key",
   keyOpenRecord: "Show record {id} in the grid",
-  keySensitiveTag: "sensitive",
 
   // Payload section of the entry detail
   plTitle: "Payload",

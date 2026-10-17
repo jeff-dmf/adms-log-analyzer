@@ -2,25 +2,69 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildKeyRow, keyHeading } from "../../src/dmslog/web/js/key-panel-model.js";
+import { buildKeyRow, keyCountText, keyFilter, keyHeading } from "../../src/dmslog/web/js/key-panel-model.js";
 
-test("a record row keeps the text literal and tolerates nulls", () => {
+const lookups = {
+  getSourceName: (id) => (id === 2 ? "C:\\ADMS\\Log\\WfmAdapter_41.sensitive.log" : undefined),
+  getTypeLabel: (id) => (id === 9 ? "Operation started" : ""),
+};
+
+test("a record row keeps the text literal, shows the file name and the type title, never the path or the code", () => {
   const row = buildKeyRow({
-    id: 5, source_id: 2, member: "Log/s.log", sensitive: true, ts: 0, tid: 31, tpl_code: "T-1", sev: 4,
+    id: 5, source_id: 2, member: "Log/s.log", sensitive: true, ts: 0, tid: 31, level: 3, tpl_id: 9, tpl_code: "T-1", sev: 4,
     msg: "<img src=x onerror=alert(1)>",
-  });
+  }, lookups);
   assert.deepEqual(
-    { id: row.id, source: row.source, sensitive: row.sensitive, tid: row.tid, code: row.code, text: row.text },
-    { id: 5, source: "Log/s.log", sensitive: true, tid: "0x1f", code: "T-1", text: "<img src=x onerror=alert(1)>" },
+    { id: row.id, source: row.source, sensitive: row.sensitive, level: row.level, type: row.type, text: row.text },
+    { id: 5, source: "WfmAdapter_41.log", sensitive: true, level: "ERROR", type: "Operation started", text: "<img src=x onerror=alert(1)>" },
   );
+  assert.equal(row.sourceTitle, "WfmAdapter_41.sensitive.log (sensitive)");
   assert.equal(row.time, "1970-01-01 00:00:00.000");
-  const odd = buildKeyRow({ id: 6, source_id: null, member: null, sensitive: null, ts: null, tid: null, tpl_code: null, msg: null });
-  assert.deepEqual(
-    { time: odd.time, source: odd.source, sensitive: odd.sensitive, tid: odd.tid, code: odd.code, text: odd.text },
-    { time: "", source: "", sensitive: false, tid: "", code: "", text: "" },
-  );
+  assert.equal(JSON.stringify(row).includes("T-1"), false, "the template code is not carried");
+  assert.equal(JSON.stringify(row).includes("ADMS"), false, "the directory is not carried");
 });
 
-test("heading shows the key type and value", () => {
+test("nulls, unknown source and unknown type are tolerated", () => {
+  const odd = buildKeyRow({ id: 6, source_id: null, member: null, sensitive: null, ts: null, tid: null, level: null, tpl_id: null, tpl_code: "X", msg: null }, lookups);
+  assert.deepEqual(
+    { time: odd.time, source: odd.source, sensitive: odd.sensitive, level: odd.level, type: odd.type, text: odd.text },
+    { time: "", source: "", sensitive: false, level: "", type: "", text: "" },
+  );
+  // a source the case does not list is named by its id: the member (file name only) is used instead
+  const row = buildKeyRow({ id: 7, source_id: 3, member: "Log/dir/a.log", sensitive: false, ts: 1, level: 99, tpl_id: 4, msg: "m" }, { getSourceName: (id) => String(id), getTypeLabel: () => null });
+  assert.equal(row.source, "a.log");
+  assert.equal(row.level, "");
+  assert.equal(row.type, "");
+  // no lookups at all
+  assert.equal(buildKeyRow({ id: 8, source_id: 1, member: "x/y.log", ts: 1, msg: "" }).source, "y.log");
+  // a sensitive source recognised by its name even when the record does not say so
+  assert.equal(buildKeyRow({ id: 9, source_id: 2, member: "q.log", sensitive: null, ts: 1 }, lookups).sensitive, true);
+});
+
+test("heading, filter and count with the right plural", () => {
   assert.equal(keyHeading("msgid", "a b"), "msgid = a b");
+  assert.deepEqual(keyFilter("msgid", 42), { key: { type: "msgid", eq: "42" } });
+  assert.equal(keyCountText(1, false), "1 record");
+  assert.equal(keyCountText(2, false), "2 records");
+  assert.equal(keyCountText(0, false), "0 records");
+  assert.equal(keyCountText(1, true), "1 record so far (more available)");
+  assert.equal(keyCountText(3, true), "3 records so far (more available)");
+  assert.equal(keyCountText(NaN, false), "0 records");
+});
+
+test("Show in grid plan: narrow a view with conditions, key joins an empty or unchained one, a full stack stops", async () => {
+  const { planShowInGrid } = await import("../../src/dmslog/web/js/key-panel-model.js");
+  const base = { chained: true, ownEmpty: false, depth: 1, maxDepth: 10 };
+  assert.equal(planShowInGrid(base), "narrow");
+  assert.equal(planShowInGrid({ ...base, ownEmpty: true }), "in-place");
+  assert.equal(planShowInGrid({ ...base, chained: false }), "in-place");
+  assert.equal(planShowInGrid({ ...base, depth: 9 }), "full");
+  assert.equal(planShowInGrid({ ...base, depth: 8 }), "narrow");
+  assert.equal(planShowInGrid({ ...base, ownEmpty: true, depth: 9 }), "in-place", "an empty view never needs a new level");
+  assert.equal(planShowInGrid({ ...base, depth: NaN }), "in-place");
+  assert.equal(planShowInGrid({ ...base, maxDepth: null }), "in-place");
+  assert.equal(planShowInGrid({ ...base, maxDepth: 0, depth: 0 }), "full");
+  assert.equal(planShowInGrid({ ...base, alreadyShown: true }), "none", "a second click does not stack an identical view");
+  assert.equal(planShowInGrid({ ...base, alreadyShown: true, depth: 9 }), "none");
+  assert.equal(planShowInGrid({ ...base, alreadyShown: "yes" }), "narrow", "only a real true counts");
 });

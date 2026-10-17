@@ -2,25 +2,65 @@
 // correlation key, in all sources of the case, with keyset "load more". Texts come from the ERS
 // (untrusted) and are only shaped here. A new key, a closed panel or a case change starts a new
 // generation: answers of an older generation or of another case are dropped.
-import { S, format } from "./strings.js";
+import { isSensitiveName } from "./grid-model.js";
+import { baseName } from "./source-filter-model.js";
+import { S, format, pluralKey } from "./strings.js";
 import { formatTs } from "./time.js";
 
 export const KEY_PAGE_LIMIT = 200;
 
-export function buildKeyRow(record) {
-  const tid = record.tid === null || record.tid === undefined ? "" : "0x" + Number(record.tid).toString(16);
+// One row of the panel, the columns of the grid: Time, Source (file name, never the path; "S" badge when sensitive),
+// Level, Message type (readable title, never the template code) and Message. lookups (all optional):
+//   getSourceName(sourceId) -> the source's name as the case lists it, or undefined
+//   getTypeLabel(tplId)     -> the readable title of the message type, or "" when unknown
+export function buildKeyRow(record, lookups = {}) {
+  const known = typeof lookups.getSourceName === "function" ? lookups.getSourceName(record.source_id) : undefined;
+  // An unknown source is named by its id: then the member of the record is the better name.
+  const unknown = known === undefined || known === null || known === "" || String(known) === String(record.source_id);
+  const raw = unknown ? record.member : known;
+  const full = raw === null || raw === undefined ? "" : baseName(raw);
+  const sensitive = record.sensitive === true || isSensitiveName(full);
+  const label = typeof lookups.getTypeLabel === "function" && Number.isInteger(record.tpl_id) && record.tpl_id !== 0
+    ? lookups.getTypeLabel(record.tpl_id)
+    : "";
   return {
     id: record.id,
     sourceId: record.source_id,
     ts: record.ts === undefined ? null : record.ts,
     time: formatTs(record.ts),
-    source: record.member ? String(record.member) : "",
-    sensitive: record.sensitive === true,
-    tid,
-    code: record.tpl_code || "",
+    source: sensitive ? full.replace(/\.sensitive(?=\.log)/i, "") : full,
+    sourceTitle: sensitive && full ? full + " (" + S.sourceSensitive + ")" : full,
+    sensitive,
+    level: Number.isInteger(record.level) && S.levelNames[record.level] ? S.levelNames[record.level] : "",
+    type: label === null || label === undefined ? "" : String(label),
     text: record.msg === null || record.msg === undefined ? "" : String(record.msg),
     sev: record.sev,
   };
+}
+
+// The filter "Show in grid" applies: records that carry this key (same shape as the "key" chip).
+export function keyFilter(type, value) {
+  return { key: { type: String(type), eq: String(value) } };
+}
+
+// What "Show in grid" does with the views of the strip: "narrow" (the current view has conditions of its own: they become
+// the parent and the key filter opens a child view), "none" (this view already is that key: a second click must not stack
+// an identical view), "in-place" (nothing to narrow, or no chained views: the key joins
+// the conditions of this view) or "full" (the stack is full: say so, change nothing). Measures that are not finite
+// numbers count as "no stack".
+export function planShowInGrid({ chained, ownEmpty, depth, maxDepth, alreadyShown = false }) {
+  if (alreadyShown === true) {
+    return "none";
+  }
+  if (chained !== true || ownEmpty === true || !Number.isFinite(depth) || !Number.isFinite(maxDepth)) {
+    return "in-place";
+  }
+  return depth + 1 >= maxDepth ? "full" : "narrow";
+}
+
+// "N records so far" / "N records", with the right plural (and a thousands separator).
+export function keyCountText(count, more) {
+  return format(S[pluralKey(more ? "keyCountMore" : "keyCount", count)], { count: Number.isFinite(count) ? count : 0 });
 }
 
 export function keyHeading(type, value) {
