@@ -37,9 +37,10 @@ from pathlib import Path
 from typing import Any
 
 from .. import messages
+from ..paths import atomic_write_bytes
 from . import aggregate
 from .filters import INT64_MAX, INT64_MIN, QueryInputError, compile_filter
-from .presets import CASE_LEAVES, _atomic_write, _walk_leaves
+from .presets import CASE_LEAVES, _walk_leaves
 from .views import MAX_NAME_CHARS, ViewError, sanitize_name
 
 SCHEMA = 1
@@ -438,7 +439,7 @@ def _save(data_dir: str | Path, doc: Document) -> None:
     if len(data) > MAX_FILE_BYTES:  # the next read would reject it: keep the old file
         raise PanelError("file_too_large", limit=MAX_FILE_BYTES)
     try:
-        _atomic_write(panels_path(data_dir), data)
+        atomic_write_bytes(panels_path(data_dir), data)
     except OSError:
         raise PanelError("save_failed") from None
 

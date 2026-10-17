@@ -247,7 +247,7 @@ def test_a_failed_write_leaves_the_file_as_it_was(tmp_path, monkeypatch):
     def boom(path, data):
         raise OSError("disk full")
 
-    monkeypatch.setattr(P, "_atomic_write", boom)
+    monkeypatch.setattr(P, "atomic_write_bytes", boom)
     assert code(P.update, tmp_path, made["id"], panel(name="Other")) == "save_failed"
     assert code(P.create, tmp_path, panel(name="New")) == "save_failed"
     assert code(P.delete, tmp_path, made["id"]) == "save_failed"
