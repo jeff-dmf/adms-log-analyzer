@@ -329,3 +329,102 @@ test("the CSS shows the bar after 400 ms of aria-busy, mutes the old rows, and r
   assert.match(css, /animation: grid-busy-in 0s linear 400ms forwards, grid-busy-run 1\.2s ease-in-out 400ms infinite;/);
   assert.match(css, /prefers-reduced-motion: reduce\) \{\s*\.grid-viewport\[aria-busy="true"\]::before/);
 });
+
+test("Follow tail: a stream the browser closed stops at once", async () => {
+  const doc = installGlobalDom();
+  const sources = [];
+  class FakeEventSource {
+    constructor() { this.handlers = {}; this.closed = false; this.readyState = 2; sources.push(this); }
+    addEventListener(name, fn) { (this.handlers[name] ??= []).push(fn); }
+    close() { this.closed = true; }
+    emit(name) { for (const fn of this.handlers[name] || []) fn({}); }
+  }
+  globalThis.EventSource = FakeEventSource;
+  const { initFollowTail } = await import("../../src/dmslog/web/js/follow-tail.js");
+  const toggle = doc.createElement("input");
+  toggle.type = "checkbox";
+  const stopped = [];
+  const follow = initFollowTail({
+    toggle, newButton: doc.createElement("button"),
+    grid: { tailInfo: () => ({ atEnd: true, top: 0, visible: 1, length: 1 }), followTail: async () => {}, total: null },
+    getCase: () => "C", getFilter: () => null, onChanged() {}, onError() {}, onStreamStopped: () => stopped.push(1),
+  });
+  toggle.checked = true;
+  toggle.dispatch("change");
+  sources[0].emit("error");
+  assert.deepEqual(stopped, [1]);
+  assert.equal(follow.stopped(), true);
+  delete globalThis.EventSource;
+});
+
+// ---- the real bar with the failure center (a message that replaced the notice must give it back) -------------------
+
+test("count 408 -> an alert takes the bar -> the alert expires: the failure and its Retry are back; a user's Dismiss is respected", async () => {
+  const { createFailureCenter } = await import("../../src/dmslog/web/js/status-bar-model.js");
+  const { ApiError } = await import("../../src/dmslog/web/js/api.js");
+  const doc2 = makeDoc();
+  const root = doc2.createElement("footer");
+  doc2.body.appendChild(root);
+  let clock = 0;
+  const timers = [];
+  const status = createStatusBar(root, {
+    S, now: () => clock,
+    setTimer: (fn, ms) => { timers.push({ fn, at: clock + ms }); return timers.length; },
+    clearTimer: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+  });
+  const advance = (ms) => { clock += ms; for (const t of timers) if (t.fn && t.at <= clock) { const fn = t.fn; t.fn = null; fn(); } };
+  const pick = (cls) => root.all().find((n) => n.className.split(/\s+/).includes(cls));
+  const text = () => (pick("sb-message").hidden ? null : pick("sb-message-text").textContent);
+  const retryShown = () => !pick("sb-action").hidden;
+  const center = createFailureCenter({
+    status, retryLabel: "Retry now", genericMessage: "x", pageHint: "",
+    goOffline() {}, health: async () => {}, setOnline() {}, openingPending: () => false, reloadCases: async () => {},
+    fallback: async () => {}, onError() {}, retryView: async () => {}, hasViewRetry: () => false, dropViewRetry() {},
+    retryGrid: async () => {}, retryCount: async () => {}, refreshTimeline: async () => {}, resumeStream: () => true,
+    cancelRequests() {},
+  });
+  center.gridFailure(new ApiError(408, "query_timeout", "Count timed out"), { kind: "timeout", scope: "count", op: "count" });
+  assert.equal(text(), "Count timed out");
+  assert.equal(retryShown(), true);
+  status.message("Alert fired", { kind: "warning" }); // an alert takes the single slot
+  assert.equal(text(), "Alert fired");
+  advance(8000); // and expires
+  assert.equal(text(), "Count timed out");
+  assert.equal(retryShown(), true);
+  // the user presses Dismiss: it stays dismissed, however the bar idles afterwards
+  pick("sb-dismiss").click();
+  assert.equal(text(), null);
+  status.message("Another", { kind: "info" });
+  advance(8000);
+  assert.equal(text(), null);
+  // a different failure shows again (the state changed)
+  center.timelineFailure(new ApiError(408, "query_timeout", "Timeline timed out"));
+  assert.equal(text(), "Timeline timed out");
+  assert.equal(retryShown(), true);
+  // recovery clears it for good
+  center.timelineRecovered();
+  center.gridRecovered("count");
+  assert.equal(text(), null);
+});
+
+test("one change of the failure shows ONE message on the bar (no second pass from the bar's idle report)", async () => {
+  const { createFailureCenter } = await import("../../src/dmslog/web/js/status-bar-model.js");
+  const { ApiError } = await import("../../src/dmslog/web/js/api.js");
+  const doc2 = makeDoc();
+  const root = doc2.createElement("footer");
+  doc2.body.appendChild(root);
+  const real = createStatusBar(root, { S });
+  let shownCount = 0;
+  const status = { ...real, message: (...args) => { shownCount += 1; return real.message(...args); } };
+  const center = createFailureCenter({
+    status, retryLabel: "Retry now", genericMessage: "x", pageHint: "",
+    goOffline() {}, health: async () => {}, setOnline() {}, openingPending: () => false, reloadCases: async () => {},
+    fallback: async () => {}, onError() {}, retryView: async () => {}, hasViewRetry: () => false, dropViewRetry() {},
+    retryGrid: async () => {}, retryCount: async () => {}, refreshTimeline: async () => {}, resumeStream: () => true,
+    cancelRequests() {},
+  });
+  center.timelineFailure(new ApiError(408, "query_timeout", "first"));
+  assert.equal(shownCount, 1);
+  center.timelineFailure(new ApiError(408, "query_timeout", "second")); // replaces the text: dismiss + show, once
+  assert.equal(shownCount, 2);
+});

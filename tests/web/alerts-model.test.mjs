@@ -340,3 +340,19 @@ test("the alert stream stops after 3 failures in a row, reports it once, and an 
   handle.close(); // closing a stopped stream is harmless
   assert.equal(connectAlertStream({ EventSourceImpl: null, url: "/p", onAlert() {} }).stopped(), false);
 });
+
+test("an alert stream the browser closed (HTTP error) stops at once, without waiting for 3 events", async () => {
+  const { connectAlertStream } = await import("../../src/dmslog/web/js/alerts-model.js");
+  let source = null;
+  class Fake {
+    constructor() { this.h = {}; this.closed = false; this.readyState = 2; source = this; }
+    addEventListener(n, fn) { (this.h[n] ??= []).push(fn); }
+    close() { this.closed = true; }
+  }
+  const stops = [];
+  const handle = connectAlertStream({ EventSourceImpl: Fake, url: "/p", onAlert() {}, onStopped: () => stops.push(1) });
+  for (const fn of source.h.error) fn({});
+  assert.equal(handle.stopped(), true);
+  assert.equal(source.closed, true);
+  assert.deepEqual(stops, [1]);
+});

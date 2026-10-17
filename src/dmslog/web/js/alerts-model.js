@@ -372,7 +372,7 @@ export function connectAlertStream({ EventSourceImpl, url, onAlert, onStopped })
     source.addEventListener("open", () => guard.opened());
     // After 3 failures in a row the stream stops (the server is down); the owner starts it again on Retry.
     source.addEventListener("error", () => {
-      if (source === mine && guard.failed()) {
+      if (source === mine && (mine.readyState === 2 ? guard.stop() : guard.failed())) {
         mine.close();
         source = null;
         if (typeof onStopped === "function") {

@@ -28,6 +28,7 @@ export class SourcesPanel {
     this.caseFiles = null; // set by main.js: the "files of the new case" list (case-files.js)
     this.addFiles = null; // set by main.js: the "add files to this case" list (case-files.js, mode "add")
     this.queueBusy = false; // the files of a new case are being opened: case switch and Open form are blocked
+    this.progressStopped = false; // the progress stream gave up and nobody follows the running job (until Retry)
     this.waiter = null; // {jobId, caseId, resolve, seen}: a runCollection() waiting for its job's done event
     this.caseNames = new Map(); // case id -> name, for the fixed case header
     this.rows = new Map(); // source id -> {li, box, label, text, name, meta, mark, badge, sig}: the rows on screen
@@ -330,6 +331,7 @@ export class SourcesPanel {
     }
     this.closeEvents();
     if (caseId !== this.caseId) {
+      this.progressStopped = false; // the stopped stream belonged to the old case
       if (this.addFiles) {
         this.addFiles.state.resetResults(); // results belong to the case they were opened in
       }
@@ -798,6 +800,7 @@ export class SourcesPanel {
   }
 
   async finishJob(data) {
+    this.progressStopped = false; // a job finished: its progress was seen to the end
     const waiter = this.waiter;
     this.waiter = null;
     this.closeEvents();
@@ -888,24 +891,21 @@ export class SourcesPanel {
       await this.finishJob(data);
     });
     events.addEventListener("error", () => {
-      // After 3 failures in a row the stream stops (the server is down); onStreamStopped lets Retry open it again.
-      if (this.events === events && guard.failed()) {
+      // The stream stops for good after 3 failures in a row (the server is down) or at once when the browser gave up
+      // (CLOSED, e.g. an HTTP error): onStreamStopped lets Retry open it again. Only the current stream matters;
+      // CONNECTING (0) keeps the automatic reconnection.
+      const closed = events.readyState === 2;
+      if (closed) {
+        this.reportProgress(null);
+      }
+      if (this.events === events && (closed ? guard.stop() : guard.failed())) {
         events.close();
         this.events = null;
-        this.reportProgress(null);
+        this.progressStopped = true; // survives other streams: it is cleared by a Retry, a finished job or a case change
         this.cancelWaiter(S.cfStreamClosed);
+        this.reportProgress(null);
         if (this.handlers.onStreamStopped) {
           this.handlers.onStreamStopped();
-        }
-        return;
-      }
-      // The browser retries by itself; a closed stream just stops the bar.
-      if (events.readyState === 2) {
-        this.reportProgress(null);
-        // Only the current stream matters; CONNECTING (0) keeps the automatic reconnection.
-        if (this.events === events) {
-          this.events = null;
-          this.cancelWaiter(S.cfStreamClosed);
         }
       }
     });
@@ -923,9 +923,12 @@ export class SourcesPanel {
 
   // Opens the progress stream again after it stopped (Retry). True only when a stream was really opened.
   resumeProgress() {
-    if (!this.progressGuard || !this.progressGuard.stopped || this.caseId === null) {
+    // The pending recovery is the panel's, not the last stream's: another file opened and refused (409) in between
+    // replaces and closes the stream, but the job that was being followed still has nobody following it.
+    if (!this.progressStopped || this.caseId === null) {
       return false;
     }
+    this.progressStopped = false;
     this.watchProgress(this.caseId);
     return this.events !== null;
   }

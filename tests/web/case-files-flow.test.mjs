@@ -431,3 +431,47 @@ test("the indexing progress stream stops after 3 failures in a row and Retry ope
   assert.equal(panel.resumeProgress(), false); // running again: nothing to resume
   assert.equal(FakeEventSource.instances.length, 2);
 });
+
+test("a progress stream the browser closed (HTTP error) is a recoverable stop at once, and survives another file opening and being refused", async () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.progressUrl = () => "/p";
+  const stopped = [];
+  const refs = {
+    caseSelect: new FakeNode("select"), newCaseForm: new FakeNode("form"), newCaseName: new FakeNode("input"),
+    openForm: new FakeNode("form"), pathInput: new FakeNode("input"), scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
+    progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), sourceList: new FakeNode("ul"),
+  };
+  const panel = new SourcesPanel(refs, {
+    onCase() {}, onSources() {}, onSelection() {}, onDone() {}, onMessage() {}, onStreamStopped: () => stopped.push(1),
+  });
+  panel.caseId = "C";
+  panel.watchProgress("C"); // file A is indexing
+  const a = FakeEventSource.instances[0];
+  a.readyState = 2; // CLOSED: no more events will come to reach a limit of 3
+  a.listeners.error({});
+  assert.deepEqual(stopped, [1]);
+  assert.equal(a.closed, true);
+  // file B opens its own stream and is refused with 409: the stream is closed again
+  panel.watchProgress("C");
+  panel.closeEvents();
+  // Retry: A still has nobody following it
+  assert.equal(panel.resumeProgress(), true);
+  assert.equal(FakeEventSource.instances.length, 3);
+  assert.equal(panel.resumeProgress(), false); // one Retry, one stream
+  // the pending recovery ends with a finished job and with a case change
+  panel.watchProgress("C");
+  FakeEventSource.instances.at(-1).readyState = 2;
+  FakeEventSource.instances.at(-1).listeners.error({});
+  assert.equal(stopped.length, 2);
+  await panel.finishJob({ status: "ok", records: 1 });
+  assert.equal(panel.resumeProgress(), false);
+  // and a case change: the stopped stream belonged to the old case
+  api.sources = async () => ({ sources: [] });
+  panel.watchProgress("C");
+  FakeEventSource.instances.at(-1).readyState = 2;
+  FakeEventSource.instances.at(-1).listeners.error({});
+  assert.equal(stopped.length, 3);
+  await panel.selectCase("D");
+  assert.equal(panel.resumeProgress(), false);
+});

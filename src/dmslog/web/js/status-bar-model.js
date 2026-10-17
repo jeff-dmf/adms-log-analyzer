@@ -188,6 +188,14 @@ export function createStreamGuard(max = MAX_STREAM_FAILURES) {
     opened() {
       failures = 0;
     },
+    // The browser itself gave up (CLOSED: no more events will come to reach the limit). True when this stopped it.
+    stop() {
+      if (stopped) {
+        return false;
+      }
+      stopped = true;
+      return true;
+    },
     reset() {
       failures = 0;
       stopped = false;
@@ -216,14 +224,28 @@ export function createFailureCenter(deps) {
   //   tasks only: the latest task message with Retry; a 4xx alone: its text without Retry; nothing: nothing.
   // The handle is kept and the message is shown again when the bar no longer shows it (a newer message replaced it).
   let shown = null; // {handle, key}
+  let dismissedKey = null; // the user pressed Dismiss on this very message: it stays away until the state changes
   let plain = null; // {name, text}: the last 4xx, until what it belongs to works, a new view starts or the case changes
   const dismissShown = () => {
     if (shown !== null) {
-      shown.handle.dismiss();
-      shown = null;
+      const old = shown;
+      shown = null; // before dismissing: the handle's own end is not the user's Dismiss
+      old.handle.dismiss();
     }
   };
+  let syncing = false;
   const syncNotice = () => {
+    if (syncing) {
+      return; // dismissing or showing a message makes the bar report "idle": not a second pass in the middle of this one
+    }
+    syncing = true;
+    try {
+      syncNoticeNow();
+    } finally {
+      syncing = false;
+    }
+  };
+  const syncNoticeNow = () => {
     let taskText = null;
     for (const [name, message] of messages) {
       if (message !== null && recovery.has(name)) {
@@ -233,19 +255,35 @@ export function createFailureCenter(deps) {
     const retryable = taskText !== null;
     const text = plain !== null ? plain.text : taskText;
     if (text === null) {
+      dismissedKey = null;
       dismissShown();
       return;
     }
     const key = text + "\u0000" + (retryable ? "retry" : "");
+    if (key === dismissedKey) {
+      return;
+    }
+    dismissedKey = null;
     if (shown !== null && shown.key === key && shown.handle.isCurrent()) {
       return;
     }
     dismissShown();
     const options = { kind: "error" };
+    const token = {};
+    // Whatever ends the message (a newer message, its expiry, the user) is seen here or through onIdle(): the failure
+    // that is still repeatable is put back once the bar is free, and a Dismiss by the user is respected.
+    options.onEnd = (reason) => {
+      if (shown !== null && shown.token === token) {
+        if (reason === "dismissed") {
+          dismissedKey = key;
+          shown = null;
+        }
+      }
+    };
     if (retryable) {
       options.action = { label: deps.retryLabel, run: () => recovery.retry() };
     }
-    shown = { handle: deps.status.message(text, options), key };
+    shown = { handle: deps.status.message(text, options), key, token };
   };
   const dropPlain = (name) => {
     if (plain !== null && (name === undefined || plain.name === name)) {
@@ -261,6 +299,9 @@ export function createFailureCenter(deps) {
     onError: deps.onError,
     onChange: syncNotice,
   });
+  if (typeof deps.status.onIdle === "function") {
+    deps.status.onIdle(syncNotice); // the bar is free again (an alert expired): show the failure that is still there
+  }
   const messageOf = (err) => (err && err.message ? err.message : deps.genericMessage);
 
   // A failure: registered (and noticed) when repeating can help, otherwise any older task of the same part is
@@ -353,7 +394,7 @@ export function createMessageState() {
     },
     // text "" clears. Returns the new message (or null) so the caller can paint it.
     // options.action: { label, run } adds a button to the message (Retry); it needs a function and a label.
-    show(text, { kind = "info", timeoutMs, action } = {}, now = 0) {
+    show(text, { kind = "info", timeoutMs, action, onEnd } = {}, now = 0) {
       if (text === "" || text === null || text === undefined) {
         current = null;
         return null;
@@ -365,6 +406,7 @@ export function createMessageState() {
       current = {
         id: serial, text: String(text), kind: resolvedKind, expiresAt: timeout > 0 ? now + timeout : null,
         action: valid ? { label: action.label, run: action.run } : null,
+        onEnd: typeof onEnd === "function" ? onEnd : null,
       };
       return current;
     },

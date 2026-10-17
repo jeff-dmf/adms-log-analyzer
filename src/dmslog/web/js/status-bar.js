@@ -167,7 +167,25 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
       timer = null;
     }
   }
-  const paintMessage = () => guarded(paintMessageNow);
+  // `onEnd(reason)` of a message runs when it stops being the one on the bar: "replaced" (a newer message),
+  // "expired", "dismissed" (the user's Dismiss button) or "cleared" (its handle, or an empty message). Listeners of
+  // onIdle() run when the bar is left without any message.
+  let painted = null;
+  const idleListeners = new Set();
+  const paintMessage = (reason = "replaced") => {
+    guarded(paintMessageNow);
+    const after = messages.current;
+    const ended = painted !== null && (after === null || after.id !== painted.id) ? painted : null;
+    painted = after;
+    if (ended !== null && ended.onEnd !== null) {
+      ended.onEnd(reason);
+    }
+    if (ended !== null && after === null) {
+      for (const listener of [...idleListeners]) {
+        listener();
+      }
+    }
+  };
   function paintMessageNow() {
     const current = messages.current;
     clearTimerNow();
@@ -191,7 +209,7 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
       timer = arm(() => {
         timer = null;
         if (messages.expire(now())) {
-          paintMessage();
+          paintMessage("expired");
         }
       }, Math.max(0, current.expiresAt - now()));
     }
@@ -206,7 +224,7 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
   });
   dismissButton.addEventListener("click", () => {
     messages.show("");
-    paintMessage();
+    paintMessage("dismissed");
   });
 
   // ---- connection
@@ -258,18 +276,22 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     count: paintCount,
     position: paintPosition,
     progress: paintProgress,
-    message(text, { kind = "info", timeoutMs, action } = {}) {
+    onIdle(listener) {
+      idleListeners.add(listener);
+      return () => idleListeners.delete(listener);
+    },
+    message(text, { kind = "info", timeoutMs, action, onEnd } = {}) {
       if (isConnectionText(text, S)) {
         // The connection error owns the bar (connection()); a stale copy must not come back after recovery.
         return { dismiss() {} };
       }
-      const shown = messages.show(text, { kind: normalizeKind(kind), timeoutMs, action }, now());
-      paintMessage();
+      const shown = messages.show(text, { kind: normalizeKind(kind), timeoutMs, action, onEnd }, now());
+      paintMessage(text === "" ? "cleared" : "replaced");
       const id = shown === null ? null : shown.id;
       return {
         dismiss() {
           if (id !== null && messages.dismiss(id)) {
-            paintMessage();
+            paintMessage("cleared");
           }
         },
         // Is this still the message on the bar (a newer one replaces it: the bar shows one at a time)?

@@ -78,7 +78,7 @@ export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, on
     });
     // The browser reconnects by itself after a dropped stream; after 3 failures in a row we stop it.
     stream.addEventListener("error", () => {
-      if (events === stream && guard.failed()) {
+      if (events === stream && (stream.readyState === 2 ? guard.stop() : guard.failed())) {
         close();
         if (typeof onStreamStopped === "function") {
           onStreamStopped();
