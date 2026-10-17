@@ -288,6 +288,40 @@ progress {
   background: var(--surface-panel);
 }
 
+/* A view change in flight (UI-25): the old rows stay, muted; the thin bar shows up only after 400 ms of aria-busy. */
+.grid-viewport.is-reloading .grid-rows {
+  opacity: 0.6;
+}
+
+.grid-viewport[aria-busy="true"]::before {
+  content: "";
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: block;
+  height: 2px;
+  margin-bottom: -2px;
+  background: var(--focus);
+  opacity: 0;
+  transform-origin: left center;
+  animation: grid-busy-in 0s linear 400ms forwards, grid-busy-run 1.2s ease-in-out 400ms infinite;
+}
+
+@keyframes grid-busy-in {
+  to { opacity: 1; }
+}
+
+@keyframes grid-busy-run {
+  0% { transform: scaleX(0.05); }
+  100% { transform: scaleX(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid-viewport[aria-busy="true"]::before {
+    animation: grid-busy-in 0s linear 400ms forwards;
+  }
+}
+
 .grid-rows {
   position: sticky;
   top: 0;

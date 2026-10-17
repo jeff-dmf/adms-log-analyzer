@@ -8,6 +8,41 @@ export class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
+
+  get kind() {
+    return errorKind(this);
+  }
+}
+
+// What kind of failure an error is, to treat it differently: "network" (server unreachable; the status bar owns it),
+// "forbidden" (session gone), "timeout" (408 or a *_timeout code: the same request may succeed later), "server" (5xx),
+// "query" (any other 4xx: the request itself is wrong, repeating it cannot help) or "unknown".
+export function errorKind(err) {
+  if (!err) {
+    return "unknown";
+  }
+  const status = Number(err.status);
+  if (err.code === "network" || status === 0) {
+    return "network";
+  }
+  if (status === 403) {
+    return "forbidden";
+  }
+  if (status === 408 || /timeout/i.test(String(err.code || ""))) {
+    return "timeout";
+  }
+  if (status >= 500) {
+    return "server";
+  }
+  if (status >= 400) {
+    return "query";
+  }
+  return "unknown";
+}
+
+// Repeating the same request can only help when the failure was not caused by the request itself.
+export function isRetryable(kind) {
+  return kind !== "query" && kind !== "forbidden";
 }
 
 let forbiddenHandler = null;

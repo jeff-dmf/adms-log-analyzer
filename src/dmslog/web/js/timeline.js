@@ -156,6 +156,13 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
     status.textContent = statusText;
   }
 
+  // The last histogram could not be refreshed: the chart still shows the previous data, marked as out of date.
+  let stale = false;
+  function setStale(on) {
+    stale = Boolean(on);
+    root.classList.toggle("tl-stale", stale);
+  }
+
   function setStatus(text, isError) {
     statusText = text;
     status.textContent = text;
@@ -393,6 +400,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
     const request = getFilter();
     if (!request || request.caseId === null || request.caseId === undefined) {
       loader.invalidate();
+      setStale(false);
       response = null;
       data = null;
       renderChart();
@@ -415,6 +423,7 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       if (result.stale || destroyed) {
         return;
       }
+      setStale(false);
       response = result.data;
       data = toChartData(response, (k) => labelOf(response.split, k));
       renderChart();
@@ -422,7 +431,12 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
       renderUndated();
       setStatus(data.series.length === 0 ? S.timelineEmpty : describeTotals(), false);
     } catch (err) {
-      setStatus(format(S.timelineError, { error: err && err.message ? err.message : "" }), true);
+      if (err && err.name === "AbortError") {
+        return;
+      }
+      // Keep the previous chart (never mixed with the new answer) and say that it is out of date.
+      setStale(data !== null);
+      setStatus(format(data !== null ? S.timelineStale : S.timelineError, { error: err && err.message ? err.message : "" }), true);
     }
   }
 
@@ -524,5 +538,5 @@ export function initTimeline(container, { api, getFilter, onRangeSelected, getSo
   }
 
   refresh();
-  return { refresh, destroy };
+  return { refresh, destroy, isStale: () => stale };
 }

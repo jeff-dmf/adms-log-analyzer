@@ -47,6 +47,43 @@ export function createDebounce({ run, wait, maxWait, timers }) {
   };
 }
 
+export const MAX_STREAM_FAILURES = 3; // consecutive failures of the watch stream before it stops trying
+
+// Consecutive failures of the watch stream (EventSource reconnects by itself and fails again while the server is
+// down). `failed()` returns true on the failure that reaches the limit: the caller closes the stream. `opened()`
+// resets the count; `reset()` forgets a stop (a new stream, Retry). Pure: no timers, no stream.
+export function createStreamGuard(max = MAX_STREAM_FAILURES) {
+  const limit = Number.isInteger(max) && max > 0 ? max : MAX_STREAM_FAILURES;
+  let failures = 0;
+  let stopped = false;
+  return {
+    failed() {
+      if (stopped) {
+        return false;
+      }
+      failures += 1;
+      if (failures >= limit) {
+        stopped = true;
+        return true;
+      }
+      return false;
+    },
+    opened() {
+      failures = 0;
+    },
+    reset() {
+      failures = 0;
+      stopped = false;
+    },
+    get stopped() {
+      return stopped;
+    },
+    get failures() {
+      return failures;
+    },
+  };
+}
+
 // "bottom": the last row of the data is in view; "scrolled": the buffer ends the data but the view is
 // above its last row; "middle": the buffer does not reach the end of the data.
 export function tailPosition(info) {

@@ -11,7 +11,8 @@ import { formatTs } from "./time.js";
 //   S                  the string catalog
 //   helpText()         the text shown by the "?" button until the shortcuts dialog exists (UI-28)
 //   now, setTimer, clearTimer   injected clock and timers (tests)
-export function createStatusBar(root, { S, helpText = () => "", now = () => Date.now(), setTimer, clearTimer } = {}) {
+//   focusFallback()    where the focus goes when the control that had it (Retry, Dismiss) disappears
+export function createStatusBar(root, { S, helpText = () => "", now = () => Date.now(), setTimer, clearTimer, focusFallback } = {}) {
   const doc = root.ownerDocument;
   const arm = setTimer || ((fn, ms) => setTimeout(fn, ms));
   const disarm = clearTimer || ((id) => clearTimeout(id));
@@ -25,6 +26,13 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     }
     return node;
   };
+
+  // A control that disappears while it has the focus would drop it on the page: hand it to the fallback.
+  function releaseFocus(container) {
+    if (container.contains(doc.activeElement) && typeof focusFallback === "function") {
+      focusFallback();
+    }
+  }
 
   root.textContent = "";
   root.classList.add("ui-statusbar");
@@ -51,7 +59,10 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
   const messageText = make("span", "sb-message-text");
   const dismissButton = make("button", "ui-button is-ghost sb-button sb-dismiss", S.sbDismiss);
   dismissButton.type = "button";
-  messageEl.append(messageText, dismissButton);
+  const actionButton = make("button", "ui-button sb-button sb-action", "");
+  actionButton.type = "button";
+  actionButton.hidden = true;
+  messageEl.append(messageText, actionButton, dismissButton);
   const announcer = make("span", "visually-hidden sb-announcer");
   announcer.setAttribute("aria-live", "polite");
   announcer.setAttribute("aria-atomic", "true");
@@ -151,7 +162,10 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     const current = messages.current;
     clearTimerNow();
     if (current === null) {
+      releaseFocus(messageEl);
       messageText.textContent = "";
+      actionButton.hidden = true;
+      actionButton.textContent = "";
       messageEl.hidden = true;
       dismissButton.hidden = true;
       messageEl.className = "sb-seg sb-message";
@@ -162,6 +176,11 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     messageEl.className = "sb-seg sb-message is-" + current.kind;
     messageEl.hidden = false;
     dismissButton.hidden = current.kind !== "error";
+    if (current.action === null) {
+      releaseFocus(actionButton);
+    }
+    actionButton.hidden = current.action === null;
+    actionButton.textContent = current.action === null ? "" : current.action.label;
     if (current.expiresAt !== null) {
       timer = arm(() => {
         timer = null;
@@ -171,6 +190,14 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
       }, Math.max(0, current.expiresAt - now()));
     }
   }
+  // The action (Retry) runs once per click on the message that is shown now; the message stays until the work
+  // it stands for succeeds (its owner dismisses it) or the user dismisses it.
+  actionButton.addEventListener("click", () => {
+    const current = messages.current;
+    if (current !== null && current.action !== null) {
+      current.action.run();
+    }
+  });
   dismissButton.addEventListener("click", () => {
     messages.show("");
     paintMessage();
@@ -180,6 +207,7 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
   let retryHandler = null;
   function connection(state, { onRetry } = {}) {
     if (state === "online") {
+      releaseFocus(errorEl);
       root.classList.remove("is-error");
       errorEl.hidden = true;
       errorText.textContent = "";
@@ -224,12 +252,12 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     count: paintCount,
     position: paintPosition,
     progress: paintProgress,
-    message(text, { kind = "info", timeoutMs } = {}) {
+    message(text, { kind = "info", timeoutMs, action } = {}) {
       if (isConnectionText(text, S)) {
         // The connection error owns the bar (connection()); a stale copy must not come back after recovery.
         return { dismiss() {} };
       }
-      const shown = messages.show(text, { kind: normalizeKind(kind), timeoutMs }, now());
+      const shown = messages.show(text, { kind: normalizeKind(kind), timeoutMs, action }, now());
       paintMessage();
       const id = shown === null ? null : shown.id;
       return {

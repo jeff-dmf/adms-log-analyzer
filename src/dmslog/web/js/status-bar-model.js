@@ -70,7 +70,8 @@ export function createMessageState() {
       return current;
     },
     // text "" clears. Returns the new message (or null) so the caller can paint it.
-    show(text, { kind = "info", timeoutMs } = {}, now = 0) {
+    // options.action: { label, run } adds a button to the message (Retry); it needs a function and a label.
+    show(text, { kind = "info", timeoutMs, action } = {}, now = 0) {
       if (text === "" || text === null || text === undefined) {
         current = null;
         return null;
@@ -78,7 +79,11 @@ export function createMessageState() {
       const resolvedKind = normalizeKind(kind);
       const timeout = timeoutMs === undefined ? messageTimeout(resolvedKind) : Math.max(0, Number(timeoutMs) || 0);
       serial += 1;
-      current = { id: serial, text: String(text), kind: resolvedKind, expiresAt: timeout > 0 ? now + timeout : null };
+      const valid = action && typeof action.run === "function" && typeof action.label === "string" && action.label !== "";
+      current = {
+        id: serial, text: String(text), kind: resolvedKind, expiresAt: timeout > 0 ? now + timeout : null,
+        action: valid ? { label: action.label, run: action.run } : null,
+      };
       return current;
     },
     // True when the current message expired at `now` and was cleared.

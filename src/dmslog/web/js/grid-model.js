@@ -259,3 +259,50 @@ export class SourceLabels {
     return label;
   }
 }
+
+// Which view change the screen really shows (UI-25). `begin(attempt)` is called for every view change and returns a
+// token; `settle(token, outcome, retryable)` says what to do with the answer: "confirm" (the attempt is now the
+// confirmed view), "rollback" (go back to `to`, the last confirmed view of the same case, or null when there is none;
+// the attempt is kept for Retry when it is retryable) or "stale" (a newer change or another case owns the screen, so
+// a late answer, success or failure, changes nothing). Pure: the caller restores the toolbar, the trail and the filter.
+export function createViewTracker() {
+  let seq = 0;
+  let current = null;
+  let confirmed = null;
+  let failed = null;
+  return {
+    begin(attempt) {
+      seq += 1;
+      current = attempt;
+      failed = null; // a newer view change replaces the failed one
+      return seq;
+    },
+    settle(token, outcome, retryable = true) {
+      if (token !== seq || current === null) {
+        return { action: "stale" };
+      }
+      if (outcome === "ok") {
+        confirmed = current;
+        failed = null;
+        return { action: "confirm" };
+      }
+      if (outcome === "failed") {
+        failed = retryable ? current : null;
+        return { action: "rollback", to: confirmed !== null && confirmed.caseId === current.caseId ? confirmed : null };
+      }
+      return { action: "stale" };
+    },
+    // The attempt that did not load and may be repeated (null when nothing failed, or it cannot succeed by repeating).
+    retryTarget: () => failed,
+    get confirmed() {
+      return confirmed;
+    },
+    // Another case was opened: nothing of the old one survives, and its late answers are stale.
+    caseChanged() {
+      seq += 1;
+      current = null;
+      confirmed = null;
+      failed = null;
+    },
+  };
+}
