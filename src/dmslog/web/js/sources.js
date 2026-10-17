@@ -46,6 +46,7 @@ export class SourcesPanel {
     this.loadEmpty = () => import("./case-empty.js"); // replaced by tests
     this.menuReady = null; // promise of the case menu (ui-menu.js loads on first use)
     this.loadMenu = () => import("./ui-menu.js"); // replaced by tests
+    this.caseGen = 0; // counts the case selections (A -> B -> A is three): a late window of an earlier one is dropped
     this.opSeq = 0; // ids of the operations (an opening or a resume) the panel runs: this.waiter is the current one
     this.addSession = 0; // counts the openings of the Add files dialog and the case switches: an operation started in an
     // earlier session must not touch the dialog (or the fields) of a later one
@@ -344,6 +345,7 @@ export class SourcesPanel {
   }
 
   async selectCase(caseId) {
+    this.caseGen += 1;
     if (this.waiter && this.waiter.caseId !== caseId) {
       this.cancelWaiter(S.cfCaseChanged);
     }
@@ -465,9 +467,17 @@ export class SourcesPanel {
         return; // a field to fix (reported), or the case or the dialog changed while the options were checked
       }
       result = await this.addFiles.submitAdd({
-        openPath: (path) => this.runCollection(path, scope, boundCase, partial.firstFor(path), {
-          onFirstReady: () => this.afterFirstReady(boundCase, session),
-        }),
+        openPath: async (path) => {
+          const outcome = await this.runCollection(path, scope, boundCase, partial.firstFor(path), {
+            onFirstReady: () => this.afterFirstReady(boundCase, session),
+          });
+          // The server refused the window or the sources: shown in the section, but only of the dialog session that sent it.
+          const err = outcome.error;
+          if (err && err.code === "bad_first" && this.caseId === boundCase && session === this.addSession && this.partialSlot()) {
+            this.partialSlot().showServerError(err.message);
+          }
+          return outcome;
+        },
       }, boundCase);
     } finally {
       this.setQueueBusy(false);
@@ -918,9 +928,6 @@ export class SourcesPanel {
         }
         this.waiter = null;
         this.closeEvents();
-        if (err && err.code === "bad_first" && this.partialSlot()) {
-          this.partialSlot().showServerError(err.message); // the server refused the window or the sources
-        }
         const result = refusalResult(err, {
           duplicate: S.cfDuplicateCollection, busy: S.cfBusy,
         });
@@ -1022,7 +1029,8 @@ export class SourcesPanel {
     }
     const err = result.error;
     if (err instanceof ApiError && err.code === "bad_first" && this.partialSlot()) {
-      this.handlers.onMessage(err.message, true); // the section already shows it (runJob)
+      this.partialSlot().showServerError(err.message);
+      this.handlers.onMessage(err.message, true);
     } else if (err instanceof ApiError && err.status === 409) {
       this.handlers.onMessage(conflictMessage(err), true);
     } else if (err instanceof ApiError && PATH_FIELD_ERRORS.has(err.code)) {
@@ -1052,6 +1060,11 @@ export class SourcesPanel {
       }
       if (data.status === "first_ready") {
         this.onFirstReadyEvent(data, events, caseId, stream);
+        return;
+      }
+      // Progress of an operation is the progress of its own job: events of another job (a replay of an earlier one) and
+      // those before the start request answered (the job is not known yet) do not touch the bar.
+      if (this.waiter && (this.waiter.jobId === null || this.waiter.jobId !== data.job_id)) {
         return;
       }
       const total = safeCount(data.bytes_total);
@@ -1133,6 +1146,7 @@ export class SourcesPanel {
   // having changed is the only reason to skip it.
   async handleFirstReady(data, waiter) {
     const caseId = this.caseId;
+    const gen = this.caseGen;
     const records = safeCount(data.records);
     const active = waiter ? this.waiter === waiter : this.events !== null; // false when the job already ended
     try {
@@ -1141,8 +1155,10 @@ export class SourcesPanel {
         this.handlers.onMessage(format(S[pluralKey("poFirstReady", records)], { records: records.toLocaleString("en-US") }), false);
       }
       await this.refreshSources(true);
-      if (this.caseId !== caseId) {
-        return; // the case changed: the window belongs to the old one
+      // The window belongs to this case selection and to this operation: if the case changed (also A -> B -> A) or a
+      // later operation started meanwhile, a late reload must not put its window back over the newer one.
+      if (this.caseId !== caseId || this.caseGen !== gen || (waiter && waiter.id !== this.opSeq)) {
+        return;
       }
       const first = (waiter && waiter.first) || null;
       const info = {
@@ -1178,7 +1194,7 @@ export class SourcesPanel {
     try {
       data = await api.partial.pending(caseId);
     } catch (err) {
-      return false;
+      return token !== this.pendingToken || this.caseId !== caseId; // an old check failing is not news
     }
     if (token !== this.pendingToken || this.caseId !== caseId) {
       return true;
@@ -1261,6 +1277,9 @@ export class SourcesPanel {
 
   // The offer goes back to "ready" (button on) when it was left in "busy" and nothing else will settle it.
   restoreOffer(caseId, from = ["busy"]) {
+    if (this.resuming || this.waiter) {
+      return; // an operation owns the offer now (its own end settles it): an old failure must not enable the button
+    }
     if (this.caseId === caseId && this.resumeUi && from.includes(this.resumeUi.getState())) {
       this.resumeUi.setState("ready", this.pendingItems, () => this.resumeFallback());
     }

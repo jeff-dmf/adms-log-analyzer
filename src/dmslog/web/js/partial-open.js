@@ -445,6 +445,7 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
         }
         plans.set(pathKey(path), entry);
         renderGroup(entry);
+        markStale(); // the file may have left the dialog while its answer was on the way
         showPeriod();
         refreshSummary();
       }

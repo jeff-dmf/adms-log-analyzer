@@ -50,7 +50,11 @@ export class CaseFiles {
   // host: element that receives the UI; nameInput: the case name field; onMessage(text, isError).
   // mode "add": the list adds files to the case that is already open (no name field, no new case);
   // `onAdd` runs when its button is pressed (it calls submitAdd()).
-  constructor({ host, nameInput, onMessage, fs, storage, mode, onAdd }) {
+  constructor({ host, nameInput, onMessage, fs, storage, mode, onAdd, announce }) {
+    // The dialog that holds the list owns its one live region (case-dialogs.js sets this.announce); nothing here is a
+    // live region of its own. What changes is spoken through it: the wait text, new notices and the count.
+    this.announce = typeof announce === "function" ? announce : null;
+    this.spoken = { wait: "", notices: 0, count: "" };
     this.host = host;
     this.mode = mode === "add" ? "add" : "create";
     this.onAdd = onAdd || (() => {});
@@ -99,8 +103,6 @@ export class CaseFiles {
     pathRow.appendChild(this.browseButton);
 
     this.waitBox = el("div", "cf-wait");
-    this.waitBox.setAttribute("role", "status");
-    this.waitBox.setAttribute("aria-live", "polite");
     this.waitBox.hidden = true;
     this.waitText = el("span", "cf-wait-text", S.cfWaitingDialog);
     this.cancelButton = button(S.cfCancel, () => this.cancelDialog());
@@ -108,11 +110,9 @@ export class CaseFiles {
     this.waitBox.appendChild(this.cancelButton);
 
     this.notices = el("ul", "cf-notices");
-    this.notices.setAttribute("aria-live", "polite");
 
     const head = el("div", "cf-list-head");
     this.count = el("span", "cf-count");
-    this.count.setAttribute("aria-live", "polite");
     this.clearButton = button(S.cfClear, () => this.state.clear());
     head.appendChild(this.count);
     head.appendChild(this.clearButton);
@@ -345,6 +345,31 @@ export class CaseFiles {
     for (const item of state.items) {
       this.list.appendChild(this.renderItem(item));
     }
+
+    this.speak();
+  }
+
+  // Speaks what changed since the last render through the dialog's live region (nothing when it did not change).
+  speak() {
+    const parts = [];
+    const wait = this.waitBox.hidden ? "" : this.waitText.textContent;
+    if (wait !== "" && wait !== this.spoken.wait) {
+      parts.push(wait);
+    }
+    this.spoken.wait = wait;
+    const noticeTexts = [...this.notices.children].map((li) => li.textContent);
+    if (noticeTexts.length > this.spoken.notices) {
+      parts.push(...noticeTexts.slice(this.spoken.notices));
+    }
+    this.spoken.notices = noticeTexts.length;
+    const count = this.count.textContent;
+    if (count !== this.spoken.count) {
+      parts.push(count);
+    }
+    this.spoken.count = count;
+    if (parts.length > 0 && this.announce) {
+      this.announce(parts.join(" "));
+    }
   }
 
   renderItem(item) {
@@ -365,7 +390,7 @@ export class CaseFiles {
     const label = statusLabel(item);
     if (label !== "") {
       const result = el("span", "cf-result cf-result-" + item.status, label + (item.message ? ": " + item.message : ""));
-      result.setAttribute("role", item.status === STATUS_WORKING ? "status" : "note");
+      result.setAttribute("role", "note");
       text.appendChild(result);
     }
     li.appendChild(text);

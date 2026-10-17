@@ -1369,18 +1369,25 @@ test("a preview of a file that left the dialog is marked and never used", async 
   assert.equal(has(q(dlg, "po-group")[0], "po-stale"), false, "back in the list: current again");
 });
 
-test("the section has no live region of its own: the dialog has one", async () => {
+const regionsOf = (dlg) => dlg.all().filter((n) => ["status", "alert"].includes(n.getAttribute("role")) || n.getAttribute("aria-live") !== null);
+
+test("each dialog has exactly one live region, and the list, the notices and the section speak through it", async () => {
   const ctx = page();
   const { dlg } = await openAdd(ctx);
   api.partial.plan = async () => planOf([{}]);
-  ctx.panel.addFiles.state.add([ENT]);
+  ctx.panel.addFiles.state.add([ENT, ENT]); // the second is a duplicate: a notice
   previewButton(dlg).dispatch("click");
   await settle();
-  const slot = q(dlg, "po-slot")[0];
-  const regions = slot.all().filter((n) => ["status", "alert"].includes(n.getAttribute("role")) || n.getAttribute("aria-live") !== null);
-  assert.deepEqual(regions.map((n) => n.className), ["po-live visually-hidden"], "one live region in the whole section");
-  const spoken = q(dlg, "po-live")[0].textContent;
-  assert.equal(spoken, "Previewed 1 file.");
+  assert.deepEqual(regionsOf(dlg).map((n) => n.className), ["cd-live visually-hidden"], "the whole Add dialog");
+  const live = q(dlg, "cd-live")[0];
+  assert.equal(live.textContent, "Previewed 1 file.");
+  ctx.panel.addFiles.state.add(["/data/other.zip"]);
+  assert.equal(live.textContent, "2 chosen", "the list's count is spoken through the same region");
+  ctx.panel.addFiles.state.add(["/data/other.zip"]);
+  assert.match(live.textContent, /already in the list/, "a notice too");
+  await ctx.panel.revealNewCase(ctx.refs.caseMenu);
+  const fresh = dialogOf("case-dialog-new");
+  assert.deepEqual(regionsOf(fresh).map((n) => n.className), ["cd-live visually-hidden"], "and the New case dialog");
 });
 
 test("the period says what its end is, and unpreviewed files say what applies to them", async () => {
@@ -1419,4 +1426,155 @@ test("the first part of a queue started in an earlier dialog session does not cl
   live().emit("done", { job_id: "J", status: "ok", records: 1 });
   await run;
   assert.ok(isOpen(dlg), "and the old queue's end does not reset or close it either");
+});
+
+// ---- second review round ---------------------------------------------------------------------------------------------
+
+test("a late first_ready reload of a finished job does not put its window over a later operation's", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const first = await startedJob(ctx, dlg, ["2026-10-09 10:00:00", "2026-10-09 10:30:00"]);
+  const slow = deferred();
+  api.sources = async () => { await slow.promise; return { sources: [] }; };
+  const stream1 = live();
+  stream1.emit("progress", { job_id: "J", status: "first_ready", stage: "first", records: 1 }); // J1's reload is slow
+  await settle();
+  api.sources = async () => ({ sources: [] });
+  stream1.emit("done", { job_id: "J", status: "ok", records: 1 });
+  await first.run;
+  await settle();
+  const applied = ctx.calls.first.length; // J1's window may or may not have landed yet: it has not (reload pending)
+  assert.equal(applied, 0);
+  // J2 starts and applies its own window
+  await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
+  q(dlg, "po-toggle-box")[0].checked = true;
+  q(dlg, "po-toggle-box")[0].dispatch("change");
+  await settle();
+  api.addCollection = async () => ({ job_id: "J2" });
+  ctx.panel.addFiles.state.add([ENT]);
+  fill(dlg, "2026-10-09 12:00:00", "2026-10-09 13:00:00");
+  const second = ctx.panel.addFilesToCase();
+  await settle();
+  live().emit("progress", { job_id: "J2", status: "first_ready", stage: "first", records: 2 });
+  await settle();
+  assert.equal(ctx.calls.first.length, 1);
+  assert.equal(ctx.calls.first[0].from, T("2026-10-09T12:00:00"));
+  slow.resolve(); // J1's late reload ends now
+  await settle();
+  assert.equal(ctx.calls.first.length, 1, "J1's 10:00 window did not come back over J2's");
+  live().emit("done", { job_id: "J2", status: "ok", records: 2 });
+  await second;
+});
+
+test("a late first_ready reload across A -> B -> A is dropped", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const { run } = await startedJob(ctx, dlg);
+  const slow = deferred();
+  api.sources = async () => { await slow.promise; return { sources: [] }; };
+  live().emit("progress", { job_id: "J", status: "first_ready", stage: "first", records: 1 });
+  await settle();
+  api.sources = async () => ({ sources: [] });
+  await ctx.panel.selectCase("B");
+  await ctx.panel.selectCase("A");
+  slow.resolve();
+  await run;
+  await settle();
+  assert.equal(ctx.calls.first.length, 0);
+});
+
+test("a refusal (bad_first) of an earlier dialog session is not shown in the reopened dialog", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const gate = deferred();
+  api.addCollection = async () => { await gate.promise; };
+  ctx.panel.addFiles.state.add([ENT]);
+  fill(dlg, "2026-10-09 10:00:00", "");
+  const run = ctx.panel.addFilesToCase();
+  await settle();
+  dlg.dispatch("keydown", { key: "Escape" });
+  await ctx.panel.revealAddFiles(false, ctx.refs.caseAddFiles);
+  gate.reject(new ApiError(400, "bad_first", "window of /data/old is bad"));
+  await run;
+  await settle();
+  assert.equal(q(dlg, "po-error").some((n) => !n.hidden && /\/data\/old/.test(n.textContent)), false);
+  // the same refusal in its own session is shown
+  const gate2 = deferred();
+  api.addCollection = async () => { await gate2.promise; };
+  q(dlg, "po-toggle-box")[0].checked = true;
+  q(dlg, "po-toggle-box")[0].dispatch("change");
+  await settle();
+  ctx.panel.addFiles.state.add([ENT]);
+  fill(dlg, "2026-10-09 10:00:00", "");
+  const run2 = ctx.panel.addFilesToCase();
+  await settle();
+  gate2.reject(new ApiError(400, "bad_first", "first.from is bad"));
+  await run2;
+  assert.ok(q(dlg, "po-error").some((n) => !n.hidden && /first\.from is bad/.test(n.textContent)));
+});
+
+test("removing the file while its /plan runs leaves a stale group with disabled checkboxes", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const gate = deferred();
+  api.partial.plan = async () => { await gate.promise; return planOf([{}, {}]); };
+  ctx.panel.addFiles.state.add([ENT]);
+  previewButton(dlg).dispatch("click");
+  await settle();
+  ctx.panel.addFiles.state.remove(ctx.panel.addFiles.state.items[0].id);
+  gate.resolve();
+  await settle();
+  const group = q(dlg, "po-group")[0];
+  assert.ok(has(group, "po-stale"));
+  assert.equal(q(group, "po-check").every((b) => b.disabled), true);
+});
+
+test("an old /pending failure cannot enable the button of a resume that is running", async () => {
+  const ctx = page();
+  api.partial.pending = async () => PENDING;
+  await ctx.panel.selectCase("A");
+  await settle();
+  const button = q(banner(), "resume-banner-button")[0];
+  // J1 ends; its follow-up /pending is slow and will fail
+  const gate = deferred();
+  api.addCollection = async () => ({ job_id: "J1" });
+  const done1 = ctx.panel.runCollection(ENT, "default", "A", { sources: ["x"] });
+  await settle();
+  api.partial.pending = async () => { await gate.promise; throw new ApiError(0, "network", "down"); };
+  live().emit("done", { job_id: "J1", status: "ok", records: 1 });
+  await done1;
+  await settle();
+  // the user presses Resume now: R is running
+  api.partial.resume = async () => ({ job_id: "R" });
+  button.dispatch("click");
+  await settle();
+  assert.equal(button.disabled, true);
+  assert.equal(ctx.panel.resuming, true);
+  gate.resolve(); // the old check fails now
+  await settle();
+  assert.equal(button.disabled, true, "still busy: the resume owns the offer");
+  assert.equal(ctx.panel.resuming, true);
+});
+
+test("progress of another job does not move the bar of this operation, nor does progress before the start answered", async () => {
+  const ctx = page();
+  const { dlg } = await openAdd(ctx);
+  const gate = deferred();
+  api.addCollection = async () => { await gate.promise; return { job_id: "NEW" }; };
+  ctx.panel.addFiles.state.add([ENT]);
+  fill(dlg, "2026-10-09 10:00:00", "");
+  const run = ctx.panel.addFilesToCase();
+  await settle();
+  const stream = live();
+  const before = ctx.calls.progress.length;
+  stream.emit("progress", { job_id: "OLD", status: "progress", stage: "rest", source: "o.log", records: 99, bytes_done: 99, bytes_total: 100 });
+  assert.equal(ctx.calls.progress.length, before, "before the start answered nothing is shown");
+  gate.resolve();
+  await settle();
+  stream.emit("progress", { job_id: "OLD", status: "progress", stage: "rest", source: "o.log", records: 99, bytes_done: 99, bytes_total: 100 });
+  assert.equal(ctx.calls.progress.at(-1) === null || ctx.calls.progress.at(-1).max !== 100, true, "OLD does not draw 99/100 during NEW");
+  stream.emit("progress", { job_id: "NEW", status: "progress", stage: "first", source: "n.log", records: 3, bytes_done: 1, bytes_total: 4 });
+  assert.deepEqual(ctx.calls.progress.at(-1), { value: 1, max: 4, text: "Indexing first part… n.log: 3 records" });
+  stream.emit("done", { job_id: "NEW", status: "ok", records: 3 });
+  await run;
 });

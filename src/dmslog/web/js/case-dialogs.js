@@ -61,10 +61,10 @@ function showLabels(root) {
 // on demand (import(); a failed load shows Try again and is tried again, never a dead end) and shows its body. While it
 // is off, or not loaded, nothing narrows the opening. Options: getPaths(), getCaseId(), getScope(), loadModule() (default:
 // import("./partial-open.js")), scopeSelect (a change of scope invalidates the preview).
-// The slot owns the dialog's one live region (the status and the errors of the section are spoken through it).
+// `announce(text)` is the dialog's one live region (the status and the errors of the section are spoken through it).
 // Returns { node, wanted(), ready() -> Promise<boolean>, validate(paths, scope), snapshot(paths, scope), refresh(),
 // reset(), showServerError(text) }: `paths`/`scope` are the files and the scope of the action being started.
-function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, scopeSelect, onMessage }) {
+function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, scopeSelect, onMessage, announce }) {
   const node = doc.createElement("div");
   node.className = "po-slot";
   const row = doc.createElement("label");
@@ -84,19 +84,12 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
   toggle.setAttribute("aria-expanded", "false");
   const note = doc.createElement("p");
   note.className = "po-load-note";
-  const live = doc.createElement("p");
-  live.className = "po-live visually-hidden";
-  live.setAttribute("role", "status");
-  live.setAttribute("aria-live", "polite");
-  const announce = (text) => {
-    live.textContent = String(text || "");
-  };
   const retry = button(doc, S.poRetry, "ui-button po-retry", () => load());
   retry.hidden = true;
   const content = doc.createElement("div");
   content.className = "po-content";
   body.append(note, retry, content);
-  node.append(row, body, live);
+  node.append(row, body);
 
   let controller = null;
   let loading = null; // shared promise of the load; reset by a failure so the next try imports again
@@ -192,9 +185,21 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
         toggle.focus();
       }
       note.textContent = "";
-      announce("");
       retry.hidden = true;
     },
+  };
+}
+
+// The one live region of a dialog (role=status, visually hidden): the list, the section and every message of the dialog
+// are spoken through it, so a screen reader never hears two regions at once.
+function addLiveRegion(doc, shell) {
+  const live = doc.createElement("p");
+  live.className = "cd-live visually-hidden";
+  live.setAttribute("role", "status");
+  live.setAttribute("aria-live", "polite");
+  shell.body.appendChild(live);
+  return (text) => {
+    live.textContent = String(text || "");
   };
 }
 
@@ -220,6 +225,7 @@ export function mountCaseDialogs({
   showLabels(newForm);
   newForm.hidden = false;
   newShell.body.appendChild(newForm);
+  caseFiles.announce = addLiveRegion(doc, newShell);
   newShell.foot.appendChild(button(doc, S.cfCancel, "ui-button case-dialog-cancel", () => newShell.close()));
   caseFiles.placeAction(newShell.foot, newForm.id || null);
   parent.appendChild(newShell.dialog);
@@ -236,6 +242,8 @@ export function mountCaseDialogs({
   addForm.insertBefore(refs.addFilesHost, heading); // the list goes above the "Folder or single file" section
   refs.addFilesHost.hidden = false;
   addShell.body.appendChild(addForm);
+  const announceAdd = addLiveRegion(doc, addShell);
+  addFiles.announce = announceAdd;
   // Open only part first: after the folder section (its Open button and the list's main action both honour it)
   const partial = createPartialSlot(doc, {
     getPaths: () => [...addFiles.state.items.map((item) => item.path), addFiles.pathInput.value, refs.pathInput.value],
@@ -244,6 +252,7 @@ export function mountCaseDialogs({
     loadModule: loadPartial,
     scopeSelect: refs.scopeSelect || null,
     onMessage,
+    announce: announceAdd,
   });
   addForm.appendChild(partial.node);
   // The files of the dialog change (list edited, a path typed): the section marks previews of files that left.
