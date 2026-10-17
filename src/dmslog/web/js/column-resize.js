@@ -19,9 +19,25 @@ export class ColumnResizer {
     this.prepareFit = prepareFit || (() => null);  // (key) -> restore function | null: shows untruncated text while fitting
     this.measureProbe = measureChar || (() => probeCharWidth(rowsLayer));
     this.headerCells = new Map();
+    // What the sideways wheel needs, kept so that the wheel path reads nothing (UI-27): measureLayout() refreshes the
+    // range and the page width when the layout changes (apply(), the viewport's ResizeObserver); scrollX follows
+    // every scroll of the viewport (syncScroll) and scrollTo().
+    this.scrollX = 0;            // horizontal scroll position
+    this.maxScrollX = Infinity;  // furthest scrollLeft; Infinity while nothing was measured
+    this.pageWidth = 0;          // client width of the viewport (a "page" of the horizontal wheel)
+    this.destroyed = false;
+    this.listeners = new AbortController(); // every listener of the resizer; destroy() removes them all
     if (typeof viewport.addEventListener === "function") {
-      viewport.addEventListener("scroll", () => this.syncScroll());
+      viewport.addEventListener("scroll", () => this.syncScroll(), { signal: this.listeners.signal });
     }
+  }
+
+  // Stops the resizer: its listeners are removed and every entry point (pointer, keys, double click, setWidth, fit,
+  // reset, apply) does nothing afterwards, so no measurement or stored preference follows a dropped grid.
+  destroy() {
+    this.destroyed = true;
+    this.listeners.abort();
+    this.headerCells.clear();
   }
 
   // Measures the width of one character of the grid font and applies it to the default widths. Called once at the start
@@ -73,7 +89,11 @@ export class ColumnResizer {
   }
 
   bindHandle(handle, key) {
+    const signal = this.listeners.signal;
     handle.addEventListener("pointerdown", (event) => {
+      if (this.destroyed) {
+        return;
+      }
       if (event.button !== undefined && event.button !== 0) {
         return;
       }
@@ -85,23 +105,32 @@ export class ColumnResizer {
       handle.classList.add("dragging");
       const move = (e) => this.setWidth(key, startWidth + e.clientX - startX, false);
       const end = () => {
+        if (this.destroyed) {
+          return;
+        }
         handle.removeEventListener("pointermove", move);
         handle.removeEventListener("pointerup", end);
         handle.removeEventListener("pointercancel", end);
         handle.classList.remove("dragging");
         this.model.save();
       };
-      handle.addEventListener("pointermove", move);
-      handle.addEventListener("pointerup", end);
-      handle.addEventListener("pointercancel", end);
-    });
-    handle.addEventListener("click", (event) => event.stopPropagation());
+      handle.addEventListener("pointermove", move, { signal });
+      handle.addEventListener("pointerup", end, { signal });
+      handle.addEventListener("pointercancel", end, { signal });
+    }, { signal });
+    handle.addEventListener("click", (event) => event.stopPropagation(), { signal });
     handle.addEventListener("dblclick", (event) => {
+      if (this.destroyed) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       this.fit(key);
-    });
+    }, { signal });
     handle.addEventListener("keydown", (event) => {
+      if (this.destroyed) {
+        return;
+      }
       const action = keyAction(event.key, event.shiftKey);
       if (!action) {
         return;
@@ -115,10 +144,13 @@ export class ColumnResizer {
       } else {
         this.setWidth(key, this.model.get(key) + action.delta, true);
       }
-    });
+    }, { signal });
   }
 
   setWidth(key, width, persist) {
+    if (this.destroyed) {
+      return;
+    }
     this.model.set(key, width, persist);
     this.apply();
   }
@@ -126,6 +158,9 @@ export class ColumnResizer {
   // Fits the column to the widest of its header and the rendered cells, measured without the applied
   // width and without flex-grow (see intrinsicWidths).
   fit(key) {
+    if (this.destroyed) {
+      return;
+    }
     const restore = this.prepareFit(key);
     try {
       const cells = [...this.getVisibleCells(key)];
@@ -142,12 +177,18 @@ export class ColumnResizer {
   }
 
   reset() {
+    if (this.destroyed) {
+      return;
+    }
     this.model.reset();
     this.apply();
   }
 
   // Applies the widths to the header, the pooled rows and the layer that sets the horizontal scroll.
   apply() {
+    if (this.destroyed) {
+      return;
+    }
     const keys = this.getKeys();
     for (const key of keys) {
       const width = this.model.get(key) + "px";
@@ -166,6 +207,7 @@ export class ColumnResizer {
     this.rowsLayer.style.minWidth = this.model.total(keys) + "px";
     this.header.style.minWidth = "";
     this.syncScroll();
+    this.measureLayout();
     this.onLayout();
   }
 
@@ -174,16 +216,43 @@ export class ColumnResizer {
     return this.model.get(key) + "px";
   }
 
-  // The header follows the body horizontally; its right padding matches the body's vertical scrollbar.
+  // The header follows the body horizontally; its right padding matches the body's vertical scrollbar. Runs on every
+  // scroll of the viewport (as before UI-27) and when the widths are applied.
   syncScroll() {
+    if (this.destroyed) {
+      return;
+    }
     const v = this.viewport;
     if (typeof v.offsetWidth === "number" && typeof v.clientWidth === "number") {
       const bar = Math.max(0, v.offsetWidth - v.clientWidth - 2 * (v.clientLeft || 0));
       this.header.style.paddingRight = bar + "px";
     }
     if (typeof v.scrollLeft === "number") {
+      this.scrollX = v.scrollLeft;
       this.header.scrollLeft = v.scrollLeft;
     }
+  }
+
+  // Range and page width of the sideways wheel, measured when the layout changes (never from the wheel path).
+  measureLayout() {
+    if (this.destroyed) {
+      return;
+    }
+    const v = this.viewport;
+    if (typeof v.clientWidth === "number") {
+      this.pageWidth = v.clientWidth;
+      if (typeof v.scrollWidth === "number") {
+        this.maxScrollX = Math.max(0, v.scrollWidth - v.clientWidth);
+      }
+    }
+  }
+
+  // Moves the body and the header to `x` (clamped to the measured range) with writes only.
+  scrollTo(x) {
+    const next = Math.min(Math.max(0, x), this.maxScrollX);
+    this.scrollX = next;
+    this.viewport.scrollLeft = next;
+    this.header.scrollLeft = next;
   }
 }
 
