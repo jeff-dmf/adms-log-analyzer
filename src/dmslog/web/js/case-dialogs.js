@@ -6,6 +6,8 @@
 import { createDialogShell } from "./panel-shell.js";
 import { S } from "./strings.js";
 
+let slotUid = 0;
+
 function button(doc, label, className, handler) {
   const node = doc.createElement("button");
   node.type = "button";
@@ -55,11 +57,138 @@ function showLabels(root) {
   }
 }
 
+// "Open only part first" (M9 9.9) inside the Add files dialog: a checkbox that, when turned on, loads partial-open.js
+// on demand (import(); a failed load shows Try again and is tried again, never a dead end) and shows its body. While it
+// is off, or not loaded, nothing narrows the opening. Options: getPaths(), getCaseId(), getScope(), loadModule() (default:
+// import("./partial-open.js")), scopeSelect (a change of scope invalidates the preview).
+// Returns { node, wanted(), ready() -> Promise<boolean>, validate(), snapshot(), reset(), showServerError(text) }.
+function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, scopeSelect, onMessage }) {
+  const node = doc.createElement("div");
+  node.className = "po-slot";
+  const row = doc.createElement("label");
+  row.className = "po-toggle";
+  const toggle = doc.createElement("input");
+  toggle.type = "checkbox";
+  toggle.className = "po-toggle-box";
+  toggle.checked = false;
+  const toggleText = doc.createElement("span");
+  toggleText.textContent = S.poToggle;
+  row.append(toggle, toggleText);
+  const body = doc.createElement("div");
+  body.className = "po-body";
+  body.id = "po-body-" + String(++slotUid);
+  body.hidden = true;
+  toggle.setAttribute("aria-controls", body.id);
+  toggle.setAttribute("aria-expanded", "false");
+  const note = doc.createElement("p");
+  note.className = "po-load-note";
+  note.setAttribute("role", "status");
+  const retry = button(doc, S.poRetry, "ui-button po-retry", () => load());
+  retry.hidden = true;
+  const content = doc.createElement("div");
+  content.className = "po-content";
+  body.append(note, retry, content);
+  node.append(row, body);
+
+  let controller = null;
+  let loading = null; // shared promise of the load; reset by a failure so the next try imports again
+  let generation = 0; // a reset (case switch) drops a load that was still running
+
+  function load() {
+    if (controller) {
+      return Promise.resolve(true);
+    }
+    if (!loading) {
+      const mine = generation;
+      note.textContent = S.poLoading;
+      retry.hidden = true;
+      const attempt = Promise.resolve().then(() => loadModule()).then((mod) => {
+        if (mine !== generation) {
+          return false;
+        }
+        controller = mod.mountPartialBody({ host: content, getCaseId, getPaths, getScope });
+        note.textContent = "";
+        const wasOnRetry = doc.activeElement === retry;
+        retry.hidden = true;
+        if (wasOnRetry || isHiddenChain(doc.activeElement)) {
+          controller.focusFirst();
+        }
+        return true;
+      });
+      loading = attempt;
+      attempt.catch(() => {
+        if (loading === attempt) {
+          loading = null;
+        }
+        if (mine === generation) {
+          note.textContent = S.poLoadFailed;
+          retry.hidden = false;
+        }
+      });
+    }
+    return loading.then((ok) => ok, () => false);
+  }
+
+  toggle.addEventListener("change", () => {
+    body.hidden = !toggle.checked;
+    toggle.setAttribute("aria-expanded", toggle.checked ? "true" : "false");
+    if (toggle.checked) {
+      load();
+    }
+  });
+  if (scopeSelect) {
+    scopeSelect.addEventListener("change", () => {
+      if (controller) {
+        controller.invalidate(S.poScopeChanged);
+      }
+    });
+  }
+
+  return {
+    node,
+    wanted: () => toggle.checked,
+    ready: () => (toggle.checked ? load() : Promise.resolve(true)),
+    validate() {
+      if (!controller) {
+        onMessage(S.poNotReady, true);
+        return { ok: false, message: S.poNotReady };
+      }
+      return controller.validate();
+    },
+    snapshot: () => (controller && toggle.checked ? controller.snapshot() : null),
+    showServerError(text) {
+      if (controller) {
+        controller.showServerError(text);
+      }
+    },
+    // Back to the closed state: a case switch or a finished opening. A load in flight is dropped.
+    reset() {
+      generation += 1;
+      loading = null;
+      if (controller) {
+        controller.reset();
+      }
+      const wasInside = body.contains(doc.activeElement);
+      toggle.checked = false;
+      toggle.setAttribute("aria-expanded", "false");
+      body.hidden = true;
+      if (wasInside) {
+        toggle.focus();
+      }
+      note.textContent = "";
+      retry.hidden = true;
+    },
+  };
+}
+
 // refs: {newCaseForm, newCaseName, openForm, pathInput, addFilesHost}. caseFiles / addFiles: the two CaseFiles lists.
 // Options: host (where the <dialog>s go, default document.body), fallback() (focus target when the opener is gone),
 // onClose(kind) after a dialog closed for any reason. Returns { open(kind, opener, {focusPath}), close(kind), closeAll(),
 // isOpen(kind), openKind() } with kind "new" | "add".
-export function mountCaseDialogs({ refs, caseFiles, addFiles, host = null, fallback = null, onClose = null }) {
+export function mountCaseDialogs({
+  refs, caseFiles, addFiles, host = null, fallback = null, onClose = null, getCaseId = () => null,
+  getScope = () => "default", loadPartial = () => import("./partial-open.js"), onMessage = () => {},
+}) {
   const parent = host || document.body;
   const doc = parent.ownerDocument || document;
   const closed = (kind) => () => {
@@ -90,6 +219,16 @@ export function mountCaseDialogs({ refs, caseFiles, addFiles, host = null, fallb
   addForm.insertBefore(refs.addFilesHost, heading); // the list goes above the "Folder or single file" section
   refs.addFilesHost.hidden = false;
   addShell.body.appendChild(addForm);
+  // Open only part first: after the folder section (its Open button and the list's main action both honour it)
+  const partial = createPartialSlot(doc, {
+    getPaths: () => [...addFiles.state.items.map((item) => item.path), addFiles.pathInput.value, refs.pathInput.value],
+    getCaseId,
+    getScope,
+    loadModule: loadPartial,
+    scopeSelect: refs.scopeSelect || null,
+    onMessage,
+  });
+  addForm.appendChild(partial.node);
   addShell.foot.appendChild(button(doc, S.cfCancel, "ui-button case-dialog-cancel", () => addShell.close()));
   addFiles.placeAction(addShell.foot);
   parent.appendChild(addShell.dialog);
@@ -125,6 +264,7 @@ export function mountCaseDialogs({ refs, caseFiles, addFiles, host = null, fallb
 
   return {
     open,
+    partial,
     close(kind) {
       if (shells[kind]) {
         shells[kind].close();

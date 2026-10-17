@@ -588,6 +588,17 @@ function start() {
       refreshDerived();
       return applyView();
     },
+    // Open only part first (M9 9.9): the first part is indexed. The view narrows to its time window (log time, [from, to)
+    // = ge from, le to - 1) so the rest arriving in the background does not show as noise, then reloads as at the end of
+    // a job. The user clears the window in the filter strip when the rest is in.
+    onFirstReady: (info) => {
+      if (info.from !== null || info.to !== null) {
+        byId("from-input").value = info.from === null ? "" : formatTs(info.from);
+        byId("to-input").value = info.to === null ? "" : formatTs(info.to - 1);
+        formState = { ...formState, from: info.from, to: info.to === null ? null : info.to - 1 };
+      }
+      return panel.handlers.onDone();
+    },
     onMessage: showMessage,
   });
   new SourceFilter({ host: byId("source-filter-host"), panel });

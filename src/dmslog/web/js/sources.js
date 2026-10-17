@@ -42,9 +42,20 @@ export class SourcesPanel {
     this.empty = null; // the empty state without a case (case-empty.js)
     this.emptyReady = null;
     this.loadDialogs = () => import("./case-dialogs.js"); // replaced by tests
+    this.loadPartial = null; // loader of partial-open.js for the Add files dialog; null = the dialog's own import()
     this.loadEmpty = () => import("./case-empty.js"); // replaced by tests
     this.menuReady = null; // promise of the case menu (ui-menu.js loads on first use)
     this.loadMenu = () => import("./ui-menu.js"); // replaced by tests
+    this.run = null; // {caseId, first, resume} of the job whose progress is watched (the window of first_ready, the follow-up)
+    this.starting = false; // the typed path is being validated/started: a second submit is ignored
+    this.resuming = false; // Resume now was pressed and its job has not ended
+    this.pendingToken = 0; // one per pending check (and per case switch): an older answer is dropped
+    this.pendingItems = []; // the last pending list shown by the banner (normalized)
+    this.pendingAnnounced = null; // case whose pending work was already announced in the status bar
+    this.resumeUi = null; // the "Resume indexing" banner (resume-banner.js), after the first pending work
+    this.resumeMod = null; // the loaded resume-banner.js
+    this.resumeReady = null; // promise of its load; reset by a failed load so the next check tries again
+    this.loadResume = () => import("./resume-banner.js"); // replaced by tests
     this.bindList();
     this.bindHeader();
     refs.caseSelect.addEventListener("change", () => {
@@ -186,6 +197,10 @@ export class SourcesPanel {
           caseFiles: this.caseFiles,
           addFiles: this.addFiles,
           fallback: () => (typeof document !== "undefined" && document.getElementById ? document.getElementById("grid-viewport") : null),
+          getCaseId: () => this.caseId,
+          getScope: () => this.currentScope(),
+          onMessage: (text, isError) => this.handlers.onMessage(text, isError),
+          ...(this.loadPartial ? { loadPartial: this.loadPartial } : {}),
         });
         return this.dialogs;
       });
@@ -329,6 +344,11 @@ export class SourcesPanel {
     }
     this.closeEvents();
     if (caseId !== this.caseId) {
+      this.pendingToken += 1; // a pending answer of the old case must not show in the new one
+      this.hideResume();
+      if (this.partialSlot()) {
+        this.partialSlot().reset(); // the window, the preview and the chosen sources belong to the case
+      }
       if (this.addFiles) {
         this.addFiles.state.resetResults(); // results belong to the case they were opened in
       }
@@ -354,6 +374,9 @@ export class SourcesPanel {
     this.refs.caseSelect.value = caseId || "";
     this.handlers.onCase(caseId);
     await this.refreshSources();
+    if (caseId !== null && this.caseId === caseId) {
+      this.checkPending(caseId); // best effort, not awaited: the offer to resume appears when it answers
+    }
   }
 
   async createCase() {
@@ -415,13 +438,60 @@ export class SourcesPanel {
     this.setQueueBusy(true);
     let result = null;
     try {
+      const partial = await this.preparePartial();
+      if (partial === null || this.caseId !== boundCase) {
+        return; // a field to fix (reported), or the case changed while the options were checked
+      }
       result = await this.addFiles.submitAdd({
-        openPath: (path) => this.runCollection(path, this.currentScope(), boundCase),
+        openPath: (path) => {
+          const scope = this.currentScope();
+          return this.runCollection(path, scope, boundCase, partial.firstFor(path, scope), {
+            onFirstReady: () => this.afterFirstReady(boundCase),
+          });
+        },
       }, boundCase);
     } finally {
       this.setQueueBusy(false);
     }
     if (result && result.state === "ok" && this.caseId === boundCase) {
+      this.closeDialog("add");
+      if (this.partialSlot()) {
+        this.partialSlot().reset();
+      }
+    }
+  }
+
+  // The "Open only part first" section of the Add files dialog, once the dialogs are mounted (null before, or when a
+  // test mounts a dialog without it).
+  partialSlot() {
+    return this.dialogs && this.dialogs.partial ? this.dialogs.partial : null;
+  }
+
+  // Open only part first: resolves to {firstFor(path, scope)} (null when nothing narrows that file), or to null when the
+  // user has to fix something first (shown next to the field and in the status bar). Without the option: no narrowing.
+  async preparePartial() {
+    const slot = this.partialSlot();
+    if (!slot || !slot.wanted()) {
+      return NO_PARTIAL;
+    }
+    const ready = await slot.ready();
+    if (!ready) {
+      this.handlers.onMessage(S.poNotReady, true);
+      return null;
+    }
+    const check = slot.validate();
+    if (!check.ok) {
+      this.handlers.onMessage(check.message, true);
+      return null;
+    }
+    return slot.snapshot() || NO_PARTIAL;
+  }
+
+  // The first part of the last file of a queue is ready: the dialog gets out of the way so the viewer can be used while
+  // the rest indexes. With more files still to open it stays, showing their progress.
+  afterFirstReady(caseId) {
+    const more = this.addFiles && this.addFiles.state.items.some((item) => item.status === "pending");
+    if (!more && this.caseId === caseId) {
       this.closeDialog("add");
     }
   }
@@ -753,8 +823,15 @@ export class SourcesPanel {
 
   // Opens one path in the current case and resolves when its job ends (one job per case at a time):
   // {status: "ok"|"failed"|"refused", code?, message?}.
-  // expectedCaseId (optional) ties the run to the case it was created for.
-  runCollection(path, scope, expectedCaseId) {
+  // expectedCaseId (optional) ties the run to the case it was created for. `first` (optional): open only part first
+  // ({from, to, sources}, see partial-open-model.js); hooks.onFirstReady(data) runs when its first part is ready.
+  runCollection(path, scope, expectedCaseId, first = null, hooks = null) {
+    return this.runJob((caseId) => api.addCollection(caseId, path, scope, first), expectedCaseId, { first, hooks });
+  }
+
+  // One job of the open case, from its start request to its done event. `start(caseId)` posts it and resolves to
+  // {job_id}; a null job_id means there was nothing to run. options: {first, hooks, resume}.
+  runJob(start, expectedCaseId, { first = null, hooks = null, resume = false } = {}) {
     return new Promise((resolve) => {
       if (this.caseId === null) {
         resolve({ status: "failed", message: S.needCase });
@@ -764,15 +841,32 @@ export class SourcesPanel {
         resolve({ status: "failed", message: S.cfCaseChanged });
         return;
       }
-      const waiter = { jobId: null, caseId: this.caseId, resolve, seen: new Map() };
+      const waiter = { jobId: null, caseId: this.caseId, resolve, seen: new Map(), firstSeen: new Map(), hooks, first, resume };
       this.waiter = waiter;
-      this.watchProgress(this.caseId);
-      api.addCollection(waiter.caseId, path, scope).then((started) => {
+      this.watchProgress(this.caseId, { first, resume });
+      let request;
+      try {
+        request = Promise.resolve(start(waiter.caseId));
+      } catch (err) {
+        request = Promise.reject(err); // a start that throws is a refused start, never an unhandled rejection
+      }
+      request.then((started) => {
         if (waiter.cancelled) {
           return;
         }
-        this.handlers.onMessage(S.collectionStarted, false);
         waiter.jobId = started ? started.job_id : null;
+        if (waiter.jobId === null && resume) {
+          // 200 {job_id: null}: nothing is pending any more
+          this.waiter = null;
+          this.closeEvents();
+          this.handlers.onMessage(S.poResumeNothing, false);
+          resolve({ status: "ok", nothing: true });
+          return;
+        }
+        this.handlers.onMessage(resume ? S.poResumeStarted : S.collectionStarted, false);
+        if (waiter.jobId !== null && waiter.firstSeen.has(waiter.jobId)) {
+          this.handleFirstReady(waiter.firstSeen.get(waiter.jobId), waiter);
+        }
         if (waiter.jobId !== null && waiter.seen.has(waiter.jobId)) {
           this.finishJob(waiter.seen.get(waiter.jobId));
         }
@@ -782,6 +876,9 @@ export class SourcesPanel {
         }
         this.waiter = null;
         this.closeEvents();
+        if (err && err.code === "bad_first" && this.partialSlot()) {
+          this.partialSlot().showServerError(err.message); // the server refused the window or the sources
+        }
         resolve(refusalResult(err, {
           duplicate: S.cfDuplicateCollection, busy: S.cfBusy,
         }));
@@ -791,19 +888,37 @@ export class SourcesPanel {
 
   async finishJob(data) {
     const waiter = this.waiter;
+    const run = this.run;
     this.waiter = null;
     this.closeEvents();
+    const left = data.status === "error" ? 0 : partialLeftOf(data);
+    const unmatched = data.status === "error" ? [] : unmatchedNamesOf(data);
+    const notes = [];
+    if (unmatched.length > 0) {
+      notes.push(unmatchedText(unmatched));
+    }
+    if (left > 0) {
+      notes.push(format(S[pluralKey("poLeft", left)], { count: left.toLocaleString("en-US") }));
+    }
     if (data.status === "error") {
       this.handlers.onMessage(S.progressFailed + (data.message ? ": " + data.message : ""), true);
     } else {
-      this.handlers.onMessage(doneText(data.records), false);
+      this.handlers.onMessage([doneText(data.records), ...notes].join(" "), left > 0);
     }
+    const caseId = waiter ? waiter.caseId : this.caseId;
     await this.refreshSources();
     this.handlers.onDone();
+    // A partial opening or a resume may leave work: ask the server (the banner follows the answer).
+    if (caseId !== null && this.caseId === caseId && (left > 0 || (this.resumeUi && this.resumeUi.isVisible()) || (run && (run.first || run.resume)) || (waiter && (waiter.first || waiter.resume)))) {
+      this.checkPending(caseId);
+    }
     if (waiter) {
-      waiter.resolve(data.status === "error"
-        ? { status: "failed", code: data.code || "", message: data.message || S.progressFailed }
-        : { status: "ok" });
+      const note = notes.join(" ");
+      if (data.status === "error") {
+        waiter.resolve({ status: "failed", code: data.code || "", message: data.message || S.progressFailed });
+      } else {
+        waiter.resolve(note === "" ? { status: "ok" } : { status: "ok", message: note });
+      }
     }
   }
 
@@ -818,49 +933,76 @@ export class SourcesPanel {
       this.handlers.onMessage(S.needCase, true);
       return;
     }
+    if (this.starting) {
+      return; // a second submit while the first one is still being checked or posted
+    }
     const path = this.refs.pathInput.value.trim();
     if (path === "") {
       setFieldError(this.refs.pathInput, S.needPath);
       return;
     }
     setFieldError(this.refs.pathInput, null);
+    const caseId = this.caseId;
     const scope = this.refs.scopeSelect.value === "all" ? "all" : "default";
-    this.watchProgress(this.caseId);
+    this.starting = true;
     try {
-      await api.addCollection(this.caseId, path, scope);
-      this.handlers.onMessage(S.collectionStarted, false);
-      this.refs.pathInput.value = "";
-      this.closeDialog("add"); // the job runs on; its progress is in the status bar
-    } catch (err) {
-      this.closeEvents();
-      if (err instanceof ApiError && err.status === 409) {
-        this.handlers.onMessage(conflictMessage(err), true);
-      } else if (err instanceof ApiError && PATH_FIELD_ERRORS.has(err.code)) {
-        setFieldError(this.refs.pathInput, err.message); // "Path does not exist: ..." under the field
-      } else {
-        this.handlers.onMessage(err.message, true);
+      const partial = await this.preparePartial();
+      if (partial === null || this.caseId !== caseId) {
+        return; // a field to fix (reported), or the case changed while the options were checked
       }
+      const first = partial.firstFor(path, scope);
+      this.watchProgress(caseId, { first, resume: false });
+      try {
+        await api.addCollection(caseId, path, scope, first);
+        this.handlers.onMessage(S.collectionStarted, false);
+        this.refs.pathInput.value = "";
+        this.closeDialog("add"); // the job runs on; its progress is in the status bar
+        if (this.partialSlot()) {
+          this.partialSlot().reset();
+        }
+      } catch (err) {
+        this.closeEvents();
+        if (err instanceof ApiError && err.code === "bad_first" && this.partialSlot()) {
+          this.partialSlot().showServerError(err.message);
+          this.handlers.onMessage(err.message, true);
+        } else if (err instanceof ApiError && err.status === 409) {
+          this.handlers.onMessage(conflictMessage(err), true);
+        } else if (err instanceof ApiError && PATH_FIELD_ERRORS.has(err.code)) {
+          setFieldError(this.refs.pathInput, err.message); // "Path does not exist: ..." under the field
+        } else {
+          this.handlers.onMessage(err.message, true);
+        }
+      }
+    } finally {
+      this.starting = false;
     }
   }
 
-  watchProgress(caseId) {
+  // run: {first, resume} of the job being watched (the window of first_ready, the follow-up after done).
+  watchProgress(caseId, run = null) {
     this.closeEvents();
     if (typeof EventSource !== "function") {
       return;
     }
+    this.run = run ? { caseId, first: run.first || null, resume: Boolean(run.resume) } : null;
     this.reportProgress({ value: null, max: null, text: "" });
     const events = new EventSource(api.progressUrl(caseId));
     this.events = events;
+    const shown = { firstJob: undefined }; // the job whose first_ready was already handled on this stream
     events.addEventListener("progress", (event) => {
       const data = parseEvent(event);
       if (!data) {
+        return;
+      }
+      if (data.status === "first_ready") {
+        this.onFirstReadyEvent(data, events, caseId, shown);
         return;
       }
       const total = safeCount(data.bytes_total);
       this.reportProgress({
         value: total > 0 ? Math.min(safeCount(data.bytes_done), total) : null,
         max: total > 0 ? total : null,
-        text: indexingText(data),
+        text: stagedIndexingText(data),
       });
       this.refreshThrottled();
     });
@@ -887,6 +1029,196 @@ export class SourcesPanel {
         }
       }
     });
+  }
+
+  // progress with status "first_ready": the first part is indexed, derived and correlated. Only the current stream and
+  // this run's job count (a replay of an earlier job is ignored), and each job once.
+  onFirstReadyEvent(data, events, caseId, shown) {
+    if (this.events !== events || this.caseId !== caseId) {
+      return;
+    }
+    const waiter = this.waiter;
+    if (waiter) {
+      if (waiter.jobId === null) {
+        waiter.firstSeen.set(data.job_id, data); // the start request has not answered yet: decided when it does
+        return;
+      }
+      if (waiter.jobId !== data.job_id) {
+        return;
+      }
+    }
+    if (shown.firstJob !== undefined && shown.firstJob === data.job_id) {
+      return;
+    }
+    shown.firstJob = data.job_id;
+    this.handleFirstReady(data, waiter);
+  }
+
+  // The status bar says the rest goes on in the background; sources, grid, timeline and panels reload as at the end of a
+  // job (main.js narrows the view to the window); the dialog of the last file steps aside.
+  async handleFirstReady(data, waiter) {
+    const caseId = this.caseId;
+    const events = this.events;
+    const run = this.run;
+    const records = safeCount(data.records);
+    try {
+      this.reportProgress({ value: null, max: null, text: S.poStatusRestBare });
+      this.handlers.onMessage(format(S[pluralKey("poFirstReady", records)], { records: records.toLocaleString("en-US") }), false);
+      await this.refreshSources(true);
+      if (this.caseId !== caseId || this.events !== events) {
+        return; // the case changed, or the job ended meanwhile (done reloads everything)
+      }
+      const first = (waiter && waiter.first) || (run && run.first) || null;
+      const info = {
+        from: first && Number.isSafeInteger(first.from) ? first.from : null,
+        to: first && Number.isSafeInteger(first.to) ? first.to : null,
+        sources: first && Array.isArray(first.sources) ? first.sources.slice() : null,
+        records,
+      };
+      if (typeof this.handlers.onFirstReady === "function") {
+        await this.handlers.onFirstReady(info);
+      } else {
+        await this.handlers.onDone();
+      }
+    } catch (err) {
+      this.handlers.onMessage(err && err.message ? err.message : String(err), true);
+    }
+    if (waiter && waiter.hooks && typeof waiter.hooks.onFirstReady === "function") {
+      waiter.hooks.onFirstReady(data);
+    }
+  }
+
+  // -- pending work of earlier partial openings (GET .../pending) and Resume now -----------------------------------
+
+  // Asks the server what an earlier partial opening left. Best effort: a failure shows nothing. Only the latest check
+  // counts (token) and only for the case that is still open.
+  async checkPending(caseId) {
+    if (caseId === null || caseId === undefined) {
+      return;
+    }
+    const token = ++this.pendingToken;
+    let data;
+    try {
+      data = await api.partial.pending(caseId);
+    } catch (err) {
+      return;
+    }
+    if (token !== this.pendingToken || this.caseId !== caseId) {
+      return;
+    }
+    const list = data && Array.isArray(data.pending) ? data.pending : [];
+    if (list.length === 0) {
+      this.hideResume();
+      return;
+    }
+    const ui = await this.ensureResume();
+    if (!ui || token !== this.pendingToken || this.caseId !== caseId) {
+      return;
+    }
+    this.pendingItems = this.resumeMod.normalizePending(data).items;
+    const busy = Boolean(this.waiter) || this.resuming;
+    const running = Boolean(data.running);
+    if (busy) {
+      ui.setState(this.resuming ? "busy" : "running", this.pendingItems, () => this.resumeFallback());
+    } else if (running) {
+      ui.setState("running", this.pendingItems, () => this.resumeFallback());
+      if (!this.events) {
+        this.watchProgress(caseId, { first: null, resume: true }); // a job runs: show its progress, end with its done
+      }
+    } else {
+      ui.setState("ready", this.pendingItems, () => this.resumeFallback());
+    }
+    if (this.pendingAnnounced !== caseId) {
+      this.pendingAnnounced = caseId;
+      this.handlers.onMessage(S.poPendingMessage, false);
+    }
+  }
+
+  // Loads resume-banner.js once and mounts the banner; a failed load is reported and tried again at the next check.
+  ensureResume() {
+    if (this.resumeUi) {
+      return Promise.resolve(this.resumeUi);
+    }
+    if (!this.resumeReady) {
+      const ready = this.loadResume().then((mod) => {
+        const anchor = this.refs.caseHeader || this.refs.caseRow || null;
+        const parent = anchor && anchor.parentNode ? anchor.parentNode : (this.refs.sourceList ? this.refs.sourceList.parentNode : null);
+        if (!parent) {
+          throw new Error(S.poResumeLoadFailed);
+        }
+        this.resumeMod = mod;
+        this.resumeUi = mod.mountResumeBanner({
+          parent,
+          before: anchor && anchor.parentNode === parent ? anchor.nextSibling : null,
+          onResume: () => this.resumeIndexing(),
+        });
+        return this.resumeUi;
+      });
+      this.resumeReady = ready;
+      ready.catch((err) => {
+        if (this.resumeReady === ready) {
+          this.resumeReady = null;
+        }
+        this.handlers.onMessage(S.poResumeLoadFailed, true);
+      });
+    }
+    return this.resumeReady.catch(() => null);
+  }
+
+  hideResume() {
+    if (this.resumeUi) {
+      this.resumeUi.setState("hidden", [], () => this.resumeFallback());
+    }
+  }
+
+  // Where the focus goes when the banner (and its button) goes away: the case header's button, else the sources list.
+  resumeFallback() {
+    for (const node of [this.refs.caseAddFiles, this.refs.caseMenu, this.refs.caseSelect]) {
+      if (node && typeof node.focus === "function" && !isHiddenNode(node)) {
+        return node;
+      }
+    }
+    return null;
+  }
+
+  // Resume now: POST .../resume, then follow the job like any other. One at a time.
+  async resumeIndexing() {
+    const caseId = this.caseId;
+    if (caseId === null || this.resuming) {
+      return;
+    }
+    if (this.queueBusy || this.waiter) {
+      this.handlers.onMessage(S.poResumeBusy, true);
+      return;
+    }
+    this.resuming = true;
+    this.pendingToken += 1; // a pending answer already on its way must not flip the banner back
+    if (this.resumeUi) {
+      this.resumeUi.setState("busy", this.pendingItems, () => this.resumeFallback());
+    }
+    let result;
+    try {
+      result = await this.runJob((id) => api.partial.resume(id), caseId, { resume: true });
+    } finally {
+      this.resuming = false;
+    }
+    if (this.caseId !== caseId) {
+      return; // another case is open now: its own check decides what to show
+    }
+    if (result.status !== "ok") {
+      if (result.code === "job_running") {
+        this.handlers.onMessage(S.poResumeBusy, true);
+        if (!this.events) {
+          this.watchProgress(caseId, { first: null, resume: true });
+        }
+        if (this.resumeUi) {
+          this.resumeUi.setState("running", this.pendingItems, () => this.resumeFallback());
+        }
+        return;
+      }
+      this.handlers.onMessage(format(S.poResumeFailed, { message: result.message || S.progressFailed }), true);
+    }
+    this.checkPending(caseId); // the banner goes away when nothing is left, or comes back with what is
   }
 
   refreshThrottled() {
@@ -987,6 +1319,54 @@ export function indexingText(data) {
   const base = source === "" ? "statusIndexingBare" : "statusIndexing";
   return format(S[pluralKey(base, safeCount(data && data.records))], { source, records });
 }
+
+// Progress text of a two-stage opening (stage "first" / "rest"); the plain text without a stage.
+// "Indexing first part… core.log: 1,200 records" / "First part ready — indexing the rest in the background: core.log, 1,200 records".
+export function stagedIndexingText(data) {
+  const stage = data && data.stage;
+  if (stage !== "first" && stage !== "rest") {
+    return indexingText(data);
+  }
+  const n = safeCount(data && data.records);
+  const records = n.toLocaleString("en-US");
+  const source = data && hasText(data.source) ? String(data.source) : "";
+  if (stage === "first") {
+    return format(S[pluralKey(source === "" ? "poStatusFirstBare" : "poStatusFirst", n)], { source, records });
+  }
+  return source === "" ? S.poStatusRestBare : format(S[pluralKey("poStatusRest", n)], { source, records });
+}
+
+// done.partial_left as a safe count; done.first_unmatched as a list of non-empty names.
+export function partialLeftOf(data) {
+  return safeCount(data && data.partial_left);
+}
+
+export function unmatchedNamesOf(data) {
+  const list = data && Array.isArray(data.first_unmatched) ? data.first_unmatched : [];
+  return list.filter((name) => typeof name === "string" && name !== "");
+}
+
+const UNMATCHED_SHOWN = 3;
+
+// "1 source chosen to open first was not found among the indexed sources: a.log." (names beyond 3 are counted).
+export function unmatchedText(names) {
+  const shown = names.slice(0, UNMATCHED_SHOWN).join(", ");
+  const rest = names.length - UNMATCHED_SHOWN;
+  const list = rest > 0 ? shown + " " + format(S.poAndMore, { count: rest.toLocaleString("en-US") }) : shown;
+  return format(S[pluralKey("poUnmatched", names.length)], { count: names.length.toLocaleString("en-US"), names: list });
+}
+
+// True when the node or an ancestor has the `hidden` attribute (a hidden element cannot take the focus).
+function isHiddenNode(node) {
+  for (let item = node; item; item = item.parentNode || item.parent) {
+    if (item.hidden === true) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const NO_PARTIAL = Object.freeze({ firstFor: () => null });
 
 // "Indexed 1,200 records."
 export function doneText(records) {
