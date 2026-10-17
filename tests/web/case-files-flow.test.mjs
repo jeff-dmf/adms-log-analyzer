@@ -393,3 +393,41 @@ test("UI-14: when the folder browser cannot open, Browse says so and is usable a
   assert.equal(files.waiting, false);
   assert.equal(browse.disabled, false);
 });
+
+test("the indexing progress stream stops after 3 failures in a row and Retry opens it again once", async () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.instances = [];
+  api.progressUrl = () => "/p";
+  const stopped = [];
+  const refs = {
+    caseSelect: new FakeNode("select"), newCaseForm: new FakeNode("form"), newCaseName: new FakeNode("input"),
+    openForm: new FakeNode("form"), pathInput: new FakeNode("input"), scopeSelect: Object.assign(new FakeNode("select"), { value: "default" }),
+    progressBar: new FakeNode("progress"), progressText: new FakeNode("div"), sourceList: new FakeNode("ul"),
+  };
+  const panel = new SourcesPanel(refs, {
+    onCase() {}, onSources() {}, onSelection() {}, onDone() {}, onMessage() {}, onStreamStopped: () => stopped.push(1),
+  });
+  panel.caseId = "C";
+  assert.equal(panel.resumeProgress(), false); // nothing stopped yet
+  panel.watchProgress("C");
+  const stream = FakeEventSource.instances[0];
+  stream.readyState = 0; // CONNECTING: the browser keeps retrying
+  const fail = () => stream.listeners.error({});
+  fail();
+  fail();
+  assert.equal(stream.closed, undefined);
+  stream.listeners.open({}); // reconnected: the count starts over
+  fail();
+  fail();
+  assert.equal(stream.closed, undefined);
+  fail();
+  assert.equal(stream.closed, true);
+  assert.deepEqual(stopped, [1]);
+  assert.equal(panel.events, null);
+  fail(); // a late error of the closed stream
+  assert.deepEqual(stopped, [1]);
+  assert.equal(panel.resumeProgress(), true);
+  assert.equal(FakeEventSource.instances.length, 2);
+  assert.equal(panel.resumeProgress(), false); // running again: nothing to resume
+  assert.equal(FakeEventSource.instances.length, 2);
+});

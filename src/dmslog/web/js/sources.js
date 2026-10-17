@@ -1,4 +1,5 @@
 // Sources panel: case selection, opening a collection with live progress (SSE), source list.
+import { createStreamGuard } from "./status-bar-model.js";
 import { ApiError, api } from "./api.js";
 import { takeCases, takeSources } from "./prefetch.js";
 import { filterSources, highlightParts, isFiltering } from "./source-filter-model.js";
@@ -858,6 +859,9 @@ export class SourcesPanel {
     this.reportProgress({ value: null, max: null, text: "" });
     const events = new EventSource(api.progressUrl(caseId));
     this.events = events;
+    const guard = createStreamGuard();
+    this.progressGuard = guard;
+    events.addEventListener("open", () => guard.opened());
     events.addEventListener("progress", (event) => {
       const data = parseEvent(event);
       if (!data) {
@@ -884,6 +888,17 @@ export class SourcesPanel {
       await this.finishJob(data);
     });
     events.addEventListener("error", () => {
+      // After 3 failures in a row the stream stops (the server is down); onStreamStopped lets Retry open it again.
+      if (this.events === events && guard.failed()) {
+        events.close();
+        this.events = null;
+        this.reportProgress(null);
+        this.cancelWaiter(S.cfStreamClosed);
+        if (this.handlers.onStreamStopped) {
+          this.handlers.onStreamStopped();
+        }
+        return;
+      }
       // The browser retries by itself; a closed stream just stops the bar.
       if (events.readyState === 2) {
         this.reportProgress(null);
@@ -904,6 +919,15 @@ export class SourcesPanel {
       this.refreshTimer = null;
       this.refreshSources(true);
     }, 1500);
+  }
+
+  // Opens the progress stream again after it stopped (Retry). True only when a stream was really opened.
+  resumeProgress() {
+    if (!this.progressGuard || !this.progressGuard.stopped || this.caseId === null) {
+      return false;
+    }
+    this.watchProgress(this.caseId);
+    return this.events !== null;
   }
 
   closeEvents() {

@@ -272,6 +272,8 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
             paintMessage();
           }
         },
+        // Is this still the message on the bar (a newer one replaces it: the bar shows one at a time)?
+        isCurrent: () => id !== null && messages.current !== null && messages.current.id === id,
       };
     },
     connection,

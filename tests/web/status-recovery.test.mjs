@@ -25,7 +25,8 @@ function bar() {
 
 class FakeEventSource {
   static last = null;
-  constructor() { this.handlers = {}; FakeEventSource.last = this; }
+  static all = [];
+  constructor() { this.handlers = {}; FakeEventSource.last = this; FakeEventSource.all.push(this); }
   addEventListener(name, fn) { this.handlers[name] = fn; }
   close() {}
 }
@@ -148,4 +149,27 @@ test("a failure to open the new case after it was created is not a name error", 
   fresh.add(["/data/ERS_CL_0A1B2C3D-0000-1111-2222-333344445555_20260101120000_Enterprise.zip"]);
   const created = await fresh.create("C", deps({ createCase: async () => { throw new Error("exists"); } }));
   assert.deepEqual(created, { state: "blocked", reason: "case" });
+});
+
+test("the alerts stream stops after 3 failures; Retry (resumeStream) opens it once, and only when it stopped", () => {
+  globalThis.EventSource = FakeEventSource;
+  FakeEventSource.all = [];
+  const { status } = bar();
+  const stops = [];
+  const alerts = startAlerts({
+    slot: status.slot("alerts"), getCase: () => "C", onShowRecords() {}, onStreamStopped: () => stops.push(1),
+    notifier: { notify() {}, permission: () => "denied", request: async () => "denied" },
+    api: { alerts: async () => ({ alerts: [] }), rules: async () => ({ rules: [] }), history: async () => ({ alerts: [] }) },
+  });
+  alerts.onCase();
+  assert.equal(alerts.resumeStream(), false); // running: nothing to resume
+  const first = FakeEventSource.all[0];
+  first.handlers.error(); first.handlers.error();
+  assert.deepEqual(stops, []);
+  first.handlers.error();
+  assert.deepEqual(stops, [1]);
+  assert.equal(FakeEventSource.all.length, 1);
+  assert.equal(alerts.resumeStream(), true);
+  assert.equal(FakeEventSource.all.length, 2);
+  assert.equal(alerts.resumeStream(), false);
 });

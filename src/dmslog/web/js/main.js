@@ -151,6 +151,7 @@ function start() {
     status,
     retryLabel: S.sbRetry,
     genericMessage: S.errorGeneric,
+    pageHint: S.gridPageHint,
     goOffline: (onRetry) => status.connection("offline", { onRetry }),
     health: () => api.health(),
     setOnline: () => status.connection("online"),
@@ -656,6 +657,7 @@ function start() {
     },
     onSelection: () => (removingChip ? undefined : applyView()),
     onProgress: (value) => status.progress(value),
+    onStreamStopped: () => failures.streamStopped("progress", () => panel.resumeProgress()),
     onWatching: (on) => {
       if (menubar) {
         menubar.setWatching(on);
@@ -1159,7 +1161,7 @@ function start() {
         },
         onError: showError,
         // The watch stream gave up after 3 failures in a row: say so in the bar; Retry starts it again.
-        onStreamStopped: () => failures.streamStopped(),
+        onStreamStopped: () => failures.streamStopped("stream", () => followTail.resume()),
       });
       return followTail;
     },
@@ -1172,6 +1174,7 @@ function start() {
     alertsUi = module.startAlerts({
       slot: status.slot("alerts"),
       onAnnounce: (text) => status.message(text, { kind: "warning" }),
+      onStreamStopped: () => failures.streamStopped("alerts", () => alertsUi.resumeStream()),
       getCase: () => caseId,
       onShowRecords: (filter) => setUserFilter(filter).catch(showError),
     });

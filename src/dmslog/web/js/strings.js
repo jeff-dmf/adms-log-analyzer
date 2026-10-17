@@ -270,6 +270,7 @@ export const S = {
   timelineUndatedOne: "{count} undated record",
   timelineUndatedOther: "{count} undated records",
   timelineError: "Could not load the timeline: {error}",
+  gridPageHint: "Press Home to reload the grid.",
   timelineStale: "Out of date: could not refresh the timeline ({error}). Showing the previous data.",
   widthSeconds: "{n} s",
   widthMinutes: "{n} min",

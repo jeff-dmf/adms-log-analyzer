@@ -37,12 +37,14 @@ function rig() {
   api.count = (caseId, filter, signal) => { const d = deferred(); counts.push({ caseId, filter, signal, d }); return d.promise; };
   const state = { live: "A", ids: [1], groups: ["g1"] };
   const log = { derived: 0, confirmed: 0, offline: 0, online: 0, timeline: [], fallbacks: 0, errors: [] };
+  // Faithful to the real bar: ONE message at a time; a newer one replaces the older, whose handle is then not current.
   const messages = []; // {text, action, dismissed}
   const status = {
     message(text, opts = {}) {
+      for (const old of messages) old.dismissed = true;
       const m = { text, action: opts.action || null, dismissed: false };
       messages.push(m);
-      return { dismiss() { m.dismissed = true; } };
+      return { dismiss() { m.dismissed = true; }, isCurrent: () => !m.dismissed };
     },
   };
   const live = () => messages.filter((m) => !m.dismissed);
@@ -54,7 +56,7 @@ function rig() {
     invalidate: () => log.timeline.push("invalidate"),
   };
   const failures = createFailureCenter({
-    status, retryLabel: "Retry now", genericMessage: "Request failed",
+    status, retryLabel: "Retry now", genericMessage: "Request failed", pageHint: "Press Home to reload the grid.",
     goOffline: () => { log.offline += 1; },
     health: async () => {},
     setOnline: () => { log.online += 1; },
@@ -341,4 +343,127 @@ test("the real timeline: a case switch drops its request in flight; a late failu
   assert.equal(done, true);
   assert.deepEqual(events, ["fail"]);
   timeline.destroy();
+});
+
+test("count 408, then a navigation rejected with 400, then a navigation that works: the Retry of the count is kept", async () => {
+  const r = rig();
+  await loadA(r, { countFails: true });
+  const bad = r.grid.goEnd();
+  r.pages.at(-1).d.reject(new ApiError(400, "bad_cursor", "Bad cursor"));
+  await bad;
+  const shown = r.live();
+  assert.equal(shown.length, 1); // one message at a time
+  assert.equal(shown[0].text, "Bad cursor");
+  assert.ok(shown[0].action, "Retry stays reachable while the count is still repeatable");
+  const home = r.grid.goHome();
+  r.pages.at(-1).d.resolve({ rows: rows(1, 20), prev: null, next: null });
+  await home;
+  await flush();
+  assert.equal(r.live().length, 1);
+  assert.equal(r.live()[0].text, "Count timed out"); // the 400 is gone, the count's notice is back with its action
+  assert.equal(r.live()[0].action.label, "Retry now");
+});
+
+test("a 4xx message goes away when what it belongs to works, when a new view starts and when the case changes", async () => {
+  const r = rig();
+  await loadA(r);
+  // worked
+  const bad = r.grid.goEnd();
+  r.pages.at(-1).d.reject(new ApiError(400, "bad_cursor", "Bad cursor"));
+  await bad;
+  assert.equal(r.live().length, 1);
+  assert.equal(r.live()[0].action, null);
+  const home = r.grid.goHome();
+  r.pages.at(-1).d.resolve({ rows: rows(1, 20), prev: null, next: null });
+  await home;
+  assert.equal(r.live().length, 0);
+  // new view
+  const bad2 = r.grid.goEnd();
+  r.pages.at(-1).d.reject(new ApiError(400, "bad_cursor", "Bad cursor"));
+  await bad2;
+  assert.equal(r.live().length, 1);
+  const next = r.apply("B", [2], []);
+  assert.equal(r.live().length, 0);
+  r.pages.at(-1).d.resolve({ rows: rows(1, 3), prev: null, next: null });
+  r.counts.at(-1).d.resolve({ count: 3, exact: true });
+  await next;
+  // case change
+  const bad3 = r.grid.goEnd();
+  r.pages.at(-1).d.reject(new ApiError(400, "bad_cursor", "Bad cursor"));
+  await bad3;
+  assert.equal(r.live().length, 1);
+  r.failures.caseChanged();
+  assert.equal(r.live().length, 0);
+});
+
+test("a rejected scroll page says how to get out (Home) and is not repeated by itself; Home clears it", async () => {
+  const r = rig();
+  const loaded = r.apply("A", [1], ["g1"]);
+  r.counts.at(-1).d.resolve({ count: 100, exact: true });
+  r.pages.at(-1).d.resolve({ rows: rows(1, 5), prev: null, next: "n1" });
+  await loaded;
+  await flush();
+  const scrollPage = r.pages.at(-1); // the pump asked for the next page
+  assert.equal(scrollPage.cursor, "n1");
+  scrollPage.d.reject(new ApiError(400, "bad_cursor", "Bad cursor"));
+  await flush();
+  assert.equal(r.live()[0].text, "Bad cursor Press Home to reload the grid.");
+  const asked = r.pages.length;
+  r.grid.scrollRows(1);
+  r.grid.scrollRows(1);
+  await flush();
+  assert.equal(r.pages.length, asked); // no automatic repetition of the invalid request
+  const home = r.grid.goHome();
+  assert.equal(r.pages.length, asked + 1);
+  r.pages.at(-1).d.resolve({ rows: rows(1, 5), prev: null, next: null });
+  await home;
+  assert.equal(r.live().length, 0);
+});
+
+test("any live stream that gives up is repeated by the same Retry, each by name", async () => {
+  const r = rig();
+  const opened = [];
+  r.failures.streamStopped("alerts", () => { opened.push("alerts"); return true; });
+  r.failures.streamStopped("progress", () => { opened.push("progress"); return true; });
+  assert.equal(r.log.offline, 2);
+  await r.failures.retry();
+  assert.deepEqual(opened.sort(), ["alerts", "progress"]);
+  assert.equal(r.failures.recovery.size, 0);
+});
+
+test("a message that replaces the notice (an alert, say) does not lose it: the next change shows it again", async () => {
+  const r = rig();
+  await loadA(r, { countFails: true });
+  assert.equal(r.live()[0].text, "Count timed out");
+  // something else speaks on the bar (same slot)
+  const spoke = { text: "Alert fired" };
+  for (const m of r.messages) m.dismissed = true;
+  r.messages.push({ text: spoke.text, action: null, dismissed: false });
+  // a change that leaves the desired message as it was (the same text) still puts it back on the bar
+  r.failures.timelineRecovered();
+  assert.equal(r.live().at(-1).text, "Count timed out");
+  assert.ok(r.live().at(-1).action);
+});
+
+test("a 4xx of the count goes away with the next view, and a 4xx of the old case never comes back after a case change", async () => {
+  const r = rig();
+  const loaded = r.apply("A", [1], []);
+  r.counts.at(-1).d.reject(new ApiError(400, "bad_filter", "Bad count filter"));
+  r.pages.at(-1).d.resolve({ rows: rows(1, 5), prev: null, next: null });
+  await loaded;
+  await flush();
+  assert.equal(r.live()[0].text, "Bad count filter");
+  const next = r.apply("B", [2], []);
+  assert.equal(r.live().length, 0);
+  r.pages.at(-1).d.resolve({ rows: rows(1, 5), prev: null, next: null });
+  r.counts.at(-1).d.resolve({ count: 5, exact: true });
+  await next;
+  // old 4xx, case change, then an unrelated recoverable failure: only the new message is shown
+  const bad = r.grid.goEnd();
+  r.pages.at(-1).d.reject(new ApiError(400, "bad_cursor", "Bad cursor"));
+  await bad;
+  r.failures.caseChanged();
+  r.failures.timelineFailure(new ApiError(408, "query_timeout", "Timeline timed out"));
+  assert.equal(r.live().length, 1);
+  assert.equal(r.live()[0].text, "Timeline timed out");
 });

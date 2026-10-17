@@ -164,6 +164,43 @@ export function createRecovery({ health, setOnline, openingPending, reloadCases,
   };
 }
 
+export const MAX_STREAM_FAILURES = 3; // consecutive failures of the watch stream before it stops trying
+
+// Consecutive failures of the watch stream (EventSource reconnects by itself and fails again while the server is
+// down). `failed()` returns true on the failure that reaches the limit: the caller closes the stream. `opened()`
+// resets the count; `reset()` forgets a stop (a new stream, Retry). Pure: no timers, no stream.
+export function createStreamGuard(max = MAX_STREAM_FAILURES) {
+  const limit = Number.isInteger(max) && max > 0 ? max : MAX_STREAM_FAILURES;
+  let failures = 0;
+  let stopped = false;
+  return {
+    failed() {
+      if (stopped) {
+        return false;
+      }
+      failures += 1;
+      if (failures >= limit) {
+        stopped = true;
+        return true;
+      }
+      return false;
+    },
+    opened() {
+      failures = 0;
+    },
+    reset() {
+      failures = 0;
+      stopped = false;
+    },
+    get stopped() {
+      return stopped;
+    },
+    get failures() {
+      return failures;
+    },
+  };
+}
+
 // What is shown and repeated when something fails (UI-25), in one place with its effects injected. The notice with
 // Retry is DERIVED from the set of registered recoverable failures (not from events): it is there while any task that
 // has a message is registered, and gone when none is, so one recovery never removes the only way to repeat another.
@@ -174,28 +211,45 @@ export function createRecovery({ health, setOnline, openingPending, reloadCases,
 //   refreshTimeline() -> Promise, resumeStream(), cancelRequests() (case changed: grid, count, histogram, stream).
 export function createFailureCenter(deps) {
   const messages = new Map(); // task name -> message text | null
-  let notice = null;
-  let noticeText = null;
-  const dismissNotice = () => {
-    if (notice !== null) {
-      notice.dismiss();
-      notice = null;
-      noticeText = null;
+  // The bar shows ONE message at a time, so what it shows is arbitrated here from the state, never from events:
+  //   a 4xx error (`plain`, no Retry of its own) while tasks are registered keeps Retry (it repeats those tasks);
+  //   tasks only: the latest task message with Retry; a 4xx alone: its text without Retry; nothing: nothing.
+  // The handle is kept and the message is shown again when the bar no longer shows it (a newer message replaced it).
+  let shown = null; // {handle, key}
+  let plain = null; // {name, text}: the last 4xx, until what it belongs to works, a new view starts or the case changes
+  const dismissShown = () => {
+    if (shown !== null) {
+      shown.handle.dismiss();
+      shown = null;
     }
   };
   const syncNotice = () => {
-    let text = null;
+    let taskText = null;
     for (const [name, message] of messages) {
       if (message !== null && recovery.has(name)) {
-        text = message; // the most recent one
+        taskText = message; // the most recent one
       }
     }
+    const retryable = taskText !== null;
+    const text = plain !== null ? plain.text : taskText;
     if (text === null) {
-      dismissNotice();
-    } else if (notice === null || noticeText !== text) {
-      dismissNotice();
-      noticeText = text;
-      notice = deps.status.message(text, { kind: "error", action: { label: deps.retryLabel, run: () => recovery.retry() } });
+      dismissShown();
+      return;
+    }
+    const key = text + "\u0000" + (retryable ? "retry" : "");
+    if (shown !== null && shown.key === key && shown.handle.isCurrent()) {
+      return;
+    }
+    dismissShown();
+    const options = { kind: "error" };
+    if (retryable) {
+      options.action = { label: deps.retryLabel, run: () => recovery.retry() };
+    }
+    shown = { handle: deps.status.message(text, options), key };
+  };
+  const dropPlain = (name) => {
+    if (plain !== null && (name === undefined || plain.name === name)) {
+      plain = null;
     }
   };
   const recovery = createRecovery({
@@ -211,9 +265,10 @@ export function createFailureCenter(deps) {
 
   // A failure: registered (and noticed) when repeating can help, otherwise any older task of the same part is
   // forgotten and, if `plain`, the error is shown once without Retry.
-  function report(name, err, run, { plain = false } = {}) {
+  function report(name, err, run, { plain: isPlain = false, hint = "" } = {}) {
     const kind = errorKind(err);
     messages.delete(name);
+    dropPlain(name);
     if (isRetryable(kind)) {
       messages.set(name, kind === "network" || kind === "forbidden" ? null : messageOf(err));
       recovery.fail(name, run);
@@ -221,13 +276,14 @@ export function createFailureCenter(deps) {
       return;
     }
     recovery.clear(name);
-    syncNotice();
-    if (plain && kind !== "forbidden") {
-      deps.status.message(messageOf(err), { kind: "error" });
+    if (isPlain && kind !== "forbidden") {
+      plain = { name, text: hint ? messageOf(err) + " " + hint : messageOf(err) };
     }
+    syncNotice();
   }
   function clear(name) {
     messages.delete(name);
+    dropPlain(name);
     recovery.clear(name);
     syncNotice();
   }
@@ -247,7 +303,8 @@ export function createFailureCenter(deps) {
         deps.dropViewRetry(); // a navigation failed after the view change did: repeat THIS one, not the older one
       }
       const run = name === "count" ? deps.retryCount : () => (deps.hasViewRetry() ? deps.retryView() : deps.retryGrid());
-      report(name, err, run, { plain: true });
+      // A rejected page request is not repeated by itself (the scroll would hammer the server): Home clears it.
+      report(name, err, run, { plain: true, hint: info.op === "page" ? deps.pageHint : "" });
     },
     gridRecovered(scope) {
       const name = countOrGrid(scope);
@@ -258,22 +315,25 @@ export function createFailureCenter(deps) {
     },
     timelineFailure: (err) => report("timeline", err, () => deps.refreshTimeline()),
     timelineRecovered: () => clear("timeline"),
-    streamStopped() {
-      messages.delete("stream");
-      messages.set("stream", null);
-      recovery.fail("stream", () => deps.resumeStream());
+    // A live stream (watch, alerts, indexing progress) gave up after 3 failures: Retry opens it again.
+    streamStopped(name = "stream", resume = () => deps.resumeStream()) {
+      messages.delete(name);
+      messages.set(name, null);
+      recovery.fail(name, resume);
       this.goOffline();
     },
     // A new view change replaces the failed grid and count: their tasks go (the timeline and the stream stay).
     viewApplied() {
+      // the 4xx of the grid or the count belonged to the view being replaced: clear() drops it
       clear("grid");
       clear("count");
     },
     // Another case: nothing that failed in the old one is repeated, and its requests are cancelled at once.
     caseChanged() {
       messages.clear();
+      plain = null;
       recovery.clearAll();
-      dismissNotice();
+      dismissShown();
       deps.cancelRequests();
     },
   };
