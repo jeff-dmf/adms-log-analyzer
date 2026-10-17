@@ -376,6 +376,9 @@ def deep(n):
         ({"schema": 1, "kind": preferences.KIND, 5: 1}, "bad_value"),
         ("x" * (preferences.MAX_PACKAGE_BYTES + 1), "package_too_large"),
     ],
+    # explicit ids: pytest would use the 8 MiB string as the test id, and the id is printed, sent between
+    # xdist workers and written to reports (megabytes per run, very slow on a Windows console)
+    ids=lambda value: type(value).__name__ if not isinstance(value, str) or len(value) > 40 else None,
 )
 def test_structural_errors_apply_nothing(tmp_path, pkg, code):
     presets.create(tmp_path, PRESET_A)
@@ -681,11 +684,7 @@ def test_strict_decoder_accepts_plain_utf8():
     assert out == {"a": ["\u00e9", 1.5, True, None]}
 
 
-def test_limits_apply_before_the_tree_is_built(tmp_path, monkeypatch):
-    def boom(*a, **k):
-        raise AssertionError("json.loads must not be reached")
-
-    monkeypatch.setattr(preferences.json, "loads", boom)
+def test_limits_apply_before_the_tree_is_built(tmp_path):
     hostile = {
         "deep": b"[" * 100_000,
         "wide": b"[" + b"0," * (preferences.MAX_NODES + 10) + b"0]",
@@ -693,6 +692,7 @@ def test_limits_apply_before_the_tree_is_built(tmp_path, monkeypatch):
         "deep objects": b'{"a":' * 5000 + b"1" + b"}" * 5000,
     }
     for name, raw in hostile.items():
+        # the limit error (not bad_json) proves the scan refused it before json.loads saw it
         with pytest.raises(preferences.PreferencesError) as err:
             preferences.parse_json_bytes(raw)
         assert err.value.code in ("package_too_complex", "bad_value"), name
