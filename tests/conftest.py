@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from dmslog import paths
 from dmslog.knowledge import pack as pack_module
 
 MINI_PACK = Path(__file__).resolve().parent / "fixtures" / "knowledge" / "mini_pack"
@@ -77,3 +78,13 @@ def extended_pack(tmp_path):
         return out
 
     return build
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_fsync_in_tests():
+    """Durability is not under test and ``fsync`` is slow on Windows runners (thousands of writes in the
+    property tests): atomic writes skip it, except in the tests that set ``paths.SYNC_WRITES`` back."""
+    previous = paths.SYNC_WRITES
+    paths.SYNC_WRITES = False
+    yield
+    paths.SYNC_WRITES = previous
