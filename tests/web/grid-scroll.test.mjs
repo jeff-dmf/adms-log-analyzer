@@ -652,8 +652,8 @@ test("sideways travel continues from the last write, and an echo of it keeps pen
   vp.values.scrollLeft = 131;
   vp.el.dispatch("scroll");
   runFrames();
-  assert.equal(vp.values.scrollLeft, 150);
-  assert.equal(grid.header.scrollLeft, 150);
+  assert.equal(vp.values.scrollLeft, 151, "a scroll the browser reports is the position the pending travel adds to");
+  assert.equal(grid.header.scrollLeft, 151);
 });
 
 
@@ -664,4 +664,28 @@ test("applying the widths syncs the header to the body as on main (scroll positi
   assert.equal(grid.header.scrollLeft, 77);
   assert.equal(grid.resizer.scrollX, 77);
   assert.equal(grid.header.style.paddingRight, "15px"); // offsetWidth 515 - clientWidth 500
+});
+
+test("a pending sideways frame adds to the position the body has then: a drag in between is kept", () => {
+  const { grid, vp, runFrames } = setup();
+  wheel(vp, 0, { deltaX: 100 }); // frame pending
+  vp.values.scrollLeft = 600; // the user drags the bar; the resizer's listener syncs
+  vp.el.dispatch("scroll");
+  assert.equal(grid.resizer.scrollX, 600);
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 700, "100 px on top of 600, not back to 100");
+  assert.equal(grid.header.scrollLeft, 700);
+  wheel(vp, 0, { deltaX: 99999 });
+  vp.values.scrollLeft = 1400;
+  vp.el.dispatch("scroll");
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 1500, "clamped to the range at the frame");
+});
+
+test("a pending vertical frame moves from the top it finds: rows are a delta on the current position", () => {
+  const { grid, vp, runFrames } = setup();
+  wheel(vp, 10 * ROW_HEIGHT);
+  grid.window.top = 50; // the position changed under the pending frame (a drag of the bar, a resize)
+  runFrames();
+  assert.equal(grid.window.top, 60);
 });

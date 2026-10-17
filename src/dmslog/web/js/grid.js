@@ -128,7 +128,7 @@ export class Grid {
     this.pendingJump = null;
     this.selectTimer = null;
     this.wheelRemainder = 0; // wheel travel in rows not applied yet (the fraction stays); applied once per frame
-    this.wheelX = null;      // horizontal scroll target (px, clamped at every event) not applied yet, or null
+    this.wheelX = 0;         // horizontal wheel travel in px not applied yet (clamped in order at every event)
     this.wheelFrame = null;  // handle of the frame that applies it, or null
     this.viewHeight = 0;     // viewport height from the ResizeObserver (0: not reported yet or hidden), see ensurePool()
     this.observer = null;
@@ -180,8 +180,10 @@ export class Grid {
       const w = this.window;
       if (travel.axis === "x") {
         // Clamped at every event, so a reversal after the edge starts from the edge (excess is dropped, not remembered).
-        const from = this.wheelX === null ? this.resizer.scrollX : this.wheelX;
-        this.wheelX = Math.min(Math.max(0, from + travel.amount), this.resizer.maxScrollX);
+        // A delta, never a target: the frame adds it to the position the body has THEN (a drag of the bar in between
+        // is kept). Clamped here against the position now, so an excess at an edge is dropped in order.
+        const at = this.resizer.scrollX;
+        this.wheelX = Math.min(Math.max(this.wheelX + travel.amount, -at), this.resizer.maxScrollX - at);
       } else {
         this.wheelRemainder = Math.min(Math.max(this.wheelRemainder + travel.amount, -w.top), w.maxTop(this.visible) - w.top);
       }
@@ -243,9 +245,9 @@ export class Grid {
   applyWheel() {
     this.wheelFrame = null;
     const x = this.wheelX;
-    this.wheelX = null;
-    if (x !== null && x !== this.resizer.scrollX) {
-      this.resizer.scrollTo(x); // writes only
+    this.wheelX = 0;
+    if (x !== 0) {
+      this.resizer.scrollTo(this.resizer.scrollX + x); // the kept position, clamped; writes only
     }
     const rows = Math.trunc(this.wheelRemainder);
     if (rows !== 0) {
@@ -262,7 +264,7 @@ export class Grid {
       this.wheelFrame = null;
     }
     this.wheelRemainder = 0;
-    this.wheelX = null;
+    this.wheelX = 0;
   }
 
   // The grid is dropped: no frame, observer callback or wheel event touches it afterwards.
