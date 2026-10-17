@@ -624,3 +624,56 @@ def test_context_keeps_records_adjusted_below_int64(case):
         ctx = C.context(conn, anchor, 5, 5, "merge", clock=clock)
         assert [(r["id"], r["ts_adjusted"]) for r in ctx.rows] == order  # every timed record, in order
         assert ctx.anchor == anchor_pos
+
+
+def _many_groups(path, offsets_by_group):
+    """One group (one collection, one source, two records) per key of ``offsets_by_group``."""
+    conn = create_case_db(path)
+    with conn:
+        for g, off in offsets_by_group.items():
+            conn.execute(
+                "INSERT INTO collection(id, kind, path, ers_group, clock_offset_ms, added_at)"
+                " VALUES (?, 'file', ?, ?, ?, '2030')",
+                (g, f"/f{g}", g, off),
+            )
+            conn.execute(
+                "INSERT INTO source(id, collection_id, member, file_name, envelope, status)"
+                " VALUES (?, ?, 'x.log', 'x.log', 'adms', 'ready')",
+                (g, g),
+            )
+            for k in (0, 1):
+                conn.execute(
+                    "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, sev, tpl_id, flags, msg)"
+                    " VALUES (?, ?, ?, 0, 1, ?, 4, 0, 0, 'r')",
+                    (2 * g + k, g, k + 1, T0 + (g * 37 + k * 1000) % 50_000),
+                )
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "offsets",
+    [
+        {g: 5 for g in range(1, 1002)},  # 1.001 groups, one class
+        {g: (5 if g % 2 else -7) for g in range(1, 1202)},  # two classes of 600+ groups (two chunks each)
+        {**{g: 0 for g in range(1, 1102)}, 1102: 3},  # a zero class of 1.101 groups
+    ],
+)
+def test_classes_of_any_size(tmp_path, offsets):
+    path = tmp_path / "many.sqlite"
+    _many_groups(path, offsets)
+    conn = connect(path, readonly=True)
+    try:
+        with C.snapshot(conn) as clock:
+            assert max(len(g) for _o, g in clock.classes()) > C.GROUP_CHUNK
+            rows = conn.execute("SELECT id, source_id, ts FROM entry").fetchall()
+            want = sorted((ts + offsets[src], i) for i, src, ts in rows)
+            got = H.walk(lambda c, d, n: C.page(conn, None, c, d, n, clock=clock), "fwd", 500)
+            assert [(a, i) for i, a in got] == want
+            window = {"ts": {"ge": T0 + 10_000, "lt": T0 + 30_000}}
+            inside = [w for w in want if T0 + 10_000 <= w[0] < T0 + 30_000]
+            assert C.count(conn, window, clock=clock).n == len(inside)
+            h = C.histogram(conn, window, 1000, "sev", clock=clock)
+            assert h.exact and h.total == len(inside)
+            assert C.histogram(conn, None, 60_000, "sev", clock=clock).total == len(want)
+    finally:
+        conn.close()

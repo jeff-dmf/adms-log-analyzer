@@ -227,14 +227,29 @@ def _and(*parts: CompiledFilter) -> CompiledFilter:
     )
 
 
-def _restriction(groups: tuple[int, ...] | None) -> dict[str, Any] | None:
-    """Filter tree of the records of a class; None for the single class (every record)."""
-    return None if groups is None else {"collection": list(groups)}
+GROUP_CHUNK = 500  # groups per IN list of a class restriction (any number of groups, in chunks)
+
+
+def _restriction(groups: tuple[int, ...] | None, alias: str = "e") -> CompiledFilter:
+    """Records of a class: those whose source is in one of ``groups`` (``None``: every record).
+
+    Same condition as the ``collection`` leaf of the filters, written here (constants and ``?`` only) because
+    a class may hold more groups than a filter list accepts: the groups go in chunks of
+    :data:`GROUP_CHUNK`, ORed inside one subquery."""
+    if groups is None:
+        return compile_filter(None)
+    chunks = [groups[k : k + GROUP_CHUNK] for k in range(0, len(groups), GROUP_CHUNK)]
+    where = " OR ".join(f"c.ers_group IN ({','.join('?' * len(chunk))})" for chunk in chunks)
+    return CompiledFilter(
+        f"{alias}.source_id IN (SELECT s.id FROM source s JOIN collection c ON c.id = s.collection_id"
+        f" WHERE {where})",
+        tuple(groups),
+    )
 
 
 def _class_filter(groups: tuple[int, ...] | None, flt: Any, delta: int) -> CompiledFilter:
     """Records of one class (``groups``) that satisfy ``flt`` with its times moved by ``delta``."""
-    restriction = compile_filter(_restriction(groups))
+    restriction = _restriction(groups)
     if callable(flt):
         body = flt(delta)
     elif isinstance(flt, CompiledFilter):
@@ -466,7 +481,7 @@ def decorate_entry(conn: sqlite3.Connection, entry: dict[str, Any], clock: Clock
 
 
 def _bucket_class(groups: tuple[int, ...] | None, tree: Any) -> CompiledFilter | None:
-    restriction = compile_bucket_filter(_restriction(groups))
+    restriction = _restriction(groups, "b")
     body = compile_bucket_filter(tree)
     return None if restriction is None or body is None else _and(restriction, body)
 
@@ -520,7 +535,7 @@ def histogram(
     for offset, groups in clock.classes():
         tree = shift_tree(flt, -offset)
         cf = _class_filter(groups, tree, 0)
-        restriction = compile_filter(_restriction(groups))
+        restriction = _restriction(groups)
         bf = _bucket_class(groups, tree)
         classes.append((offset, cf, restriction, bf))
     with query.read_guard(conn, bucket_timeout_s):
