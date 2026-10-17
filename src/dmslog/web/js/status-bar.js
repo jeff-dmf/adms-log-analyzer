@@ -3,7 +3,7 @@
 // itself; nothing is ever laid over the filter strip, and showing or hiding a message never moves another element
 // (the bar has a fixed height and the message has its own fixed segment). Contract: docs/notas/ui-contratos.md, 3.
 // Every text is set with textContent; every visible text comes from strings.js.
-import { createMessageState, formatCount, isConnectionText, normalizeKind } from "./status-bar-model.js";
+import { createMessageState, formatCount, isConnectionText, isShown, normalizeKind } from "./status-bar-model.js";
 import { format } from "./strings.js";
 import { formatTs } from "./time.js";
 
@@ -27,9 +27,18 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     return node;
   };
 
-  // A control that disappears while it has the focus would drop it on the page: hand it to the fallback.
-  function releaseFocus(container) {
-    if (container.contains(doc.activeElement) && typeof focusFallback === "function") {
+  // A control that disappears while it has the focus would drop it on the page: after any repaint, if the focused element
+  // of the bar is no longer shown (hidden itself, or hidden with the part of the bar that holds it), the focus goes to
+  // the fallback, whatever the transition (error -> info, offline -> forbidden, message cleared, back online).
+  function guarded(change) {
+    const active = doc.activeElement;
+    const inside = Boolean(active) && active !== doc.body && root.contains(active);
+    change();
+    if (!inside || typeof focusFallback !== "function") {
+      return;
+    }
+    const swallowed = root.classList.contains("is-error") && !errorEl.contains(active); // the error replaces the segments
+    if (swallowed || !isShown(active)) {
       focusFallback();
     }
   }
@@ -158,11 +167,11 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
       timer = null;
     }
   }
-  function paintMessage() {
+  const paintMessage = () => guarded(paintMessageNow);
+  function paintMessageNow() {
     const current = messages.current;
     clearTimerNow();
     if (current === null) {
-      releaseFocus(messageEl);
       messageText.textContent = "";
       actionButton.hidden = true;
       actionButton.textContent = "";
@@ -176,9 +185,6 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
     messageEl.className = "sb-seg sb-message is-" + current.kind;
     messageEl.hidden = false;
     dismissButton.hidden = current.kind !== "error";
-    if (current.action === null) {
-      releaseFocus(actionButton);
-    }
     actionButton.hidden = current.action === null;
     actionButton.textContent = current.action === null ? "" : current.action.label;
     if (current.expiresAt !== null) {
@@ -205,9 +211,9 @@ export function createStatusBar(root, { S, helpText = () => "", now = () => Date
 
   // ---- connection
   let retryHandler = null;
-  function connection(state, { onRetry } = {}) {
+  const connection = (state, options = {}) => guarded(() => connectionNow(state, options));
+  function connectionNow(state, { onRetry } = {}) {
     if (state === "online") {
-      releaseFocus(errorEl);
       root.classList.remove("is-error");
       errorEl.hidden = true;
       errorText.textContent = "";

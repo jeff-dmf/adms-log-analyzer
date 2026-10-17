@@ -41,14 +41,15 @@ function setup() {
     counts.push({ caseId, filter, signal, d });
     return d.promise;
   };
-  const log = { counts: [], failures: [], recovered: 0, errors: [] };
+  const log = { counts: [], failures: [], recovered: 0, errors: [], scopes: [], abandoned: [] };
   const viewport = fakeElement();
   const grid = new Grid({
     viewport, rowsLayer: fakeElement(), spacer: fakeElement(), header: fakeElement(),
     onSelect() {}, onCount: (v, o) => log.counts.push([v, o]), onPosition() {},
     onError: (err) => log.errors.push(err),
     onFailure: (err, info) => log.failures.push({ err, kind: info.kind, retry: info.retry }),
-    onRecovered: () => { log.recovered += 1; },
+    onRecovered: (scope) => { log.recovered += 1; log.scopes.push(scope); },
+    onAbandon: (view) => log.abandoned.push(view),
   });
   return { grid, pages, counts, log, viewport };
 }
@@ -277,7 +278,8 @@ test("a count that fails while the page works shows no count (never the old one)
   ctx.pages.at(-1).d.resolve({ rows: rows(50, 3), prev: null, next: null });
   assert.equal(await outcome, "ok");
   assert.equal(ctx.log.counts.at(-1)[0], null);
-  assert.equal(ctx.log.errors.length, 1);
+  assert.equal(ctx.log.failures.length, 1);
+  assert.equal(ctx.log.failures[0].kind, "server");
 });
 
 test("the count of a view change that failed, arriving late, is never shown", async () => {

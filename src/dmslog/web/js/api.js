@@ -57,8 +57,30 @@ export function onNetworkError(handler) {
   networkHandler = handler;
 }
 
-function networkFailed() {
-  if (networkHandler) {
+// A consumer that discards an answer (a newer request replaced it) says so by aborting its signal, or by binding a
+// check to it: the global notice (Disconnected / session) is then not raised for a response nobody uses.
+const currentChecks = new WeakMap();
+
+export function bindCurrent(signal, isCurrent) {
+  if (signal && typeof isCurrent === "function") {
+    currentChecks.set(signal, isCurrent);
+  }
+  return signal;
+}
+
+function stillWanted(signal) {
+  if (!signal) {
+    return true;
+  }
+  if (signal.aborted) {
+    return false;
+  }
+  const check = currentChecks.get(signal);
+  return check === undefined || Boolean(check());
+}
+
+function networkFailed(signal) {
+  if (networkHandler && stillWanted(signal)) {
     networkHandler();
   }
   return new ApiError(0, "network", S.errorNetwork);
@@ -77,7 +99,7 @@ async function request(method, url, body, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw networkFailed();
+    throw networkFailed(signal);
   }
   if (response.status === 204) {
     return null;
@@ -89,7 +111,7 @@ async function request(method, url, body, signal) {
     data = null;
   }
   if (response.status === 403) {
-    if (forbiddenHandler) {
+    if (forbiddenHandler && stillWanted(signal)) {
       forbiddenHandler();
     }
     throw new ApiError(403, "forbidden", S.errorForbidden);
@@ -118,10 +140,10 @@ async function requestFile(url, body, as, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw networkFailed();
+    throw networkFailed(signal);
   }
   if (response.status === 403) {
-    if (forbiddenHandler) {
+    if (forbiddenHandler && stillWanted(signal)) {
       forbiddenHandler();
     }
     throw new ApiError(403, "forbidden", S.errorForbidden);
@@ -144,7 +166,7 @@ async function requestFile(url, body, as, signal) {
     if (err && err.name === "AbortError") {
       throw err;
     }
-    throw networkFailed(); // the stream broke: never a half file
+    throw networkFailed(signal); // the stream broke: never a half file
   }
   const rows = Number(response.headers.get("X-Dmslog-Rows"));
   return {

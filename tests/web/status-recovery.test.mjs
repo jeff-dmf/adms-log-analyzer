@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { setFieldError, resetFormWithErrors } from "../../src/dmslog/web/js/field-error.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 import { createStatusBar } from "../../src/dmslog/web/js/status-bar.js";
-import { createConnectionRetry } from "../../src/dmslog/web/js/status-bar-model.js";
+import { createRecovery } from "../../src/dmslog/web/js/status-bar-model.js";
 import { installGlobalDom } from "./fixtures/fake-dom.mjs";
 
 const doc = installGlobalDom();
@@ -85,30 +85,33 @@ test("a connection error text is never shown as a message (no stale copy after r
   assert.equal(shown(), true);
 });
 
-test("Retry reloads the cases when the opening failed, the view otherwise, and stays offline while down", async () => {
+test("Retry reloads the cases when the opening failed, applies the view after a restored connection, and stays offline while down", async () => {
   const calls = [];
   let healthy = false;
   let pending = true;
-  const retry = createConnectionRetry({
+  const recovery = createRecovery({
     health: async () => { if (!healthy) throw new Error("down"); },
     setOnline: () => calls.push("online"),
     openingPending: () => pending,
     reloadCases: async () => { calls.push("cases"); pending = false; },
-    refreshView: async () => { calls.push("view"); },
+    fallback: async () => { calls.push("view"); },
     onError: (e) => calls.push("error:" + e.message),
   });
-  await retry();
+  await recovery.retry();
   assert.deepEqual(calls, []);
   healthy = true;
-  await retry();
+  await recovery.retry();
   assert.deepEqual(calls, ["online", "cases"]);
-  await retry();
-  assert.deepEqual(calls, ["online", "cases", "online", "view"]);
-  const failing = createConnectionRetry({
+  await recovery.retry(); // nothing failed and the connection was not lost: nothing is reloaded
+  assert.deepEqual(calls, ["online", "cases", "online"]);
+  recovery.markOffline();
+  await recovery.retry(); // the connection was lost and nothing is registered: the view is applied again
+  assert.deepEqual(calls, ["online", "cases", "online", "online", "view"]);
+  const failing = createRecovery({
     health: async () => {}, setOnline() {}, openingPending: () => true,
-    reloadCases: async () => { throw new Error("boom"); }, refreshView: async () => {}, onError: (e) => calls.push("error:" + e.message),
+    reloadCases: async () => { throw new Error("boom"); }, fallback: async () => {}, onError: (e) => calls.push("error:" + e.message),
   });
-  await failing();
+  await failing.retry();
   assert.equal(calls.at(-1), "error:boom");
 });
 

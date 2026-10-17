@@ -136,28 +136,69 @@ test("a message without an action (or with a broken one) shows no Retry; a newer
   assert.equal(pick("sb-action").hidden, true);
 });
 
-test("the focus goes to the fallback when Retry disappears under it, on dismiss and on recovery of the connection", () => {
+test("the focus leaves the bar for a shown target on EVERY transition that hides what had it", () => {
   const moved = [];
-  const { doc, status, pick } = bar({ focusFallback: () => moved.push("grid") });
-  const handle = status.message("boom", { kind: "error", action: { label: "Retry", run() {} } });
-  pick("sb-action").focus();
+  const ctx = bar({ focusFallback: () => { moved.push("grid"); outside.focus(); } });
+  const { doc, status, pick } = ctx;
+  const outside = doc.createElement("button");
+  doc.body.appendChild(outside);
+  const act = (label) => ({ label, run() {} });
+  const focusIn = (cls) => pick(cls).focus();
+  // error message: Dismiss hidden when it becomes info
+  status.message("boom", { kind: "error" });
+  focusIn("sb-dismiss");
+  status.message("fine", { kind: "info" });
+  assert.equal(moved.length, 1);
+  // Retry of the message: dismissed by its owner
+  const handle = status.message("boom", { kind: "error", action: act("Retry") });
+  focusIn("sb-action");
   handle.dismiss();
-  assert.deepEqual(moved, ["grid"]);
-  // replaced by a message without action while focused
-  status.message("boom", { kind: "error", action: { label: "Retry", run() {} } });
-  pick("sb-action").focus();
+  assert.equal(moved.length, 2);
+  // action -> message without action
+  status.message("boom", { kind: "error", action: act("Retry") });
+  focusIn("sb-action");
   status.message("other", { kind: "info" });
-  assert.deepEqual(moved, ["grid", "grid"]);
-  // the connection error's Retry now
-  status.connection("offline", { onRetry() {} });
-  pick("sb-retry").focus();
-  status.connection("online");
-  assert.deepEqual(moved, ["grid", "grid", "grid"]);
-  // nothing focused inside: the fallback is not called
-  doc.body.focus?.();
-  status.connection("offline", { onRetry() {} });
-  status.connection("online");
   assert.equal(moved.length, 3);
+  // offline -> forbidden hides the bar's Retry
+  status.connection("offline", { onRetry() {} });
+  focusIn("sb-retry");
+  status.connection("forbidden");
+  assert.equal(moved.length, 4);
+  // offline -> online
+  status.connection("offline", { onRetry() {} });
+  focusIn("sb-retry");
+  status.connection("online");
+  assert.equal(moved.length, 5);
+  // entering offline swallows every other segment of the bar (help button, message buttons)
+  status.message("boom", { kind: "error" });
+  focusIn("sb-dismiss");
+  status.connection("offline", { onRetry() {} });
+  assert.equal(moved.length, 6);
+  status.connection("online");
+  // focus outside the bar is never taken
+  outside.focus();
+  status.message("x", { kind: "error" });
+  status.message("");
+  status.connection("offline", { onRetry() {} });
+  status.connection("online");
+  assert.equal(moved.length, 6);
+});
+
+test("the fallback target is a SHOWN one: the grid, else the search box; with no case the empty state's button", async () => {
+  const { fallbackTarget } = await import("../../src/dmslog/web/js/status-bar-model.js");
+  const node = (name, hidden = false, parent = null) => ({ name, hidden, parent, isConnected: true });
+  const grid = node("grid");
+  const search = node("search");
+  const empty = node("new-case");
+  const hiddenBox = node("box", true);
+  const inHidden = node("inner", false, hiddenBox);
+  const q = (map) => (selector) => map[selector] ?? null;
+  assert.equal(fallbackTarget({ query: q({ "#grid-viewport": grid, "#search-input": search }), noCase: false }), grid);
+  // the grid is hidden (a collapsed panel): the search box
+  assert.equal(fallbackTarget({ query: q({ "#grid-viewport": inHidden, "#search-input": search }), noCase: false }), search);
+  // no case: the grid is not offered even if it is "shown"; the empty state is
+  assert.equal(fallbackTarget({ query: q({ ".case-empty-new": empty, "#grid-viewport": grid }), noCase: true }), empty);
+  assert.equal(fallbackTarget({ query: q({}), noCase: true }), null);
 });
 
 test("the disconnected state says what to do and Retry is offered; role=alert", () => {
@@ -280,19 +321,6 @@ test("the timeline keeps the previous chart, says it is out of date, and recover
 });
 
 // ---- wiring (main.js is not run here: its pieces are tested above; this keeps the connections from rotting) ------
-
-test("main.js wires the failure notice, Retry, the rollback and the stream stop", () => {
-  const main = fs.readFileSync(new URL("../../src/dmslog/web/js/main.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  assert.match(main, /onFailure: noticeFailure/);
-  assert.match(main, /onRecovered: dropFailureNotice/);
-  assert.match(main, /onStreamStopped: \(\) => status\.connection\("offline"/);
-  assert.match(main, /refreshView: \(\) => recoverFailed\(\)/);
-  assert.match(main, /viewTracker\.settle\(token, outcome, isRetryable\(kind\)\)/);
-  assert.match(main, /viewsStack\.rollback\(to\.stack\)/);
-  assert.match(main, /viewTracker\.caseChanged\(\)/);
-  assert.match(main, /focusFallback: \(\) => byId\("grid-viewport"\)\.focus\(\)/);
-  assert.doesNotMatch(main, /innerHTML/);
-});
 
 test("the CSS shows the bar after 400 ms of aria-busy, mutes the old rows, and respects reduced motion", () => {
   const css = fs.readFileSync(new URL("../../src/dmslog/web/css/app.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");

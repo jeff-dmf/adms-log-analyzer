@@ -59,11 +59,11 @@ export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, on
 
   function connect() {
     close();
+    guard.reset(); // a new stream, a new case or no case: a stop does not outlive them
     const caseId = getCase();
     if (!flow.state.on || caseId === null || typeof EventSource !== "function") {
       return;
     }
-    guard.reset();
     const stream = new EventSource(api.progressUrl(caseId));
     events = stream;
     stream.addEventListener("watch", (event) => {
@@ -114,7 +114,7 @@ export function initFollowTail({ toggle, newButton, grid, getCase, getFilter, on
         return false;
       }
       connect();
-      return true;
+      return events !== null; // true only when a stream was really opened
     },
     stopped: () => guard.stopped,
     // The grid moved or reloaded.

@@ -292,6 +292,14 @@ export function createViewTracker() {
       }
       return { action: "stale" };
     },
+    // The user navigated while this view change was loading: it is dropped. Returns the confirmed view to go back to
+    // (null when there is none); the answers of the dropped change are stale from now on.
+    abandon() {
+      seq += 1;
+      current = null;
+      failed = null;
+      return confirmed;
+    },
     // The attempt that did not load and may be repeated (null when nothing failed, or it cannot succeed by repeating).
     retryTarget: () => failed,
     get confirmed() {
@@ -304,5 +312,52 @@ export function createViewTracker() {
       confirmed = null;
       failed = null;
     },
+  };
+}
+
+// The orchestration around the tracker (UI-25), with its effects injected so it can be tested without the page:
+//   capture()            the state of the view being applied: {caseId, live, selection, stack, filter} (filter is set by
+//                        the caller once composed)
+//   restoreState(a)      puts the toolbar, the side selection and the trail back to attempt `a`
+//   afterRollback(a)     what follows a rollback (terms, filter, timeline, chips); `a` is the view that is back
+//   onConfirm()          the first page of the new view is there (the detail pane may go)
+// begin() -> {attempt, token}; settle(token, outcome, retryable) applies the verdict; abandon() is the user navigating
+// during a pending change; retryState() restores the attempt that failed and returns it (the caller applies the view).
+export function createViewFlow({ capture, restoreState, afterRollback, onConfirm }) {
+  const tracker = createViewTracker();
+  return {
+    tracker,
+    begin() {
+      const attempt = capture();
+      return { attempt, token: tracker.begin(attempt) };
+    },
+    settle(token, outcome, retryable = true) {
+      const verdict = tracker.settle(token, outcome, retryable);
+      if (verdict.action === "confirm") {
+        onConfirm();
+      } else if (verdict.action === "rollback" && verdict.to !== null) {
+        restoreState(verdict.to);
+        afterRollback(verdict.to);
+      }
+      return verdict;
+    },
+    abandon() {
+      const to = tracker.abandon();
+      if (to !== null) {
+        restoreState(to);
+        afterRollback(to);
+      }
+      return to;
+    },
+    retryState(caseId) {
+      const failed = tracker.retryTarget();
+      if (failed === null || failed.caseId !== caseId) {
+        return null;
+      }
+      restoreState(failed);
+      return failed;
+    },
+    retryTarget: () => tracker.retryTarget(),
+    caseChanged: () => tracker.caseChanged(),
   };
 }

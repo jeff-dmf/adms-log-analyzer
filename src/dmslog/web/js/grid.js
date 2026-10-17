@@ -1,6 +1,6 @@
 // Virtual log grid: a pooled set of row elements over a keyset-paged RowWindow. The scrollbar
 // maps onto the time range of the chosen sources; wheel and keys move by rows.
-import { api, errorKind } from "./api.js";
+import { api, bindCurrent, errorKind } from "./api.js";
 import {
   END_CURSOR, PAGE_LIMIT, ROW_HEIGHT, SCROLL_SPAN, RowWindow, SourceLabels, fetchPlan, isMultiDay,
   jumpCursor, scrollToTs, shortTs, topAfterResize, tsToScroll,
@@ -40,7 +40,7 @@ function fieldText(value) {
 export class Grid {
   constructor({
     viewport, rowsLayer, spacer, header, onSelect, onCount, onPosition, onError, getMark, onVisible, onView,
-    getHighlight, onFailure, onRecovered,
+    getHighlight, onFailure, onRecovered, onAbandon,
   }) {
     this.viewport = viewport;
     this.rowsLayer = rowsLayer;
@@ -53,7 +53,12 @@ export class Grid {
     // A request failed (UI-25): (error, {kind, retry}). The old rows stay on screen; without this hook the error goes
     // to onError. onRecovered() follows the next request that works, so the notice can go away.
     this.onFailure = onFailure || ((err) => this.onError(err));
-    this.onRecovered = onRecovered || (() => {});
+    this.onRecovered = onRecovered || (() => {}); // (scope): "grid" (rows) or "count"
+    // A pending view change was dropped because the user navigated (Home, End, a time, a column change) before its first
+    // page arrived: the owner puts the controls back to the view the rows belong to.
+    this.onAbandon = onAbandon || (() => {});
+    this.countFailure = null; // {error, kind, announce}: the count that failed, repeatable alone with retryCount()
+    this.countFailureShown = false;
     this.getMark = getMark || (() => null); // bookmark of a record id: {color} | null
     this.getHighlight = getHighlight || (() => null); // highlight rule of a record id: {color, label} | null
     this.onVisible = onVisible || (() => {}); // ids of the rendered rows (bookmark lookup)
@@ -384,15 +389,64 @@ export class Grid {
     this.failure = null;
     if (this.failureShown) {
       this.failureShown = false;
-      this.onRecovered();
+      this.onRecovered("grid");
     }
+  }
+
+  // A pending view change that the user's navigation replaces: it is dropped (its page and its count are discarded) and
+  // the owner is told, so the controls go back to the confirmed view. Never for a new case (nothing to go back to).
+  abandonPending() {
+    const pending = this.pending;
+    if (pending === null || pending.committed || pending.failed) {
+      return;
+    }
+    pending.abandoned = true;
+    this.pending = null;
+    this.invalidateCount();
+    this.onCount(this.shownCount);
+    this.onAbandon(pending);
+  }
+
+  // The count in flight (or held) belongs to a view that will not be shown: its answer, success or failure, is dropped.
+  invalidateCount() {
+    this.countGeneration += 1;
+    if (this.countController) {
+      this.countController.abort();
+      this.countController = null;
+    }
+  }
+
+  clearCountFailure() {
+    this.countFailure = null;
+    if (this.countFailureShown) {
+      this.countFailureShown = false;
+      this.onRecovered("count");
+    }
+  }
+
+  failCount(error, announce) {
+    const kind = errorKind(error);
+    this.countFailure = { error, kind, announce: Boolean(announce) };
+    this.countFailureShown = true;
+    this.onFailure(error, { kind, scope: "count", retry: () => this.retryCount() });
+  }
+
+  // Repeats only the count that failed (the rows are fine). One at a time; nothing failed: nothing happens.
+  retryCount() {
+    if (this.countFailure === null || this.countController !== null) {
+      return Promise.resolve("noop");
+    }
+    const { announce } = this.countFailure;
+    this.countFailure = null;
+    this.onCount("loading");
+    return this.refreshCount(announce).then(() => (this.countFailure === null ? "ok" : "failed"));
   }
 
   fail(err, op) {
     const kind = errorKind(err);
     this.failure = { kind, error: err, op };
     this.failureShown = true;
-    this.onFailure(err, { kind, retry: () => this.retry() });
+    this.onFailure(err, { kind, scope: "grid", retry: () => this.retry() });
   }
 
   // Repeats only what failed: the page of the scroll, the jump, or the view change. A second call while it runs, or
@@ -415,16 +469,16 @@ export class Grid {
 
   // `view`: a pending view change (setView) or null for the current view (columns changed).
   async reload(view = null) {
+    if (view === null) {
+      this.abandonPending(); // a column change must not leave an older view change half applied
+    }
     this.cancel();
     const target = view || this.currentView();
     this.failure = null;
     this.pending = target;
     // The count of the new view has its own answer, held until the page arrives; the old one is not a baseline for it.
-    this.countGeneration += 1;
-    if (this.countController) {
-      this.countController.abort();
-      this.countController = null;
-    }
+    this.invalidateCount();
+    this.clearCountFailure();
     if (target.caseId !== this.caseId || target.caseId === null) {
       // Another case: its rows cannot be replaced by those of the old one.
       this.adopt(target);
@@ -454,6 +508,7 @@ export class Grid {
       this.countController.abort();
     }
     const controller = new AbortController();
+    bindCurrent(controller.signal, () => generation === this.countGeneration);
     this.countController = controller;
     const caseId = view ? view.caseId : this.caseId;
     const filter = view ? view.filter : this.filter;
@@ -468,15 +523,19 @@ export class Grid {
           this.total = value.n;
           this.emitCount(value, { announce });
         }
+        if (!view || view.committed) {
+          this.clearCountFailure();
+        }
       }
     } catch (err) {
       if (generation === this.countGeneration && !(err && err.name === "AbortError")) {
         if (view && !view.committed) {
-          view.countFailed = true;
+          view.countFailed = true; // reported with its page, or dropped with it
+          view.countError = err;
         } else {
           this.emitCount(null);
+          this.failCount(err, announce);
         }
-        this.onError(err);
       }
     } finally {
       if (generation === this.countGeneration) {
@@ -499,9 +558,13 @@ export class Grid {
   // only when its page arrives. On failure the window, the selection and the scroll position are left as they were.
   // Resolves to "ok", "failed" or "superseded".
   async jump(cursor, dir, view = null) {
+    if (view === null) {
+      this.abandonPending();
+    }
     this.cancel();
     const generation = this.generation;
     this.controller = new AbortController();
+    bindCurrent(this.controller.signal, () => generation === this.generation);
     this.loading = true;
     this.failure = null;
     this.setBusy(true, view !== null);
@@ -529,6 +592,7 @@ export class Grid {
         if (view) {
           view.failed = true;
           this.pending = null;
+          this.invalidateCount(); // its count is dropped with it: a late answer or failure changes nothing
           this.onCount(this.shownCount); // the held answer belongs to the view that did not load: show the old count
         }
         this.fail(err, view ? { kind: "reload", target: { ...view, failed: false, committed: false, count: null, countFailed: false } }
@@ -554,6 +618,7 @@ export class Grid {
       this.total = view.count ? view.count.n : null; // the old total is no baseline for the new view
       if (view.countFailed) {
         this.emitCount(null);
+        this.failCount(view.countError, view.announce);
       } else if (view.count) {
         this.emitCount(view.count, { announce: view.announce });
       }
@@ -576,6 +641,7 @@ export class Grid {
       }
       this.loading = true;
       this.controller = new AbortController();
+      bindCurrent(this.controller.signal, () => generation === this.generation);
       const cursor = plan === "fwd" ? w.nextCursor : w.prevCursor;
       try {
         const page = await api.page(this.caseId, this.filter, cursor, plan, PAGE_LIMIT, this.controller.signal, this.columnNames());
