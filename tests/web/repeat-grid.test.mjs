@@ -1,4 +1,4 @@
-// 9.12 UI: the grid shows a repeated record with a data attribute, the words as the row tooltip and in its aria-label,
+// 9.12 UI: the grid shows a repeated record with a data attribute, the words as the row tooltip and as hidden text (UI-26),
 // asks for the marks of the rows on screen through onVisible, and never reads the layout to do it.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -19,7 +19,7 @@ globalThis.document = { createElement: fakeElement, createTextNode: (text) => ({
 const { Grid } = await import("../../src/dmslog/web/js/grid.js");
 const { api } = await import("../../src/dmslog/web/js/api.js");
 
-test("repeated rows get data-rp, the tooltip and the label; other rows and rows whose mark went away lose them", async () => {
+test("repeated rows get data-rp and the tooltip; other rows and rows whose mark went away lose them", async () => {
   api.count = async () => ({ count: 2, exact: true });
   api.page = async () => ({
     rows: [{ id: 1, ts: 10, sev: 4, msg: "a", nlines: 1, source_id: 1 }, { id: 2, ts: 11, sev: 4, msg: "a", nlines: 1, source_id: 1 }],
@@ -40,13 +40,13 @@ test("repeated rows get data-rp, the tooltip and the label; other rows and rows 
   assert.equal(first.title, "");
   assert.equal(second.dataset.rp, "1");
   assert.equal(second.title, "Repeat of #1, +1 ms");
-  assert.match(second.attrs["aria-label"], /, Repeat of #1, \+1 ms$/);
+  assert.equal(second.attrs["aria-label"], undefined, "UI-26: the words are hidden text in the first cell, not a row label");
   assert.deepEqual(visible.at(-1), [1, 2]);
   marks = {};
   grid.render();
   assert.equal(second.dataset.rp, undefined);
   assert.equal(second.title, "");
-  assert.doesNotMatch(second.attrs["aria-label"], /Repeat/);
+  assert.equal(second.attrs["aria-label"], undefined);
 });
 
 test("without the repeats module (it loads after the first view) the grid is as it was", async () => {
