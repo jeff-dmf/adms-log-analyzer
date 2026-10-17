@@ -17,16 +17,17 @@ globalThis.ResizeObserver = class {
 };
 
 const { Grid } = await import("../../src/dmslog/web/js/grid.js");
+const { wheelTravel } = await import("../../src/dmslog/web/js/grid.js");
 const { ROW_HEIGHT, SCROLL_SPAN } = await import("../../src/dmslog/web/js/grid-model.js");
 
-const GEOMETRY = ["clientHeight", "clientWidth", "offsetHeight", "offsetWidth", "scrollTop", "scrollLeft", "scrollHeight"];
+const GEOMETRY = ["clientHeight", "clientWidth", "offsetHeight", "offsetWidth", "scrollTop", "scrollLeft", "scrollHeight", "scrollWidth"];
 
 // A viewport whose geometry reads are counted; writes to scrollTop/scrollLeft are not reads.
 function makeViewport(clientHeight = 10 * ROW_HEIGHT) {
   const el = new El(doc, "div");
   el.id = "grid-viewport";
   const reads = { total: 0 };
-  const values = { clientHeight, scrollTop: 0, scrollLeft: 0 };
+  const values = { clientHeight, scrollTop: 0, scrollLeft: 0, scrollWidth: 2000, clientWidth: 500, offsetWidth: 515 };
   for (const name of GEOMETRY) {
     Object.defineProperty(el, name, {
       configurable: true,
@@ -136,29 +137,60 @@ test("deltas past either end stop at the end and the start, and the rows still m
   assert.equal(grid.window.top, 0);
 });
 
-test("horizontal wheel is added up too and moves the viewport once per frame without reading scrollLeft", () => {
+test("horizontal wheel is added up and moves body and header once per frame, with writes only", () => {
   const { grid, vp, runFrames } = setup();
   const before = vp.reads.total;
   wheel(vp, 0, { deltaX: 30 });
   wheel(vp, 0, { deltaY: 5, deltaX: 20, shiftKey: true });
-  assert.deepEqual(vp.el.scrolled, []);
+  assert.equal(vp.values.scrollLeft, 0);
   runFrames();
-  assert.deepEqual(vp.el.scrolled, [50]);
+  assert.equal(vp.values.scrollLeft, 50);
+  assert.equal(grid.header.scrollLeft, 50);
   wheel(vp, ROW_HEIGHT);
   runFrames();
-  assert.deepEqual(vp.el.scrolled, [50], "the horizontal travel is spent: a later frame does not repeat it");
+  assert.equal(vp.values.scrollLeft, 50, "the horizontal travel is spent: a later frame does not repeat it");
   assert.equal(grid.window.top, 1);
-  grid.window.top = 0;
-  assert.equal(grid.window.top, 0);
   assert.equal(vp.reads.total, before);
 });
 
-test("without scrollBy the horizontal move falls back to scrollLeft", () => {
-  const { vp, runFrames } = setup();
-  vp.el.scrollBy = undefined;
+test("direction reversal at an edge keeps the later delta (vertical, both ends, and horizontal)", () => {
+  const { grid, vp, runFrames } = setup({ rows: 100 });
+  wheel(vp, -10 * ROW_HEIGHT);
+  wheel(vp, ROW_HEIGHT);
+  runFrames();
+  assert.equal(grid.window.top, 1, "at the top: the excess of -10 is dropped, +1 follows");
+  const max = grid.window.maxTop(grid.visible);
+  grid.window.top = max;
+  wheel(vp, 10 * ROW_HEIGHT);
+  wheel(vp, -ROW_HEIGHT);
+  runFrames();
+  assert.equal(grid.window.top, max - 1, "at the end");
+  wheel(vp, 0, { deltaX: -100 });
   wheel(vp, 0, { deltaX: 40 });
   runFrames();
-  assert.equal(vp.values.scrollLeft, 40);
+  assert.equal(vp.values.scrollLeft, 40, "horizontal, at the left edge");
+  wheel(vp, 0, { deltaX: 99999 });
+  wheel(vp, 0, { deltaX: -10 });
+  runFrames();
+  assert.equal(vp.values.scrollLeft, 1500 - 10, "horizontal, at the right edge (scrollWidth - clientWidth)");
+});
+
+test("wheel units are normalised on both axes: pixel, line and page", () => {
+  const ctx = { visible: 11, pageWidth: 500 };
+  const y = (deltaMode, deltaY) => wheelTravel({ deltaMode, deltaY, deltaX: 0, shiftKey: false }, ctx);
+  assert.deepEqual(y(0, ROW_HEIGHT), { axis: "y", amount: 1 });
+  assert.deepEqual(y(1, 1), { axis: "y", amount: 3 });
+  assert.deepEqual(y(2, 1), { axis: "y", amount: 10 }, "a page is the visible rows less one");
+  assert.equal(wheelTravel({ deltaMode: 2, deltaY: 1, deltaX: 0 }, { visible: 1 }).amount, 1);
+  const x = (deltaMode, deltaX) => wheelTravel({ deltaMode, deltaX, deltaY: 0, shiftKey: false }, ctx);
+  assert.deepEqual(x(0, 30), { axis: "x", amount: 30 });
+  assert.deepEqual(x(1, 1), { axis: "x", amount: 3 * ROW_HEIGHT });
+  assert.deepEqual(x(2, 1), { axis: "x", amount: 500 });
+  assert.deepEqual(wheelTravel({ deltaMode: 1, deltaX: 0, deltaY: 2, shiftKey: true }, ctx), { axis: "x", amount: 6 * ROW_HEIGHT });
+  const { grid, vp, runFrames } = setup();
+  wheel(vp, 1, { deltaMode: 2 });
+  runFrames();
+  assert.equal(grid.window.top, grid.visible - 1);
 });
 
 test("a wheel burst, its frame and the scroll sync read no layout", () => {
@@ -168,12 +200,17 @@ test("a wheel burst, its frame and the scroll sync read no layout", () => {
     wheel(vp, ROW_HEIGHT);
     if (i % 30 === 29) {
       runFrames();
+      vp.el.dispatch("scroll"); // the echo of syncScroll(), through the real listeners of the grid and its resizer
     }
   }
   runFrames();
+  wheel(vp, 0, { deltaX: 40 });
+  runFrames();
+  vp.el.dispatch("scroll");
   grid.scrollRows(-7);
   grid.syncScroll();
   grid.render();
+  vp.el.dispatch("scroll");
   assert.equal(vp.reads.total, before, JSON.stringify(vp.reads));
   assert.equal(vp.values.scrollTop, Math.round((grid.window.topRow().ts - 1000) / (grid.range.max - 1000) * SCROLL_SPAN));
 });
@@ -185,8 +222,10 @@ test("syncScroll writes the target and remembers it: the scroll event it causes 
   const target = vp.values.scrollTop;
   assert.ok(target > 0);
   assert.equal(grid.lastScroll, target);
+  const reads = vp.reads.total;
   vp.el.dispatch("scroll");
   assert.equal(grid.pendingJump, null, "the programmatic scroll does not start a jump");
+  assert.equal(vp.reads.total, reads, "and its echo is not even read");
   vp.values.scrollTop = target + 1; // sub-pixel snapping of the browser stays below the threshold
   vp.el.dispatch("scroll");
   assert.equal(grid.pendingJump, null);
@@ -196,6 +235,7 @@ test("a scrollbar drag is still the user's: it starts the jump to that time", ()
   const { grid, vp } = setup();
   grid.window.top = 150;
   grid.syncScroll();
+  vp.el.dispatch("scroll"); // the echo of syncScroll()
   vp.values.scrollTop = grid.lastScroll + 500;
   vp.el.dispatch("scroll");
   assert.notEqual(grid.pendingJump, null);
@@ -333,14 +373,14 @@ function method(name) {
 const GEOMETRY_READ = /clientHeight|clientWidth|clientTop|offsetWidth|offsetHeight|offsetTop|offsetLeft|getBoundingClientRect|scrollTop\b(?!\s*=[^=])|scrollLeft\s*\+?=|scrollHeight|scrollWidth|getComputedStyle|innerHeight|\.scrollLeft\b(?!\s*\+=)/;
 
 test("the hot scroll and render paths read no geometry (static): only readHeight and the scrollbar input do", () => {
-  for (const name of ["scrollRows", "syncScroll", "ensurePool", "render", "applyWheel", "cancelWheel", "createRow"]) {
+  for (const name of ["scrollRows", "moveRows", "syncScroll", "ensurePool", "render", "applyWheel", "cancelWheel", "createRow"]) {
     const body = method(name).replace(/\/\/.*$/gm, "");
     const cleaned = body.replace(/this\.viewport\.scrollTop = top;/, "").replace(/this\.viewport\.scrollLeft \+= x;/, "");
     assert.ok(!GEOMETRY_READ.test(cleaned), name + ": " + (GEOMETRY_READ.exec(cleaned) || [])[0]);
   }
   const bind = source.slice(source.indexOf("  bind() {"), source.indexOf("  readHeight()"));
   const wheelListener = bind.slice(bind.indexOf('addEventListener("wheel"'), bind.indexOf('addEventListener("scroll"')).replace(/\/\/.*$/gm, "");
-  assert.ok(wheelListener.length > 200 && !GEOMETRY_READ.test(wheelListener) && !/scrollRows|render\(|scrollLeft/.test(wheelListener));
+  assert.ok(wheelListener.length > 200 && !GEOMETRY_READ.test(wheelListener) && !/scrollRows|moveRows|render\(|scrollLeft/.test(wheelListener));
   // The few reads that remain are named: the fallback in readHeight() and the scroll event of the scrollbar.
   const reads = source.split("\n").filter((l) => /clientHeight|\.scrollTop\b(?!\s*=)/.test(l) && !/^\s*\/\//.test(l));
   assert.equal(reads.length, 2, reads.join("\n"));
@@ -368,4 +408,128 @@ test("the css contains the viewport and the rows, and gives the pooled rows no c
   for (const m of css.matchAll(/\.grid-(?:viewport:focus-visible )?[^{}]*grid-row\.selected[^{}]*\{[^}]*outline-offset:\s*(-?\d+)px/g)) {
     assert.ok(Number(m[1]) < 0, m[0]);
   }
+});
+
+test("the resizer has no scroll listener and measures layout only from apply() and the observer (static)", () => {
+  const src = fs.readFileSync(new URL("../../src/dmslog/web/js/column-resize.js", import.meta.url), "utf8");
+  assert.ok(!/addEventListener\("scroll"/.test(src));
+  const grid = fs.readFileSync(new URL("../../src/dmslog/web/js/grid.js", import.meta.url), "utf8");
+  const calls = grid.split("\n").filter((l) => /resizer\.measureLayout\(\)/.test(l));
+  assert.equal(calls.length, 1, "only the ResizeObserver callback");
+});
+
+// -- navigation and destroy ------------------------------------------------------------------------------------
+
+const { api } = await import("../../src/dmslog/web/js/api.js");
+
+function withApi(setupOptions) {
+  const ctx = setup(setupOptions);
+  const pages = [];
+  api.page = (caseId, filter, cursor, dir, limit, signal) => new Promise((resolve, reject) => {
+    pages.push({ cursor, dir, signal, resolve, reject });
+  });
+  api.count = async () => ({ count: 300, exact: true });
+  return { ...ctx, pages };
+}
+
+test("Home, End, a time jump and navigation keys drop the pending wheel travel", async () => {
+  for (const [start, expectTop] of [[(g) => g.goHome(), () => 0], [(g) => g.goEnd(), (g) => g.window.maxTop(g.visible)], [(g) => g.jumpToTime(1500), () => 0]]) {
+    const { grid, vp, pages, runFrames } = withApi();
+    wheel(vp, 10 * ROW_HEIGHT);
+    const done = start(grid);
+    assert.equal(grid.wheelRemainder, 0);
+    assert.equal(runFrames(), 0, "the pending frame was cancelled");
+    pages[0].resolve({ rows: makeRows(300), prev: null, next: null });
+    await done;
+    assert.equal(grid.window.top, expectTop(grid), "the frame of an older wheel does not move the new rows");
+  }
+  for (const key of ["ArrowDown", "PageDown", "Home", "End"]) {
+    const { grid, vp, pages, runFrames } = withApi();
+    wheel(vp, 10 * ROW_HEIGHT);
+    vp.el.dispatch("keydown", { key });
+    assert.equal(grid.wheelRemainder, 0, key);
+    assert.equal(runFrames(), 0, key);
+    pages.forEach((p) => p.resolve({ rows: makeRows(300), prev: null, next: null }));
+  }
+  const { grid, vp, runFrames } = withApi();
+  wheel(vp, 10 * ROW_HEIGHT);
+  grid.scrollRows(2); // a programmatic move
+  assert.equal(runFrames(), 0);
+  assert.equal(grid.window.top, 2);
+});
+
+test("the scrollbar jump (80 ms debounce) also drops the wheel travel", async () => {
+  const { grid, vp, pages } = withApi();
+  vp.values.scrollTop = 5000;
+  vp.el.dispatch("scroll");
+  wheel(vp, 10 * ROW_HEIGHT);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(pages.length, 1);
+  assert.equal(grid.wheelRemainder, 0);
+  grid.destroy();
+});
+
+test("destroy is idempotent and leaves no live work: listeners, requests, count, keys, fonts", async () => {
+  const removed = [];
+  document.fonts = { addEventListener() {}, removeEventListener: (type, fn) => removed.push([type, fn]) };
+  const { grid, vp, pages } = withApi();
+  let jumped = grid.goEnd();
+  assert.equal(pages.length, 1);
+  const signal = pages[0].signal;
+  let renders = 0;
+  const ensurePool = grid.ensurePool.bind(grid); // render() reaches it only when it does work
+  grid.ensurePool = () => { renders += 1; ensurePool(); };
+  const rowsBefore = grid.window.rows;
+  grid.destroy();
+  grid.destroy();
+  assert.equal(signal.aborted, true, "the request in flight is aborted");
+  assert.equal(grid.listeners.signal.aborted, true, "every listener is tied to a signal that was aborted");
+  assert.equal(removed.length, 1);
+  assert.equal(removed[0][0], "loadingdone");
+  pages[0].resolve({ rows: makeRows(5), prev: null, next: null }); // a late answer
+  assert.equal(await jumped, "superseded");
+  assert.equal(grid.window.rows, rowsBefore);
+  vp.el.dispatch("keydown", { key: "ArrowDown" });
+  vp.el.dispatch("scroll");
+  vp.el.dispatch("wheel", { deltaY: 100, deltaX: 0, deltaMode: 0 });
+  grid.rowsLayer.dispatch("click", { target: { closest: () => null } });
+  assert.equal(renders, 0, "no render after destroy");
+  assert.equal(await grid.goHome(), "superseded");
+  assert.equal(pages.length, 1, "no request after destroy");
+  grid.render();
+  grid.scrollRows(3);
+  grid.pump();
+  assert.equal(renders, 0);
+  assert.equal(grid.resizer.destroyed, true);
+  delete document.fonts;
+});
+
+test("destroy aborts the count in flight and ignores keys even for a host that ignores the listener signal", async () => {
+  const { grid, vp } = withApi();
+  let countSignal = null;
+  api.count = (caseId, filter, signal) => new Promise(() => { countSignal = signal; });
+  grid.refreshCount(true, null);
+  assert.ok(countSignal && countSignal.aborted === false);
+  grid.window.selected = 5;
+  grid.destroy();
+  assert.equal(countSignal.aborted, true);
+  vp.el.dispatch("keydown", { key: "ArrowDown" });
+  assert.equal(grid.window.selected, 5, "the key did nothing");
+  api.count = async () => ({ count: 300, exact: true });
+  assert.equal(await grid.refreshCount(true, null), undefined);
+});
+
+test("the resizer measures the horizontal range in apply() and stops after destroy()", () => {
+  const { grid, vp } = setup();
+  vp.values.scrollWidth = 3000;
+  grid.resizer.apply();
+  assert.equal(grid.resizer.maxScrollX, 2500);
+  assert.equal(grid.resizer.pageWidth, 500);
+  grid.resizer.destroy();
+  vp.values.scrollWidth = 9000;
+  const widths = grid.rowsLayer.style.minWidth;
+  grid.resizer.setWidth("msg", 700, false); // would re-apply every width
+  grid.resizer.measureLayout();
+  assert.equal(grid.resizer.maxScrollX, 2500);
+  assert.equal(grid.rowsLayer.style.minWidth, widths);
 });

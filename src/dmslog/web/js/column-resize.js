@@ -19,9 +19,18 @@ export class ColumnResizer {
     this.prepareFit = prepareFit || (() => null);  // (key) -> restore function | null: shows untruncated text while fitting
     this.measureProbe = measureChar || (() => probeCharWidth(rowsLayer));
     this.headerCells = new Map();
-    if (typeof viewport.addEventListener === "function") {
-      viewport.addEventListener("scroll", () => this.syncScroll());
-    }
+    // Layout facts for the scroll path, measured by measureLayout() when the layout changes (apply(), the viewport's
+    // ResizeObserver) and never on a scroll event: a wheel burst must cost no layout read (UI-27).
+    this.scrollX = 0;            // horizontal scroll position, kept in memory (scrollTo() writes it)
+    this.maxScrollX = Infinity;  // furthest scrollLeft; Infinity while nothing was measured
+    this.pageWidth = 0;          // client width of the viewport (a "page" of the horizontal wheel)
+    this.destroyed = false;
+  }
+
+  // Stops the resizer: no layout work after the grid is dropped.
+  destroy() {
+    this.destroyed = true;
+    this.headerCells.clear();
   }
 
   // Measures the width of one character of the grid font and applies it to the default widths. Called once at the start
@@ -148,6 +157,9 @@ export class ColumnResizer {
 
   // Applies the widths to the header, the pooled rows and the layer that sets the horizontal scroll.
   apply() {
+    if (this.destroyed) {
+      return;
+    }
     const keys = this.getKeys();
     for (const key of keys) {
       const width = this.model.get(key) + "px";
@@ -165,7 +177,7 @@ export class ColumnResizer {
     }
     this.rowsLayer.style.minWidth = this.model.total(keys) + "px";
     this.header.style.minWidth = "";
-    this.syncScroll();
+    this.measureLayout();
     this.onLayout();
   }
 
@@ -174,16 +186,33 @@ export class ColumnResizer {
     return this.model.get(key) + "px";
   }
 
-  // The header follows the body horizontally; its right padding matches the body's vertical scrollbar.
-  syncScroll() {
+  // The only geometry reads of the resizer, made when the layout changes (never on a scroll event). The header's right
+  // padding matches the body's vertical scrollbar; the header follows the body horizontally.
+  measureLayout() {
+    if (this.destroyed) {
+      return;
+    }
     const v = this.viewport;
     if (typeof v.offsetWidth === "number" && typeof v.clientWidth === "number") {
       const bar = Math.max(0, v.offsetWidth - v.clientWidth - 2 * (v.clientLeft || 0));
       this.header.style.paddingRight = bar + "px";
+      this.pageWidth = v.clientWidth;
+    }
+    if (typeof v.scrollWidth === "number" && typeof v.clientWidth === "number") {
+      this.maxScrollX = Math.max(0, v.scrollWidth - v.clientWidth);
     }
     if (typeof v.scrollLeft === "number") {
-      this.header.scrollLeft = v.scrollLeft;
+      this.scrollX = v.scrollLeft;
+      this.header.scrollLeft = this.scrollX;
     }
+  }
+
+  // Moves the body and the header to `x` (clamped to the measured range) with writes only.
+  scrollTo(x) {
+    const next = Math.min(Math.max(0, x), this.maxScrollX);
+    this.scrollX = next;
+    this.viewport.scrollLeft = next;
+    this.header.scrollLeft = next;
   }
 }
 
