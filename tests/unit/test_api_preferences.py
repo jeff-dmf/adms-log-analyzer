@@ -4,6 +4,8 @@ import json
 
 import test_api
 
+from dmslog.server import api as server_api
+
 server, client = test_api.server, test_api.client  # fixtures
 
 TREE = {"or": [{"sev": {"le": 2}}, {"tpl": ["GEN-EXC-01"]}]}
@@ -28,7 +30,7 @@ def test_export_import_roundtrip_over_http(client, server):
     assert client.get("/api/preferences/export")[1]["text"] == out["text"]
 
 
-def test_sections_and_errors(client):
+def test_sections_and_errors(client, monkeypatch):
     assert client.get("/api/preferences/export?sections=presets")[1]["package"].keys() == {
         "schema", "kind", "presets",
     }  # fmt: skip
@@ -41,7 +43,10 @@ def test_sections_and_errors(client):
     )
     assert status == 200 and rep["outcome"] == "rejected" and rep["errors"][0]["code"] == "schema_too_new"
     assert client.request("PUT", "/api/preferences/import")[0] == 405
-    assert client.request("POST", "/api/preferences/import", raw=b"x" * (9 * 1024 * 1024))[0] == 413
+    # a small limit keeps the oversized body small: a multi-megabyte body the server stops reading can
+    # reset or stall the client socket on Windows
+    monkeypatch.setitem(server_api._BODY_LIMITS, "/api/preferences/import", 4096)
+    assert client.request("POST", "/api/preferences/import", raw=b"x" * 10_000)[0] == 413
 
 
 def test_strict_body_over_http(client, server):

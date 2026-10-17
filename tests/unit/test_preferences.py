@@ -543,6 +543,7 @@ def test_atomic_write_keeps_the_old_file_when_replace_fails(tmp_path, monkeypatc
 def test_atomic_write_keeps_the_old_file_when_fsync_fails(tmp_path, monkeypatch):
     target = tmp_path / "f.txt"
     target.write_bytes(b"old")
+    monkeypatch.setattr(paths, "SYNC_WRITES", True)
     monkeypatch.setattr(os, "fsync", lambda fd: (_ for _ in ()).throw(OSError("io")))
     with pytest.raises(OSError):
         paths.atomic_write_bytes(target, b"new")
@@ -585,7 +586,8 @@ def test_concurrent_imports_leave_a_valid_state(tmp_path):
     for t in threads:
         t.start()
     for t in threads:
-        t.join()
+        t.join(timeout=60)
+    assert not any(t.is_alive() for t in threads), "an import is stuck (deadlock?)"
     assert sorted(p["name"] for p in presets.load_user(tmp_path).presets) == [f"p{n}" for n in range(6)]
     assert redact.load_profile(tmp_path).name.startswith("w")
     assert not list(tmp_path.glob("*.tmp"))
@@ -936,3 +938,16 @@ def test_replace_drops_top_level_fields_of_the_old_file(tmp_path):
     presets.create(clean, {"name": "a", "filter": ERRORS})
     assert (clean / "presets.toml").read_bytes() == (tmp_path / "presets.toml").read_bytes()
     assert preferences.import_package(tmp_path, pkg, mode="replace")["outcome"] == "unchanged"
+
+
+def test_atomic_write_calls_fsync_when_enabled(tmp_path, monkeypatch):
+    calls = []
+    real = os.fsync
+    monkeypatch.setattr(paths, "SYNC_WRITES", True)
+    monkeypatch.setattr(os, "fsync", lambda fd: (calls.append(fd), real(fd))[1])
+    paths.atomic_write_bytes(tmp_path / "f.txt", b"x")
+    assert len(calls) >= 1 and (tmp_path / "f.txt").read_bytes() == b"x"
+    calls.clear()
+    monkeypatch.setattr(paths, "SYNC_WRITES", False)
+    paths.atomic_write_bytes(tmp_path / "g.txt", b"y")
+    assert calls == []

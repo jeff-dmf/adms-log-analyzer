@@ -62,6 +62,9 @@ def private_mkdir(path: str | os.PathLike[str]) -> Path:
 
 REPLACE_RETRIES = 5
 REPLACE_RETRY_DELAY_S = 0.02
+# ``fsync`` makes a write durable across a power cut but costs milliseconds (on Windows, tens of them), so
+# the test suite switches it off (tests/conftest.py) except in the tests that check that it is called.
+SYNC_WRITES = True
 
 
 def atomic_write_bytes(path: str | os.PathLike[str], data: bytes) -> None:
@@ -80,7 +83,8 @@ def atomic_write_bytes(path: str | os.PathLike[str], data: bytes) -> None:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
-            os.fsync(handle.fileno())
+            if SYNC_WRITES:
+                os.fsync(handle.fileno())
         try:
             tmp.chmod(0o600)  # POSIX only; a no-op where permissions do not apply
         except OSError:
@@ -96,7 +100,7 @@ def atomic_write_bytes(path: str | os.PathLike[str], data: bytes) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    if os.name == "posix":
+    if os.name == "posix" and SYNC_WRITES:  # a directory cannot be opened for fsync on Windows
         try:
             dir_fd = os.open(target.parent, os.O_RDONLY)
         except OSError:
