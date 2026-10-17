@@ -88,6 +88,8 @@ EXPECTED_MODULES = {
     "source-filter.js",
     "distinct-model.js",
     "distinct-panel.js",
+    "extract-model.js",
+    "extract-panel.js",
     "highlight-model.js",
     "highlight-panel.js",
     "case-dialogs.js",
