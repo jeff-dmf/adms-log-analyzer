@@ -6,7 +6,8 @@
 // `deps` is built in main.js and is visible only here (the AppContext stays small). What it holds:
 //   api, derivedApi            the plain API and the one whose queries carry the chosen collection
 //   highlightStore, bookmarkStore
-//   fieldNames(), hasCollections(), sourceName(id)
+//   fieldNames(), hasCollections(), sourceName(id), typeLabel(tplId) ("" when unknown)
+//   showKeyInGrid({type, value, filter})   "Show in grid" of the same-key panel: a chained view with the key filter
 //   showEntry(id), reveal(row), showEventInGrid({from, to, entryId}), exportContext()
 //   filterTreeOptions()        { onChange, getExtraFilter, onSavedApplied } of the filter tree
 //   onFilterTree(tree), onHighlightPanel(panel), onBookmarksPanel(panel)   main keeps these to talk to them
@@ -171,6 +172,7 @@ export function registerAppPanels(dock, deps) {
       const module = await import("./key-panel.js");
       const panel = module.initKeyPanel(host, {
         getCase: ctx.caseId, onSelect: ctx.reveal, onRequestClose: () => ctx.dock.close("sameKey"),
+        onShowInGrid: deps.showKeyInGrid, getSourceName: deps.sourceName, getTypeLabel: deps.typeLabel,
       });
       return { show: ({ type, value }) => panel.open(type, value), closed: () => panel.close(), reset: () => panel.reset() };
     },
