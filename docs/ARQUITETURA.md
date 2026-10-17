@@ -190,7 +190,7 @@ Arquivo: `<dados>/cases/<case_id>/index.sqlite` (seção 12). Pragmas: `journal_
 Tempo (U6): `ts` é **inteiro em ms** do horário local do log, **preservado como está** (sem fuso e sem conversão; o log não informa fuso). Por conveniência de cálculo ele é codificado como se fosse UTC, e por isso o front-end e a exportação formatam sempre com `timeZone: 'UTC'` / `getUTC*` (senão o navegador "converteria" para o fuso do PC). Premissas e efeitos:
 - As fontes de uma **coleta** vêm do mesmo servidor e do mesmo relógio; dentro dela o merge por `ts` é válido sem ajuste. Entre coletas (U21) cada uma tem seu relógio e o merge por `ts` é só **ordenação aproximada**: a API marca `ordering = "approximate"` quando o caso tem mais de uma coleta e cada linha pode trazer a coluna `collection`; a UI mostra de qual coleta vem o registro (seção 9.1b).
 - **Horário de verão**: o log não marca o salto. Na volta do relógio (ex.: 00:00 → 23:00), a mesma hora aparece duas vezes: dentro de uma fonte os registros seguem a ordem do arquivo, recebem `flags & 32` (ts fora de ordem) e o derivador `lifecycle` cria `event(kind='clock_jump')` quando o retrocesso passa de 30 min; no merge entre fontes, a hora repetida fica intercalada e a UI mostra o aviso do `clock_jump` sobre a timeline. No avanço (ex.: 00:00 → 01:00), aparece como lacuna de ~1 h em todas as fontes ao mesmo tempo; `gaps` marca `detail.possible_clock_jump` quando a lacuna é de 60 ± 1 min e simultânea em todos os streams. Operação que atravessa o salto recebe `detail.clock_jump=true` (duração não confiável). Nada é corrigido.
-- `collection.clock_offset_ms` fica no esquema, sempre 0 (nada o aplica); a tarefa 9.15 vai usá-lo para alinhar coletas.
+- `collection.clock_offset_ms`: offset de relógio da coleta definido pelo usuário (9.15, seção 10.13); `ts` nunca muda e as leituras somam o offset por coleta (`ts_adjusted`).
 
 ```sql
 -- Caso e origem -------------------------------------------------------------
@@ -204,7 +204,7 @@ CREATE TABLE collection(                                       -- um ERS (zip), 
   ers_variant TEXT CHECK(ers_variant IN ('enterprise','sensitive')),
   ers_group INTEGER,                                           -- mesmo valor para o par Enterprise/Sensitive da mesma coleta
   machine TEXT, system TEXT, label TEXT,                       -- ex.: DSPMPDMZINT01 / mpdmz / rótulo do usuário
-  clock_offset_ms INTEGER NOT NULL DEFAULT 0,                  -- sempre 0 até a 9.15 (offset entre coletas)
+  clock_offset_ms INTEGER NOT NULL DEFAULT 0,                  -- offset da coleta (9.15, seção 10.13); 0 = sem ajuste
   added_at TEXT NOT NULL);
 
 CREATE TABLE stream(                                           -- fluxo lógico: um processo (família+PID+sensitivity) numa coleta
@@ -1529,6 +1529,74 @@ Banco sintético de 2 M registros (20 fontes, 10% com continuação; 1,2 GB), te
 - Buscar janela menor automaticamente quando o `^.*?` da promoção não cabe no orçamento do catálogo: o veredito do carregador já diz "declare a smaller window"; a escolha fica com quem promove.
 - O conjunto de caracteres "imprimíveis" aceitos crus segue o `str.isprintable()` da versão do Python (pode variar em code points recém-atribuídos entre 3.11 e 3.14); o escape `\uHHHH` funciona em todas.
 
+### 10.13 Offset de relógio entre coletas (9.15)
+
+Só backend (`store/clock.py`); a UI e os consumidores listados no fim ficam para a 9.15b.
+
+#### Definição
+
+Cada coleta (grupo `collection.ers_group`, U21) tem o relógio do seu servidor. O usuário escolhe dois registros que aconteceram no mesmo instante: a **âncora** A numa coleta e o **alvo** B em outra. A coleta de B recebe `clock_offset_ms(B) = (ts(A) + clock_offset_ms(coleta de A)) − ts(B)`, e todo registro passa a ter `ts_adjusted = ts + clock_offset_ms` da sua coleta. A âncora entra pelo horário **ajustado**, então alinhar em cadeia funciona (C a B, com B já alinhado a A); a coleta da âncora não muda. A resposta traz `skew_ms = −offset` (quanto o relógio do alvo adianta). Há também offset manual (`offset_ms`); zerar remove o ajuste. `ts` nunca muda (U6): o horário original continua em todas as respostas e o ajustado vem ao lado.
+
+Validação: âncora e alvo existem e têm horário (`no_time`); o alvo está na coleta da rota (`target_not_in_collection`); a âncora está em outra coleta (`same_collection`); `|offset| ≤ MAX_OFFSET_MS` = 31 dias (`offset_too_large`: um par mais distante é engano, não desvio de relógio, e o limite mantém a aritmética longe de int64). Inteiros, nunca `bool`.
+
+#### Onde é guardado (sem migração)
+
+- **Valor:** `collection.clock_offset_ms`, que está no esquema desde a v1. É gravado em **todas** as linhas do grupo e **lido da linha cabeça** (`id = ers_group`, a primeira coleção do grupo, que nunca sai sozinha). A outra metade de um ERS que chega depois herda o valor do grupo (`IndexWriter.add_collection`). Um valor inválido gravado à mão (não inteiro ou fora de ±31 dias) conta como 0. A migração 8 continua reservada para a 9.10.
+- **Proveniência:** `meta['clock.<grupo>']`, JSON canônico: `{"method": "pair", "anchor": {group, collection, member, line_no, ts}, "target": {...}, "set_at"}` ou `{"method": "manual", "set_at"}`. Os localizadores são estáveis (coleção, membro, linha), nunca ids. A chave é apagada ao zerar e por `remove_group` (`writer.CLOCK_PREFIX`).
+- **Por que não em `entry.ts`:** reescreveria milhões de linhas, índices, `bucket`, eventos e assinaturas, quebraria a igualdade com a indexação completa e perderia o horário original (U6).
+
+#### Aplicação nas leituras
+
+Só quando alguma coleta tem offset diferente de 0 (`ClockMap.active`). Sem offset, todas as funções chamam `query.*` sem mudança: mesmas instruções SQL e a mesma resposta byte a byte (testado por traço do SQL e por propriedade).
+
+- **Classes:** as coletas com o mesmo offset formam uma classe, lida com a folha `collection` dos seus grupos (uma classe só: sem restrição, o plano de sempre). Dentro de uma classe, ajustado = bruto + constante, então a ordem `(ts, id)` dos índices continua valendo.
+- **Condições de tempo:** a folha `ts` é deslocada por `−offset` na **árvore** do filtro, por classe (`shift_tree`), e nunca somada em SQL. Um valor deslocado fora de int64 vira a constante que implica (sempre verdadeiro para registro com horário, ou falso), e nunca é saturado.
+- **Grid** (`POST /api/entries/page`): um keyset por classe (cada um até `limit + 1` linhas) e merge em Python por `(ts_adjusted, id)`; registros sem horário vêm primeiro, por id, como antes. Os cursores ficam no tempo ajustado (`"<ts_adjusted>:<id>"`, aceitos até int64 ± 31 dias). Um prazo único cobre todas as classes.
+- **Contagem:** a árvore vira um OR com um ramo por classe (`compile_clocked`); sem folha `ts` o filtro não muda.
+- **Histograma:** por classe. Usa a tabela `bucket` (exata) quando o offset e a largura são minutos inteiros e não há folha `ts`; senão agrega em `entry` pelo tempo ajustado, com a janela presa a int64 e a correção somada em SQL sem overflow. Todas as agregações em `entry` dividem `timeout_s`; estourado o prazo, as classes que faltam viram estimativa (`bucket` com o minuto deslocado, senão amostra) e `exact = false`.
+- **Contexto `merge`:** vizinhos na ordem ajustada (registros sem horário ficam fora, como antes). Nos modos `source` e `tid` as linhas só ganham `ts_adjusted`.
+- **Próximo destaque** (`]`/`[`): segue a ordem e o cursor do grid ajustado, e a folha `ts` da visão é ajustada. As condições das regras seguem no horário do log, como `mark` as avalia.
+
+**O que não muda:** `entry.ts`, ids, `bucket`/`bucket_sev`, hashes, impressões, assinaturas de derivação e correlação, eventos, links e payloads (todos são por coleta: nenhum cruza coletas, U21), ordem dentro de uma fonte e de uma coleta, repetidos e sequências (por stream), bookmarks.
+
+**Determinismo:** o offset é função dos dois `ts`, iguais em indexação completa, incremental e parcial, e a proveniência usa localizadores. O teste indexa o mesmo caso em três ordens (completa, metades invertidas, parcial com janela e conclusão) e compara o grid (por localizador), a contagem com filtro de tempo, o histograma e os offsets: são iguais. Um empate de `ts_adjusted` entre fontes é desfeito pelo `id`, o mesmo contrato do grid para `ts` (índice `(ts, id)`).
+
+#### Contrato
+
+- `PUT /api/cases/{case}/collections/{group}/clock` com `{"anchor": id, "target": id}` ou `{"offset_ms": n}`, e `"dry_run": true` opcional (calcula sem gravar) → `200 {group, previous_ms, clock_offset_ms, clock_source, applied, anchor?: {entry_id, ts, ts_adjusted}, target?: {...}, skew_ms?}`. Erros: `400` (`bad_request`, `bad_offset`, `bad_entry`, `no_time`, `same_collection`, `target_not_in_collection`, `offset_too_large`, `invalid_field`), `404 collection_not_found` (inclusive um id que não é cabeça de grupo) e `404 entry_not_found`. Tudo numa transação `BEGIN IMMEDIATE`.
+- `DELETE /api/cases/{case}/collections/{group}/clock` → offset 0 (mesmo corpo de resposta).
+- `GET /api/cases/{case}/collections`: cada grupo ganha `clock_source` (null sem offset) e a raiz ganha `clocks: "raw" | "adjusted"`. `ordering` continua `approximate` com mais de uma coleta, porque o offset é uma estimativa do usuário.
+- Só com `clocks = "adjusted"`:
+  - as linhas de `/api/entries/page`, de `/api/entries/{id}/context` e de `/api/entries/highlight/next` trazem `ts_adjusted`;
+  - `/api/entries/page` e `/api/histogram` trazem `"clock": "adjusted"` (o `start` do histograma é ajustado);
+  - `GET /api/entries/{id}` traz `ts_adjusted` e `clock_offset_ms`.
+
+  Os filtros `ts` e os cursores enviados pela UI valem no tempo ajustado.
+
+#### Medido
+
+Base sintética de 2 M registros, 2 coletas (C2 com 20%), 20 fontes; Linux, SQLite 3.53; mediana em ms.
+
+| Consulta | offset 0 | 1.234 ms | 2 min |
+|---|---|---|---|
+| página de 200 (início / cursor no meio / para trás) | 0,5 / 0,3 / 0,3 | 1,2 / 1,3 / 1,2 | 1,2 / 1,2 / 1,2 |
+| página de 200 com `sev ≤ 2` | 1,1 | 20,5 | 20,0 |
+| página de 200 com janela `ts` | 0,3 | 1,4 | 1,3 |
+| contagem com janela `ts` (10 min, 399 mil registros) | 8,4 | 27,7 | 27,1 |
+| histograma sem filtro | 0,2 (`bucket`) | 720 (`entry`) | 1,0 (`bucket`) |
+| histograma com janela `ts` | 72 (`entry`) | 188 (`entry`) | 183 (`entry`) |
+| contexto `merge` 50/50 | 0,2 | 33,6 | 32,8 |
+
+O custo extra vem da leitura por classe com a folha `collection`: por fonte no `ix_entry_src_ts`, o mesmo perfil do filtro por coleta da 9.20. O pior caso é o histograma sem filtro com offset fora do minuto, que deixa a tabela `bucket` e varre `entry`: 720 ms em 2 M registros, dentro do prazo de 3 s; acima disso, estimativa.
+
+#### Fora desta entrega (9.15b)
+
+- **Eventos e estatísticas** (`/api/events*`, `/api/stats/*`, painéis por adapter): seguem no horário do log. Cada evento é de um stream de uma coleta e as durações não mudam. Ajustar a ordem, `from`/`to` e o histograma de eventos pede o mesmo merge por classe; até lá, com offset ativo, os eventos sobrepostos à timeline ajustada aparecem deslocados.
+- **Exportações** (`.txt` do chamado, copiar/exportar a visão), **busca por chave**, **comparação de visões** (a nota `mixed_clocks` continua) e **extrator**: horário e ordem do log.
+- **Alertas** e **regras de destaque** com folha `ts`: horário do log (é raro; são avaliados por registro novo e por id).
+- **UI:** escolher âncora e alvo, mostrar `ts_adjusted` ao lado de `ts` e a origem do ajuste.
+- Um `PUT` durante um lote longo de ingestão espera o lock de escrita (5 s) e depois responde `500 database_error`.
+
 ## 11. Viewer: funcionalidades × LogViewPlus, por marco
 
 | Funcionalidade | Conceito LogViewPlus | Marco |
@@ -1709,3 +1777,4 @@ Requisito firme: **todo o app é em inglês**. Vale para nomes de pacote, módul
 | 2026-10-16 | UI-21 (issue #161): lateral com o caso aberto: cabeçalho fixo do caso (nome, "Add files…", menu ⋯; formulários de novo caso e de caminho sob demanda, ocultos desde o primeiro paint), coletas compactas e recolhíveis (uma linha por coleta, menu ⋯ com "Remove Cn…" e confirmação em dois passos, aviso "N files unreadable"), lista de fontes de uma linha com `min-height: 240px`, reconciliada por `id` (foco, rolagem e seleção preservados; roving tabindex; marcador `!` na fonte ilegível; meta sem segmento ausente; progresso "Indexing: N records") em `js/sources.js` e `js/collections-panel.js`, `css/sources.css` (novo), `css/collections.css`; as funções puras ficam exportadas de `sources.js` (sem módulo novo, para caber nos 40 módulos do boot) | Sonnet |
 | 2026-10-16 | ROADMAP 9.8 (issue #105): extrator ad hoc por regex, só backend (`parse/extractor.py`, `parse/promote.py`, `store/extract.py`, folha de filtro `{"extract": …}` com a função SQL `dmslog_extract`, rotas `POST /api/extract/check`, `/api/entries/extract`, `/extract/values`, `/extract/promote`): gramática pequena lida no texto original (grupos nomeados, repetição de um átomo até 64, `?` só em grupos), orçamento de passos estático (janela por regex), resultado determinístico em ordem estável independente do `id`, prazo de 5 s com 408, "promote to template" só devolve o texto `[[template]]` conferido pelo carregador; ARQUITETURA 10.11 | Opus |
 | 2026-10-16 | UI-17 (issue #157): layout responsivo sem sobreposição: `css/responsive.css` (novo, carregado por último) decide o layout por media query (≥ 1600 px: lateral 248 · grid · detalhe 380; 1280-1599: trilho de 44 px com a lateral como gaveta de 280 px · detalhe 340 (o corte do layout largo é 1600 px, não 1500, porque em 1536×864 com Collection e vários dias Message ficava com 47 caracteres; 20 px a menos que a proposta: Message ≥ 50 caracteres em 1280 com a coluna Collection e caso de vários dias; nesse caso Source fica em 14ch); < 1280: o detalhe também é gaveta de 420 px), em variáveis CSS repetidas na classe das escolhas do usuário (`is-side-collapsed`, `is-detail-collapsed` em `#panels`); os breakpoints antigos de `app.css` (1100 e 720 px) saíram; `js/drawers-model.js` (puro: modo por largura, gaveta única aberta, contagem do trilho, escolhas em `localStorage` `dmslog.layout`) e `js/drawers.js` (DOM: aria-expanded, foco, Esc, Enter no grid, clique no grid fecha; carregado por `import()` retryable no `main.js` (uma falha é esquecida e o próximo uso do trilho, do botão Detail ou de "New case"/"Add files" tenta de novo; `afterDrawerOpen` e `openWhenLoaded` em `late-init.js`), fora do grafo estático de 40 módulos; interface `isOpen(id)`, `open`, `close`, `toggle`, `on("change", fn)`; o foco é reencaminhado quando um resize oculta o painel que o continha, só para nós efetivamente visíveis; ações `view.sources` e `view.detail` em `app-actions.js`; "New case"/"Add files" abrem a gaveta da lateral antes de revelar o formulário); `column-resize-model.js` ganha `layoutModeFor`, `LAYOUT_BY_MODE`, `layoutWidths` e a opção `layout` de `messageChars` (Message ≥ 50 caracteres em 1366 e 1280). Novos: trilho `#side-rail`, botões `#side-collapse`, `#detail-collapse` e `#detail-toggle` em `index.html`; strings `railTitle`, `railCountTitle`, `railDetail`, `sideCollapse`, `sidePin`, `detailCollapse`, `detailPin` | Sonnet |
+| 2026-10-17 | ROADMAP 9.15: offset de relógio entre coletas, só backend (`store/clock.py`, seção 10.13): `collection.clock_offset_ms` (sem migração) com proveniência em `meta['clock.<grupo>']`, leituras por classe de offset (grid, contagem, histograma, contexto, próximo destaque) com `ts_adjusted`, rotas `PUT`/`DELETE …/collections/{group}/clock`; eventos, exportações, chaves, comparação e UI ficam para a 9.15b | Opus |
