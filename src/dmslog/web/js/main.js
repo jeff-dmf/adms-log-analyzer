@@ -554,6 +554,7 @@ function start() {
     caseAddFiles: byId("case-add-files"),
     caseMenu: byId("case-header-menu"),
     addFilesHost: byId("add-files-host"),
+    emptyHost: byId("grid-panel"), // the empty state without a case (case-empty.js, loaded on demand)
   }, {
     onCase: (id) => {
       caseId = id;
@@ -1297,8 +1298,16 @@ function start() {
       return panel.selectCase(id);
     },
     closeCase: () => deps.selectCase(null),
-    focusNewCase: () => withSources(() => panel.revealNewCase()),
-    focusAddFiles: () => withSources(() => panel.revealAddFiles()),
+    // The opener is read before the drawer opens: opening it moves the focus into the sources panel, and the dialog must
+    // give the focus back to the control the user used (the menu item's trigger), not to the panel.
+    focusNewCase: () => {
+      const opener = document.activeElement;
+      return withSources(() => panel.revealNewCase(opener));
+    },
+    focusAddFiles: () => {
+      const opener = document.activeElement;
+      return withSources(() => panel.revealAddFiles(false, opener));
+    },
     drawerOpen: (id) => (drawers ? drawers.isOpen(id) : false),
     toggleDrawer: async (id) => {
       try {

@@ -85,6 +85,7 @@ export class CaseFiles {
     this.pathInput.autocomplete = "off";
     this.pathInput.setAttribute("aria-label", S.cfPathLabel);
     this.pathInput.placeholder = S.cfPathPlaceholder;
+    this.pathInput.addEventListener("input", () => this.updateAction()); // a typed path alone enables the main action
     this.pathInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault(); // the field is inside the case form: Enter adds, never submits
@@ -120,7 +121,7 @@ export class CaseFiles {
     this.list.setAttribute("aria-label", S.cfListLabel);
     this.list.setAttribute("aria-describedby", this.help.id);
 
-    this.createButton = el("button", "primary cf-create");
+    this.createButton = el("button", "ui-button is-primary cf-create");
     // Create mode submits the new-case form; add mode sits inside the open form and must not submit it.
     this.createButton.type = adding ? "button" : "submit";
     if (adding) {
@@ -132,16 +133,49 @@ export class CaseFiles {
     }
   }
 
+  // The dialog (case-dialogs.js) puts the main action in its foot, outside the form. In create mode it stays the form's
+  // submit button through the `form` attribute, so Enter in the name field still creates the case.
+  placeAction(foot, formId = null) {
+    if (formId && !this.createButton.getAttribute("form") && this.mode !== "add") {
+      this.createButton.setAttribute("form", formId);
+    }
+    foot.appendChild(this.createButton);
+  }
+
+  // The path field gets the focus (only when it can take it: a disabled field, or one that is not shown, cannot).
+  focusPath() {
+    if (!this.pathInput.disabled && !isHidden(this.pathInput)) {
+      this.pathInput.focus();
+      return true;
+    }
+    return false;
+  }
+
+  // The main action is on when the list has files, or a path is typed that the action will add first (flushTyped).
+  updateAction() {
+    this.createButton.disabled = this.state.busy || (this.state.items.length === 0 && this.pathInput.value.trim() === "");
+  }
+
+  // A path typed and not yet added with Enter counts when the main action is pressed (it would otherwise be lost
+  // behind the "choose at least 1 file" message).
+  flushTyped() {
+    if (this.pathInput.value.trim() !== "" && !this.state.busy) {
+      this.addTyped(false);
+    }
+  }
+
   // -- list ---------------------------------------------------------------------------------
 
-  addTyped() {
+  addTyped(refocus = true) {
     const value = this.pathInput.value.trim();
     if (value === "") {
       return;
     }
     this.state.add([value]);
     this.pathInput.value = "";
-    this.pathInput.focus();
+    if (refocus) {
+      this.pathInput.focus();
+    }
   }
 
   async cancelDialog() {
@@ -213,6 +247,7 @@ export class CaseFiles {
 
   // deps: {createCase, selectCase, openPath}; see CaseFilesState.create.
   async submit(deps) {
+    this.flushTyped();
     const name = this.nameInput.value.trim();
     if (name === "") {
       setFieldError(this.nameInput, S.cfNeedName);
@@ -246,6 +281,7 @@ export class CaseFiles {
 
   // Adds the chosen files to the open case. deps: {openPath}; see CaseFilesState.addAll.
   async submitAdd(deps, caseId = null) {
+    this.flushTyped();
     if (this.state.items.length === 0) {
       this.onMessage(S.cfAddNeedFiles, true);
       return null;
@@ -273,7 +309,7 @@ export class CaseFiles {
     this.browseButton.disabled = state.busy || this.waiting;
     this.clearButton.disabled = state.busy || state.items.length === 0;
     this.clearButton.hidden = state.items.length === 0;
-    this.createButton.disabled = !state.canCreate;
+    this.updateAction();
     const adding = this.mode === "add";
     if (adding) {
       this.createButton.textContent = state.items.length > 0
@@ -339,6 +375,15 @@ export class CaseFiles {
     li.appendChild(remove);
     return li;
   }
+}
+
+function isHidden(node) {
+  for (let item = node; item; item = item.parentNode || item.parent) {
+    if (item.hidden === true) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function safeStorage() {
