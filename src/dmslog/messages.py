@@ -473,6 +473,46 @@ ALERT_ERRORS = {
 ALERT_TIMEOUT_UNAVAILABLE = (
     "The case has no value for this timeout parameter, so the rule cannot be evaluated; use a fixed timeout"
 )
+# User-built panels (store/panels.py, store/panelrun.py, /api/panels/*; ARQUITETURA 10.14 draft).
+PANEL_ERRORS = {
+    "bad_panel": "a panel must be an object with a name and a list of widgets",
+    "unknown_key": "an object has a key that is not allowed here",
+    "bad_name": "the name must be a non-empty text of at most {limit} characters",
+    "bad_widgets": "widgets must be a list of at most {limit} widgets",
+    "bad_widget": "a widget must be an object with id, title, query, chart and options",
+    "bad_widget_id": "a widget id must be 1 to 32 characters: lowercase letters, digits, '-' or '_'",
+    "duplicate_widget": "two widgets of the panel share an id",
+    "bad_title": "the title must be a text of at most {limit} characters",
+    "bad_chart": "the chart must be 'bar', 'line', 'table' or 'stat'",
+    "bad_options": "options must be an object with only the keys allowed for the chart",
+    "bad_option": "an option has a value that does not fit the chart or the query",
+    "chart_needs": "the chart does not fit the query's grouping",
+    "bad_query": "the query is not valid ({reason})",
+    "query_too_large": "the query is too large, too deeply nested or holds a value out of range",
+    "bad_data": "the panel is too large, too deeply nested or holds a value that is out of range",
+    "case_specific": "the query filter points at one case; a panel must work in any case",
+    "scan_needs_scope": "text and regex conditions need a source or time scope, which a panel cannot hold",
+    "too_many_rows": "the widgets ask for more than {limit} rows in total",
+    "panel_too_large": "the panel is larger than {limit} bytes",
+    "duplicate_name": "a panel with this name already exists",
+    "too_many_panels": "at most {limit} panels can be kept",
+    "not_found": "the panel does not exist",
+    "unknown_widget": "the panel has no such widget",
+    "rev_conflict": "the panel was changed meanwhile; reload it and apply the change again",
+    "bad_id": "the panel id is missing or malformed",
+    "bad_since": "since_id must be an integer from 0 to {limit}",
+    "file_invalid": "the panels file is not valid and was left untouched; fix or remove it first",
+    "file_too_large": "the panels file would be larger than {limit} bytes; delete some panels",
+    "save_failed": "the panels file could not be written",
+}
+# Per-widget outcome of a panel run: static texts, never the query or any log text.
+PANEL_WIDGET_ERRORS = {
+    "invalid_query": "the widget's query is not valid for this case",
+    "unknown_field": "a field or key used by the widget does not exist in this case",
+    "timeout": "the widget's query did not finish in time; narrow its filter",
+    "failed": "the widget's query failed",
+    "budget": "the panel's time budget ran out before this widget",
+}
 # Declarative aggregation (store/aggregate.py, POST /api/entries/aggregate; ARQUITETURA 10.6).
 AGGREGATE_ERRORS = {
     "bad_type": "expected {expected}",

@@ -52,6 +52,8 @@ from ..store import (
     events,
     highlights,
     keys,
+    panelrun,
+    panels,
     payloads,
     presets,
     query,
@@ -335,6 +337,7 @@ class IngestJobs:
         self._watched: dict[str, str] = {}  # case -> resolved folder followed by ``serve --watch``
         self._watch_enabled = False  # set when ``serve --watch`` starts; kept while serving
         self.alerts = alerts.AlertState()  # cooldowns, alerted operations and history of the local alerts
+        self.panel_watch = panelrun.PanelWatch()  # frequency limit of the ``panels`` refresh events
 
     def _describe(self, error: BaseException) -> str:
         """Safe error text (fixed description plus alias-normalized components)."""
@@ -548,6 +551,20 @@ class IngestJobs:
         except Exception:  # noqa: BLE001 - alerts must not stop the follow mode
             return []
 
+    def _panel_refresh(self, cid: str, baseline: int | None, report: CycleReport) -> dict[str, Any] | None:
+        """Body of the ``panels`` event for a follow cycle (best effort: never raises)."""
+        result = report.result
+        events_changed = None if result is None else result.events_derived > 0
+        try:
+            with self._store.reader(cid) as conn:
+                until = alerts.max_entry_id(conn)
+                body = self.panel_watch.process_cycle(
+                    conn, self._store.data_dir, cid, baseline, until, events_changed=events_changed
+                )
+        except Exception:  # noqa: BLE001 - panels must not stop the follow mode
+            return None
+        return None if body is None else {"cycle": report.cycle, **body}
+
     def _watch_cycle(self, cid: str, watcher: Watcher, hub: ProgressHub) -> CycleReport | None:
         """Ingest what ``watcher.poll`` found, publishing progress; always finishes the hub's job."""
         job_id = hub.job_id or ""
@@ -602,14 +619,19 @@ class IngestJobs:
             # cannot overlap the evaluation or recreate its state. Events go out after the release.
             news = report is not None and report.has_news
             found: list[dict[str, Any]] = []
+            panel_body: dict[str, Any] | None = None
             try:
                 found = self._evaluate_alerts(cid, baseline) if news else []
+                if news and report is not None:
+                    panel_body = self._panel_refresh(cid, baseline, report)
             finally:
                 hub.finish(done)
             if news and report is not None:
                 hub.publish("watch", watch_payload(report), coalesce=True)
                 for body in found:
                     hub.publish("alert", body)
+                if panel_body is not None:
+                    hub.publish("panels", panel_body)  # not coalesced: each carries its own id range
         return report
 
 
@@ -1036,6 +1058,14 @@ class Api:
             ("GET", re.compile(r"/api/alerts/history\Z"), self.alert_history),
             ("DELETE", re.compile(r"/api/alerts/history\Z"), self.clear_alert_history),
         ]
+        self._routes += [
+            ("GET", re.compile(r"/api/panels\Z"), self.list_panels),
+            ("POST", re.compile(r"/api/panels\Z"), self.create_panel),
+            ("PUT", re.compile(r"/api/panels\Z"), self.update_panel),
+            ("DELETE", re.compile(r"/api/panels\Z"), self.delete_panel),
+            ("POST", re.compile(r"/api/panels/run\Z"), self.run_panel),
+            ("POST", re.compile(r"/api/panels/changes\Z"), self.panel_changes),
+        ]
         self._routes += [("POST", re.compile(r"/api/entries/aggregate\Z"), self.entries_aggregate)]
         self._routes += [("POST", re.compile(r"/api/entries/compare\Z"), self.entries_compare)]
         self._routes += [
@@ -1101,6 +1131,7 @@ class Api:
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
         self.store.delete(cid)
         self.jobs.alerts.forget_case(cid)
+        self.jobs.panel_watch.forget_case(cid)
         return Response(204)
 
     def add_collection(self, request: Request) -> Response:
@@ -2362,6 +2393,63 @@ class Api:
         self.jobs.alerts.clear_history(cid)
         return Response(204)
 
+    # -- user-built panels (store/panels.py, store/panelrun.py; panels in <data dir>/panels.json)
+
+    def list_panels(self, request: Request) -> Response:
+        return Response(200, _panel_call(lambda: panels.list_panels(self.data_dir)))
+
+    def create_panel(self, request: Request) -> Response:
+        return Response(201, _panel_call(lambda: panels.create(self.data_dir, request.read_body())))
+
+    def update_panel(self, request: Request) -> Response:
+        """Body: ``{"id", "panel": {name, widgets}, "if_rev"?}``."""
+        body = request.read_body()
+        return Response(
+            200,
+            _panel_call(
+                lambda: panels.update(self.data_dir, body.get("id"), body.get("panel"), body.get("if_rev"))
+            ),
+        )
+
+    def delete_panel(self, request: Request) -> Response:
+        _panel_call(lambda: panels.delete(self.data_dir, request.query.get("id")))
+        return Response(204)
+
+    def run_panel(self, request: Request) -> Response:
+        """Body: ``{case, id, widgets?}``: runs the panel's widgets (or the listed ones) under one budget."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+        wanted = body.get("widgets")
+        if wanted is not None and (
+            not isinstance(wanted, list)
+            or len(wanted) > panels.MAX_WIDGETS
+            or not all(isinstance(w, str) for w in wanted)
+        ):
+            raise ApiError(400, "invalid_field", messages.API_MISSING_FIELD.format(field="widgets"))
+
+        def call() -> dict[str, Any]:
+            panel = panels.get_panel(self.data_dir, body.get("id"))
+            with self.store.reader(cid) as conn:
+                know = (
+                    None
+                    if not any(w["query"].get("lookups") for w in panel["widgets"])
+                    else (lambda: self._knowledge(conn, cid, with_ers=True))
+                )
+                return panelrun.run_panel(conn, panel, widget_ids=wanted, knowledge=know)
+
+        return Response(200, _panel_call(call))
+
+    def panel_changes(self, request: Request) -> Response:
+        """Body: ``{case, since_id}``: widgets to run again for the records above ``since_id``."""
+        body = request.read_body()
+        cid = _case_from_body(self.store, body)
+
+        def call() -> dict[str, Any]:
+            with self.store.reader(cid) as conn:
+                return panelrun.changes_since(conn, self.data_dir, body.get("since_id"))
+
+        return Response(200, _panel_call(call))
+
     # -- declarative aggregation (store/aggregate.py; ARQUITETURA 10.6)
 
     def entries_aggregate(self, request: Request) -> Response | Download:
@@ -2481,6 +2569,21 @@ _PRESET_STATUS = {
     "builtin": 403, "import_too_large": 413, "file_invalid": 409, "file_too_large": 409, "save_failed": 500,
 }  # fmt: skip
 _BODY_LIMITS["/api/presets/import"] = presets.MAX_IMPORT_BYTES
+
+
+# --------------------------------------------------------------------------- user-built panels (9.11)
+
+_PANEL_STATUS = {
+    "duplicate_name": 409, "too_many_panels": 409, "not_found": 404, "file_invalid": 409,
+    "file_too_large": 409, "rev_conflict": 409, "save_failed": 500,
+}  # fmt: skip
+
+
+def _panel_call(call: Callable[[], Any]) -> Any:
+    try:
+        return call()
+    except panels.PanelError as exc:
+        raise ApiError(_PANEL_STATUS.get(exc.code, 400), exc.code, str(exc)) from None
 
 
 # --------------------------------------------------------------------------- local alerts (9.13)
