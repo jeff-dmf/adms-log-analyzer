@@ -194,6 +194,20 @@ export function createViewsStack({ ownFilter, getLive, maxDepth = MAX_DEPTH, loo
       index = i;
       return nodes[i].state;
     },
+    // A copy of the stack (views and position), to put it back if the view change it came with fails to load.
+    checkpoint() {
+      return { index, nodes: nodes.map((n) => ({ state: n.state, customName: n.customName })) };
+    },
+    // Puts a checkpoint back; false for anything else. The active view's state is read again from the toolbar.
+    rollback(point) {
+      if (!isObject(point) || !Array.isArray(point.nodes) || point.nodes.length === 0
+        || !Number.isInteger(point.index) || point.index < 0 || point.index >= point.nodes.length) {
+        return false;
+      }
+      nodes = point.nodes.map((n) => ({ state: n.state, customName: n.customName }));
+      index = point.index;
+      return true;
+    },
     rename(i, raw) {
       if (i >= 0 && i < nodes.length) {
         nodes[i].customName = sanitizeName(raw);
@@ -246,15 +260,4 @@ export function loadStack(storage, caseId, stack) {
   } catch (err) {
     return null;
   }
-}
-
-// Alt+Left / Alt+Right: back / forward in the stack of views. Returns "back" | "forward" | null.
-export function viewsKey(event) {
-  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
-    return null;
-  }
-  if (event.key === "ArrowLeft") {
-    return "back";
-  }
-  return event.key === "ArrowRight" ? "forward" : null;
 }

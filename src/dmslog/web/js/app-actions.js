@@ -18,7 +18,8 @@
 //   drawerOpen(id), toggleDrawer(id)   the sources rail and drawers of UI-17 ("side" | "detail"); loaded on demand, retried on failure
 //   openColumns(), copyExportOpen(), followTailOn(), toggleFollowTail(), setTheme(choice), theme()
 //   recordShown(), hasType(), copyRecord(), loadContext(same), filterType(), highlightType(), highlightReady()   the record actions
-//   shortcutsText()            the lines of the shortcut help (until the dialog of UI-28)
+//   navigateRecord(kind, dir), navigateHighlight(dir), toggleBookmark(), compareSelected(), viewsBack(), viewsForward(),
+//   focusSearch(), moveRegion(dir), openShortcuts()   the keyboard actions (UI-28), see "Keys" below
 import { S } from "./strings.js";
 import { THEME_CHOICES } from "./theme.js";
 
@@ -444,14 +445,35 @@ export function registerAppActions(actions, deps) {
     run: () => deps.highlightType(),
   });
 
-  // ---- Help (a plain list until the dialog of UI-28)
+  // ---- Keys (UI-28). shortcuts.js is the only dispatcher: it matches the KeySpec below, checks enabled() and calls run().
+  //   deps.navigateRecord(kind, dir)  "error" | "template", "fwd" | "back"      deps.navigateHighlight(dir)
+  //   deps.toggleBookmark(), deps.compareSelected(), deps.viewsBack(), deps.viewsForward(), deps.focusSearch()
+  //   deps.moveRegion(dir)            F6 (1) / Shift+F6 (-1): loads shortcuts.js if it is not in
+  //   deps.openShortcuts()            the shortcuts dialog; the opener is read before the module loads
+  const key = (def) => actions.register({ group: "navigate", ...def });
+  key({ id: "navigate.nextError", labelKey: "actNextError", shortcut: "n", run: () => deps.navigateRecord("error", "fwd") });
+  key({ id: "navigate.prevError", labelKey: "actPrevError", shortcut: "N", run: () => deps.navigateRecord("error", "back") });
+  key({ id: "navigate.nextType", labelKey: "actNextType", shortcut: "t", run: () => deps.navigateRecord("template", "fwd") });
+  key({ id: "navigate.prevType", labelKey: "actPrevType", shortcut: "T", run: () => deps.navigateRecord("template", "back") });
+  key({ id: "navigate.nextHighlight", labelKey: "actNextHighlight", shortcut: "]", run: () => deps.navigateHighlight("fwd") });
+  key({ id: "navigate.prevHighlight", labelKey: "actPrevHighlight", shortcut: "[", run: () => deps.navigateHighlight("back") });
+  key({ id: "navigate.focusSearch", labelKey: "actFocusSearch", shortcut: "/", run: () => deps.focusSearch() });
+  // F6 also works without a case (the bar and the empty state are regions).
+  key({ id: "navigate.nextRegion", labelKey: "actNextRegion", shortcut: "F6", enabled: always, run: () => deps.moveRegion(1) });
+  key({ id: "navigate.prevRegion", labelKey: "actPrevRegion", shortcut: "Shift+F6", enabled: always, run: () => deps.moveRegion(-1) });
+  actions.register({ id: "record.bookmark", labelKey: "actBookmark", group: "record", shortcut: "b", run: () => deps.toggleBookmark() });
+  actions.register({ id: "record.compare", labelKey: "actCompare", group: "record", shortcut: "c", run: () => deps.compareSelected() });
+  actions.register({ id: "views.back", labelKey: "actViewBack", group: "views", shortcut: "Alt+ArrowLeft", run: () => deps.viewsBack() });
+  actions.register({ id: "views.forward", labelKey: "actViewForward", group: "views", shortcut: "Alt+ArrowRight", run: () => deps.viewsForward() });
+
+  // ---- Help
   actions.register({
     id: "help.shortcuts",
     labelKey: "actShortcuts",
     group: "help",
     shortcut: "?",
     enabled: always,
-    run: (ctx) => (ctx.status.help ? ctx.status.help() : ctx.status.message(deps.shortcutsText(), { kind: "info" })),
+    run: () => deps.openShortcuts(),
   });
 
   return {

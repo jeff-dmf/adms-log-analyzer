@@ -59,7 +59,7 @@ function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
     toggleFollowTail: () => { calls.follow += 1; state.follow = !state.follow; },
     theme: () => state.theme,
     setTheme: (choice) => { calls.theme.push(choice); state.theme = choice; },
-    shortcutsText: () => "help text",
+    openShortcuts: () => { calls.shortcuts = (calls.shortcuts || 0) + 1; },
   });
   const el = (tag, extra = {}) => Object.assign(doc.createElement(tag), extra);
   const bar = doc.createElement("header");
@@ -230,8 +230,8 @@ test("the View menu: Columns, Follow tail (pressed), Theme with System, Light an
   assert.deepEqual(calls.theme, ["light"]);
   menu = open(doc, refs.menus.view);
   itemByLabel(menu, S.actShortcuts).dispatch("click");
-  await until(() => messages.length > 0, "message");
-  assert.deepEqual(messages.at(-1), ["info", "help text"]);
+  await until(() => calls.shortcuts === 1, "shortcuts dialog");
+  assert.equal(messages.length, 0, "the dialog replaces the one-line help message");
 });
 
 test("the case menu: the cases (current one checked), then New case, Add files and Close case", async () => {

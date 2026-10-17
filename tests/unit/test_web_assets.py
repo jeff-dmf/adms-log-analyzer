@@ -116,6 +116,8 @@ EXPECTED_MODULES = {
     "status-bar-model.js",
     "status-bar.js",
     "menubar.js",
+    "shortcuts-model.js",
+    "shortcuts.js",
 }
 
 FORBIDDEN_JS = [

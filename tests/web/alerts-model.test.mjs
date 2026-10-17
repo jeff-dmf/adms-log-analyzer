@@ -315,3 +315,44 @@ test("flow: the remembered ids are bounded and a new case starts clean", () => {
   flow.reset();
   assert.notEqual(flow.receive({ ...EVENT, id: SEEN_LIMIT + 5 }), null);
 });
+
+test("the alert stream stops after 3 failures in a row, reports it once, and an open resets the count", async () => {
+  const { connectAlertStream } = await import("../../src/dmslog/web/js/alerts-model.js");
+  const sources = [];
+  class Fake {
+    constructor() { this.h = {}; this.closed = false; sources.push(this); }
+    addEventListener(n, fn) { (this.h[n] ??= []).push(fn); }
+    close() { this.closed = true; }
+    emit(n) { for (const fn of this.h[n] || []) fn({ data: "" }); }
+  }
+  const stops = [];
+  const handle = connectAlertStream({ EventSourceImpl: Fake, url: "/p", onAlert() {}, onStopped: () => stops.push(1) });
+  const s = sources[0];
+  s.emit("error"); s.emit("error"); s.emit("open"); s.emit("error"); s.emit("error");
+  assert.equal(s.closed, false);
+  assert.equal(handle.stopped(), false);
+  s.emit("error");
+  assert.equal(s.closed, true);
+  assert.equal(handle.stopped(), true);
+  assert.deepEqual(stops, [1]);
+  s.emit("error");
+  assert.deepEqual(stops, [1]);
+  handle.close(); // closing a stopped stream is harmless
+  assert.equal(connectAlertStream({ EventSourceImpl: null, url: "/p", onAlert() {} }).stopped(), false);
+});
+
+test("an alert stream the browser closed (HTTP error) stops at once, without waiting for 3 events", async () => {
+  const { connectAlertStream } = await import("../../src/dmslog/web/js/alerts-model.js");
+  let source = null;
+  class Fake {
+    constructor() { this.h = {}; this.closed = false; this.readyState = 2; source = this; }
+    addEventListener(n, fn) { (this.h[n] ??= []).push(fn); }
+    close() { this.closed = true; }
+  }
+  const stops = [];
+  const handle = connectAlertStream({ EventSourceImpl: Fake, url: "/p", onAlert() {}, onStopped: () => stops.push(1) });
+  for (const fn of source.h.error) fn({});
+  assert.equal(handle.stopped(), true);
+  assert.equal(source.closed, true);
+  assert.deepEqual(stops, [1]);
+});

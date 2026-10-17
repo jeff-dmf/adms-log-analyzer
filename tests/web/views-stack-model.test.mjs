@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { composeFilter } from "../../src/dmslog/web/js/filters.js";
 import {
-  MAX_DEPTH, createViewsStack, describeFilter, emptyState, isValidFilter, loadStack, saveStack, viewsKey,
+  MAX_DEPTH, createViewsStack, describeFilter, emptyState, isValidFilter, loadStack, saveStack,
 } from "../../src/dmslog/web/js/views-stack-model.js";
 
 const ownFilter = (s) => composeFilter({ sourceIds: [], text: s.searchText, ...s.formState }, s.userFilter, s.toggles);
@@ -131,14 +131,6 @@ test("persistence round-trips and rejects garbage", () => {
   store.set("dmslog.viewsStack.C2", "{}");
   saveStack(storage, "C2", fresh.stack);
   assert.equal(store.has("dmslog.viewsStack.C2"), false);
-});
-
-test("Alt+Left / Alt+Right only", () => {
-  assert.equal(viewsKey({ key: "ArrowLeft", altKey: true }), "back");
-  assert.equal(viewsKey({ key: "ArrowRight", altKey: true }), "forward");
-  assert.equal(viewsKey({ key: "ArrowLeft" }), null);
-  assert.equal(viewsKey({ key: "ArrowLeft", altKey: true, ctrlKey: true }), null);
-  assert.equal(viewsKey({ key: "n", altKey: true }), null);
 });
 
 test("malformed stored filters are discarded, valid ones kept", () => {

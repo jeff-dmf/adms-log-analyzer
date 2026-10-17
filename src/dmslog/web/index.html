@@ -41,6 +41,7 @@
   <link rel="stylesheet" href="/css/presets.css">
   <link rel="stylesheet" href="/css/knowledge.css">
   <link rel="stylesheet" href="/css/repeats.css">
+  <link rel="stylesheet" href="/css/shortcuts.css">
   <link rel="stylesheet" href="/css/responsive.css">
   <link rel="modulepreload" href="/js/actions.js">
   <link rel="modulepreload" href="/js/api.js">
@@ -90,8 +91,9 @@
   <script type="module" src="/js/boot.js"></script>
 </head>
 <body>
+  <a id="skip-link" class="skip-link" href="#grid-viewport" data-i18n="skipToGrid"></a>
   <div id="app">
-    <header id="toolbar" class="topbar" role="banner">
+    <header id="toolbar" class="topbar" role="banner" data-i18n-aria-label="regionBar">
       <span id="app-name" class="app-name" data-i18n="appName"></span>
       <button type="button" id="case-button" class="ui-button topbar-case" data-i18n-title="caseLabel">
         <span id="case-button-label" class="topbar-case-label"></span><span class="topbar-caret" aria-hidden="true"></span>

@@ -2,7 +2,7 @@
 // and reaches the page through textContent / DOM nodes only.
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
-import { api, onForbidden, onNetworkError } from "./api.js";
+import { api, isRetryable, onForbidden, onNetworkError } from "./api.js";
 import { afterDrawerOpen, createButtonGate, loadSections, mountLate, openWhenLoaded, retryable } from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
@@ -11,19 +11,20 @@ import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
 import { Detail, adoptHeading } from "./detail.js";
 import {
-  NAV_ERROR_FILTER, andFilters, bookmarkKey, composeFilter, createLatestRequest, ignoresShortcut, navKey, navRequest, stateFromForm,
+  andFilters, composeFilter, createLatestRequest, navPlan, stateFromForm,
   timeSpan, withTemplate, withTsRange,
 } from "./filters.js";
 import { initTimeline } from "./timeline.js";
 import { createDock } from "./dock.js";
 import { COLUMNS, Grid } from "./grid.js";
+import { createViewController } from "./grid-model.js";
 import { CollectionsPanel } from "./collections-panel.js";
 import {
   columnShown, effectiveSourceIds, gridTags, isMulti, loadColumnPref, saveColumnPref, scopeApi, tagMap,
 } from "./collections-model.js";
 import { resetFormWithErrors, setFieldError } from "./field-error.js";
 import { createStatusBar } from "./status-bar.js";
-import { createConnectionRetry } from "./status-bar-model.js";
+import { createFailureCenter, fallbackTarget } from "./status-bar-model.js";
 import { KnowledgeSection } from "./knowledge.js";
 import { mountMenubar } from "./menubar.js";
 import { searchTerms } from "./search.js";
@@ -121,7 +122,18 @@ function start() {
   // The status bar (UI-13). showMessage stays as the adapter the modules already call.
   const status = createStatusBar(byId("status-bar"), {
     S,
-    helpText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp, S.timelineHint].join(" "),
+    // Retry / Dismiss disappeared while focused: a shown target (the grid; with no case, the empty state's button).
+    focusFallback: () => {
+      const target = fallbackTarget({
+        query: (selector) => document.querySelector(selector),
+        noCase: document.body.classList.contains("no-case"),
+      });
+      if (target) {
+        target.focus();
+      }
+    },
+    // The "?" button opens the shortcuts dialog (help.shortcuts); actions and ctx exist by the time it is clicked.
+    onHelp: () => actions.invoke("help.shortcuts", ctx),
   });
   const showMessage = (text, isError) => status.message(text, { kind: isError ? "error" : "info" });
   // Connection errors already own the bar: do not repeat them as a message.
@@ -131,19 +143,50 @@ function start() {
     }
     showMessage(err && err.message ? err.message : S.errorGeneric, true);
   };
+  // UI-25: a failed request never empties the screen. The grid keeps its rows; the notice (with Retry, unless repeating
+  // the request cannot help) sits in the status bar; a view change that did not load goes back to the last view that did.
+  // The decisions live in status-bar-model.js (createFailureCenter) and grid-model.js (createViewController); here
+  // they are only connected to the page.
   let casesLoaded = false; // the opening (GET /api/cases) finished: until then Retry reloads the cases
-  const retryConnection = createConnectionRetry({
+  const failures = createFailureCenter({
+    status,
+    retryLabel: S.sbRetry,
+    genericMessage: S.errorGeneric,
+    pageHint: S.gridPageHint,
+    goOffline: (onRetry) => status.connection("offline", { onRetry }),
     health: () => api.health(),
     setOnline: () => status.connection("online"),
     openingPending: () => !casesLoaded,
     reloadCases: () => panel.loadCases(null).then(() => { casesLoaded = true; }),
-    refreshView: () => (caseId !== null ? applyView() : Promise.resolve()),
+    fallback: () => (caseId !== null ? applyView() : Promise.resolve()),
     onError: (err) => showError(err),
+    retryView: () => retryView(),
+    hasViewRetry: () => viewFlow.retryTarget() !== null,
+    dropViewRetry: () => viewFlow.dropRetry(),
+    retryGrid: () => grid.retry(),
+    retryCount: () => grid.retryCount(),
+    refreshTimeline: () => (timeline ? timeline.refreshNow() : Promise.resolve()),
+    resumeStream: () => (followTail ? followTail.resume() : false),
+    // Another case: the requests of the old one (rows, count, histogram) are cancelled now, not when the new sources
+    // arrive; the stream is closed and reopened by followTail.onCase() further down.
+    cancelRequests: () => {
+      viewFlow.caseChanged();
+      grid.closeCase();
+      if (timeline) {
+        timeline.invalidate();
+      }
+    },
   });
   onForbidden(() => status.connection("forbidden"));
-  onNetworkError(() => status.connection("offline", { onRetry: retryConnection }));
+  onNetworkError(() => failures.goOffline());
 
-  const actions = createActionRegistry({ onError: (err) => showError(err), singleKeysOn: () => true });
+  // The keyboard layer (shortcuts.js: the one keydown listener, F6 regions, the shortcuts dialog) loads after the first
+  // view; until then the single-key preference is not known and the keys do nothing.
+  let shortcuts = null;
+  const actions = createActionRegistry({
+    onError: (err) => showError(err),
+    singleKeysOn: () => (shortcuts === null ? true : shortcuts.singleKeys()),
+  });
   // Step 1 of the dock: it exists before the context that holds it; bind(ctx) is step 2.
   const dock = createDock({
     root: byId("dock"),
@@ -347,6 +390,10 @@ function start() {
     onCount: (value, options) => status.count(value, options),
     onPosition: (ts) => status.position(ts),
     onError: showError,
+    onFailure: (err, info) => failures.gridFailure(err, info),
+    onRecovered: (scope) => failures.gridRecovered(scope),
+    // The user navigated before the new view's first page: the controls go back to the view the rows belong to.
+    onAbandon: () => viewFlow.abandon(),
     getMark: (id) => bookmarkStore.get(id),
     getHighlight: (id) => highlightStore.get(id),
     getRepeat: (id) => (repeats ? repeats.get(id, grid.caseId) : null), // the grid's rows belong to ITS case
@@ -474,23 +521,65 @@ function start() {
     setTimeout(resolve, FIRST_VIEW_GRACE_MS);
   });
 
-  const applyView = () => {
-    const ids = panel.selectedIds();
+  // The view change did not load: the toolbar, the filter and the trail go back to the last view that did (the grid
+  // still shows it); the attempt is kept for Retry unless the request itself is wrong (a 4xx cannot succeed twice).
+  // The side panel's selection is part of the view: sources and collections go back with the toolbar.
+  const restoreSelection = (selection) => {
+    panel.restoreSelection(selection.ids);
+    if (collectionsPanel) {
+      collectionsPanel.restoreSelection(selection.groups);
+    }
     updateRail();
-    const groups = collectionsPanel ? collectionsPanel.selectedGroups() : [];
-    const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
+  };
+  // Which view the screen shows (grid-model.js createViewFlow): a change that does not load goes back to the last one
+  // that did (toolbar, selection, trail, filter), the detail pane is cleared only when the new page is confirmed.
+  const viewFlow = createViewController({
+    getCase: () => caseId,
+    captureLive,
+    restoreLive,
+    getSelection: () => ({ ids: panel.selectedIds(), groups: collectionsPanel ? collectionsPanel.selectedGroups() : [] }),
+    setSelection: restoreSelection,
+    getStack: () => viewsStack,
+    refreshDerived, // Operations, Dashboard and the clock banner follow the restored collection too
+    afterRollback: (to) => {
+      currentFilter = to.filter;
+      const terms = searchTerms(searchText);
+      grid.setTerms(terms);
+      detail.setTerms(terms); // the detail pane was kept: it still shows the record of the view that is back
+      if (timeline) {
+        timeline.refresh();
+      }
+      dock.notify("view");
+      if (viewsUi) {
+        viewsUi.changed();
+      }
+      if (filterChips) {
+        filterChips.refresh();
+      }
+    },
+    onConfirm: () => detail.clear(),
+  });
+  const retryView = () => (viewFlow.retryState(caseId) === null ? Promise.resolve() : applyView());
+
+  const applyView = () => {
+    const { attempt, token } = viewFlow.begin(); // replaces the failed view change, if any
+    const { ids, groups } = attempt.selection;
+    failures.viewApplied();
+    updateRail();
     // The effective view: the ancestors' filters AND the active view's own.
+    const own = composeFilter({ sourceIds: ids, collectionIds: groups, text: searchText, ...formState }, userFilter, toggles);
     const filter = viewsStack ? andFilters(viewsStack.parentsFilter(), own) : own;
     currentFilter = filter;
+    attempt.filter = filter;
     navRequests.invalidate();
     const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
-    detail.setTerms(terms);
-    detail.clear();
+    detail.setTerms(terms); // the detail pane stays until the new page is confirmed (a failure must not blank it)
     const caseRange = timeSpan(sources, [], null, null); // the whole case: decides the date in the time column
     const loaded = grid.setView({ caseId, filter, range, caseRange });
     loaded.then(firstViewDone, firstViewDone);
+    viewFlow.track(token, loaded, () => (grid.failure ? grid.failure.kind : "unknown"), isRetryable);
     if (timeline) {
       timeline.refresh();
     }
@@ -522,6 +611,7 @@ function start() {
   }, {
     onCase: (id) => {
       caseId = id;
+      failures.caseChanged(); // nothing of the old case is repeated, and its requests are cancelled now
       applyPending = true; // refreshSources() follows and rebuilds the view
       if (collectionsPanel) {
         collectionsPanel.setCase();
@@ -821,6 +911,9 @@ function start() {
     getSourceName: (id) => sourceNames.get(id) || String(id),
     getFilter: () => (caseId === null ? null : { caseId, filter: currentFilter }),
     onRangeSelected: (range) => setUserFilter(withTsRange(userFilter, range)),
+    // A histogram that failed (also the first one, with no chart yet) is repeated by Retry, alone.
+    onFailure: (err) => failures.timelineFailure(err),
+    onRecovered: () => failures.timelineRecovered(),
   });
 
   // The panels (filter tree, Analyze, Export, ...) mount in the dock the first time they open; see app-actions.js.
@@ -1031,35 +1124,31 @@ function start() {
   };
   compareButton.addEventListener("click", compareCurrent);
 
-  // Shortcuts: b toggles the bookmark of the selected record, B opens the panel, c compares.
-  document.addEventListener("keydown", async (event) => {
-    const action = bookmarkKey(event);
-    if (!action || ignoresShortcut(event) || caseId === null) {
-      return;
-    }
-    if (action === "panel") {
-      event.preventDefault();
-      actions.invoke("toggle.bookmarks", ctx);
-      return;
-    }
+  // b / c (record.bookmark, record.compare; the keys are dispatched by shortcuts.js).
+  const toggleBookmark = async () => {
     const row = grid.selectedRow();
     if (!row) {
       showMessage(S.navNoSelection, false);
       return;
     }
-    event.preventDefault();
-    if (action === "toggle") {
-      try {
-        await bookmarkStore.toggle(row.id);
-      } catch (err) {
-        showError(err);
-      }
-    } else if (detail.entry && detail.entry.id === row.id) {
-      compareCurrent();
-    } else {
-      detail.show(row.id).then(() => compareCurrent());
+    try {
+      await bookmarkStore.toggle(row.id);
+    } catch (err) {
+      showError(err);
     }
-  });
+  };
+  const compareSelected = () => {
+    const row = grid.selectedRow();
+    if (!row) {
+      showMessage(S.navNoSelection, false);
+      return undefined;
+    }
+    if (detail.entry && detail.entry.id === row.id) {
+      compareCurrent();
+      return undefined;
+    }
+    return detail.show(row.id).then(() => compareCurrent());
+  };
 
   // retryable(): a failed import() is forgotten, so the next use of a control tries again (the rail never stays dead).
   const loadDrawers = retryable(() => import("./drawers.js").then((module) => {
@@ -1097,6 +1186,8 @@ function start() {
           panel.refreshSources(true).catch(showError);
         },
         onError: showError,
+        // The watch stream gave up after 3 failures in a row: say so in the bar; Retry starts it again.
+        onStreamStopped: () => failures.streamStopped("stream", () => followTail.resume()),
       });
       return followTail;
     },
@@ -1132,6 +1223,7 @@ function start() {
     alertsUi = module.startAlerts({
       slot: status.slot("alerts"),
       onAnnounce: (text) => status.message(text, { kind: "warning" }),
+      onStreamStopped: () => failures.streamStopped("alerts", () => alertsUi.resumeStream()),
       getCase: () => caseId,
       onShowRecords: (filter) => setUserFilter(filter).catch(showError),
     });
@@ -1192,24 +1284,19 @@ function start() {
     // Module missing or failing: no banner.
   });
 
-  // Shortcuts: n/N next/previous error, t/T next/previous entry of the selected row's template.
-  document.addEventListener("keydown", async (event) => {
-    const nav = navKey(event);
-    if (!nav || ignoresShortcut(event) || caseId === null) {
+  // n/N next/previous error, t/T next/previous entry of the selected row's message type (navigate.* actions). Without a
+  // selected record n/N start at the first/last visible record.
+  const visibleRows = () => {
+    const w = grid.window;
+    return w && Array.isArray(w.rows) ? w.rows.slice(w.top, w.top + Math.max(1, Number(grid.visible) || 1)) : [];
+  };
+  const navigateRecord = async (kind, dir) => {
+    const plan = navPlan(kind, dir, grid.selectedRow(), visibleRows(), currentFilter);
+    if (plan.problem) {
+      showMessage(S[plan.problem], false);
       return;
     }
-    const row = grid.selectedRow();
-    if (!row) {
-      showMessage(S.navNoSelection, false);
-      return;
-    }
-    if (nav.kind === "template" && !(row.tpl_id > 0)) {
-      showMessage(S.navNoTemplate, false);
-      return;
-    }
-    event.preventDefault();
-    const extra = nav.kind === "error" ? NAV_ERROR_FILTER : { tpl: [row.tpl_id] };
-    const request = navRequest(currentFilter, extra, row, nav.dir);
+    const { request } = plan;
     const { seq, signal } = navRequests.begin();
     const forCase = caseId;
     try {
@@ -1229,7 +1316,7 @@ function start() {
         showError(err);
       }
     }
-  });
+  };
 
   // ---- The action registry, the dock and the top bar. Everything is registered here, synchronously, so every
   // item of every menu exists from the first paint (see app-actions.js).
@@ -1339,8 +1426,46 @@ function start() {
       }
       return highlightUi.highlightType();
     },
-    shortcutsText: () => [S.shortcutsHelp, S.hlShortcutsHelp, S.vsShortcutsHelp].join(" "),
+    // Keyboard (UI-28).
+    navigateRecord,
+    navigateHighlight: (dir) => (highlightUi === null ? showMessage(S.navNoSelection, false) : highlightUi.navigate(dir)),
+    toggleBookmark,
+    compareSelected,
+    viewsBack: () => (viewsUi === null ? undefined : viewsUi.back()),
+    viewsForward: () => (viewsUi === null ? undefined : viewsUi.forward()),
+    focusSearch: () => {
+      const input = byId("search-input");
+      if (!input.disabled) {
+        input.focus();
+        input.select();
+      }
+    },
+    moveRegion: async (dir) => (await loadShortcuts()).regions.move(dir),
+    // The opener is read before the module loads: the dialog gives the focus back to the control the user used.
+    openShortcuts: async () => {
+      const opener = document.activeElement;
+      (await loadShortcuts()).openDialog(opener);
+    },
   };
+  // import() with a retry: a failed load is forgotten, the next use (a key, the "?" button) tries again.
+  const loadShortcuts = retryable(() => import("./shortcuts.js").then((module) => {
+    if (shortcuts === null) {
+      shortcuts = module.createShortcuts({
+        actions, ctx, getCase: () => caseId, drawers: () => drawers, storage: safeLocalStorage(),
+      });
+    }
+    return shortcuts;
+  }));
+  let shortcutsFailureShown = false;
+  const startShortcuts = () => loadShortcuts().catch((err) => {
+    if (!shortcutsFailureShown) {
+      shortcutsFailureShown = true;
+      showError(err);
+    }
+    // Until it loads the keys do nothing (the controls still work); the next key press tries again.
+    document.addEventListener("keydown", () => { startShortcuts(); }, { once: true, capture: true });
+  });
+  afterFirstView.then(startShortcuts);
   registerAppPanels(dock, deps);
   appActions = registerAppActions(actions, deps);
   const toggleButtons = Array.from(document.querySelectorAll("#toolbar [data-action]"));

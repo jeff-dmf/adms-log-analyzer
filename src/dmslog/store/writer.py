@@ -124,6 +124,7 @@ PARTIAL_SCOPE_PREFIX = "partial_scope."
 PARTIAL_ORDER_PREFIX = "partial_order."
 # Per-group counter bumped when entries of the group are deleted (ARQUITETURA 5, "Chaves de meta"); the global
 # ``entries_epoch`` of older cases stays as it was and both go into the correlation signatures.
+CLOCK_PREFIX = "clock."  # meta['clock.<group>']: how the clock offset was set (store/clock.py, 9.15)
 EPOCH_KEY = "entries_epoch"
 
 
@@ -419,6 +420,12 @@ class IndexWriter:
         )
         if ers_group is None:
             self.conn.execute("UPDATE collection SET ers_group=? WHERE id=?", (cid, cid))
+        else:  # the other half of a capture keeps the clock offset of its group (9.15; read from the head)
+            self.conn.execute(
+                "UPDATE collection SET clock_offset_ms = coalesce("
+                "(SELECT h.clock_offset_ms FROM collection h WHERE h.id = ?), 0) WHERE id = ?",
+                (ers_group, cid),
+            )
         return cid
 
     def update_collection_path(self, collection_id: int, path: str) -> None:
@@ -813,8 +820,9 @@ class IndexWriter:
         Gone: records (with bodies, FTS rows, keys, payloads, buckets, unknown signatures and every link that
         touches them), events, statistics samples, observed and Registry configuration, streams, sources,
         collections, the group's bookmarks and its ``meta`` keys (derivation checkpoints, correlation
-        signatures, epoch, payload extraction marks). The other groups are not touched: their signatures do
-        not change, so nothing of theirs is derived again. Removed ids are never reused (``id_floor``).
+        signatures, epoch, payload extraction marks, clock offset record). The other groups are not touched:
+        their signatures do not change, so nothing of theirs is derived again. Removed ids are never reused
+        (``id_floor``).
         """
         self.flush()
         self.begin()
@@ -860,7 +868,8 @@ class IndexWriter:
         conn.execute("DELETE FROM config_param WHERE collection_group = ?", (group,))
         conn.execute("DELETE FROM error_config WHERE collection_group = ?", (group,))
         conn.execute("DELETE FROM collection WHERE ers_group = ?", (group,))
-        keys = [f"{p}{group}" for p in ("correlate.", "correlate.links.", "payloads.", f"{EPOCH_KEY}.")]
+        prefixes = ("correlate.", "correlate.links.", "payloads.", f"{EPOCH_KEY}.", CLOCK_PREFIX)
+        keys = [f"{p}{group}" for p in prefixes]
         keys += [f"payload_extraction_version.{sid}" for sid in sources]
         keys += [f"{PARTIAL_PREFIX}{sid}" for sid in sources]
         keys += [f"{p}{cid}" for cid in cids for p in (PARTIAL_SCOPE_PREFIX, PARTIAL_ORDER_PREFIX)]

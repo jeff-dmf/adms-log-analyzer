@@ -33,3 +33,5 @@ select = ["E", "F", "W", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# A test stuck for 10 minutes dumps every thread's stack to stderr (a hung CI job otherwise says nothing).
+faulthandler_timeout = 600

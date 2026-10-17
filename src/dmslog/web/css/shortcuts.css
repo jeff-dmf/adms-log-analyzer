@@ -1,0 +1,93 @@
+/* Keyboard layer (UI-28): the skip link and the shortcuts dialog. Tokens only. */
+
+/* The skip link is the first control of the page and shows only while it has the focus. */
+.skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-toast);
+  padding: var(--space-2) var(--space-4);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: var(--radius-md);
+  font-weight: var(--weight-strong);
+  text-decoration: none;
+  transform: translateY(-300%);
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: none;
+}
+
+.shortcuts-dialog {
+  width: min(560px, 92vw);
+}
+
+.shortcuts-dialog .sc-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-weight: var(--weight-strong);
+}
+
+.shortcuts-dialog .sc-state {
+  color: var(--ink-muted);
+  font-weight: var(--weight-regular);
+}
+
+.shortcuts-dialog .sc-hint {
+  margin: var(--space-2) 0 var(--space-4);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.shortcuts-dialog .sc-table {
+  width: 100%;
+  margin-bottom: var(--space-4);
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.shortcuts-dialog .sc-table th,
+.shortcuts-dialog .sc-table td {
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.shortcuts-dialog .sc-caption {
+  padding: var(--space-2) var(--space-3);
+  font-weight: var(--weight-strong);
+  text-align: left;
+}
+
+.shortcuts-dialog .sc-key {
+  width: 40%;
+}
+
+.shortcuts-dialog kbd {
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  background: var(--surface-field);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+
+.shortcuts-dialog .sc-off,
+.shortcuts-dialog .sc-unavailable {
+  color: var(--ink-muted);
+}
+
+.shortcuts-dialog .sc-note {
+  font-style: italic;
+}
+
+@media (forced-colors: active) {
+  .skip-link {
+    color: ButtonText;
+    background: ButtonFace;
+    border: 1px solid ButtonText;
+  }
+}

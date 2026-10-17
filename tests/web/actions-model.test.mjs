@@ -171,7 +171,9 @@ test("every label, title and disabled key used by the registered actions exists 
     "toggle.bookmarks", "toggle.alerts", "analyze.distinct", "analyze.groupByType", "analyze.aggregate", "analyze.operations",
     "analyze.dashboard", "analyze.payloads", "analyze.unknownTypes", "analyze.config", "export.report", "export.copyAs",
     "view.columns", "view.followTail", "view.theme", "help.shortcuts", "record.copy", "record.context", "record.filterType",
-    "record.highlightType"]) {
+    "record.highlightType", "navigate.nextError", "navigate.prevError", "navigate.nextType", "navigate.prevType",
+    "navigate.nextHighlight", "navigate.prevHighlight", "navigate.focusSearch", "navigate.nextRegion", "navigate.prevRegion",
+    "record.bookmark", "record.compare", "views.back", "views.forward"]) {
     assert.ok(ids.includes(id), id + " is registered");
   }
   for (const d of registry.list()) {
