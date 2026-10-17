@@ -1,0 +1,161 @@
+/* "Extract" panel and its "Promote to template" dialog. Colours come from the tokens of app.css. */
+.ext-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ext-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ext-field-regex {
+  flex: 1 1 auto;
+}
+
+.ext-regex {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+}
+
+.ext-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ext-limit,
+.ext-top {
+  width: 6em;
+}
+
+.ext-types {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ext-types-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ext-type-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ext-type-name,
+.ext-value,
+.ext-context,
+.ext-toml {
+  font-family: ui-monospace, monospace;
+}
+
+.ext-context,
+.ext-others,
+.ext-empty,
+.ext-column-meta,
+.ext-file,
+.ext-suggest-text {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.ext-context {
+  overflow-wrap: anywhere;
+}
+
+.ext-stale,
+.ext-note {
+  font-style: italic;
+  font-size: 0.9em;
+  margin: var(--space-1) 0;
+}
+
+.ext-notes {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.ext-column {
+  margin-bottom: var(--space-3);
+}
+
+.ext-column-head,
+.ext-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.ext-column-name {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+}
+
+.ext-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.ext-stat {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.ext-stat dt {
+  color: var(--muted);
+}
+
+.ext-stat dd {
+  margin: 0;
+}
+
+.ext-table .ext-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ext-value {
+  overflow-wrap: anywhere;
+}
+
+.ext-value.is-null,
+.ext-value.is-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.ext-dialog-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ext-warnings {
+  margin: var(--space-2) 0;
+  padding-left: 1.2em;
+}
+
+.ext-toml {
+  box-sizing: border-box;
+  width: min(72ch, 100%);
+  resize: vertical;
+}
+
+.ext-field-msg {
+  font-size: 0.9em;
+}

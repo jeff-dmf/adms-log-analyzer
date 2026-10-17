@@ -34,9 +34,10 @@ function staticGraph(entries) {
 // first view (Follow tail, alerts, clock banner).
 const NOT_AT_OPENING = [
   "filter-tree", "tpl-leaf", "presets", "saved-views", "folder-browser", "links", "payload", "bookmarks-panel",
-  "highlight-panel", "copy-export", "distinct-panel", "aggregate-panel", "events-panel", "dashboard", "unknown-panel",
+  "highlight-panel", "copy-export", "distinct-panel", "aggregate-panel", "extract-panel", "extract-model", "events-panel", "dashboard", "unknown-panel",
   "config-panel", "key-panel", "payload-list", "side-by-side", "compare", "export-panel", "redaction-panel",
   "alerts-panel", "follow-tail", "clock-banner", "dock-model", "case-dialogs", "case-empty", "shortcuts", "shortcuts-model",
+  "partial-open", "partial-open-model", "resume-banner",
   "missing-panel", "missing-model", "repeat-model", "repeat-detail",
 ];
 const MAX_STATIC_MODULES = 40; // main.js + boot.js, uPlot included; the budget on open is 40 with everything else

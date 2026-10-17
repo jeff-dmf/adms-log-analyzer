@@ -306,6 +306,23 @@ export function registerAppPanels(dock, deps) {
       });
     },
   });
+
+  dock.register({
+    id: "extract",
+    titleKey: "actExtract",
+    listens: ["view"],
+    mount: async (host, ctx) => {
+      const [module, model] = await Promise.all([import("./extract-panel.js"), import("./extract-model.js")]);
+      const panel = module.mountExtractPanel(host, {
+        api,
+        getCase: ctx.caseId,
+        getFilter: () => ctx.filter(),
+        onDrill: (leaf) => ctx.setUserFilter(model.drillFilter(ctx.userFilter(), leaf)),
+        onRequestClose: () => ctx.dock.close("extract"),
+      });
+      return { refresh: () => panel.refresh(), closed: () => panel.closed(), reset: () => panel.reset() };
+    },
+  });
 }
 
 // Until the tabs of UI-15 a panel has no tab to close, so the menu item and the toggle button open it when it is
@@ -346,6 +363,7 @@ export function registerAppActions(actions, deps) {
   analyze("analyze.distinct", "actDistinct", "distinct", "./distinct-panel.js");
   analyze("analyze.groupByType", "actGroupByType", "groupByType", "./distinct-panel.js");
   analyze("analyze.aggregate", "actAggregate", "aggregate", "./aggregate-panel.js");
+  analyze("analyze.extract", "actExtract", "extract", "./extract-panel.js");
   analyze("analyze.operations", "actOperations", "operations", "./events-panel.js");
   analyze("analyze.dashboard", "actDashboard", "dashboard", "./dashboard.js");
   analyze("analyze.missingSteps", "actMissingSteps", "missingSteps", "./missing-panel.js");

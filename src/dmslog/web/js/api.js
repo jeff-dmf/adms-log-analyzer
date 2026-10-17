@@ -196,8 +196,18 @@ export const api = {
   health: () => request("GET", "/api/health"),
   cases: () => request("GET", "/api/cases"),
   createCase: (name) => request("POST", "/api/cases", { name }),
-  addCollection: (caseId, path, scope) =>
-    request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections", { path, scope }),
+  // `first` (optional): open only part first, {from, to, sources} (ARQUITETURA 9.3b); omitted when there is none.
+  addCollection: (caseId, path, scope, first) =>
+    request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections",
+      first ? { path, scope, first } : { path, scope }),
+  // Partial opening: the sources of a path before indexing, the work an earlier partial opening left, and resuming it.
+  partial: {
+    plan: (caseId, path, scope, signal) =>
+      request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections/plan", { path, scope }, signal),
+    pending: (caseId, signal) =>
+      request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/pending", undefined, signal),
+    resume: (caseId) => request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/resume", {}),
+  },
   progressUrl: (caseId) => "/api/cases/" + encodeURIComponent(caseId) + "/progress",
   sources: (caseId) => request("GET", "/api/sources" + query({ case: caseId })),
   page: (caseId, filter, cursor, dir, limit, signal, columns) =>
@@ -354,4 +364,12 @@ export const api = {
   aggregate: (caseId, body, signal) => request("POST", "/api/entries/aggregate", { ...body, case: caseId }, signal),
   aggregateCsv: (caseId, body, signal) =>
     requestFile("/api/entries/aggregate", { ...body, case: caseId, format: "csv" }, "text", signal),
+  // Ad hoc regex extractor (ARQUITETURA 10.11): `check` needs no case; `promote` only returns the TOML text.
+  extract: {
+    check: (body, signal) => request("POST", "/api/extract/check", body, signal),
+    run: (caseId, body, signal) => request("POST", "/api/entries/extract", { ...body, case: caseId }, signal),
+    values: (caseId, body, signal) => request("POST", "/api/entries/extract/values", { ...body, case: caseId }, signal),
+    promote: (caseId, body, signal) =>
+      request("POST", "/api/entries/extract/promote", { ...body, case: caseId }, signal),
+  },
 };

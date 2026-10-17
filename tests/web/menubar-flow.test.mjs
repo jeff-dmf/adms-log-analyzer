@@ -12,7 +12,7 @@ import { mountMenubar } from "../../src/dmslog/web/js/menubar.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 import { makeDoc, menuEls, menuItems, tick, until } from "./fixtures/fake-dom.mjs";
 
-const PANELS = ["filterTree", "highlights", "bookmarks", "alerts", "distinct", "groupByType", "aggregate", "operations",
+const PANELS = ["filterTree", "highlights", "bookmarks", "alerts", "distinct", "groupByType", "aggregate", "extract", "operations",
   "dashboard", "missingSteps", "payloads", "unknownTypes", "config", "export"];
 
 function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
@@ -121,11 +121,11 @@ test("the Analyze menu lists the nine analyses in order and each one opens its p
   const { doc, refs, dock, calls } = setup();
   const menu = open(doc, refs.menus.analyze);
   assert.deepEqual(labels(menu), [
-    S.actDistinct, S.actGroupByType, S.actAggregate, S.actOperations, S.actDashboard, S.actMissingSteps, S.actPayloads, S.actUnknownTypes,
+    S.actDistinct, S.actGroupByType, S.actAggregate, S.actExtract, S.actOperations, S.actDashboard, S.actMissingSteps, S.actPayloads, S.actUnknownTypes,
     S.actConfig,
   ]);
   assert.equal(refs.menus.analyze.attrs["aria-expanded"], "true");
-  const ids = ["distinct", "groupByType", "aggregate", "operations", "dashboard", "missingSteps", "payloads", "unknownTypes", "config"];
+  const ids = ["distinct", "groupByType", "aggregate", "extract", "operations", "dashboard", "missingSteps", "payloads", "unknownTypes", "config"];
   for (let i = 0; i < ids.length; i += 1) {
     const m = open(doc, refs.menus.analyze);
     assert.equal(menuItems(m)[i].attrs["aria-checked"], "false");
