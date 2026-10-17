@@ -55,7 +55,7 @@ def test_key_records_pagination_over_http(client, demo):  # noqa: F811
         after = body["next"]
     assert seen == [r["id"] for r in full["records"]] and len(set(seen)) == 12
     assert {"id", "source_id", "member", "family", "process", "sensitive", "ts", "tid", "level", "sev",
-            "tpl_code", "msg", "collection"} == set(full["records"][0])  # fmt: skip
+            "tpl_code", "tpl_id", "msg", "collection"} == set(full["records"][0])  # fmt: skip
 
 
 def test_key_records_pagination_filtered_by_collection(client, server, demo):  # noqa: F811

@@ -49,7 +49,7 @@ NULL_TS = -(2**63)  # ts of a record without a time in the cursor: sorts before 
 
 _RECORD_COLUMNS = (
     "e.id, e.source_id, s.member, st.family, st.process, st.sensitive, e.ts, e.tid, e.level, e.sev,"
-    " t.code, substr(e.msg, 1, ?), st.collection_group"
+    " t.code, substr(e.msg, 1, ?), st.collection_group, e.tpl_id"
 )
 
 
@@ -66,11 +66,11 @@ def _sensitive(value: Any) -> bool | None:
 
 
 def _record(row: tuple[Any, ...]) -> dict[str, Any]:
-    (id_, source_id, member, family, process, sensitive, ts, tid, level, sev, code, msg, group) = row
+    (id_, source_id, member, family, process, sensitive, ts, tid, level, sev, code, msg, group, tpl_id) = row
     return {
         "id": id_, "source_id": source_id, "member": member, "family": family, "process": process,
         "sensitive": _sensitive(sensitive), "ts": ts, "tid": tid, "level": level, "sev": sev,
-        "tpl_code": code, "msg": msg, "collection": group,
+        "tpl_code": code, "tpl_id": tpl_id or None, "msg": msg, "collection": group,
     }  # fmt: skip
 
 

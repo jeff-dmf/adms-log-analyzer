@@ -123,46 +123,21 @@
   border-color: var(--accent);
 }
 
-.cf-create.primary,
-.fb-footer .primary {
-  background: var(--accent);
-  color: var(--accent-text);
-  border-color: var(--accent);
-}
-
-.cf-create:disabled,
-.fb-footer .primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 /* Folder browser */
-.fb-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+/* The browser is a native modal <dialog class="ui-dialog fb-dialog"> (frame in components.css); it opens on top of the
+   case dialogs, so it is wider than they are but never wider than the window. */
+.fb-dialog {
+  width: min(760px, 94vw);
 }
 
-.fb-dialog {
+.fb-dialog .ui-dialog-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: min(760px, 94vw);
-  max-height: 88vh;
-  padding: 12px;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
 }
 
-.fb-title {
-  margin: 0;
-  font-size: 15px;
+.fb-kind {
+  flex: none;
 }
 
 .fb-bar {
@@ -292,13 +267,6 @@
 
 .fb-error {
   color: var(--error-text);
-}
-
-.fb-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: flex-end;
 }
 
 .fb-count {

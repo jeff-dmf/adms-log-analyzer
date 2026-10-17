@@ -8,8 +8,26 @@
   margin-bottom: 0;
 }
 
+/* One line per record, the columns of the grid: Time, Source (+ S badge), Level, Message type, Message. */
 .key-table {
   margin-bottom: var(--space-3);
+  table-layout: fixed;
+  width: 100%;
+}
+
+.key-table th:nth-child(1) { width: 11.5em; }
+.key-table th:nth-child(2) { width: 16em; }
+.key-table th:nth-child(3) { width: 6.5em; }
+.key-table th:nth-child(4) { width: 14em; }
+
+.key-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.key-badge {
+  margin-right: var(--space-2);
 }
 
 .key-mono {
@@ -17,11 +35,7 @@
 }
 
 .key-text {
-  overflow-wrap: anywhere;
-}
-
-.key-tag {
-  color: var(--muted);
+  min-width: 0;
 }
 
 .key-open {
