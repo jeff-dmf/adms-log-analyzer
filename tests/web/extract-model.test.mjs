@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 
 import {
   buildPromote, buildResult, canPromote, classifyError, createCheckFlow, createPromoteFlow, createRunFlow,
-  drillFilter, errorContext, errorOffset, formatNumber, formatPct, groupNames, inputState, isInexactInteger,
+  drillFilter, errorContext, hasScope, warningText, errorOffset, formatNumber, formatPct, groupNames, inputState, isInexactInteger,
   parseBounded, promoteIds, reconcileChoices, requestKey, statsView, typesPayload, usableLeaf, valueView,
 } from "../../src/dmslog/web/js/extract-model.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
@@ -117,12 +117,18 @@ test("numbers: zero, null, NaN, infinities and integers a double cannot hold", (
 });
 
 test("valueView tells no match, empty text, numbers and texts apart", () => {
-  assert.deepEqual(valueView(null, S), { kind: "null", text: S.exValueNone });
-  assert.deepEqual(valueView(undefined, S), { kind: "null", text: S.exValueNone });
-  assert.deepEqual(valueView("", S), { kind: "empty", text: S.exValueEmpty });
-  assert.deepEqual(valueView(0, S), { kind: "number", text: "0" });
-  assert.deepEqual(valueView("0", S), { kind: "text", text: "0" });
-  assert.deepEqual(valueView("<b>x</b>", S), { kind: "text", text: "<b>x</b>" });
+  assert.deepEqual(valueView(null, S), { kind: "null", text: S.exValueNone, inexact: false });
+  assert.deepEqual(valueView(undefined, S), { kind: "null", text: S.exValueNone, inexact: false });
+  assert.deepEqual(valueView("", S), { kind: "empty", text: S.exValueEmpty, inexact: false });
+  assert.deepEqual(valueView(0, S), { kind: "number", text: "0", inexact: false });
+  assert.deepEqual(valueView("0", S), { kind: "text", text: "0", inexact: false });
+  assert.deepEqual(valueView("<b>x</b>", S), { kind: "text", text: "<b>x</b>", inexact: false });
+  // 9007199254740993 comes out of JSON.parse as 2^53: it must not look exact (a float of that size is exact)
+  const rounded = valueView(JSON.parse("9007199254740993"), S, "int");
+  assert.deepEqual([rounded.inexact, rounded.text.startsWith("≈")], [true, true]);
+  assert.equal(valueView(2 ** 60, S, "hex").inexact, true);
+  assert.equal(valueView(2 ** 60, S, "float").inexact, false);
+  assert.equal(valueView(2 ** 53 - 1, S, "int").inexact, false);
 });
 
 test("statsView is empty without numbers and tolerates null measures", () => {
@@ -316,4 +322,58 @@ test("check flow: an older ACCEPTED answer that arrives last does not replace th
   await first;
   assert.equal(w.flow.state.result.columns[0].name, "b");
   assert.equal(w.states.filter((s) => s === "ok").length, 1, "one verdict was published");
+});
+
+test("hasScope mirrors the server: a source/stream/family/ts leaf in the top-level conjunction", () => {
+  assert.equal(hasScope(null), false);
+  assert.equal(hasScope({}), false);
+  assert.equal(hasScope({ source: [1] }), true);
+  assert.equal(hasScope({ ts: { ge: 1 } }), true);
+  assert.equal(hasScope({ and: [{ sev: { le: 2 } }, { and: [{ family: ["AWFM"] }] }] }), true);
+  assert.equal(hasScope({ and: [{ sev: { le: 2 } }] }), false);
+  assert.equal(hasScope({ or: [{ source: [1] }, { source: [2] }] }), false);
+  assert.equal(hasScope({ not: { source: [1] } }), false);
+  assert.equal(hasScope({ source: [1], ts: {} }), false, "two keys is not a node the server accepts as scope");
+  assert.equal(hasScope([{ source: [1] }]), false);
+});
+
+test("warningText maps known codes to strings.js and shows an unknown one generically", () => {
+  for (const code of ["lead_varies", "code_exists", "already_classified", "cut_skipped"]) {
+    assert.equal(warningText(code, S), S.exWarnings[code]);
+    assert.ok(!/template/i.test(S.exWarnings[code]));
+  }
+  assert.match(warningText("zzz", S), /zzz/);
+  assert.match(warningText("constructor", S), /constructor/, "no prototype lookups");
+});
+
+test("run flow: cancelPending drops a run in progress but keeps what was shown; an error remembers its request", async () => {
+  const calls = [];
+  const flow = createRunFlow({
+    api: { extract: { run: () => { const d = defer(); calls.push(d); return d.promise; } } },
+    getCase: () => "A",
+    onState: () => {},
+  });
+  const first = flow.run({ regex: "1" }, "k1");
+  calls[0].resolve({ matched: 1, scanned: 1, columns: [], rows: [] });
+  await first;
+  const second = flow.run({ regex: "2" }, "k2");
+  assert.equal(flow.state.status, "loading");
+  flow.cancelPending();
+  assert.deepEqual([flow.state.status, flow.state.key], ["done", "k1"]);
+  calls[1].resolve({ matched: 9, scanned: 9, columns: [], rows: [] });
+  await second;
+  assert.equal(flow.state.data.matched, 1, "the cancelled answer is dropped");
+  const third = flow.run({ regex: "3" }, "k3");
+  calls[2].reject(Object.assign(new Error("boom"), { code: "x" }));
+  await third;
+  assert.deepEqual([flow.state.status, flow.state.errorKey], ["error", "k3"]);
+  const fourth = flow.run({ regex: "4" }, "k4");
+  flow.cancelPending();
+  assert.deepEqual([flow.state.status, flow.state.errorKey], ["error", "k3"]);
+  flow.cancelPending(); // nothing pending: no change
+  void fourth;
+  const fresh = createRunFlow({ api: { extract: { run: () => defer().promise } }, getCase: () => "A", onState: () => {} });
+  fresh.run({}, "k");
+  fresh.cancelPending();
+  assert.equal(fresh.state.status, "idle");
 });

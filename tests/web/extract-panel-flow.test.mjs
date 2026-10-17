@@ -235,7 +235,7 @@ test("the result shows columns with top values, the suggested type, statistics a
 });
 
 test("a result without matches, a null measure and an unsafe integer do not break the table", async () => {
-  const w = world();
+  const w = world({ filter: { source: [1] } });
   await w.typeChecked("(?P<id>\\d+)", ID);
   await w.runWith(result({ matched: 0, scanned: 0, columns: [column("id", [])] }));
   assert.equal(find(w.host, "ext-empty").textContent, S.exNoMatches);
@@ -248,13 +248,13 @@ test("a result without matches, a null measure and an unsafe integer do not brea
   assert.equal(buttons[0].disabled, true, "an integer a double cannot hold is not applied as a filter");
   assert.equal(buttons[0].title, S.exLeafUnsafe);
   assert.equal(buttons[1].disabled, false);
-  assert.match(findAll(w.host, "ext-value")[0].textContent, /^1152921504606846976$|^1152921504606847000$/);
+  assert.match(findAll(w.host, "ext-value")[0].textContent, /^≈[0-9]{19}$/);
   const stats = findAll(w.host, "ext-stat").map((n) => n.textContent);
   assert.ok(stats.some((s) => s.startsWith("Max≈")) && stats.includes("Average–"));
 });
 
 test("the value buttons apply their leaf; a value without a leaf is disabled with the reason; labels name the value", async () => {
-  const w = world();
+  const w = world({ filter: { source: [1] } });
   await w.typeChecked("(?P<id>\\d+)", ID);
   const values = column("id", [["7", 2], ["x".repeat(2000), 1]]);
   values.values[1].leaf = null;
@@ -268,13 +268,13 @@ test("the value buttons apply their leaf; a value without a leaf is disabled wit
   second.click();
   assert.equal(w.drills.length, 1);
   // the drill-down changes the filter of the grid: the result is out of date, not recomputed
-  w.state.filter = { and: [w.drills[0]] };
+  w.state.filter = { and: [{ source: [1] }, w.drills[0]] };
   w.panel.refresh();
   assert.equal(w.stale.hidden, false);
   assert.equal(w.stale.textContent, S.exStale);
   assert.equal(w.calls.run.length, 1, "no request without the user");
   assert.equal(findAll(w.host, "ext-value").length, 2, "the old result stays visible");
-  w.state.filter = null;
+  w.state.filter = { source: [1] };
   w.panel.refresh();
   assert.equal(w.stale.hidden, true);
 });
@@ -465,7 +465,7 @@ test("Promote opens a dialog with at most 20 ids, shows the TOML as text with th
   w.calls.promote[0].resolve({
     toml: "[[template]]\ncode = \"<script>x</script>\"\n", file: "src/dmslog/adapters/awfm.toml",
     check: { loads: false, error: "bad regex <b>" },
-    warnings: [{ code: "lead_varies", message: "The text before the match differs" }],
+    warnings: [{ code: "lead_varies", message: "The text before the match differs" }, { code: "from_the_future", message: "x" }],
     records: [],
   });
   await tick();
@@ -474,7 +474,7 @@ test("Promote opens a dialog with at most 20 ids, shows the TOML as text with th
   const check = find(dialog, "ext-dialog-check");
   assert.equal(check.textContent, format(S.exCheckFails, { error: "bad regex <b>" }));
   assert.ok(cls(check, "ui-error"));
-  assert.deepEqual(findAll(dialog, "ext-warning").map((n) => n.textContent), ["The text before the match differs"]);
+  assert.deepEqual(findAll(dialog, "ext-warning").map((n) => n.textContent), [S.exWarnings.lead_varies, format(S.exWarningUnknown, { code: "from_the_future" })]);
   assert.equal(dialog.all().filter((n) => n.tagName === "SCRIPT" || n.tagName === "B").length, 0);
   assert.equal(generate.disabled, false);
   // family and code go into the next request
@@ -634,4 +634,211 @@ test("Copy: a refusal says so and selects the text; the dialog returns focus to 
   assert.equal(doc.activeElement, find(host, "ext-promote"));
   find(dialog, "dialog-close").click();
   assert.equal(doc.activeElement, w.promote, "the opener was captured before the dialog took the focus");
+});
+
+// ---- review of PR #217 ---------------------------------------------------------------------------------------------
+
+test("editing Family or Code drops the generated text: Copy is disabled, a late answer is ignored, the status says why", async () => {
+  const w = await withResult();
+  w.promote.click();
+  const dialog = lastDialog();
+  w.calls.promote[0].resolve({ toml: "[[template]]\nA\n", file: "f.toml", check: { loads: true }, warnings: [] });
+  await tick();
+  const copy = find(dialog, "ext-copy");
+  assert.equal(copy.disabled, false);
+  const family = find(dialog, "ext-family");
+  family.value = "AWFM";
+  family.dispatch("input");
+  assert.equal(copy.disabled, true);
+  assert.equal(find(dialog, "ext-toml").value, "");
+  assert.equal(find(dialog, "ext-dialog-status").textContent, S.exPromoteEdited);
+  assert.equal(find(dialog, "ext-dialog-check").textContent, "");
+  // while a request is in flight, editing also drops it
+  find(dialog, "ext-generate").click();
+  const code = find(dialog, "ext-code");
+  code.value = "AWFM-901";
+  code.dispatch("input");
+  w.calls.promote[1].resolve({ toml: "late for the old values", file: "f", check: { loads: true }, warnings: [] });
+  await tick();
+  assert.equal(find(dialog, "ext-toml").value, "");
+  assert.equal(copy.disabled, true);
+  find(dialog, "ext-generate").click();
+  assert.equal(w.calls.promote[2].args[1].family, "AWFM");
+  assert.equal(w.calls.promote[2].args[1].code, "AWFM-901");
+});
+
+test("closing the tab drops the pending check and run and the wish to run; the finished result stays; reopening checks again", async () => {
+  const w = await withResult();
+  assert.equal(findAll(w.host, "ext-value").length, 1);
+  w.type("(?P<id>\\d+)z");
+  w.regex.dispatch("keydown", { key: "Enter" }); // wants to run once the check accepts it
+  w.delays[w.delays.length - 1].resolve();
+  await tick();
+  const check = w.calls.check[w.calls.check.length - 1];
+  w.panel.closed();
+  check.resolve({ columns: ID, window: 5 });
+  await tick();
+  assert.equal(w.calls.run.length, 1, "no run started after the tab closed");
+  assert.notEqual(w.msg.textContent.startsWith("Valid"), true, "the cancelled check published no verdict");
+  assert.equal(w.run.disabled, true, "without a verdict Run waits for the next check");
+  assert.equal(findAll(w.host, "ext-value").length, 1, "the finished result stays");
+  // a run in flight when the tab closes
+  w.panel.refresh();
+  w.delays[w.delays.length - 1].resolve();
+  await tick();
+  w.calls.check[w.calls.check.length - 1].resolve({ columns: ID, window: 5 });
+  await tick();
+  assert.equal(w.calls.run.length, 1, "the wish to run did not survive the closing: the new verdict starts nothing");
+  assert.equal(w.run.disabled, false);
+  w.run.click();
+  await tick();
+  w.panel.closed();
+  assert.equal(w.status.textContent.length > 0, true);
+  w.calls.run[w.calls.run.length - 1].resolve(result({ columns: [column("id", [["late", 1]])], rows: [{ id: 9 }] }));
+  await tick();
+  assert.deepEqual(findAll(w.host, "ext-value").map((n) => n.textContent), ["1"], "the late answer did not replace the shown result");
+  assert.equal(w.run.textContent, S.exRun);
+  // the types chosen before survive the cancelled check
+  assert.equal(w.host.all().filter((n) => n.tagName === "SELECT" && n.dataset.group === "id").length, 1);
+});
+
+test("a copy that finishes after the dialog was closed, reopened or regenerated touches nothing", async () => {
+  const w = await withResult();
+  const refusals = [];
+  const host = doc.createElement("section");
+  doc.body.appendChild(host);
+  let answered = 0;
+  mountExtractPanel(host, {
+    api: { extract: {
+      check: () => Promise.resolve({ columns: ID, window: 5 }),
+      run: () => Promise.resolve(result({ rows: [{ id: 1 }], columns: [column("id", [["1", 1]])] })),
+      promote: () => { answered += 1; return Promise.resolve({ toml: "text " + answered, file: "f", check: { loads: true }, warnings: [] }); },
+    } },
+    getCase: () => "A", getFilter: () => null, onDrill() {}, delay: () => Promise.resolve(),
+    copyText: () => { const d = defer(); refusals.push(d); return d.promise; },
+  });
+  const regex = find(host, "ext-regex");
+  regex.value = "(?P<id>\\d+)";
+  regex.dispatch("input");
+  await tick();
+  find(host, "ext-run").click();
+  await tick();
+  find(host, "ext-promote").click();
+  await tick();
+  const dialog = lastDialog();
+  const toml = find(dialog, "ext-toml");
+  const order = [];
+  toml.select = () => order.push("select");
+  toml.focus = () => { order.push("focus"); doc.activeElement = toml; };
+  find(dialog, "ext-copy").click();
+  await tick();
+  // the dialog closes, opens again and builds another text while the first copy is pending
+  find(dialog, "dialog-close").click();
+  find(host, "ext-promote").click();
+  await tick();
+  assert.equal(toml.value, "text 2");
+  refusals[0].reject(new Error("denied"));
+  await tick();
+  assert.deepEqual(order, [], "the old refusal neither focuses nor selects the new text");
+  assert.equal(find(dialog, "ext-dialog-status").textContent, "");
+  // the current one: focus first, then select
+  find(dialog, "ext-copy").click();
+  await tick();
+  refusals[1].reject(new Error("denied"));
+  await tick();
+  assert.deepEqual(order, ["focus", "select"]);
+  assert.equal(find(dialog, "ext-dialog-status").textContent, S.exCopyFailed);
+  // an old success must not announce "Copied" over a newer state either
+  find(dialog, "ext-copy").click();
+  await tick();
+  find(dialog, "dialog-close").click();
+  refusals[2].resolve();
+  await tick();
+  assert.equal(find(dialog, "ext-dialog-status").textContent, "");
+  void w;
+});
+
+test("an error of an earlier request is labelled when the inputs changed since", async () => {
+  const w = world();
+  await w.typeChecked("(?P<id>\\d+)", ID);
+  w.run.click();
+  await tick();
+  w.type("(?P<id>\\d+)b");
+  w.delays[w.delays.length - 1].resolve();
+  await tick();
+  w.calls.check[w.calls.check.length - 1].resolve({ columns: ID, window: 5 });
+  await tick();
+  w.calls.run[0].reject(Object.assign(new Error("slow"), { code: "extract_timeout", status: 408 }));
+  await tick();
+  assert.equal(w.status.textContent, format(S.exErrorOld, { error: format(S.exError, { error: "slow" }) }));
+  w.type("(?P<id>\\d+)");
+  w.delays[w.delays.length - 1].resolve();
+  await tick();
+  w.calls.check[w.calls.check.length - 1].resolve({ columns: ID, window: 5 });
+  await tick();
+  assert.equal(w.status.textContent, format(S.exError, { error: "slow" }), "back to the inputs of the failed request");
+});
+
+test("an integer a double cannot hold is shown with ≈ and a reason, in the cell and in the button name", async () => {
+  const w = world({ filter: { source: [1] } });
+  await w.typeChecked("(?P<id>\\d+)", ID);
+  await w.runWith(result({
+    columns: [column("id", [[JSON.parse("9007199254740993"), 1]], { type: "int" })], rows: [{ id: 1 }],
+  }));
+  const cell = find(w.host, "ext-value");
+  assert.ok(cell.textContent.startsWith("≈"), cell.textContent);
+  assert.equal(cell.title, S.exInexact);
+  assert.ok(find(w.host, "ext-include").getAttribute("aria-label").includes("≈"));
+});
+
+test("Only needs a source or time scope in the grid filter and says so; it follows the filter", async () => {
+  const w = world({ filter: { sev: { le: 3 } } });
+  await w.typeChecked("(?P<id>\\d+)", ID);
+  await w.runWith(result({ columns: [column("id", [["7", 2]])], rows: [{ id: 1 }] }));
+  const only = find(w.host, "ext-include");
+  assert.equal(only.disabled, true);
+  assert.equal(only.title, S.exNeedsScope);
+  only.listeners.click[0]();
+  assert.equal(w.drills.length, 0, "no filter the server would refuse");
+  w.state.filter = { and: [{ sev: { le: 3 } }, { ts: { ge: 1 } }] };
+  w.panel.refresh();
+  assert.equal(only.disabled, false);
+  assert.equal(only.title, "");
+  only.click();
+  assert.equal(w.drills.length, 1);
+  w.state.filter = null;
+  w.panel.refresh();
+  assert.equal(only.disabled, true);
+});
+
+test("Records and Top errors sit next to their fields and are described by them", async () => {
+  const w = world();
+  await w.typeChecked("(?P<id>\\d+)", ID);
+  const limitMsg = find(w.host, "ext-limit-msg");
+  const topMsg = find(w.host, "ext-top-msg");
+  assert.equal(limitMsg.hidden, true);
+  assert.equal(w.limit.getAttribute("aria-describedby"), limitMsg.id);
+  assert.equal(w.top.getAttribute("aria-describedby"), topMsg.id);
+  w.limit.value = "0";
+  w.limit.dispatch("input");
+  assert.equal(limitMsg.textContent, S.exBadLimit);
+  assert.equal(limitMsg.hidden, false);
+  w.top.value = "999";
+  w.top.dispatch("input");
+  assert.equal(topMsg.textContent, S.exBadTop);
+  w.limit.value = "5";
+  w.limit.dispatch("input");
+  assert.equal(limitMsg.textContent, "");
+  assert.equal(limitMsg.hidden, true);
+});
+
+test("one live region per context: the panel announces through the run status, the dialog through its own status", async () => {
+  const w = await withResult();
+  const live = (root) => root.all().filter((n) => n.getAttribute("role") === "status" || n.getAttribute("aria-live"));
+  assert.equal(live(w.host).length, 1);
+  assert.equal(live(w.host)[0], w.status);
+  w.promote.click();
+  const dialog = lastDialog();
+  assert.equal(live(dialog).length, 1);
+  assert.equal(live(dialog)[0], find(dialog, "ext-dialog-status"));
 });

@@ -5,7 +5,7 @@
 import {
   CHECK_DEBOUNCE_MS, DEFAULT_LIMIT, DEFAULT_TOP, MAX_LIMIT, MAX_TOP, TARGETS, TYPES,
   canPromote, createCheckFlow, groupNames, createPromoteFlow, createRunFlow, errorContext, formatNumber, formatPct,
-  inputState, promoteIds, reconcileChoices, requestKey, typesPayload, usableLeaf, valueView,
+  hasScope, inputState, promoteIds, reconcileChoices, requestKey, typesPayload, usableLeaf, valueView, warningText,
 } from "./extract-model.js";
 import { createDialogShell, createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
 import { S, format, pluralKey } from "./strings.js";
@@ -36,6 +36,13 @@ function field(labelText, control, className) {
   label.htmlFor = control.id;
   wrap.append(label, control);
   return wrap;
+}
+
+// Text of a node that is NOT a live region (verdicts and descriptions are read when the user reaches them).
+function setText(node, text, isError) {
+  node.textContent = text;
+  node.classList.toggle("is-error", Boolean(isError));
+  node.classList.toggle("ui-error", Boolean(isError));
 }
 
 function realDelay() {
@@ -70,7 +77,7 @@ export function mountExtractPanel(host, options) {
   regexInput.setAttribute("spellcheck", "false");
   regexInput.setAttribute("autocomplete", "off");
   regexInput.placeholder = S.exRegexPlaceholder;
-  const regexMessage = statusLine(document, "ext-regex-msg");
+  const regexMessage = element("div", "ui-status ext-regex-msg"); // static: the live region of the panel is `status`
   regexMessage.id = "ext-regex-msg-" + String(++uid);
   regexInput.setAttribute("aria-describedby", regexMessage.id);
   const regexContext = element("div", "ext-context");
@@ -93,6 +100,12 @@ export function mountExtractPanel(host, options) {
   topInput.min = "1";
   topInput.max = String(MAX_TOP);
   topInput.value = String(DEFAULT_TOP);
+  const limitMessage = element("div", "ui-status ext-field-msg ext-limit-msg");
+  limitMessage.id = "ext-limit-msg-" + String(++uid);
+  limitInput.setAttribute("aria-describedby", limitMessage.id);
+  const topMessage = element("div", "ui-status ext-field-msg ext-top-msg");
+  topMessage.id = "ext-top-msg-" + String(++uid);
+  topInput.setAttribute("aria-describedby", topMessage.id);
   const typesRow = element("div", "ext-types");
   typesRow.hidden = true;
   const typesLabel = element("span", "ext-types-label", S.exTypesLabel);
@@ -102,7 +115,7 @@ export function mountExtractPanel(host, options) {
   const regexField = field(S.exRegexLabel, regexInput, "ext-field-regex");
   const optionsRow = element("div", "ext-options");
   form.append(
-    regexField, regexMessage, regexContext, optionsRow, typesRow,
+    regexField, regexMessage, regexContext, optionsRow, limitMessage, topMessage, typesRow,
   );
   optionsRow.append(field(S.exTargetLabel, targetSelect), field(S.exLimitLabel, limitInput), field(S.exTopLabel, topInput));
   shell.addTools(form);
@@ -209,7 +222,7 @@ export function mountExtractPanel(host, options) {
     regexContext.textContent = "";
     regexInput.setAttribute("aria-invalid", state.status === "error" ? "true" : "false");
     if (state.status === "error") {
-      setStatusLine(regexMessage, state.error.text || S.exBadRegexShort, true);
+      setText(regexMessage, state.error.text || S.exBadRegexShort, true);
       const context = state.error.problem === "regex" ? errorContext(typedRegex(), state.error.offset) : null;
       if (context) {
         regexContext.hidden = false;
@@ -222,18 +235,18 @@ export function mountExtractPanel(host, options) {
     if (state.status === "ok" && state.result) {
       const columns = Array.isArray(state.result.columns) ? state.result.columns : [];
       syncTypeRows(columns);
-      setStatusLine(regexMessage, format(S[pluralKey("exCheckOk", columns.length)], {
+      setText(regexMessage, format(S[pluralKey("exCheckOk", columns.length)], {
         count: columns.length,
         window: formatNumber(state.result.window),
       }), false);
       return;
     }
-    setStatusLine(regexMessage, state.status === "checking" ? S.exChecking : "", false);
+    setText(regexMessage, state.status === "checking" ? S.exChecking : "", false);
   }
 
   function onCheckState(state) {
     renderCheck();
-    if (state.status === "idle") {
+    if (state.status === "idle" && typedRegex() === "") {
       syncTypeRows([]);
     }
     if (wantRun && state.status === "ok") {
@@ -280,6 +293,16 @@ export function mountExtractPanel(host, options) {
     section.appendChild(list);
   }
 
+  let onlyButtons = []; // { node, usable, label } of the shown result: enabled while the grid filter has a scope
+
+  function updateOnly() {
+    const scoped = hasScope(getFilter());
+    for (const item of onlyButtons) {
+      item.node.disabled = !item.usable.ok || !scoped;
+      item.node.title = !item.usable.ok ? S[item.usable.reason] : scoped ? "" : S.exNeedsScope;
+    }
+  }
+
   function appendValues(column, section) {
     if (column.values.length === 0) {
       return;
@@ -295,21 +318,22 @@ export function mountExtractPanel(host, options) {
     table.appendChild(element("thead")).appendChild(headRow);
     const body = element("tbody");
     for (const item of column.values) {
-      const view = valueView(item.value, S);
+      const view = valueView(item.value, S, column.type);
       const tr = element("tr");
-      tr.appendChild(element("td", "ext-value is-" + view.kind, view.text));
+      const valueCell = element("td", "ext-value is-" + view.kind + (view.inexact ? " is-inexact" : ""), view.text);
+      if (view.inexact) {
+        valueCell.title = S.exInexact;
+      }
+      tr.appendChild(valueCell);
       tr.appendChild(element("td", "ext-num", formatNumber(item.count)));
       tr.appendChild(element("td", "ext-num", formatPct(item.pct)));
       const cell = element("td", "ext-actions");
       const only = button("is-ghost ext-include", S.exFilterOnly);
       only.setAttribute("aria-label", format(S.exFilterOnlyLabel, { name: column.name, value: view.text }));
       const usable = usableLeaf(item.leaf);
-      only.disabled = !usable.ok;
-      if (!usable.ok) {
-        only.title = S[usable.reason];
-      }
+      onlyButtons.push({ node: only, usable });
       only.addEventListener("click", () => {
-        if (usable.ok) {
+        if (usable.ok && hasScope(getFilter())) {
           onDrill(item.leaf);
         }
       });
@@ -326,15 +350,25 @@ export function mountExtractPanel(host, options) {
     }
   }
 
+  // The error belongs to the request that failed: when the inputs changed since, it says so.
+  function renderRunError() {
+    const state = run.state;
+    const inputs = currentInputs();
+    const current = state.errorKey === currentKey(inputs, Number(limitInput.value), Number(topInput.value));
+    const text = format(S.exError, { error: state.error.text || S.exErrorGeneric });
+    setStatusLine(status, current ? text : format(S.exErrorOld, { error: text }), true);
+  }
+
   function renderResult() {
     const state = run.state;
     resultHost.textContent = "";
+    onlyButtons = [];
     if (state.status === "loading") {
       setStatusLine(status, S.exRunning, false);
       return;
     }
     if (state.status === "error") {
-      setStatusLine(status, format(S.exError, { error: state.error.text || S.exErrorGeneric }), true);
+      renderRunError();
       return;
     }
     if (state.status !== "done") {
@@ -414,6 +448,9 @@ export function mountExtractPanel(host, options) {
     }
     staleNote.hidden = !stale;
     staleNote.textContent = stale ? S.exStale : "";
+    if (state.status === "error") {
+      renderRunError();
+    }
   }
 
   function updateControls() {
@@ -425,6 +462,11 @@ export function mountExtractPanel(host, options) {
     runButton.title = verdict.ok ? "" : S[verdict.problem];
     limitInput.setAttribute("aria-invalid", verdict.limit === null ? "true" : "false");
     topInput.setAttribute("aria-invalid", verdict.top === null ? "true" : "false");
+    setText(limitMessage, verdict.limit === null ? S.exBadLimit : "", true);
+    setText(topMessage, verdict.top === null ? S.exBadTop : "", true);
+    limitMessage.hidden = verdict.limit !== null;
+    topMessage.hidden = verdict.top !== null;
+    updateOnly();
     runButton.textContent = run.state.status === "loading" ? S.exRunning : S.exRun;
     const done = run.state.status === "done" ? run.state.data : null;
     const can = canPromote(done, lastBody ? lastBody.target : null);
@@ -467,11 +509,18 @@ export function mountExtractPanel(host, options) {
           generate();
         }
       });
+      // The text shown (or being built) is for the values it was generated with: editing them drops it.
+      input.addEventListener("input", () => {
+        if (promote.state.status !== "idle") {
+          promote.cancel();
+          setStatusLine(dialogParts.dialogStatus, S.exPromoteEdited, false);
+        }
+      });
     }
     const fields = element("div", "ext-dialog-fields");
     fields.append(field(S.exFamilyLabel, familyInput), field(S.exCodeLabel, codeInput));
-    const dialogStatus = statusLine(document, "ext-dialog-status");
-    const checkLine = statusLine(document, "ext-dialog-check");
+    const dialogStatus = statusLine(document, "ext-dialog-status"); // the one live region of the dialog
+    const checkLine = element("div", "ui-status ext-dialog-check");
     const warnings = element("ul", "ext-warnings");
     warnings.setAttribute("aria-label", S.exWarningsLabel);
     const fileLine = element("div", "ext-file");
@@ -511,14 +560,28 @@ export function mountExtractPanel(host, options) {
     return promote.load(body);
   }
 
+  // Any change of what the dialog shows (a request starts, ends, is cancelled; the dialog closes) bumps the session:
+  // a copy that finishes after that belongs to a text no longer shown and touches nothing.
+  let session = 0;
+
   function copy() {
     const text = String(dialogParts.toml.value || "");
     if (text === "") {
       return Promise.resolve();
     }
+    session += 1;
+    const mine = session;
     return Promise.resolve().then(() => copyText(text)).then(
-      () => setStatusLine(dialogParts.dialogStatus, S.exCopied, false),
       () => {
+        if (mine === session) {
+          setStatusLine(dialogParts.dialogStatus, S.exCopied, false);
+        }
+      },
+      () => {
+        if (mine !== session) {
+          return;
+        }
+        dialogParts.toml.focus();
         dialogParts.toml.select();
         setStatusLine(dialogParts.dialogStatus, S.exCopyFailed, true);
       },
@@ -530,6 +593,7 @@ export function mountExtractPanel(host, options) {
       return;
     }
     const parts = dialogParts;
+    session += 1;
     parts.warnings.textContent = "";
     parts.generateButton.disabled = state.status === "loading";
     parts.copyButton.disabled = state.status !== "done" || state.promote.toml === "";
@@ -540,14 +604,14 @@ export function mountExtractPanel(host, options) {
     if (state.status === "error") {
       parts.toml.value = "";
       parts.fileLine.textContent = "";
-      parts.checkLine.textContent = "";
+      setText(parts.checkLine, "", false);
       setStatusLine(parts.dialogStatus, format(S.exError, { error: state.error.text || S.exErrorGeneric }), true);
       return;
     }
     if (state.status !== "done") {
       parts.toml.value = "";
       parts.fileLine.textContent = "";
-      parts.checkLine.textContent = "";
+      setText(parts.checkLine, "", false);
       setStatusLine(parts.dialogStatus, "", false);
       return;
     }
@@ -555,13 +619,13 @@ export function mountExtractPanel(host, options) {
     parts.toml.value = result.toml;
     parts.fileLine.textContent = result.file === "" ? "" : format(S.exPromoteFile, { file: result.file });
     setStatusLine(parts.dialogStatus, "", false);
-    setStatusLine(
+    setText(
       parts.checkLine,
       result.loads ? S.exCheckLoads : format(S.exCheckFails, { error: result.checkError || S.exErrorGeneric }),
       !result.loads,
     );
     for (const warning of result.warnings) {
-      parts.warnings.appendChild(element("li", "ext-warning", warning.message));
+      parts.warnings.appendChild(element("li", "ext-warning", warningText(warning.code, S)));
     }
   }
 
@@ -626,6 +690,10 @@ export function mountExtractPanel(host, options) {
 
   return {
     refresh() {
+      // Reopened (or the filter changed): a verdict dropped while the tab was closed is asked again.
+      if (typedRegex() !== "" && check.state.status === "idle") {
+        scheduleCheck();
+      }
       updateControls();
     },
     reset() {
@@ -639,7 +707,12 @@ export function mountExtractPanel(host, options) {
       renderResult();
       updateControls();
     },
+    // Closing the tab drops what is in flight and the wish to run; what finished stays for the next opening.
     closed() {
+      wantRun = false;
+      check.cancel();
+      run.cancelPending();
+      promote.cancel();
       if (dialog !== null && dialog.isOpen()) {
         dialog.close();
       }

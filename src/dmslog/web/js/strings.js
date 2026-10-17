@@ -1698,6 +1698,17 @@ export const S = {
   exCheckLoads: "The catalog loads this message type.",
   exCheckFails: "The catalog does not load this message type: {error}",
   exWarningsLabel: "Warnings",
+  exWarnings: {
+    lead_varies: "The text before the match differs between the examples; the message type starts with a wildcard.",
+    code_exists: "That code is already used by a packaged message type; choose another one.",
+    already_classified: "Some examples already have a message type; the new one only applies to records no earlier one matches.",
+    cut_skipped: "Records longer than the search window were not used as examples.",
+  },
+  exWarningUnknown: "Warning from the server: {code}",
+  exPromoteEdited: "Family or code changed. Generate again.",
+  exNeedsScope: "Choose a source or a time range in the filter first: a filter on an extracted value needs one.",
+  exInexact: "Rounded: this integer is too large for the viewer to hold exactly.",
+  exErrorOld: "{error} (for earlier inputs)",
   exTomlLabel: "Message type definition (TOML)",
   // Bottom dock (UI-15): tabs for the analysis panels.
   dockLabel: "Analysis panels",

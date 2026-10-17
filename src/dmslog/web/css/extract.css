@@ -155,3 +155,7 @@
   width: min(72ch, 100%);
   resize: vertical;
 }
+
+.ext-field-msg {
+  font-size: 0.9em;
+}

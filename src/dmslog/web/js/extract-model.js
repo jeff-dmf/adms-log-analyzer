@@ -4,6 +4,7 @@
 //
 // api.extract.check(body, signal), api.extract.run(caseId, body, signal), api.extract.promote(caseId, body, signal).
 import { andFilters } from "./filters.js";
+import { format } from "./strings.js";
 
 export const TARGETS = ["msg", "text"];
 export const TYPES = ["str", "int", "hex", "guid", "float"];
@@ -144,11 +145,13 @@ export function isInexactInteger(n) {
   return isNum(n) && Number.isInteger(n) && !Number.isSafeInteger(n);
 }
 
-export function formatNumber(n) {
+// `exact: true` for values that are exact doubles by nature (floats); integers beyond 2^53 come out of JSON.parse
+// rounded, so they carry "≈".
+export function formatNumber(n, exact = false) {
   if (!isNum(n)) {
     return "–";
   }
-  if (isInexactInteger(n)) {
+  if (!exact && isInexactInteger(n)) {
     return "≈" + n.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 0 });
   }
   if (n === 0) {
@@ -166,14 +169,22 @@ export function formatPct(pct) {
 
 // The text of one value of a column: null (the regex did not match, or the group did not take part) and "" are
 // told apart from a text; kinds: "null" | "empty" | "number" | "text".
-export function valueView(value, S) {
+// `type` is the type of the column: an integer beyond 2^53 of an int or hex column was rounded by JSON.parse and is
+// shown as "≈<digits>" with inexact: true (a float of that size is an exact double).
+export function valueView(value, S, type = "str") {
   if (value === null || value === undefined) {
-    return { kind: "null", text: S.exValueNone };
+    return { kind: "null", text: S.exValueNone, inexact: false };
   }
   if (value === "") {
-    return { kind: "empty", text: S.exValueEmpty };
+    return { kind: "empty", text: S.exValueEmpty, inexact: false };
   }
-  return { kind: typeof value === "number" ? "number" : "text", text: String(value) };
+  if (typeof value === "number") {
+    if (type !== "float" && isInexactInteger(value)) {
+      return { kind: "number", text: formatNumber(value), inexact: true };
+    }
+    return { kind: "number", text: String(value), inexact: false };
+  }
+  return { kind: "text", text: String(value), inexact: false };
 }
 
 const STAT_KEYS = ["count", "min", "max", "avg", "p50", "p90", "p99"];
@@ -183,7 +194,32 @@ export function statsView(numeric) {
   if (!numeric || typeof numeric !== "object" || !isNum(numeric.count) || numeric.count <= 0) {
     return [];
   }
-  return STAT_KEYS.map((key) => ({ key, value: formatNumber(numeric[key]) }));
+  const exact = numeric.type === "float";
+  return STAT_KEYS.map((key) => ({ key, value: formatNumber(numeric[key], exact && key !== "count") }));
+}
+
+// The grid refuses a regex scan without a source or time condition in the top-level conjunction of the filter
+// (server/api.py _has_scope, SCOPE_LEAVES). The extraction itself does not need one; the "Only" filter does.
+const SCOPE_LEAVES = ["source", "stream", "family", "ts"];
+export function hasScope(filter) {
+  if (!filter || typeof filter !== "object" || Array.isArray(filter)) {
+    return false;
+  }
+  const keys = Object.keys(filter);
+  if (keys.length !== 1) {
+    return false;
+  }
+  if (SCOPE_LEAVES.includes(keys[0])) {
+    return true;
+  }
+  return keys[0] === "and" && Array.isArray(filter.and) && filter.and.some((child) => hasScope(child));
+}
+
+// The warnings of the promotion by code: the texts live in strings.js (the server's own are English prose that
+// says "template"); a code this version does not know shows generically.
+export function warningText(code, S) {
+  const known = S.exWarnings && Object.prototype.hasOwnProperty.call(S.exWarnings, code) ? S.exWarnings[code] : null;
+  return known === null ? format(S.exWarningUnknown, { code: String(code).slice(0, 40) }) : known;
 }
 
 // A drill-down leaf the panel may apply: the server gave one (long texts have none) and its value survived JSON.
@@ -191,7 +227,7 @@ export function usableLeaf(leaf) {
   if (!leaf || typeof leaf !== "object" || !leaf.extract || typeof leaf.extract !== "object") {
     return { ok: false, reason: "exNoLeaf" };
   }
-  if (isInexactInteger(leaf.extract.eq)) {
+  if (leaf.extract.type !== "float" && isInexactInteger(leaf.extract.eq)) {
     return { ok: false, reason: "exLeafUnsafe" };
   }
   return { ok: true, reason: null };
@@ -337,9 +373,10 @@ export function createCheckFlow({ api, onState, delay = realDelay }) {
 // The extraction itself: one request counts, a new run or cancel() drops the older answer, and an answer that
 // arrives after the case changed is dropped too. States: idle | loading | done { data } | error { error }.
 export function createRunFlow({ api, getCase, onState }) {
-  const state = { status: "idle", data: null, error: null, caseId: null, key: null };
+  const state = { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null };
   let seq = 0;
   let controller = null;
+  let before = null; // what was shown when the pending run started
   const emit = () => onState && onState(state);
 
   function abort() {
@@ -355,12 +392,15 @@ export function createRunFlow({ api, getCase, onState }) {
     abort();
     const caseId = getCase();
     if (!caseId) {
-      Object.assign(state, { status: "idle", data: null, error: null, caseId: null, key: null });
+      Object.assign(state, { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null });
       emit();
       return;
     }
     controller = typeof AbortController === "function" ? new AbortController() : null;
-    Object.assign(state, { status: "loading", error: null, caseId });
+    if (state.status !== "loading") {
+      before = { status: state.status, error: state.error, errorKey: state.errorKey };
+    }
+    Object.assign(state, { status: "loading", error: null, errorKey: null, caseId });
     emit();
     try {
       const data = await api.extract.run(caseId, body, controller ? controller.signal : undefined);
@@ -372,7 +412,7 @@ export function createRunFlow({ api, getCase, onState }) {
       if (mine !== seq || getCase() !== caseId || (err && err.name === "AbortError")) {
         return;
       }
-      Object.assign(state, { status: "error", error: classifyError(err) });
+      Object.assign(state, { status: "error", error: classifyError(err), errorKey: key });
     }
     emit();
   }
@@ -383,7 +423,21 @@ export function createRunFlow({ api, getCase, onState }) {
     cancel() {
       seq += 1;
       abort();
-      Object.assign(state, { status: "idle", data: null, error: null, caseId: null, key: null });
+      before = null;
+      Object.assign(state, { status: "idle", data: null, error: null, errorKey: null, caseId: null, key: null });
+      emit();
+    },
+    // Drops only a run in progress (the tab was closed): what was already shown stays.
+    cancelPending() {
+      if (state.status !== "loading") {
+        return;
+      }
+      seq += 1;
+      abort();
+      const back = before || { status: "idle", error: null, errorKey: null };
+      before = null;
+      const status = back.status === "done" && state.data ? "done" : back.status === "error" ? "error" : "idle";
+      Object.assign(state, { status, error: back.error, errorKey: back.errorKey });
       emit();
     },
   };
