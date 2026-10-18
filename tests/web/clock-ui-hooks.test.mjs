@@ -20,7 +20,7 @@ const { Detail, adjustedFact, setDetailPrefs } = await import("../../src/dmslog/
 const { createDetailPrefs } = await import("../../src/dmslog/web/js/detail-model.js");
 const { createActionRegistry } = await import("../../src/dmslog/web/js/actions.js");
 const { registerAppActions } = await import("../../src/dmslog/web/js/app-actions.js");
-const { contextMenuDefs } = await import("../../src/dmslog/web/js/commands-model.js");
+const { captureTarget, contextMenuDefs, targetContext, targetCurrent } = await import("../../src/dmslog/web/js/commands-model.js");
 const { S } = await import("../../src/dmslog/web/js/strings.js");
 
 const T = Date.UTC(2026, 2, 9, 14, 5, 6, 789);
@@ -101,7 +101,7 @@ function actionsSetup({ multi = true, caseId = "A" } = {}) {
       onMessage: (text, isError) => state.messages.push([text, isError]),
     }),
   });
-  const ctx = { caseId: () => state.caseId, entry: () => state.entry, selectedRow: () => null };
+  const ctx = { caseId: () => state.caseId, generation: () => state.gen, entry: () => state.entry, selectedRow: () => null };
   return { registry, app, state, ctx };
 }
 
@@ -232,4 +232,44 @@ test("main.js wiring: a generation per opened case, one clock scope for the acti
   assert.match(main, /timeSpan\(sources, effectiveSourceIds\(sources, ids, groups\), formState\.from, formState\.to, offsetOf\)/);
   assert.match(main, /timeSpan\(sources, \[\], null, null, offsetOf\)/);
   assert.doesNotMatch(main, /onApplied/, "the reload sequence lives in clock-dialog.js, where every wait is followed by a scope check");
+});
+
+// The menu and the palette capture the target BEFORE invoke() waits for the action's loader, and pass targetCurrent() as the guard.
+test("a clock action started in A is refused by the real registry when A was opened again while the module loaded (A -> B -> A)", async () => {
+  const { registry, state, ctx: base } = actionsSetup();
+  const ctx = { ...base, selectedRow: () => (state.entry ? { id: state.entry.id } : null) };
+  state.entry = { id: 10, ts: T, source_id: 1 };
+  const target = captureTarget(ctx);
+  const bound = targetContext(ctx, target);
+  assert.equal(bound.generation(), 1);
+  const guard = () => targetCurrent(ctx, target);
+  for (const id of ["record.clockAnchor", "record.clockTarget"]) {
+    state.caseId = "A";
+    state.gen = 1;
+    const running = registry.invoke(id, bound, undefined, guard); // waits for preload() first
+    state.caseId = "B";
+    state.gen = 2;
+    state.caseId = "A"; // back in A, but it is the third generation
+    state.gen = 3;
+    assert.deepEqual(await running, { ok: false, reason: "stale" }, id);
+  }
+  await tick();
+  assert.deepEqual(state.messages, [], "no anchor registered, no dialog");
+  assert.equal(doc.body.all().filter((n) => n.tagName === "DIALOG").length, 0);
+  // the same call in the live scope still works
+  state.gen = 1;
+  const fresh = captureTarget(ctx);
+  assert.deepEqual(await registry.invoke("record.clockAnchor", targetContext(ctx, fresh), undefined, () => targetCurrent(ctx, fresh)), { ok: true });
+  assert.ok(state.messages.at(-1)[0].startsWith("Clock anchor: record 10"));
+});
+
+test("without a guard the action still takes the scope of its captured target, so the dialog refuses a later generation", async () => {
+  const { registry, state, ctx: base } = actionsSetup();
+  const ctx = { ...base, selectedRow: () => (state.entry ? { id: state.entry.id } : null) };
+  state.entry = { id: 10, ts: T, source_id: 1 };
+  const bound = targetContext(ctx, captureTarget(ctx));
+  const running = registry.invoke("record.clockAnchor", bound);
+  state.gen = 3;
+  await running;
+  assert.deepEqual(state.messages, [], "the scope was captured with the target, not after the wait");
 });

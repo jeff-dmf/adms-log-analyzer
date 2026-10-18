@@ -37,7 +37,7 @@ const apiError = (status, code, message = "server text 12345") => Object.assign(
 function setup({ list = [collection(1, 1), collection(2, 2)], caseId = "A", ignoreAbort = false } = {}) {
   doc.body.children = [];
   doc.activeElement = doc.body;
-  const state = { caseId, gen: 1, list, calls: [], messages: [], applied: [], order: [], keep: null, selected: null, cleared: 0, onList: null };
+  const state = { caseId, gen: 1, list, calls: [], messages: [], applied: [], order: [], keep: null, selected: null, cleared: 0, onList: null, listResult: "same", actions: [] };
   const api = {
     clock: {
       set(c, g, body, signal) {
@@ -66,14 +66,14 @@ function setup({ list = [collection(1, 1), collection(2, 2)], caseId = "A", igno
     groupOfSource: (id) => ({ 1: 1, 2: 2, 3: 3 })[id] ?? null,
     view: {
       keep: () => state.keep,
-      refreshList: async () => { state.order.push("list"); if (state.onList) await state.onList(); },
+      refreshList: async () => { state.order.push("list"); if (state.onList) await state.onList(); return state.listResult; },
       applyView: async () => { state.order.push("view"); if (state.onApply) { await state.onApply(); } if (state.applyFail) { throw state.applyFail; } state.applied.push(1); },
       refreshDerived: () => state.order.push("derived"),
       reveal: async (keep) => { state.order.push("reveal"); state.revealed = keep; if (state.revealFail) { throw state.revealFail; } },
       selectedId: () => state.selected,
       clearDetail: () => { state.cleared += 1; },
     },
-    onMessage: (text, isError) => state.messages.push([text, isError]),
+    onMessage: (text, isError, action) => { state.messages.push([text, isError]); state.actions.push(action); },
   });
   const opener = doc.createElement("button");
   host.appendChild(opener);
@@ -736,4 +736,36 @@ test("the record to restore is the one the user was on BEFORE the list reloaded"
   ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
   await done;
   assert.deepEqual(ctx.state.revealed, { id: 5, ts: T });
+});
+
+test("a failed list reload stops the reload (no grid reload with the old column) and offers to repeat it", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.listResult = "failed";
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.deepEqual(ctx.state.order, ["list"], "neither the view nor the derived panels were reloaded");
+  assert.deepEqual(ctx.state.messages.at(-1), [S.ckReloadFailed, true]);
+  const action = ctx.state.actions.at(-1);
+  assert.equal(action.label, S.ckReloadRetry);
+  ctx.state.listResult = "same";
+  await action.run();
+  assert.deepEqual(ctx.state.order, ["list", "list", "view", "derived"], "the retry runs the whole sequence");
+});
+
+test("the retry of a failed reload does nothing once another case is open", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.listResult = "failed";
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  const action = ctx.state.actions.at(-1);
+  ctx.state.gen += 1; // A opened again
+  ctx.state.listResult = "same";
+  const before = ctx.state.order.length;
+  await action.run();
+  assert.equal(ctx.state.order.length, before + 1, "only the list read started; the scope check stops the rest");
+  assert.equal(ctx.state.applied.length, 0);
 });

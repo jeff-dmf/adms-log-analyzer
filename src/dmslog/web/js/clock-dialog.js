@@ -26,13 +26,14 @@ let uid = 0;
 //   view                  what the page offers to put the view right after an offset changed (the sequence and its checks live
 //                         here, so every wait is followed by a check of the scope):
 //                         keep() -> {id, ts} | null     the record the user is on (selected, else shown in the detail)
-//                         refreshList() -> Promise      reload GET /collections (offsets, `clocks`, the Adjusted time column)
+//                         refreshList() -> Promise<"failed" | other>  reload GET /collections (offsets, `clocks`, the Adjusted time column);
+//                                                       "failed" = the list is the old one: the reload stops and offers a retry
 //                         applyView() -> Promise        reload the grid, the timeline and the filter strip
 //                         refreshDerived()              the panels fed by derived events
 //                         reveal({id, ts}) -> Promise   select that record again, at its adjusted time
 //                         selectedId() -> id | null     the selected record
 //                         clearDetail()                 the record left the view: the detail is emptied
-//   onMessage(text, isError)   the page's message region (the dialog has its own for what happens while it is open)
+//   onMessage(text, isError, action?)   (action = {label, run}: a button on the message) the page's message region (the dialog has its own for what happens while it is open)
 // Returns { setAnchor(entry, expected), setTarget(entry, opener, expected), align(group, opener, expected), reset(group, expected),
 //           forgetCase(), busy(), isOpen(), picked() }; align() resolves when the dialog is closed.
 export function mountClock(host, options) {
@@ -412,8 +413,14 @@ export function mountClock(host, options) {
   async function reload(scope) {
     try {
       const keep = view.keep();
-      await view.refreshList();
+      const listed = await view.refreshList();
       if (!here(scope)) {
+        return;
+      }
+      if (listed === "failed") {
+        // The offsets changed but the list (offsets, `clocks`, the Adjusted column) is the old one: reloading the grid now would
+        // mix the new order with the old column and interval. Stop, say so, and offer to repeat the reload.
+        onMessage(S.ckReloadFailed, true, { label: S.ckReloadRetry, run: () => reload(scope) });
         return;
       }
       await view.applyView();

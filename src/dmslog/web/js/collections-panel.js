@@ -168,9 +168,16 @@ export class CollectionsPanel {
 
   // Reloads the list. Resolves to true when the chosen collections changed (a chosen one vanished).
   async refresh() {
+    return (await this.reload()) === "changed";
+  }
+
+  // The same reload with a distinct result for the callers that must not go on after a failure (the clock change, 9.15):
+  // "changed" (a chosen collection vanished), "same", "failed" (the list is the old one), "stale" (a newer reload or another
+  // case took over; nothing was applied).
+  async reload() {
     const caseId = this.getCase();
     if (caseId === null || caseId === undefined) {
-      return false;
+      return "stale";
     }
     this.seq += 1;
     const mine = this.seq;
@@ -185,11 +192,12 @@ export class CollectionsPanel {
     } catch (err) {
       if (mine === this.seq && !(err && err.name === "AbortError")) {
         this.status.textContent = S.colLoadError; // a static sentence: the server's text is not repeated
+        return "failed";
       }
-      return false;
+      return "stale";
     }
     if (mine !== this.seq || caseId !== this.getCase()) {
-      return false;
+      return "stale";
     }
     this.controller = null;
     this.collections = Array.isArray(data.collections) ? data.collections : [];
@@ -210,7 +218,7 @@ export class CollectionsPanel {
     if (changed) {
       this.onSelection(this.selectedGroups());
     }
-    return changed;
+    return changed ? "changed" : "same";
   }
 
   toggle(group, on) {

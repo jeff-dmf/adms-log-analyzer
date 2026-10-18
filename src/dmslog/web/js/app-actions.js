@@ -547,6 +547,14 @@ export function registerAppActions(actions, deps) {
     }
     return clockLoading;
   };
+  // {caseId, generation} the action was started in: the one the captured target carries (menu and palette hand a bound context,
+  // made before invoke() waits for preload()), or the live one for a caller without a target. invoke()'s guard refuses to run
+  // the action once the live case or generation differ from it.
+  const clockScope = (ctx) => {
+    const live = deps.clockContext();
+    const generation = typeof ctx.generation === "function" ? ctx.generation() : null;
+    return { caseId: ctx.caseId(), generation: generation === null ? live.generation : generation };
+  };
   const clockRecord = (ctx) => recordShown(ctx) && typeof ctx.entry().ts === "number" && deps.hasCollections();
   recordAction({
     id: "record.clockAnchor",
@@ -556,7 +564,7 @@ export function registerAppActions(actions, deps) {
     load: loadClock,
     run: async (ctx) => {
       const entry = ctx.entry();
-      const expected = deps.clockContext(); // the case and its generation now: the module may load after a case change
+      const expected = clockScope(ctx); // the scope of the captured target, taken before the module and the preload waited
       (await loadClock()).setAnchor(entry, expected);
     },
   });
@@ -569,7 +577,7 @@ export function registerAppActions(actions, deps) {
     run: async (ctx) => {
       const entry = ctx.entry();
       const opener = document.activeElement; // read before the module loads: the dialog gives the focus back to it
-      const expected = deps.clockContext();
+      const expected = clockScope(ctx);
       (await loadClock()).setTarget(entry, opener, expected); // opens the dialog when the anchor is in another collection
     },
   });

@@ -240,3 +240,72 @@ test("timeSpan shifts each source by its collection's offset; the whole case the
   await grid.setView({ caseId: "A", filter: null, range: { min: T, max: T + 1000 }, caseRange });
   assert.equal(grid.multiDay, true, "the offset made the case span days: Time and Adjusted time show the date");
 });
+
+test("revealRow: a GET started in A does not move the selection after A -> B -> A", async () => {
+  const { grid } = makeGrid();
+  await load(grid, [adjustedRow(1, T)]);
+  grid.setAdjustedColumn(true);
+  let release;
+  api.entry = () => new Promise((resolve) => { release = resolve; });
+  const reveal = grid.revealRow({ id: 98, ts: 2000 });
+  api.count = async () => ({ count: 1, exact: true });
+  const cursors = [];
+  api.page = async (caseId, filter, cursor) => { cursors.push(cursor); return { rows: [adjustedRow(1, T)], prev: null, next: null }; };
+  await grid.setView({ caseId: "B", filter: null, range: null });
+  await grid.setView({ caseId: "A", filter: null, range: null }); // the same case id, another opening of the view
+  const before = cursors.length;
+  release({ id: 98, ts: 2000, ts_adjusted: 12000 });
+  await reveal;
+  assert.equal(cursors.length, before, "no jump in the view that was opened later");
+  assert.equal(grid.selectedRow(), null);
+});
+
+test("revealRow: a jump cancelled by a case change selects nothing in the new case, even for the same record id", async () => {
+  const { grid } = makeGrid();
+  await load(grid, [adjustedRow(1, T)]);
+  let releaseA;
+  api.count = async () => ({ count: 1, exact: true });
+  api.page = (caseId) => (caseId === "A"
+    ? new Promise((resolve) => { releaseA = () => resolve({ rows: [adjustedRow(98, 2000)], prev: null, next: null }); })
+    : Promise.resolve({ rows: [adjustedRow(98, 2000)], prev: null, next: null }));
+  const reveal = grid.revealRow(adjustedRow(98, 2000)); // its jump waits for the page of A
+  await Promise.resolve();
+  await grid.setView({ caseId: "B", filter: null, range: null }); // B has a record 98 too
+  grid.window.selected = -1;
+  releaseA();
+  await reveal;
+  assert.equal(grid.selectedRow(), null, "record 98 of B is not selected by a reveal made for A");
+});
+
+test("setView: the dates show when the ORIGINAL span crosses a day, even if the adjusted span does not", async () => {
+  const day = 86_400_000;
+  const { grid } = makeGrid();
+  api.count = async () => ({ count: 1, exact: true });
+  api.page = async () => ({ rows: [adjustedRow(1, T)], prev: null, next: null });
+  const adjusted = { min: T, max: T + 1000 };
+  const original = { min: T, max: T + 2 * day };
+  await grid.setView({ caseId: "A", filter: null, range: adjusted, caseRange: [adjusted, original] });
+  assert.equal(grid.multiDay, true);
+  const quiet = makeGrid().grid;
+  await quiet.setView({ caseId: "A", filter: null, range: adjusted, caseRange: [adjusted, adjusted] });
+  assert.equal(quiet.multiDay, false);
+});
+
+test("revealRow: a jump superseded by the user's own newer jump in the same view selects nothing", async () => {
+  const { grid } = makeGrid();
+  await load(grid, [adjustedRow(1, T)]);
+  let calls = 0;
+  api.page = (caseId, filter, cursor, dir, limit, signal) => {
+    calls += 1;
+    if (calls > 1) {
+      return Promise.resolve({ rows: [adjustedRow(5, 3000), adjustedRow(98, 2000)], prev: null, next: null });
+    }
+    return new Promise((resolve, reject) => signal.addEventListener("abort", () => setTimeout(() => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), 5))); // the old request ends after the new rows are in
+  };
+  const reveal = grid.revealRow(adjustedRow(98, 2000));
+  await new Promise((r) => setTimeout(r, 0)); // the reveal's page request is in flight
+  assert.equal(await grid.jump(null, "fwd"), "ok"); // the newer jump supersedes the reveal's
+  grid.window.selected = -1;
+  await reveal;
+  assert.equal(grid.selectedRow(), null, "record 98 of the newer window is not selected by the old reveal");
+});

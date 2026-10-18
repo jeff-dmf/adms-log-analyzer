@@ -271,3 +271,16 @@ test("a list that fails to load says it with a static sentence, never the server
   assert.equal(panel.status.textContent, S.colLoadError);
   assert.ok(!panel.status.textContent.includes("secret"));
 });
+
+test("reload() tells a failed list from an unchanged one; refresh() keeps answering true/false", async () => {
+  const { panel, set } = setup([group(1, 1), group(2, 2)]);
+  assert.equal(await panel.reload(), "same");
+  let fail = true;
+  panel.api.collections = async () => { if (fail) { throw new Error("boom"); } return { ordering: "exact", clocks: "raw", collections: [group(1, 1)] }; };
+  assert.equal(await panel.reload(), "failed");
+  assert.equal(panel.status.textContent, S.colLoadError);
+  assert.equal(await panel.refresh(), false);
+  fail = false;
+  assert.equal(await panel.reload(), "same");
+  void set;
+});

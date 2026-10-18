@@ -137,7 +137,7 @@ function start() {
     // The "?" button opens the shortcuts dialog (help.shortcuts); actions and ctx exist by the time it is clicked.
     onHelp: () => actions.invoke("help.shortcuts", ctx),
   });
-  const showMessage = (text, isError) => status.message(text, { kind: isError ? "error" : "info" });
+  const showMessage = (text, isError, action) => status.message(text, { kind: isError ? "error" : "info", action });
   // Connection errors already own the bar: do not repeat them as a message.
   const showError = (err) => {
     if (err && (err.code === "network" || err.code === "forbidden")) {
@@ -612,7 +612,8 @@ function start() {
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
     detail.setTerms(terms); // the detail pane stays until the new page is confirmed (a failure must not blank it)
-    const caseRange = timeSpan(sources, [], null, null, offsetOf); // the whole case: decides the date in the time column
+    // The whole case decides the date in the time columns: both axes count (offsets can put two original days on one adjusted day).
+    const caseRange = [timeSpan(sources, [], null, null, offsetOf), timeSpan(sources, [], null, null)];
     const loaded = grid.setView({ caseId, filter, range, caseRange });
     loaded.then(firstViewDone, firstViewDone);
     viewFlow.track(token, loaded, () => (grid.failure ? grid.failure.kind : "unknown"), isRetryable);
@@ -1393,6 +1394,7 @@ function start() {
   // item of every menu exists from the first paint (see app-actions.js).
   const ctx = Object.freeze({
     caseId: () => caseId,
+    generation: () => caseGen, // grows every time a case is opened: a captured target of case A is not A opened again
     filter: () => currentFilter,
     userFilter: () => userFilter,
     selectedRow: () => grid.selectedRow(),
@@ -1436,7 +1438,7 @@ function start() {
           }
           return detail.entry ? { id: detail.entry.id, ts: detail.entry.ts } : null;
         },
-        refreshList: () => collectionsPanel.refresh(),
+        refreshList: () => collectionsPanel.reload(), // "failed" stops the reload (clock-dialog.js)
         applyView: () => applyView(),
         refreshDerived: () => refreshDerived(),
         reveal: (keep) => grid.revealRow(keep), // reads the record's adjusted time first: the cursor axis is the adjusted one
