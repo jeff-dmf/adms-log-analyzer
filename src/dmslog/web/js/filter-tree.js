@@ -590,6 +590,7 @@ export function initFilterTree(container, { api, caseId, onChange, initial, getE
       focusRequest = null;
       render();
     },
+    refreshPresets: () => presetsPanel.refresh(), // the presets file changed (preferences import)
     setCase(next) {
       currentCase = next;
       savedViews.setCase(next);

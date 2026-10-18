@@ -35,7 +35,7 @@ function staticGraph(entries) {
 const NOT_AT_OPENING = [
   "filter-tree", "tpl-leaf", "presets", "saved-views", "folder-browser", "links", "payload", "bookmarks-panel",
   "highlight-panel", "copy-export", "distinct-panel", "aggregate-panel", "extract-panel", "extract-model", "events-panel", "dashboard", "unknown-panel",
-  "config-panel", "key-panel", "payload-list", "side-by-side", "compare", "export-panel", "redaction-panel",
+  "config-panel", "key-panel", "payload-list", "side-by-side", "compare", "export-panel", "redaction-panel", "preferences-dialog", "preferences-model",
   "alerts-panel", "follow-tail", "clock-banner", "dock-model", "case-dialogs", "case-empty", "shortcuts", "shortcuts-model",
   "partial-open", "partial-open-model", "resume-banner",
   "commands", "commands-model", "context-menu",

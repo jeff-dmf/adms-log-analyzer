@@ -94,7 +94,7 @@ const labels = (menu) => menuItems(menu).map((n) => n.children[0].textContent);
 const itemByLabel = (menu, label) => menuItems(menu).find((n) => n.children[0].textContent === label);
 
 test("without a case only the case menu, the View menu and Keyboard shortcuts work; the rest says why", async () => {
-  const { refs, toggles, state, bridge } = setup({ caseId: null });
+  const { doc, refs, toggles, state, bridge } = setup({ caseId: null });
   assert.equal(refs.caseLabel.textContent, S.caseNone);
   for (const t of toggles) {
     assert.equal(t.disabled, true, t.id);
@@ -102,8 +102,11 @@ test("without a case only the case menu, the View menu and Keyboard shortcuts wo
     assert.equal(t.attrs["aria-pressed"], "false");
   }
   assert.equal(refs.menus.analyze.disabled, true);
-  assert.equal(refs.menus.export.disabled, true);
+  assert.equal(refs.menus.export.disabled, false); // Preferences: export / import... is per user and needs no case
   assert.equal(refs.menus.analyze.title, S.needCase);
+  const exportMenu = open(doc, refs.menus.export);
+  assert.deepEqual(menuItems(exportMenu).map((n) => n.attrs["aria-disabled"] === "true"), [true, true, false]);
+  exportMenu.dispatch("keydown", { key: "Escape" });
   assert.equal(refs.menus.view.disabled, false); // Theme, Columns and Keyboard shortcuts need no case
   for (const c of refs.caseControls) {
     assert.equal(c.disabled, true);
@@ -148,7 +151,7 @@ test("the Export menu opens the report dialog (not a dock tab) and the Copy as d
   globalThis.document = doc;
   Object.defineProperty(globalThis, "navigator", { value: { clipboard: null, platform: "Linux" }, configurable: true });
   const menu = open(doc, refs.menus.export);
-  assert.deepEqual(labels(menu), [S.actExportReport, S.actCopyAs]);
+  assert.deepEqual(labels(menu), [S.actExportReport, S.actCopyAs, S.pfActPreferences]);
   itemByLabel(menu, S.actCopyAs).dispatch("click");
   await until(() => calls.copy === 1, "copy");
   const again = open(doc, refs.menus.export);

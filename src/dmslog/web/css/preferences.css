@@ -1,0 +1,161 @@
+/* Preferences: export and import dialog (9.10). Colors come from tokens only. */
+.pf-dialog {
+  width: min(860px, 94vw);
+}
+
+.pf-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.pf-section:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
+.pf-heading,
+.pf-subheading {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+}
+
+.pf-subheading {
+  font-size: var(--text-sm);
+}
+
+.pf-intro,
+.pf-hint,
+.pf-file-info {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.pf-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.pf-group legend {
+  padding: 0 var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.pf-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.pf-hint {
+  margin-left: calc(var(--space-3) + 1.2em);
+}
+
+/* The warning is part of the page (not a toast): bordered, so it stays visible in forced colors. */
+.pf-warning {
+  margin: 0 0 0 calc(var(--space-3) + 1.2em);
+  padding: var(--space-2) var(--space-3);
+  color: var(--status-error-ink);
+  background: var(--status-error-bg);
+  border: 1px solid var(--status-error-ink);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.pf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.pf-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 2px solid var(--line-strong);
+  border-radius: var(--radius-md);
+}
+
+.pf-confirm p {
+  margin: 0;
+}
+
+.pf-report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.pf-report:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pf-headline {
+  margin: 0;
+  font-weight: var(--weight-strong);
+}
+
+.pf-table {
+  table-layout: auto;
+}
+
+.pf-table caption {
+  padding: var(--space-2) 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.pf-table .is-num {
+  text-align: right;
+}
+
+.pf-table .is-bad {
+  color: var(--status-error-ink);
+  font-weight: var(--weight-strong);
+}
+
+.pf-list {
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: var(--text-sm);
+}
+
+.pf-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+@media (forced-colors: active) {
+  .pf-warning,
+  .pf-confirm,
+  .pf-group {
+    border-color: ButtonText;
+    color: CanvasText;
+    background: Canvas;
+  }
+
+  .pf-report:focus {
+    outline-color: Highlight;
+  }
+
+  .pf-table .is-bad {
+    color: CanvasText;
+    text-decoration: underline;
+  }
+}

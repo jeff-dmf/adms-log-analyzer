@@ -395,6 +395,27 @@ export function registerAppActions(actions, deps) {
     load: () => deps.loadCopyExport(),
     run: () => deps.copyExportOpen(),
   });
+  // "Preferences: export / import..." (9.10): a modal dialog of its own, per user (it needs no case). The module loads
+  // on the first use; deps.preferencesApplied() reloads what depends on the files after an Apply (presets, alert rules).
+  let preferencesDialog = null;
+  actions.register({
+    id: "export.preferences",
+    labelKey: "pfActPreferences",
+    group: "export",
+    enabled: always,
+    load: () => import("./preferences-dialog.js"),
+    run: async () => {
+      const opener = document.activeElement; // read before the module loads: the focus may move meanwhile
+      const module = await import("./preferences-dialog.js");
+      if (preferencesDialog === null) {
+        preferencesDialog = module.mountPreferencesDialog(document.body, {
+          api: deps.api,
+          onApplied: () => deps.preferencesApplied(),
+        });
+      }
+      preferencesDialog.open(opener);
+    },
+  });
 
   // ---- View
   actions.register({ id: "view.columns", labelKey: "actColumns", group: "view", enabled: always, run: () => deps.openColumns() });
