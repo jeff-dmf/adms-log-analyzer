@@ -190,6 +190,7 @@ export class Grid {
         const at = this.resizer.scrollX;
         this.wheelX = Math.min(Math.max(this.wheelX + travel.amount, -at), this.resizer.maxScrollX - at);
       } else {
+        this.userMoved(); // the gesture itself is the later intention: an end-of-data load in flight must not replace the rows
         this.wheelRemainder = Math.min(Math.max(this.wheelRemainder + travel.amount, -w.top), w.maxTop(this.visible) - w.top);
       }
       if (this.wheelFrame === null) {
@@ -781,7 +782,7 @@ export class Grid {
     this.cancel();
     const generation = this.generation;
     this.controller = new AbortController();
-    bindCurrent(this.controller.signal, () => generation === this.generation);
+    bindCurrent(this.controller.signal, () => generation === this.generation && (guard === null || guard()));
     this.loading = true;
     this.failure = null;
     this.setBusy(true, view !== null);
