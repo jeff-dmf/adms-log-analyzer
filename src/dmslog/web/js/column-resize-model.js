@@ -12,7 +12,7 @@ const MAX_STORED = 200;           // entries kept in storage (dynamic field colu
 
 // Default widths in characters (`ch`) of the grid's monospace font (UI-16): the width of a character changes between
 // Windows and Linux, the text of the column does not. Widths the user dragged are stored in px and win over these.
-export const DEFAULT_CH = { ts: 12, pid: 6, tid: 6, level: 9, source: 20, collection: 5 };
+export const DEFAULT_CH = { ts: 12, adjusted: 12, pid: 6, tid: 6, level: 9, source: 20, collection: 5 };
 export const TS_CH_MULTIDAY = 18;  // "MM-DD HH:MM:SS.mmm", used when the case covers more than one day
 export const SOURCE_CH_MULTIDAY = 14; // the wider time column is paid by Source (its middle ellipsis keeps the tail)
 // Layout of the page at the acceptance size (css/tokens.css, css/app.css): sources panel, detail panel, grid panel

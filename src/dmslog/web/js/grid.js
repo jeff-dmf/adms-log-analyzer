@@ -10,7 +10,7 @@ import { baseName } from "./source-filter-model.js";
 import { markerLabel } from "./bookmarks-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format, pluralKey } from "./strings.js";
-import { formatTs } from "./time.js";
+import { cursorTime, formatTs } from "./time.js";
 import { CELL_PAD_PX, SOURCE_CH_MULTIDAY, TS_CH_MULTIDAY } from "./column-resize-model.js";
 
 export const COLUMNS = [
@@ -25,6 +25,10 @@ export const COLUMNS = [
 // Shown only for a case with more than one collection (main.js decides); never part of COLUMNS, so the
 // stored column choice and the Columns menu of the fixed columns do not depend on it.
 export const COLLECTION_COLUMN = { key: "collection", label: () => S.columnCollection };
+
+// Shown (right after Time) while some collection has a clock offset (9.15): Time keeps the original time, this one the adjusted
+// time the order uses. Never part of COLUMNS: the Columns menu does not list it and the stored column choice ignores it.
+export const ADJUSTED_COLUMN = { key: "adjusted", label: () => S.ckColumnAdjusted };
 
 function cellClass(column) {
   return column.field === undefined ? "col-" + column.key : "col-field";
@@ -103,6 +107,7 @@ export class Grid {
     this.shownCount = null; // what the status bar shows now: {n, exact} | null
     this.busy = false;
     this.countGeneration = 0;
+    this.scopeEpoch = 0;   // grows every time a view is adopted or the grid is cleared: a late answer for case A is not for A shown again
     this.navEpoch = 0;     // counts the user's own moves of the view (rows, keys, Home/End, scrollbar, jumps)
     this.tailOp = null;    // the operation (followTail) that is loading the end: a move by the user cancels that load
     this.tailJump = false; // set only while followTail() starts its own jump (not a user move)
@@ -117,6 +122,7 @@ export class Grid {
     this.multiDay = false;                  // the case covers several days: the time column shows MM-DD too
     this.collectionColumn = false; // the Collection column (C<n>) is shown
     this.collectionTags = new Map(); // collection group -> {tag, color}
+    this.adjustedColumn = false; // the Adjusted time column is shown (clock offsets in the case)
     this.terms = [];
     this.caseId = null;
     this.filter = null;
@@ -375,6 +381,19 @@ export class Grid {
     return this.caseId === null || !reload ? Promise.resolve() : this.reload();
   }
 
+  // Shows or hides the Adjusted time column. The rows already carry ts_adjusted (the server adds it while an offset exists),
+  // so no reload is needed; the view reloads anyway when an offset changes (the order moves).
+  setAdjustedColumn(on) {
+    const next = Boolean(on);
+    if (next === this.adjustedColumn) {
+      return;
+    }
+    this.adjustedColumn = next;
+    this.discardPool();
+    this.renderHeader();
+    this.render();
+  }
+
   // tags: Map group id -> {tag: "C2", color: 2}
   setCollectionTags(tags) {
     this.collectionTags = tags;
@@ -386,10 +405,14 @@ export class Grid {
   columnDefs() {
     const defs = [];
     for (const column of COLUMNS) {
-      if (!this.visibleColumns.includes(column.key)) {
+      // The original time stays visible while the adjusted one is shown, even when the user hid the Time column.
+      if (!this.visibleColumns.includes(column.key) && !(column.key === "ts" && this.adjustedColumn)) {
         continue;
       }
       defs.push(column);
+      if (column.key === "ts" && this.adjustedColumn) {
+        defs.push(ADJUSTED_COLUMN);
+      }
       if (column.key === "source" && this.collectionColumn) {
         defs.push(COLLECTION_COLUMN);
       }
@@ -412,9 +435,44 @@ export class Grid {
     return this.window.rows[this.window.selected] || null;
   }
 
-  // Loads the window at `row` and selects it (used by the keyboard navigation).
+  // The scope an operation started in: the case, and an epoch that grows whenever a view is adopted or the grid is cleared
+  // (so case A shown again is not the A the operation started in). Revalidated after every wait, right before an effect.
+  captureScope() {
+    return { caseId: this.caseId, epoch: this.scopeEpoch };
+  }
+
+  inScope(scope) {
+    return !this.destroyed && this.caseId === scope.caseId && this.scopeEpoch === scope.epoch;
+  }
+
+  // The instant a cursor for `row` must name. With clock offsets the cursor axis is the adjusted time; a record that comes
+  // from elsewhere (events, bookmarks, links) only has its log time, so its adjusted time is read first (GET /entries/{id}).
+  // undefined = the scope changed meanwhile.
+  async revealTime(row, scope = this.captureScope()) {
+    if (typeof row.ts_adjusted === "number" || !this.adjustedColumn || row.ts === null || row.ts === undefined) {
+      const at = cursorTime(row);
+      return at === undefined ? null : at;
+    }
+    const entry = await api.entry(scope.caseId, row.id);
+    if (!this.inScope(scope)) {
+      return undefined;
+    }
+    return cursorTime(entry && entry.id === row.id ? entry : row);
+  }
+
+  // Loads the window at `row` and selects it (used by the keyboard navigation). Nothing is selected unless the grid is still
+  // in the scope the call started in AND the jump it made was applied: a cancelled jump (outcome "superseded") may leave the
+  // rows of another case, where a record can have the same id.
   async revealRow(row) {
-    await this.jump(row.ts === null || row.ts === undefined ? "null:" + (row.id - 1) : row.ts + ":" + (row.id - 1), "fwd");
+    const scope = this.captureScope();
+    const at = await this.revealTime(row, scope);
+    if (at === undefined || !this.inScope(scope)) {
+      return; // another case (or view) took over while the adjusted time was being read
+    }
+    const outcome = await this.jump(at === null ? "null:" + (row.id - 1) : at + ":" + (row.id - 1), "fwd", null, () => this.inScope(scope));
+    if (outcome !== "ok" || !this.inScope(scope)) {
+      return;
+    }
     const index = this.window.rows.findIndex((r) => r.id === row.id);
     if (index >= 0) {
       this.window.selected = index;
@@ -468,6 +526,7 @@ export class Grid {
     }
     this.multiDay = next;
     this.resizer.setDefaultCh("ts", next ? TS_CH_MULTIDAY : null, false);
+    this.resizer.setDefaultCh("adjusted", next ? TS_CH_MULTIDAY : null, false);
     this.resizer.setDefaultCh("source", next ? SOURCE_CH_MULTIDAY : null);
     this.render();
   }
@@ -500,13 +559,16 @@ export class Grid {
 
   // -- loading ------------------------------------------------------------------------------
 
-  // `range`: time span of the filtered view; `caseRange`: span of the whole case, which decides the time column (the
+  // `range`: time span of the filtered view; `caseRange`: span (or a list of spans) of the whole case, which decides the time column (the
   // restored filter of one day must not hide the date of a multi-day case). Without it the view range is used.
   // The view change is confirmed only when its first page arrives: until then the old rows (and the old filter, range
   // and count) stay. A new case has nothing to keep, so it is adopted at once. Resolves to "ok", "failed" (the old
   // rows stay; see onFailure) or "superseded" (a newer request replaced this one).
   async setView({ caseId, filter, range, caseRange }) {
-    this.setMultiDay(isMultiDay(caseRange === undefined ? range : caseRange) || (caseId === this.caseId && this.multiDay));
+    // `caseRange` may be a list (the adjusted and the original span, 9.15): the dates show when ANY of them crosses a day, since
+    // the Time column shows original times and the Adjusted one adjusted times.
+    const spans = Array.isArray(caseRange) ? caseRange : [caseRange === undefined ? range : caseRange];
+    this.setMultiDay(spans.some((span) => isMultiDay(span)) || (caseId === this.caseId && this.multiDay));
     return this.reload({ caseId, filter, range, count: null, countFailed: false, announce: false, committed: false, failed: false });
   }
 
@@ -538,6 +600,7 @@ export class Grid {
       this.countFresh = false; // the count shown so far is the previous view's until its own answer is emitted
     }
     this.cancelWheel(); // travel gathered over the old rows does not move the new ones
+    this.scopeEpoch += 1;
     this.caseId = view.caseId;
     this.filter = view.filter;
     this.range = view.range;
@@ -604,6 +667,7 @@ export class Grid {
     this.failureShown = false;
     this.countFailure = null;
     this.countFailureShown = false;
+    this.scopeEpoch += 1;
     this.caseId = null;
     this.filter = null;
     this.range = null;
@@ -1011,7 +1075,7 @@ export class Grid {
     // Write only: reading scrollTop back would force a layout on every wheel frame. The target is an integer inside
     // the scroll travel (the rows layer fills the viewport, the spacer adds exactly SCROLL_SPAN), so it is what the
     // browser keeps, and the scroll event it causes matches lastScroll within onScrollBar's 3 px tolerance.
-    const top = tsToScroll(row.ts, this.range);
+    const top = tsToScroll(cursorTime(row), this.range); // the range is on the same (adjusted) axis as the jumps
     this.viewport.scrollTop = top;
     this.lastScroll = top;
   }
@@ -1287,6 +1351,12 @@ export class Grid {
       const full = formatTs(row.ts);
       cells.ts.textContent = shortTs(full, this.multiDay);
       cells.ts.title = full; // the full date, also when the cell shows the clock only
+    }
+    if (cells.adjusted) {
+      const adjusted = typeof row.ts_adjusted === "number" ? row.ts_adjusted : row.ts;
+      const full = formatTs(adjusted);
+      cells.adjusted.textContent = shortTs(full, this.multiDay);
+      cells.adjusted.title = full;
     }
     if (cells.pid) {
       cells.pid.textContent = row.pid === null || row.pid === undefined ? "" : String(row.pid);

@@ -20,6 +20,8 @@
 //   copyRecord(), loadContext(same), filterType(), highlightType(), highlightReady()   the record actions
 //   navigateRecord(kind, dir), navigateHighlight(dir), toggleBookmark(), compareSelected(), viewsBack(), viewsForward(),
 //   focusSearch(), moveRegion(dir), openShortcuts()   the keyboard actions (UI-28), see "Keys" below
+//   clockOptions()             { api, getContext, getCollections, groupOfSource, view, onMessage } of clock-dialog.js (9.15)
+//   clockContext()             {caseId, generation} of the open case (the generation grows every time a case is opened)
 import { S } from "./strings.js";
 import { THEME_CHOICES } from "./theme.js";
 
@@ -559,6 +561,56 @@ export function registerAppActions(actions, deps) {
       }
     },
   });
+  // ---- Clock offset between collections (9.15, ARQUITETURA 10.13). clock-dialog.js loads with the first use; the record
+  // actions pick the anchor and the target, and the collection rows' menu (collections-panel.js) opens the dialog or resets.
+  let clockController = null;
+  let clockLoading = null;
+  const loadClock = () => {
+    if (clockLoading === null) {
+      clockLoading = import("./clock-dialog.js").then((module) => {
+        clockController = module.mountClock(document.body, deps.clockOptions());
+        return clockController;
+      });
+      clockLoading.catch(() => {
+        clockLoading = null; // a failed load is tried again on the next use
+      });
+    }
+    return clockLoading;
+  };
+  // {caseId, generation} the action was started in: the one the captured target carries (menu and palette hand a bound context,
+  // made before invoke() waits for preload()), or the live one for a caller without a target. invoke()'s guard refuses to run
+  // the action once the live case or generation differ from it.
+  const clockScope = (ctx) => {
+    const live = deps.clockContext();
+    const generation = typeof ctx.generation === "function" ? ctx.generation() : null;
+    return { caseId: ctx.caseId(), generation: generation === null ? live.generation : generation };
+  };
+  const clockRecord = (ctx) => recordShown(ctx) && typeof ctx.entry().ts === "number" && deps.hasCollections();
+  recordAction({
+    id: "record.clockAnchor",
+    labelKey: "actClockAnchor",
+    enabled: clockRecord,
+    disabledKey: "ckNeedTwo",
+    load: loadClock,
+    run: async (ctx) => {
+      const entry = ctx.entry();
+      const expected = clockScope(ctx); // the scope of the captured target, taken before the module and the preload waited
+      (await loadClock()).setAnchor(entry, expected);
+    },
+  });
+  recordAction({
+    id: "record.clockTarget",
+    labelKey: "actClockTarget",
+    enabled: clockRecord,
+    disabledKey: "ckNeedTwo",
+    load: loadClock,
+    run: async (ctx) => {
+      const entry = ctx.entry();
+      const opener = document.activeElement; // read before the module loads: the dialog gives the focus back to it
+      const expected = clockScope(ctx);
+      (await loadClock()).setTarget(entry, opener, expected); // opens the dialog when the anchor is in another collection
+    },
+  });
   // Shift+F10 in the grid (the Menu key and the right click reach the menu through the grid's contextmenu event).
   actions.register({
     id: "record.contextMenu",
@@ -604,11 +656,29 @@ export function registerAppActions(actions, deps) {
   actions.register({ id: "help.palette", labelKey: "actPalette", group: "help", shortcut: "Ctrl+k", enabled: always, run: () => deps.openPalette() });
 
   return {
-    // A case change (also back to a case seen before): the export dialog forgets its report, open or not.
+    // A case change (also back to a case seen before): the export dialog forgets its report, open or not; the clock dialog
+    // closes and the records picked for it are forgotten.
     onCase() {
       if (exportDialogs !== null) {
         exportDialogs.reset();
       }
+      if (clockController !== null) {
+        clockController.forgetCase();
+      }
+    },
+    // What the Collections panel's row menu calls (collections-panel.js `clock` option).
+    clock: {
+      // The case and its generation are read BEFORE the module loads and handed back: an action started in case A never acts
+      // on case B (or on A opened again) because the import took a while.
+      align(group, opener) {
+        const expected = deps.clockContext();
+        return loadClock().then((clock) => clock.align(group, opener, expected)).catch((err) => deps.onError(err));
+      },
+      reset(group) {
+        const expected = deps.clockContext();
+        return loadClock().then((clock) => clock.reset(group, expected)).catch((err) => deps.onError(err));
+      },
+      busy: () => clockController !== null && clockController.busy(),
     },
   };
 }
