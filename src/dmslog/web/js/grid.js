@@ -1062,8 +1062,10 @@ export class Grid {
     }
     this.userMoved();
     this.window.moveTop(delta, this.visible);
-    this.render();
+    // The scrollbar first: writing scrollTop after the rows were rewritten makes the browser lay the page out on the
+    // spot (a forced layout per wheel frame); with the layout still clean from the last frame the write is cheap.
     this.syncScroll();
+    this.render();
     this.pump();
   }
 
