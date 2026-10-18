@@ -415,7 +415,7 @@ def _bundle_tool():
 
 
 def test_the_page_links_one_stylesheet_the_up_to_date_bundle():
-    # Opening the page must cost one stylesheet request, not one per feature (tools/ui_perf.mjs budget: 12 files).
+    # Opening the page costs one stylesheet request, not one per feature (ui_perf budget: 12 files).
     html = (WEB / "index.html").read_text(encoding="utf-8")
     assert re.findall(r'<link rel="stylesheet" href="([^"]+)"', html) == ["/css/bundle.css"]
     tool = _bundle_tool()
