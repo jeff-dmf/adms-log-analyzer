@@ -373,6 +373,13 @@ class IngestJobs:
         with self._lock:
             return self._hubs.setdefault(case_id, ProgressHub())
 
+    def forget_case(self, case_id: str) -> None:
+        """Drop the retained events of a deleted case (source names, alert copies, the last watch change)."""
+        with self._lock:
+            hub = self._hubs.get(case_id)
+        if hub is not None:
+            hub.forget()
+
     def followed(self, case_id: str) -> str | None:
         """Resolved path of the folder ``serve --watch`` follows into the case, if any."""
         with self._lock:
@@ -1161,6 +1168,9 @@ class Api:
         self.store.delete(cid)
         self.jobs.alerts.forget_case(cid)
         self.jobs.panel_watch.forget_case(cid)
+        self.jobs.forget_case(cid)
+        with self._knowledge_lock:  # ERS paths and Registry parameters of the deleted case (review 8.2 M9)
+            self._case_knowledge.pop(cid, None)
         return Response(204)
 
     def add_collection(self, request: Request) -> Response:
@@ -1376,7 +1386,10 @@ class Api:
                 installations[len(installations)] = installation
         knowledge = Knowledge(installations=installations)
         with self._knowledge_lock:
-            self._case_knowledge[cid] = (key, knowledge)
+            # delete_case removes the folder before it drops the entry under this lock: a load that finishes
+            # after the DELETE (begun before it, or on a connection opened before it) finds no folder
+            if (self.store.root / cid).is_dir():
+                self._case_knowledge[cid] = (key, knowledge)
         return knowledge
 
     def get_knowledge(self, request: Request) -> Response:

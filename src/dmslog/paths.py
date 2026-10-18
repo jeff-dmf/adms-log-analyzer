@@ -67,16 +67,18 @@ REPLACE_RETRY_DELAY_S = 0.02
 SYNC_WRITES = True
 
 
-def atomic_write_bytes(path: str | os.PathLike[str], data: bytes) -> None:
+def atomic_write_bytes(path: str | os.PathLike[str], data: bytes, *, create_parents: bool = True) -> None:
     """Replace ``path`` with ``data`` so that a reader (or a crash) sees the old file or the new one.
 
     Temporary file in the same folder, ``fsync``, ``os.replace`` (atomic on POSIX and on Windows), then
     ``fsync`` of the folder where that is possible. No handle stays open. On any failure the temporary
     file is removed and the previous file is untouched. On Windows ``os.replace`` can fail briefly
     (``PermissionError``) while an antivirus or indexer holds the target: it is retried a few times.
+    ``create_parents=False``: the folder must exist (``FileNotFoundError`` otherwise; never recreated).
     """
     target = Path(path)
-    private_mkdir(target.parent)
+    if create_parents:
+        private_mkdir(target.parent)
     fd, tmp_name = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=target.parent)
     tmp = Path(tmp_name)
     try:
