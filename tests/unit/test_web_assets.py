@@ -176,7 +176,7 @@ def test_vendored_uplot_matches_its_recorded_checksums():
     folder = WEB / "vendor" / "uplot"
     notes = (folder / "VENDOR.md").read_text(encoding="utf-8")
     assert "MIT" in (folder / "LICENSE").read_text(encoding="utf-8")
-    for name in ("uPlot.esm.js", "uPlot.min.css", "LICENSE"):
+    for name in ("uPlot.esm.js", "uPlot.esm.min.js", "uPlot.min.css", "LICENSE"):
         digest = hashlib.sha256((folder / name).read_bytes()).hexdigest()
         assert re.search(rf"\|\s*{re.escape(name)}\s*\|\s*{digest}\s*\|", notes), name
 
@@ -383,7 +383,7 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
     paths = [
         "/",
         *stylesheets,  # every stylesheet of the page, straight from index.html
-        "/vendor/uplot/uPlot.esm.js",
+        "/vendor/uplot/uPlot.esm.min.js",
         *(f"/js/{name}" for name in sorted(EXPECTED_MODULES)),
     ]  # fmt: skip
     result = subprocess.run(
@@ -402,4 +402,34 @@ def test_pyz_serves_viewer_html_js_and_css(tmp_path, monkeypatch):
         if path.endswith(".js"):
             assert content_type.startswith("text/javascript"), path
     assert served["/"][1].startswith("text/html")
-    assert served["/css/app.css"][1].startswith("text/css")
+    assert served["/css/bundle.css"][1].startswith("text/css")
+
+
+def _bundle_tool():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("build_web_css", ROOT / "tools" / "build_web_css.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_page_links_one_stylesheet_the_up_to_date_bundle():
+    # Opening the page must cost one stylesheet request, not one per feature (tools/ui_perf.mjs budget: 12 files).
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    assert re.findall(r'<link rel="stylesheet" href="([^"]+)"', html) == ["/css/bundle.css"]
+    tool = _bundle_tool()
+    current = (WEB / "css" / "bundle.css").read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert current == tool.bundle_text(), "css/bundle.css is stale: run python tools/build_web_css.py"
+
+
+def test_every_sheet_is_in_the_bundle_order_and_the_list_names_only_real_sheets():
+    tool = _bundle_tool()
+    listed = tool.sheet_names()
+    assert len(listed) == len(set(listed)), "a sheet is listed twice"
+    on_disk = {p.name for p in (WEB / "css").glob("*.css")} - {"bundle.css"}
+    in_css_dir = {name for name in listed if "/" not in name}
+    assert in_css_dir == on_disk, (sorted(on_disk - in_css_dir), sorted(in_css_dir - on_disk))
+    for name in listed:
+        assert (WEB / "css" / name).is_file(), name
+    assert listed[0] == "tokens.css" and listed[-1] == "responsive.css"

@@ -15,7 +15,7 @@ const CHART_HEIGHT = 200;
 const COLORS = 8; // --agg-c0 .. --agg-c7 (aggregate.css)
 let uid = 0;
 
-const defaultUplot = () => import("../vendor/uplot/uPlot.esm.js").then((module) => module.default);
+const defaultUplot = () => import("../vendor/uplot/uPlot.esm.min.js").then((module) => module.default);
 
 // Depth-first walk that works on a collection without array methods (an HTMLCollection has none).
 function find(root, test) {

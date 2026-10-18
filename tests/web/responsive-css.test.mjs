@@ -5,6 +5,7 @@ import fs from "node:fs";
 
 import { DETAIL_DRAWER_QUERY, SIDE_RAIL_QUERY } from "../../src/dmslog/web/js/drawers-model.js";
 import { LAYOUT_BY_MODE, RAIL_MIN_WIDTH, WIDE_MIN_WIDTH } from "../../src/dmslog/web/js/column-resize-model.js";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const read = (name) => fs.readFileSync(new URL("../../src/dmslog/web/" + name, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const strip = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -103,8 +104,8 @@ test("the page carries the rail, the buttons and the stylesheet, last; the modul
   assert.match(html, /<button[^>]*id="detail-toggle"[^>]*aria-controls="detail-panel"[^>]*aria-expanded="false"/);
   assert.match(html, /id="side-collapse"/);
   assert.match(html, /id="detail-collapse"/);
-  const links = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
-  assert.equal(links.at(-1), "/css/responsive.css");
+  assert.ok(pageLinksBundle(html), "the page links the bundle alone");
+  assert.equal(SHEET_ORDER.at(-1), "responsive.css", "the responsive sheet is last in the cascade");
   assert.match(main, /const loadDrawers = retryable\(\(\) => import\("\.\/drawers\.js"\)/, "a failed import is forgotten and tried again");
   // UI-22: the opener is read before the drawer opens (it moves the focus), then passed to the dialog.
   assert.match(main, /focusNewCase: \(\) => \{\s*const opener = document\.activeElement;\s*return withSources\(\(\) => panel\.revealNewCase\(opener\)\);/);

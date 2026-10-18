@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { DOCK_MIN_PX, GRID_MIN_ROWS } from "../../src/dmslog/web/js/dock-model.js";
 import { ROW_HEIGHT } from "../../src/dmslog/web/js/grid-model.js";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/dmslog/web");
 const read = (file) => fs.readFileSync(path.join(WEB, file), "utf8").replace(/\r\n/g, "\n");
@@ -22,7 +23,7 @@ test("#dock sits in #grid-panel after the grid and before the detail, hidden, wi
   assert.match(tag, /class="ui-dock"/);
   assert.match(tag, /data-i18n-aria-label="dockLabel"/);
   assert.match(tag, /\bhidden\b/);
-  assert.match(html, /<link rel="stylesheet" href="\/css\/dock\.css">/);
+  assert.ok(pageLinksBundle(html) && inBundle("dock.css"));
 });
 
 test("main.js creates the dock over #dock and the provisional dock is gone", () => {

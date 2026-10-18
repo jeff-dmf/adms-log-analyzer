@@ -3,7 +3,7 @@
 // thin line on a second scale (see alarmLayers); other splits keep the plain stacked histogram.
 // Drag selects a time range (reported through onRangeSelected), double-click clears it.
 // Only text nodes and class names are written to the DOM; log-derived values never reach HTML.
-import uPlot from "../vendor/uplot/uPlot.esm.js";
+import uPlot from "../vendor/uplot/uPlot.esm.min.js";
 import { S, format, pluralKey } from "./strings.js";
 import {
   NORMAL_LINE_PATH,

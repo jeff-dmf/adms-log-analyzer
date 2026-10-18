@@ -2,7 +2,7 @@
 // calls by method, exceptions grouped by signature, log level windows and startups/restarts/gaps.
 // Everything comes from the ERS (untrusted text): textContent and class names only; one delegated
 // listener per list. Charts are uPlot (vendored), coloured from the CSS tokens of the theme.
-import uPlot from "../vendor/uplot/uPlot.esm.js";
+import uPlot from "../vendor/uplot/uPlot.esm.min.js";
 import {
   HIST_KEYS, METRICS, buildStatsRows, buildStatsTotals, createDashboardFlow, groupExceptions, histColorClass,
   histogramToChart, levelRows, lifecycleRows, methodOptions, seriesToChart,

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 import { installGlobalDom, tick, until } from "./fixtures/fake-dom.mjs";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const doc = installGlobalDom();
 const read = (name) => fs.readFileSync(new URL("../../src/dmslog/web/" + name, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -136,7 +137,7 @@ test("the limit the dialog uses is the one of the backend", () => {
 
 // ---- css and page
 test("the stylesheet is linked, uses tokens for colors and has a forced-colors block", () => {
-  assert.match(read("index.html"), /<link rel="stylesheet" href="\/css\/preferences\.css">/);
+  assert.ok(pageLinksBundle(read("index.html")) && inBundle("preferences.css"));
   const css = read("css/preferences.css").replace(/\/\*[\s\S]*?\*\//g, "");
   const outside = css.replace(/@media \(forced-colors: active\) \{[\s\S]*$/, "");
   assert.doesNotMatch(outside, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, "no literal color");
