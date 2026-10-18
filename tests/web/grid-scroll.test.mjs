@@ -395,6 +395,14 @@ test("syncScroll never reads scrollTop back (static)", () => {
   assert.ok(!/= this\.viewport\.scrollTop/.test(body));
 });
 
+test("moveRows writes the scrollbar BEFORE it rewrites the rows (a scrollTop write after the DOM changed forces a layout per frame)", () => {
+  const body = method("moveRows");
+  const sync = body.indexOf("this.syncScroll()");
+  const render = body.indexOf("this.render()");
+  assert.ok(sync > -1 && render > -1, "moveRows calls both");
+  assert.ok(sync < render, "syncScroll() runs before render() (measured with tools/ui_perf.mjs: 120 forced layouts in 120 wheel events -> 2)");
+});
+
 test("the css contains the viewport and the rows, and gives the pooled rows no content-visibility", () => {
   const css = fs.readFileSync(new URL("../../src/dmslog/web/css/app.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const rule = (selector) => {
