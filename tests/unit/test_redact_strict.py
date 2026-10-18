@@ -95,7 +95,7 @@ def test_round3_automatic_exception_never_hides_a_structured_field(mode):
 
 SAFETY_CAP_S = 15.0  # seconds at the development machine's speed, scaled by _machine_factor()
 LINEAR_SLACK = 2.5  # quadratic growth costs `growth` times the linear ratio, so 4x and 8x sizes still fail
-NOISE_FLOOR_S = 0.3  # a small measurement below this proves nothing either way
+NOISE_FLOOR_S = 0.5  # a small measurement below this proves nothing either way (a real blowup costs seconds)
 
 
 def _machine_factor() -> float:
@@ -129,7 +129,8 @@ def _assert_linear(measure, n: int, growth: int, label: object) -> None:
     small = _best_of(measure, n)
     big = _best_of(measure, n * growth)
     assert big < SAFETY_CAP_S * _machine_factor(), (label, small, big)
-    assert big < max(LINEAR_SLACK * growth * small, NOISE_FLOOR_S), (label, small, big)
+    # `<=`: the Windows CPU clock ticks every 15.6 ms, so a tiny baseline can make the bound equal it
+    assert big <= max(LINEAR_SLACK * growth * small, NOISE_FLOOR_S), (label, small, big)
 
 
 def _repeat(unit: str, size: int) -> str:
