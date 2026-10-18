@@ -57,7 +57,8 @@ async function setup({ atEnd = false } = {}) {
     total: 1000,
     tailInfo: () => info,
     followTail: async () => { gridCalls.followTail += 1; },
-    showTotal(n, exact) { grid.total = n; gridCalls.shown.push({ n, exact }); return true; },
+    beginCount: () => 7,
+    showTotal(n, exact, id) { grid.total = n; gridCalls.shown.push({ n, exact, id }); return true; },
   };
   const follow = initFollowTail({
     toggle, newButton, grid, getCase: () => "C", getFilter: () => null, doc, timers,
@@ -189,5 +190,37 @@ test("destroy removes the toggle and button listeners and the instance is inert"
   assert.equal(t.gridCalls.followTail, callsBefore);
   assert.equal((t.toggle.listeners?.change || []).length, 0);
   assert.equal((t.newButton.listeners?.click || []).length, 0);
+  cleanup();
+});
+
+test("the 'new records' button goes through the protected flow: hiding the tab ends it, one update when back", async () => {
+  const t = await setup();
+  let op = null;
+  let release;
+  t.grid.followTail = (o) => { op = o; return new Promise((resolve) => { release = resolve; }); };
+  t.newButton.dispatch("click");
+  assert.ok(op !== null);
+  assert.equal(op.isCurrent(), true);
+  assert.equal(t.follow.flow.busy(), true);
+  t.hide();
+  assert.equal(op.isCurrent(), false);
+  t.urls.length = 0;
+  release(true);
+  await t.settle();
+  assert.deepEqual(t.urls, []); // nothing counted with the tab hidden
+  t.grid.followTail = async () => { t.gridCalls.followTail += 1; };
+  t.show();
+  await t.settle();
+  assert.equal(t.changed.length, 1); // one update when back
+  cleanup();
+});
+
+test("the count answer is shown with the id the grid gave when it was requested", async () => {
+  const t = await setup();
+  t.setTotal(1100);
+  t.sent({ records: 1, sources: [] });
+  t.timers.advance(1000);
+  await t.settle();
+  assert.equal(t.gridCalls.shown.at(-1).id, 7);
   cleanup();
 });

@@ -45,9 +45,10 @@ export function initFollowTail({
     getFilter,
     view: {
       tailInfo: () => grid.tailInfo(),
-      followTail: (isCurrent) => grid.followTail(isCurrent),
+      followTail: (op) => grid.followTail(op),
       total: () => grid.total,
-      showTotal: typeof grid.showTotal === "function" ? (count, exact) => grid.showTotal(count, exact) : undefined,
+      beginCount: typeof grid.beginCount === "function" ? () => grid.beginCount() : undefined,
+      showTotal: typeof grid.showTotal === "function" ? (count, exact, id) => grid.showTotal(count, exact, id) : undefined,
     },
     onState: (state) => {
       newButton.hidden = !(state.on && state.pending > 0);
@@ -146,7 +147,7 @@ export function initFollowTail({
       return;
     }
     flow.reset();
-    grid.followTail().catch(onError);
+    flow.engage().catch(onError); // through the flow: hiding the tab or a newer operation ends it
   }
   newButton.addEventListener("click", onNewClick);
 

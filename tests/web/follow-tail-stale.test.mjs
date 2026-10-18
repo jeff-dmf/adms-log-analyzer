@@ -16,7 +16,7 @@ function setup(info = { atEnd: true, top: 100, visible: 20, length: 200 }, { sho
   const states = [];
   const shown = [];
   const tails = [];
-  const current = { info: { ...info }, total: 1000, showResult };
+  const current = { info: { ...info }, total: 1000, showResult, nextId: 0, ids: [] };
   const api = {
     count(caseId, filter, signal) {
       const d = deferred();
@@ -31,9 +31,10 @@ function setup(info = { atEnd: true, top: 100, visible: 20, length: 200 }, { sho
     getFilter: () => filter,
     view: {
       tailInfo: () => current.info,
-      followTail: (isCurrent) => { const d = deferred(); tails.push({ isCurrent, d }); return d.promise; },
+      followTail: (op) => { const d = deferred(); tails.push({ isCurrent: () => op.isCurrent(), op, d }); return d.promise; },
+      beginCount: () => { current.nextId += 1; return current.nextId; },
       total: () => current.total,
-      showTotal(n, exact) { shown.push({ n, exact }); if (current.showResult) { current.total = n; } return current.showResult; },
+      showTotal(n, exact, id) { shown.push({ n, exact, id }); if (current.showResult) { current.total = n; } return current.showResult; },
     },
     onState: (s) => states.push(s),
   });
@@ -131,4 +132,28 @@ test("main.js: a watch update without a source change reloads the collections bu
   const block = text.slice(text.indexOf("onChanged: ({ sources = false }"), text.indexOf("onError: showError,", text.indexOf("onChanged: ({ sources = false }")));
   assert.match(block, /if \(sources\) \{\s*panel\.refreshSources\(true\)/);
   assert.match(block, /else if \(collectionsPanel\) \{\s*collectionsPanel\.refresh\(\)/);
+});
+
+test("the count request takes its id from the grid before the request and hands it back with the answer", async () => {
+  const t = setup();
+  t.flow.setOn(true);
+  const refreshing = t.flow.refresh();
+  t.counts[0].d.resolve({ count: 1100, exact: true });
+  await refreshing;
+  assert.equal(t.shown[0].id, 1);
+});
+
+test("an operation object has an id and a kind; only the newest is current", async () => {
+  const t = setup({ atEnd: true, top: 180, visible: 20, length: 200 });
+  t.flow.setOn(true);
+  t.flow.engage();
+  t.flow.engage();
+  assert.equal(t.tails[0].op.kind, "load");
+  assert.ok(t.tails[1].op.id > t.tails[0].op.id);
+  assert.equal(t.tails[0].op.isCurrent(), false);
+  assert.equal(t.tails[1].op.isCurrent(), true);
+  assert.equal(t.flow.busy(), true);
+  t.tails[1].d.resolve(true);
+  await tick();
+  assert.equal(t.flow.busy(), false);
 });

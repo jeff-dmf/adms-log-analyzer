@@ -140,7 +140,7 @@ test("followTail stops before counting when its operation became obsolete", asyn
   let alive = true;
   const page = deferred();
   api.page = () => page.promise;
-  const running = grid.followTail(() => alive);
+  const running = grid.followTail({ isCurrent: () => alive });
   alive = false; // the tab hid while the end was loading
   page.resolve({ rows: [], prev: null, next: null });
   assert.equal(await running, false);
@@ -154,7 +154,7 @@ test("followTail drops the count answer when the operation became obsolete while
   await Promise.resolve();
   api.page = async () => ({ rows: [], prev: null, next: null });
   let alive = true;
-  const running = grid.followTail(() => alive);
+  const running = grid.followTail({ isCurrent: () => alive });
   for (let i = 0; i < 10 && counts.length < 2; i += 1) await Promise.resolve();
   assert.equal(counts.length, 2);
   alive = false;
@@ -194,4 +194,95 @@ test("a normal followTail (no user move) completes and counts", async () => {
   counts[1].d.resolve({ count: 12, exact: true });
   assert.equal(await running, true);
   assert.equal(grid.total, 12);
+});
+
+function tailSetup() {
+  const t = setup();
+  return t;
+}
+
+test("an obsolete operation does not apply the end page (window.load) nor show its failure", async () => {
+  const { grid, counts } = tailSetup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 10, exact: true });
+  await Promise.resolve();
+  const page = deferred();
+  api.page = () => page.promise;
+  let replaced = 0;
+  const original = grid.window.load.bind(grid.window);
+  grid.window.load = (...args) => { replaced += 1; return original(...args); };
+  let alive = true;
+  const running = grid.followTail({ isCurrent: () => alive });
+  alive = false;
+  page.resolve({ rows: [{ id: 1, ts: 1 }], prev: null, next: null });
+  assert.equal(await running, false);
+  assert.equal(replaced, 0);
+  // the same for a failure: nothing is shown for an obsolete operation
+  const failing = deferred();
+  api.page = () => failing.promise;
+  let alive2 = true;
+  const running2 = grid.followTail({ isCurrent: () => alive2 });
+  alive2 = false;
+  failing.promise.catch(() => {});
+  failing.resolve(Promise.reject(new Error("503")));
+  assert.equal(await running2, false);
+  assert.equal(grid.failure, null);
+});
+
+test("an older load that ends does not clear the protection of the newer one", async () => {
+  const { grid, counts } = tailSetup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 10, exact: true });
+  await Promise.resolve();
+  const pages = [];
+  api.page = (c, f, cur, dir, limit, signal) => { const d = deferred(); pages.push({ d, signal }); return d.promise; };
+  let replaced = 0;
+  const original = grid.window.load.bind(grid.window);
+  grid.window.load = (...args) => { replaced += 1; return original(...args); };
+  const first = grid.followTail({ isCurrent: () => true });
+  const second = grid.followTail({ isCurrent: () => true }); // overlaps: the first one is superseded
+  pages[0].d.resolve({ rows: [], prev: null, next: null });
+  assert.equal(await first, false);
+  assert.ok(grid.tailOp !== null); // the second still owns it
+  grid.moveRows(-2); // the user scrolls
+  assert.equal(pages[1].signal.aborted, true);
+  pages[1].d.resolve({ rows: [], prev: null, next: null });
+  assert.equal(await second, false);
+  assert.equal(replaced, 0);
+});
+
+test("a late count failure of an obsolete operation does not erase the count nor register a failure", async () => {
+  const { grid, counts } = tailSetup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 10, exact: true });
+  await Promise.resolve();
+  await Promise.resolve();
+  api.page = async () => ({ rows: [], prev: null, next: null });
+  let alive = true;
+  const running = grid.followTail({ isCurrent: () => alive });
+  for (let i = 0; i < 10 && counts.length < 2; i += 1) await Promise.resolve();
+  assert.equal(counts.length, 2);
+  alive = false;
+  counts[1].d.reject(new Error("503"));
+  assert.equal(await running, false);
+  assert.equal(grid.countFailure, null);
+  assert.equal(grid.total, 10);
+  assert.equal(grid.showTotal(11, true), true); // not blocked by a failure that never was
+});
+
+test("a count requested by Follow tail before a reload cannot overwrite the reload's newer total", async () => {
+  const { grid, counts } = tailSetup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 1000, exact: true });
+  await Promise.resolve();
+  await Promise.resolve();
+  const id = grid.beginCount(); // the flow asks /count (answer still in flight)
+  const reload = grid.refreshCount(); // a reload (same case, same filter) counts after it
+  counts[1].d.resolve({ count: 1200, exact: true });
+  await reload;
+  assert.equal(grid.total, 1200);
+  assert.equal(grid.showTotal(1100, true, id), false); // the old answer arrives late
+  assert.equal(grid.total, 1200);
+  assert.equal(grid.showTotal(1300, true, grid.beginCount()), true);
+  assert.equal(grid.total, 1300);
 });
