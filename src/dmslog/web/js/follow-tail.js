@@ -18,6 +18,7 @@ export function initFollowTail({
   timers, // injectable for tests ({now, setTimeout, clearTimeout}); the real clock otherwise
 }) {
   let events = null;
+  let destroyed = false;
   const guard = createStreamGuard();
   const gate = createWatchGate(Boolean(doc && doc.hidden));
   const refreshDebounce = createDebounce({
@@ -44,9 +45,9 @@ export function initFollowTail({
     getFilter,
     view: {
       tailInfo: () => grid.tailInfo(),
-      followTail: () => grid.followTail(),
+      followTail: (isCurrent) => grid.followTail(isCurrent),
       total: () => grid.total,
-      showTotal: (count, exact) => (typeof grid.showTotal === "function" ? grid.showTotal(count, exact) : false),
+      showTotal: typeof grid.showTotal === "function" ? (count, exact) => grid.showTotal(count, exact) : undefined,
     },
     onState: (state) => {
       newButton.hidden = !(state.on && state.pending > 0);
@@ -71,6 +72,9 @@ export function initFollowTail({
 
   function connect() {
     close();
+    if (destroyed) {
+      return;
+    }
     guard.reset(); // a new stream, a new case or no case: a stop does not outlive them
     const caseId = getCase();
     if (!flow.state.on || caseId === null || typeof EventSource !== "function") {
@@ -100,7 +104,10 @@ export function initFollowTail({
     });
   }
 
-  toggle.addEventListener("change", () => {
+  function onToggle() {
+    if (destroyed) {
+      return;
+    }
     flow.setOn(toggle.checked);
     if (flow.state.on) {
       connect();
@@ -108,11 +115,15 @@ export function initFollowTail({
     } else {
       close();
     }
-  });
+  }
+  toggle.addEventListener("change", onToggle);
 
   // Hidden: cancel what is scheduled or counting (a late answer is dropped by the flow's token) and remember it.
   // Visible again: ONE update, only when something was missed.
   function onVisibility() {
+    if (destroyed) {
+      return;
+    }
     if (doc.hidden) {
       gate.hide(refreshDebounce.pending() || derivedDebounce.pending() || flow.busy());
       refreshDebounce.cancel();
@@ -130,20 +141,27 @@ export function initFollowTail({
     doc.addEventListener("visibilitychange", onVisibility);
   }
 
-  newButton.addEventListener("click", () => {
+  function onNewClick() {
+    if (destroyed) {
+      return;
+    }
     flow.reset();
     grid.followTail().catch(onError);
-  });
+  }
+  newButton.addEventListener("click", onNewClick);
 
   return {
     // The case changed: drop the old stream and counter.
     onCase() {
+      if (destroyed) {
+        return;
+      }
       flow.reset();
       connect();
     },
     // Starts the stream again after it stopped (Retry). True when it did something, false when there was nothing to resume.
     resume() {
-      if (!guard.stopped || !flow.state.on) {
+      if (destroyed || !guard.stopped || !flow.state.on) {
         return false;
       }
       connect();
@@ -151,11 +169,14 @@ export function initFollowTail({
     },
     stopped: () => guard.stopped,
     // The grid moved or reloaded.
-    viewChanged: () => flow.viewChanged(),
-    // Drops the stream, the timers and the visibility listener.
+    viewChanged: () => (destroyed ? undefined : flow.viewChanged()),
+    // Drops the stream, the timers and every listener; the instance does nothing afterwards.
     destroy() {
+      destroyed = true;
       close();
       flow.cancel();
+      toggle.removeEventListener("change", onToggle);
+      newButton.removeEventListener("click", onNewClick);
       if (doc) {
         doc.removeEventListener("visibilitychange", onVisibility);
       }

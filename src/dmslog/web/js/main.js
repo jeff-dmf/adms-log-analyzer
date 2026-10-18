@@ -1237,7 +1237,9 @@ function start() {
             timeline.refresh();
           }
           if (sources) {
-            panel.refreshSources(true).catch(showError);
+            panel.refreshSources(true).catch(showError); // also reloads the collections (onSources)
+          } else if (collectionsPanel) {
+            collectionsPanel.refresh(); // the collection's record count follows the case without asking /api/sources
           }
         },
         onError: showError,

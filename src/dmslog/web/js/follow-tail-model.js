@@ -134,19 +134,25 @@ export function createWatchGate(hidden = false) {
   return gate;
 }
 
-// `view` is the grid adapter: tailInfo() -> {atEnd, top, visible, length}, followTail() -> Promise (reload
-// the end of the data and keep the view at the bottom), total() -> number | null (count shown by the grid),
-// showTotal(n, exact) (optional: the grid shows the newest total, so the status and the collection agree).
+// `view` is the grid adapter: tailInfo() -> {atEnd, top, visible, length}, followTail(isCurrent) -> Promise<false |
+// anything> (reload the end of the data and keep the view at the bottom; it checks isCurrent() before it counts and
+// resolves to false when the operation was dropped, e.g. the user scrolled meanwhile), total() -> number | null (count
+// shown by the grid), showTotal(n, exact) -> boolean (optional: the grid shows the newest total, so the status and
+// the collection agree; false = the grid refused it and nothing is adopted).
 // ONE source of truth for the total: the newest count answer (`state.total`). `base` is the total when the
 // view stopped following (the grid's own count at that time); pending = total - base, shown as "new records".
-// `onState` receives {on, pending, position}. Answers that arrive after a newer refresh, a case change
-// or switching off are dropped (generation token); the request is aborted too.
+// `onState` receives {on, pending, position}.
+// ONE operation token (`generation`) covers every async effect: it is bumped by a new refresh, hiding the tab,
+// returning to the bottom while counting, switching off, a case change and destroy. The effects (the count, the
+// publication to the grid, the load of the tail) check it right before they happen, and the grid receives it as
+// `isCurrent` so its own steps stop too.
 export function createFollowFlow({ api, getCase, getFilter, view, onState }) {
   let generation = 0;
   let controller = null;
   const state = { on: false, pending: 0, position: "bottom", total: null };
   let base = null;   // total when the view left the bottom; null while following
   let pushed = null; // the last total this flow gave to the grid; a different grid total means the grid reloaded
+  let kind = null;   // what the running operation does: "count" or "load" (the tail)
 
   function forget() {
     base = null;
@@ -163,10 +169,34 @@ export function createFollowFlow({ api, getCase, getFilter, view, onState }) {
   function cancel() {
     generation += 1;
     active = false;
+    kind = null;
     if (controller) {
       controller.abort();
       controller = null;
     }
+  }
+
+  // Loads the end of the data. Only a completed load counts as "at the bottom"; a dropped one (the user scrolled,
+  // the operation became obsolete) leaves the baseline alone.
+  async function loadTail(mine) {
+    kind = "load";
+    let done;
+    try {
+      done = await view.followTail(() => mine === generation);
+    } finally {
+      if (mine === generation) {
+        active = false;
+        kind = null;
+      }
+    }
+    if (mine !== generation) {
+      return;
+    }
+    if (done !== false) {
+      forget();
+    }
+    state.position = tailPosition(view.tailInfo());
+    emit();
   }
 
   async function refresh() {
@@ -185,35 +215,26 @@ export function createFollowFlow({ api, getCase, getFilter, view, onState }) {
     state.position = position;
     if (position === "bottom") {
       // Load the end of the data first: only then are the counted records in the buffer.
-      try {
-        await view.followTail();
-      } finally {
-        if (mine === generation) {
-          active = false;
-        }
-      }
-      if (mine === generation) {
-        forget();
-        emit();
-      }
+      await loadTail(mine);
       return;
     }
+    kind = "count";
     controller = new AbortController();
     try {
       const result = await api.count(caseId, filter, controller.signal);
       if (mine !== generation || caseId !== getCase() || !state.on || filter !== getFilter()) {
         return;
       }
+      const total = Number(result.count);
       const shown = view.total();
-      if (base === null || (pushed !== null && shown !== pushed)) {
-        base = shown; // first count since the view left the end, or the grid reloaded with its own total
+      const nextBase = base === null || (pushed !== null && shown !== pushed) ? shown : base; // first count since the view left the end, or the grid reloaded with its own total
+      if (typeof view.showTotal === "function" && nextBase !== null && !view.showTotal(total, result.exact !== false)) {
+        return; // the grid refused it (a view change or a failed count owns the number): adopt nothing
       }
-      state.total = Number(result.count);
-      state.pending = pendingCount(base, state.total);
-      pushed = state.total;
-      if (typeof view.showTotal === "function" && base !== null) {
-        view.showTotal(state.total, result.exact !== false);
-      }
+      base = nextBase;
+      state.total = total;
+      state.pending = pendingCount(base, total);
+      pushed = total;
       emit();
     } catch (err) {
       // A failed count only leaves the previous number in place.
@@ -221,6 +242,7 @@ export function createFollowFlow({ api, getCase, getFilter, view, onState }) {
       if (mine === generation) {
         controller = null;
         active = false;
+        kind = null;
       }
     }
   }
@@ -238,6 +260,9 @@ export function createFollowFlow({ api, getCase, getFilter, view, onState }) {
       return;
     }
     if (position === "bottom") {
+      if (kind === "count") {
+        cancel(); // a count started while scrolled up must not recreate the counter now that the view is at the end
+      }
       forget();
     }
     emit();
@@ -267,18 +292,7 @@ export function createFollowFlow({ api, getCase, getFilter, view, onState }) {
     cancel();
     const mine = generation;
     active = true;
-    try {
-      await view.followTail();
-    } finally {
-      if (mine === generation) {
-        active = false;
-      }
-    }
-    if (mine === generation) {
-      forget();
-      state.position = tailPosition(view.tailInfo());
-      emit();
-    }
+    await loadTail(mine);
   }
 
   function reset() {

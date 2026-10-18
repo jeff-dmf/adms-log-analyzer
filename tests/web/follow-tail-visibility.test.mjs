@@ -171,3 +171,23 @@ test("destroy removes the listener and the stream; a later visibility change doe
   assert.equal(t.timers.size(), 0);
   cleanup();
 });
+
+test("destroy removes the toggle and button listeners and the instance is inert", async () => {
+  const t = await setup();
+  t.follow.destroy();
+  const streamsBefore = t.streams.length;
+  const callsBefore = t.gridCalls.followTail;
+  t.toggle.checked = false;
+  t.toggle.dispatch("change");
+  t.toggle.checked = true;
+  t.toggle.dispatch("change");
+  t.newButton.dispatch("click");
+  t.follow.onCase();
+  assert.equal(t.follow.resume(), false);
+  await t.settle();
+  assert.equal(t.streams.length, streamsBefore); // no stream was opened again
+  assert.equal(t.gridCalls.followTail, callsBefore);
+  assert.equal((t.toggle.listeners?.change || []).length, 0);
+  assert.equal((t.newButton.listeners?.click || []).length, 0);
+  cleanup();
+});

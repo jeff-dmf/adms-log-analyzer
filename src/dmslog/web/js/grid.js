@@ -103,6 +103,9 @@ export class Grid {
     this.shownCount = null; // what the status bar shows now: {n, exact} | null
     this.busy = false;
     this.countGeneration = 0;
+    this.navEpoch = 0;     // counts the user's own moves of the view (rows, keys, Home/End, scrollbar, jumps)
+    this.tailJob = false;  // followTail() is loading the end: a move by the user cancels that load
+    this.tailJump = false; // set only while followTail() starts its own jump (not a user move)
     this.countController = null;
     this.total = null; // last entry count of the filter (a number), the baseline of "follow tail"
     this.fieldColumns = [];
@@ -702,7 +705,7 @@ export class Grid {
 
   // The count has its own generation: navigation (jump, scroll) must not discard its answer; only a newer
   // count or a reload (new case or filter) does. `view`: the pending view change it belongs to, if any.
-  async refreshCount(announce = false, view = null) {
+  async refreshCount(announce = false, view = null, isCurrent = null) {
     if (this.destroyed) {
       return;
     }
@@ -718,7 +721,7 @@ export class Grid {
     const filter = view ? view.filter : this.filter;
     try {
       const result = await api.count(caseId, filter, controller.signal);
-      if (generation === this.countGeneration) {
+      if (generation === this.countGeneration && (isCurrent === null || isCurrent())) {
         const value = { n: Number(result.count), exact: Boolean(result.exact) };
         if (view && !view.committed) {
           view.count = value; // shown with its page, never before it (dropped if the page fails)
@@ -769,6 +772,9 @@ export class Grid {
     }
     this.cancelWheel(); // Home, End, a time and the scrollbar land here: older wheel travel must not move the new rows
     if (view === null) {
+      if (!this.tailJump) {
+        this.navEpoch += 1; // a move by the user (Follow tail's own jump is not one)
+      }
       this.abandonPending();
     }
     this.cancel();
@@ -898,6 +904,7 @@ export class Grid {
     if (this.destroyed || this.caseId === null || this.pending || this.countFailure !== null || !Number.isFinite(n)) {
       return false;
     }
+    this.invalidateCount(); // one order for the answers: a count requested before this total must not overwrite it
     this.total = n;
     this.emitCount({ n, exact: Boolean(exact) });
     return true;
@@ -905,9 +912,30 @@ export class Grid {
 
   // Reloads the end of the data and keeps the view at the bottom; the selected entry stays selected
   // when it is still in the buffer.
-  async followTail() {
+  // `isCurrent()` (optional): false once the caller's operation is obsolete (tab hidden, switched off, case changed...).
+  // A move by the user while the end loads also ends the operation: the later intention prevails. Resolves to true
+  // when the view is at the end and its count was requested, false when the operation was dropped.
+  async followTail(isCurrent = null) {
     const selected = this.selectedRow();
-    await this.goEnd();
+    this.tailJump = true;
+    let jumping;
+    try {
+      jumping = this.goEnd();
+    } finally {
+      this.tailJump = false;
+    }
+    const epoch = this.navEpoch;
+    const current = () => !this.destroyed && this.navEpoch === epoch && (isCurrent === null || isCurrent());
+    this.tailJob = true;
+    let outcome;
+    try {
+      outcome = await jumping;
+    } finally {
+      this.tailJob = false;
+    }
+    if (outcome !== "ok" || !current()) {
+      return false;
+    }
     if (selected) {
       const index = this.window.rows.findIndex((r) => r.id === selected.id);
       if (index >= 0) {
@@ -915,7 +943,18 @@ export class Grid {
         this.render();
       }
     }
-    await this.refreshCount();
+    await this.refreshCount(false, null, current);
+    return current();
+  }
+
+  // The user moved the view: any end-of-data load Follow tail has in flight is dropped (its page would replace the
+  // rows the user chose).
+  userMoved() {
+    this.navEpoch += 1;
+    if (this.tailJob) {
+      this.tailJob = false;
+      this.cancel();
+    }
   }
 
   jumpToTime(ms) {
@@ -942,6 +981,7 @@ export class Grid {
     if (this.destroyed) {
       return;
     }
+    this.userMoved();
     this.window.moveTop(delta, this.visible);
     this.render();
     this.syncScroll();
@@ -992,6 +1032,7 @@ export class Grid {
     if (Object.prototype.hasOwnProperty.call(moves, event.key)) {
       event.preventDefault();
       this.cancelWheel(); // the selection moved the rows: older wheel travel is stale
+      this.userMoved();
       this.window.moveSelection(moves[event.key], this.visible);
       this.render();
       this.syncScroll();

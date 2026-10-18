@@ -118,3 +118,80 @@ test("showTotal (Follow tail) shows the newest total without announcing; not wit
   assert.equal(grid.showTotal(200, true), false);
   assert.equal(grid.total, 130);
 });
+
+test("showTotal shares the count order: an older count answer cannot overwrite a newer total", async () => {
+  const { grid, counts } = setup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 2000, exact: true });
+  await Promise.resolve();
+  await Promise.resolve();
+  const older = grid.refreshCount(); // requested before the total below
+  assert.equal(grid.showTotal(2300, true), true);
+  counts[1].d.resolve({ count: 2100, exact: true });
+  await older;
+  assert.equal(grid.total, 2300);
+});
+
+test("followTail stops before counting when its operation became obsolete", async () => {
+  const { grid, counts } = setup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 10, exact: true });
+  await Promise.resolve();
+  let alive = true;
+  const page = deferred();
+  api.page = () => page.promise;
+  const running = grid.followTail(() => alive);
+  alive = false; // the tab hid while the end was loading
+  page.resolve({ rows: [], prev: null, next: null });
+  assert.equal(await running, false);
+  assert.equal(counts.length, 1); // no /count was requested
+});
+
+test("followTail drops the count answer when the operation became obsolete while it was in flight", async () => {
+  const { grid, counts } = setup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 10, exact: true });
+  await Promise.resolve();
+  api.page = async () => ({ rows: [], prev: null, next: null });
+  let alive = true;
+  const running = grid.followTail(() => alive);
+  for (let i = 0; i < 10 && counts.length < 2; i += 1) await Promise.resolve();
+  assert.equal(counts.length, 2);
+  alive = false;
+  counts[1].d.resolve({ count: 999, exact: true });
+  assert.equal(await running, false);
+  assert.equal(grid.total, 10);
+});
+
+test("a move by the user while followTail loads the end prevails: no rows replaced, no count", async () => {
+  const { grid, counts } = setup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 10, exact: true });
+  await Promise.resolve();
+  const page = deferred();
+  let loaded = 0;
+  api.page = () => { loaded += 1; return page.promise; };
+  const original = grid.window.load.bind(grid.window);
+  let replaced = 0;
+  grid.window.load = (...args) => { replaced += 1; return original(...args); };
+  const running = grid.followTail();
+  grid.moveRows(-3); // the user scrolls during the load
+  page.resolve({ rows: [], prev: null, next: null });
+  assert.equal(await running, false);
+  assert.ok(loaded >= 1);
+  assert.equal(replaced, 0);
+  assert.equal(counts.length, 1);
+});
+
+test("a normal followTail (no user move) completes and counts", async () => {
+  const { grid, counts } = setup();
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 10, exact: true });
+  await Promise.resolve();
+  api.page = async () => ({ rows: [], prev: null, next: null });
+  const running = grid.followTail();
+  for (let i = 0; i < 10 && counts.length < 2; i += 1) await Promise.resolve();
+  counts[1].d.resolve({ count: 12, exact: true });
+  assert.equal(await running, true);
+  assert.equal(grid.total, 12);
+});
