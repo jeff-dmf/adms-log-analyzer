@@ -1876,6 +1876,7 @@ export const S = {
   cvProcessOption: "{name} (process {id})",
   cvUnavailable: "(no longer available)",
   cvListFailed: "Could not load the list of saved views, operations or processes. Use Reload lists.",
+  cvListWait: "The lists are still loading. Press Compare again when they are ready.",
   cvNoListHere: "This mode has no list to reload.",
   cvResults: "Comparison result",
   cvHelp: "Choose what to compare and press Compare. The sides are compared by the sequence of their message types; the other modes also use the current view as a filter.",

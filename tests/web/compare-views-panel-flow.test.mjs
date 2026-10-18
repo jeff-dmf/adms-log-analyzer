@@ -391,6 +391,7 @@ test("the view changing: the result stays, marked out of date; a run in progress
   assert.equal(stale.hidden, false);
   assert.equal(stale.textContent, S.cvViewChanged);
   assert.equal(w.rows().length, 3);
+  await ready(w); // the lists are read again for the new view
   w.run().click();
   assert.equal(stale.hidden, true, "a new run is for the new view");
   w.current.filter = { sev: { le: 2 } };
@@ -615,7 +616,9 @@ test("reloading a list keeps a choice that is still there; one that is gone stay
   w.byId("b-op").value = "5";
   w.byId("b-op").dispatch("change");
   byClass(w.host, "panel-refresh")[0].click();
-  assert.deepEqual(w.byId("a-op").options.map((o) => o.textContent), [S.cvListLoading], "while loading only the placeholder shows");
+  assert.equal(w.byId("a-op").value, "x:6", "while loading the choice stays, as a pending value the form refuses");
+  w.run().click();
+  assert.equal(w.compare().length, 0);
   await ready(w);
   assert.equal(w.byId("a-op").value, "6", "restored after the reload");
   assert.equal(w.byId("b-op").value, "5");
@@ -681,4 +684,61 @@ test("Cancel disappearing after the answer hands the focus to Compare", async ()
   await tick();
   assert.equal(w.cancel().hidden, true);
   assert.equal(doc.activeElement, w.run());
+});
+
+test("while a list reloads, Compare sends nothing (a saved view is never swapped for the current one) and a running comparison goes on", async () => {
+  let release = null;
+  let hold = false;
+  const w = world({
+    views: { list: () => (hold ? new Promise((resolve) => { release = () => resolve({ views: VIEWS }); }) : Promise.resolve({ views: VIEWS })) },
+  });
+  await ready(w);
+  assert.equal(w.byId("b-view").value, "7");
+  w.run().click(); // a comparison is running
+  assert.equal(w.compare().length, 1);
+  hold = true;
+  byClass(w.host, "panel-refresh")[0].click();
+  assert.equal(w.byId("b-view").value, "x:7", "pending, not the current view");
+  w.run().click();
+  assert.equal(w.compare().length, 1, "nothing was sent with the wrong filters");
+  assert.equal(w.compare()[0].signal.aborted, false, "the comparison in progress was not cancelled");
+  assert.equal(w.status().textContent, S.cvListWait);
+  release();
+  await ready(w);
+  assert.equal(w.byId("b-view").value, "7");
+  assert.equal(w.status().textContent, S.cvLoading, "the wait message gives way to the state of the comparison");
+});
+
+test("a list that recovers clears its error from the live region; a comparison's own message is never replaced", async () => {
+  let fail = true;
+  const w = world({
+    views: { list: () => (fail ? Promise.reject(Object.assign(new Error("x"), { status: 500 })) : Promise.resolve({ views: VIEWS })) },
+  });
+  await ready(w);
+  assert.equal(w.status().textContent, S.cvListFailed);
+  fail = false;
+  byClass(w.host, "panel-refresh")[0].click();
+  await ready(w);
+  assert.equal(w.status().textContent, S.cvIdle);
+  assert.ok(!cls(w.status(), "is-error"));
+  // a comparison finished meanwhile: its message stays when a list reloads
+  w.run().click();
+  w.compare()[0].d.resolve(answer());
+  await ready(w);
+  const done = w.status().textContent;
+  byClass(w.host, "panel-refresh")[0].click();
+  await ready(w);
+  assert.equal(w.status().textContent, done);
+});
+
+test("the list error belongs to the mode that needs the list: in another mode the line goes back to the state of the comparison", async () => {
+  const w = world({ views: { list: () => Promise.reject(Object.assign(new Error("x"), { status: 500 })) } });
+  await ready(w);
+  assert.equal(w.status().textContent, S.cvListFailed);
+  w.setMode("operation");
+  await ready(w);
+  assert.equal(w.status().textContent, S.cvIdle);
+  w.setMode("filter"); // the list is still failed: asked again, and says so again
+  await ready(w);
+  assert.equal(w.status().textContent, S.cvListFailed);
 });

@@ -516,7 +516,7 @@ export function createCompareFlow({ api, getCase, onState, getViewKey = () => ""
       return;
     }
     counter += 1;
-    const op = { id: counter, caseId, body, controller: typeof AbortController === "function" ? new AbortController() : null };
+    const op = { id: counter, caseId, body, observed: getViewKey(), controller: typeof AbortController === "function" ? new AbortController() : null };
     current = op;
     clearResult();
     Object.assign(state, { status: "loading", caseId, body, names: names || null, viewKey, stale: viewKey !== getViewKey() });
@@ -585,7 +585,7 @@ export function createCompareFlow({ api, getCase, onState, getViewKey = () => ""
       }
       const offset = state.nextOffset;
       const digest = state.result.digest;
-      const op = { id: ++counter, caseId: state.caseId, body: { ...state.body, offset }, controller: typeof AbortController === "function" ? new AbortController() : null };
+      const op = { id: ++counter, caseId: state.caseId, observed: getViewKey(), body: { ...state.body, offset }, controller: typeof AbortController === "function" ? new AbortController() : null };
       current = op;
       state.loadingMore = true;
       state.moreError = null;
@@ -640,10 +640,15 @@ export function createCompareFlow({ api, getCase, onState, getViewKey = () => ""
     },
     // The view of the grid changed: a result read for the old one says so; an operation in progress is cancelled.
     viewChanged() {
-      if (state.status === "idle" || state.viewKey === getViewKey()) {
-        return; // nothing compared, or the view is the one the result was read for (a refresh without a change)
+      if (state.status === "idle") {
+        return;
       }
-      if (current !== null) {
+      const now = getViewKey();
+      // The out-of-date mark is the plain comparison with the view the result was read for (back to it = not out of date).
+      const stale = state.viewKey !== now;
+      // An operation in progress is cancelled only if the view changed after IT started (a rerun of an old result started
+      // on the view that is shown now stays).
+      if (current !== null && current.observed !== now) {
         const wasMore = state.loadingMore;
         drop();
         if (!wasMore) {
@@ -654,9 +659,14 @@ export function createCompareFlow({ api, getCase, onState, getViewKey = () => ""
           return;
         }
         state.loadingMore = false;
+        state.stale = stale;
+        emit();
+        return;
       }
-      state.stale = true;
-      emit();
+      if (stale !== state.stale) {
+        state.stale = stale;
+        emit();
+      }
     },
     // Another case: nothing of the old one stays.
     reset() {

@@ -578,3 +578,39 @@ test("lists: an answer whose scope changed meanwhile never publishes, even befor
   assert.deepEqual(flow.lists.views.items, []);
   assert.equal(flow.lists.views.status, "loading");
 });
+
+test("the view: a rerun of an old result started on the view shown now is not cancelled by a refresh without a change", async () => {
+  const w = world();
+  await done(w);
+  w.current.view = "v2";
+  w.flow.viewChanged();
+  assert.equal(w.state.stale, true);
+  const rerun = w.flow.rerun({ onlyDiff: true });
+  w.flow.viewChanged(); // refresh, still v2
+  assert.equal(w.calls.at(-1).signal.aborted, false);
+  assert.equal(w.state.status, "loading");
+  w.calls.at(-1).d.resolve(answer());
+  await rerun;
+  assert.equal(w.state.status, "ok");
+  assert.equal(w.state.stale, true, "still the rows of v1");
+  // but a change after it started does cancel it
+  const again = w.flow.rerun({ onlyDiff: false });
+  w.current.view = "v3";
+  w.flow.viewChanged();
+  assert.equal(w.calls.at(-1).signal.aborted, true);
+  assert.equal(w.state.status, "idle");
+  await again;
+});
+
+test("the view: going back to the view of the result clears the out-of-date mark", async () => {
+  const w = world();
+  await done(w);
+  w.current.view = "v2";
+  w.flow.viewChanged();
+  assert.equal(w.state.stale, true);
+  w.current.view = "v1";
+  w.flow.viewChanged();
+  assert.equal(w.state.stale, false);
+  assert.equal(w.state.status, "ok");
+  assert.equal(w.state.rows.length, 2);
+});

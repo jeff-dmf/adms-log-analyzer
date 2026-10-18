@@ -478,8 +478,9 @@ export function mountCompareViewsPanel(host, options) {
     let value = null;
     if (keep !== undefined && keep !== "" && entries.some((c) => c.value === keep)) {
       value = keep;
-    } else if (keep !== undefined && keep !== "" && keep !== CURRENT && (status === "ready" || status === "error")) {
-      entries.push({ value: GONE + keep, label: S.cvUnavailable });
+    } else if (keep !== undefined && keep !== "" && keep !== CURRENT) {
+      // Not in the list: gone (list read) or not known yet (list loading). Either way it stays selected and invalid.
+      entries.push({ value: GONE + keep, label: status === "ready" || status === "error" ? S.cvUnavailable : S.cvListLoading });
       value = GONE + keep;
     } else if (keep === undefined && status === "ready" && defaultValue !== undefined) {
       value = defaultValue;
@@ -532,6 +533,12 @@ export function mountCompareViewsPanel(host, options) {
     if (name !== null && lists.lists[name].status === "error") {
       lastStatus = "e:" + S.cvListFailed;
       say(S.cvListFailed, true);
+    } else if ((lastStatus === "e:" + S.cvListFailed || lastStatus === "i:" + S.cvListWait)
+      && !Object.values(lists.lists).some((list) => list.status === "loading")) {
+      // The list recovered: the line says what the comparison says again (a message about a comparison is never in this state).
+      const line = statusText(flow.state);
+      lastStatus = (line.error ? "e:" : "i:") + line.text;
+      say(line.text, line.error);
     }
   }
 
@@ -577,10 +584,12 @@ export function mountCompareViewsPanel(host, options) {
   function run() {
     const mode = modeNow();
     const needs = listNameOf[mode];
-    if (needs && lists.lists[needs].status === "error") {
-      // The pickers could not be filled: nothing is compared from half a form.
-      lastStatus = "e:" + S.cvListFailed;
-      say(S.cvListFailed, true);
+    if (needs && lists.lists[needs].status !== "ready") {
+      // The pickers are not filled (loading, closed, failed): nothing is compared from half a form, and a comparison
+      // already running is left alone.
+      const failed = lists.lists[needs].status === "error";
+      lastStatus = (failed ? "e:" : "i:") + (failed ? S.cvListFailed : S.cvListWait);
+      say(failed ? S.cvListFailed : S.cvListWait, failed);
       return Promise.resolve();
     }
     const names = mode === "filter"
