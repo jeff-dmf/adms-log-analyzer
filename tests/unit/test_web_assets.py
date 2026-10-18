@@ -24,6 +24,8 @@ EXPECTED_MODULES = {
     "tpl-leaf.js",
     "api.js",
     "clock-banner.js",
+    "clock-dialog.js",
+    "clock-model.js",
     "config-panel-model.js",
     "config-panel.js",
     "dashboard-model.js",

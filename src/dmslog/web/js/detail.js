@@ -4,7 +4,16 @@ import { api } from "./api.js";
 import { RequestGuard, canLoadContext, createDetailPrefs, headerParts } from "./detail-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format } from "./strings.js";
-import { formatTs } from "./time.js";
+import { formatOffset, formatTs } from "./time.js";
+
+// The adjusted time of a record of a collection with a clock offset (9.15), next to the original one in the header; "" otherwise.
+export function adjustedFact(entry) {
+  const offset = entry ? entry.clock_offset_ms : 0;
+  if (!entry || typeof entry.ts_adjusted !== "number" || !Number.isSafeInteger(offset) || offset === 0) {
+    return "";
+  }
+  return format(S.ckDetailAdjusted, { time: formatTs(entry.ts_adjusted), offset: formatOffset(offset) });
+}
 
 // ---- collapsible sections (UI-20): an h3 with a real button (aria-expanded), the state remembered ----------------
 // The sections re-render from scratch, so every render calls sectionHeading() again and the stored state is applied.
@@ -285,6 +294,10 @@ export class Detail {
     }
     box.appendChild(first);
     const facts = [];
+    const adjusted = adjustedFact(entry);
+    if (adjusted !== "") {
+      facts.push(adjusted);
+    }
     if (parts.pid !== null) {
       facts.push(format(S.detailPid, { pid: parts.pid }));
     }
@@ -415,6 +428,9 @@ export class Detail {
       const time = document.createElement("span");
       time.className = "context-time";
       time.textContent = formatTs(row.ts);
+      if (typeof row.ts_adjusted === "number" && row.ts_adjusted !== row.ts) {
+        time.title = format(S.ckRowAdjustedTitle, { time: formatTs(row.ts_adjusted) }); // the order of this list is the adjusted one
+      }
       const message = document.createElement("span");
       message.className = "context-msg";
       message.textContent = row.msg === null || row.msg === undefined ? "" : String(row.msg);

@@ -1,0 +1,103 @@
+/* Clock offset between collections (9.15): the badge of a collection row, the Adjusted time column and the Align clock dialog.
+   Colours come from the tokens; nothing here relies on colour alone (the offset is written out). */
+.col-clock {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.col-adjusted {
+  width: calc(12ch + 2 * var(--cell-pad));
+}
+
+.ck-dialog {
+  width: min(44rem, calc(100vw - 2 * var(--space-5)));
+}
+
+.ck-modes {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: 0;
+}
+
+.ck-legend {
+  padding: 0;
+  font-weight: 600;
+}
+
+.ck-mode {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.ck-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.ck-table th,
+.ck-table td {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.ck-rowhead,
+.ck-colhead {
+  font-weight: 600;
+}
+
+.ck-hint {
+  margin: var(--space-2) 0 0;
+  font-weight: 600;
+}
+
+.ck-how,
+.ck-manual-hint,
+.ck-intro,
+.ck-current {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+}
+
+.ck-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ck-input {
+  max-width: 16rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ck-input[aria-invalid="true"] {
+  outline: 2px solid var(--error-text);
+}
+
+.ck-preview {
+  margin: var(--space-3) 0 0;
+  font-weight: 600;
+}
+
+.ck-status {
+  margin-top: var(--space-2);
+  min-height: 1.4em;
+}
+
+.ck-apply[aria-disabled="true"] {
+  cursor: progress;
+}
+
+@media (forced-colors: active) {
+  .ck-table th,
+  .ck-table td {
+    border-color: CanvasText;
+  }
+
+  .ck-input[aria-invalid="true"] {
+    outline-color: Highlight;
+  }
+}

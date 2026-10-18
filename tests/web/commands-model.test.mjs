@@ -256,6 +256,7 @@ test("the record context menu lists the record actions in sections, without its 
   assert.deepEqual(ids, [
     "record.sameKey", "record.onlySource", "record.filterType", "record.hideType", "record.highlightType", "record.context",
     "|", "record.bookmark", "record.compare", "record.copy",
+    "|", "record.clockAnchor", "record.clockTarget", // 9.15: actions that are not listed come last, in their own section
   ]);
   // Every record action but the launcher is there (a new one would be appended after the sections).
   const record = actions.list({ group: "record" }).map((d) => d.id).filter((id) => id !== "record.contextMenu");

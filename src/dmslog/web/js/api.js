@@ -351,6 +351,14 @@ export const api = {
     request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/collections", undefined, signal),
   removeCollection: (caseId, group) =>
     request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group)),
+  // Clock offset of a collection (9.15, ARQUITETURA 10.13): set from {anchor, target} (entry ids; dry_run: true computes only)
+  // or from {offset_ms}; reset puts the offset back to 0. `group` is the collection group id.
+  clock: {
+    set: (caseId, group, body, signal) =>
+      request("PUT", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group) + "/clock", body, signal),
+    reset: (caseId, group, signal) =>
+      request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group) + "/clock", undefined, signal),
+  },
   // Local alerts (store/alerts.py): the user's rules, and the alert history of a case.
   alerts: {
     rules: (caseId, signal) => request("GET", "/api/alerts/rules" + query({ case: caseId }), undefined, signal),

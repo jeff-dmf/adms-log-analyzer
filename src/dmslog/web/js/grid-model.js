@@ -1,6 +1,8 @@
 // Pure model of the virtual grid (no DOM): keyset cursors, the buffered row window and the
 // proportional scroll mapping. The DOM layer lives in grid.js.
 
+import { cursorTime } from "./time.js";
+
 export const ROW_HEIGHT = 20;       // px, also used by the CSS through the row elements
 export const PAGE_LIMIT = 200;      // rows per request (server maximum is 500)
 export const MAX_ROWS = 1200;       // rows kept in memory before trimming the far end
@@ -9,7 +11,7 @@ export const SCROLL_SPAN = 20000;   // px of scrollbar travel mapped onto the ti
 export const END_CURSOR = Number.MAX_SAFE_INTEGER + ":" + Number.MAX_SAFE_INTEGER;
 
 export function makeCursor(row) {
-  return row.ts + ":" + row.id;
+  return cursorTime(row) + ":" + row.id; // the adjusted time when the rows carry one (the server's cursor axis)
 }
 
 // Cursor that starts at the first entry with ts >= the given instant (id -1 sorts before all ids).
