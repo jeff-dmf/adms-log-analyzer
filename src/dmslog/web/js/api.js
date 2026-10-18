@@ -375,6 +375,10 @@ export const api = {
   aggregate: (caseId, body, signal) => request("POST", "/api/entries/aggregate", { ...body, case: caseId }, signal),
   aggregateCsv: (caseId, body, signal) =>
     requestFile("/api/entries/aggregate", { ...body, case: caseId, format: "csv" }, "text", signal),
+  // Comparison of two views by message type (ARQUITETURA 10.10). The answer is one page of aligned rows; `offset` pages it.
+  compareViews: {
+    run: (caseId, body, signal) => request("POST", "/api/entries/compare", { ...body, case: caseId }, signal),
+  },
   // Ad hoc regex extractor (ARQUITETURA 10.11): `check` needs no case; `promote` only returns the TOML text.
   extract: {
     check: (body, signal) => request("POST", "/api/extract/check", body, signal),
