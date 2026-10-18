@@ -69,6 +69,8 @@ EXPECTED_MODULES = {
     "panel-shell.js",
     "payload-list-model.js",
     "payload-list.js",
+    "preferences-dialog.js",
+    "preferences-model.js",
     "export-dialogs.js",
     "export-model.js",
     "export-panel.js",
