@@ -360,6 +360,17 @@ export const api = {
     history: (caseId, signal) => request("GET", "/api/alerts/history" + query({ case: caseId }), undefined, signal),
     clearHistory: (caseId) => request("DELETE", "/api/alerts/history" + query({ case: caseId })),
   },
+  // The user's panels (store/panels.py, store/panelrun.py; ARQUITETURA 10.14). `panel` is {name, widgets}; `ifRev` is the
+  // revision the caller saw (409 rev_conflict when it moved). `run` runs the STORED panel (all widgets, or `widgets`: ids).
+  panels: {
+    list: (signal) => request("GET", "/api/panels", undefined, signal),
+    create: (panel) => request("POST", "/api/panels", panel),
+    update: (id, panel, ifRev) =>
+      request("PUT", "/api/panels", ifRev === undefined || ifRev === null ? { id, panel } : { id, panel, if_rev: ifRev }),
+    remove: (id) => request("DELETE", "/api/panels" + query({ id })),
+    run: (caseId, id, widgets, signal) =>
+      request("POST", "/api/panels/run", widgets ? { case: caseId, id, widgets } : { case: caseId, id }, signal),
+  },
   // Declarative aggregation (store/aggregate.py): JSON result, or the same result as CSV text.
   aggregate: (caseId, body, signal) => request("POST", "/api/entries/aggregate", { ...body, case: caseId }, signal),
   aggregateCsv: (caseId, body, signal) =>

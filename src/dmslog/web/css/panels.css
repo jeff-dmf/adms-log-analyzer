@@ -1,0 +1,342 @@
+/* "Panels" dock panel (panels-panel.js). Colours come from the tokens (tokens.css) and the series palette of
+   aggregate.css (--agg-c0 .. --agg-c7, classes .agg-c0 .. .agg-c7). Bars are plain elements, not a canvas, so
+   forced-colors and zoom behave; every chart has its data table next to it. */
+.pn-tools,
+.pn-name-form,
+.pn-confirm,
+.pn-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.pn-name-form,
+.pn-confirm {
+  padding: 4px 0;
+}
+
+.pn-name-form[hidden],
+.pn-confirm[hidden],
+.pn-view[hidden],
+.pn-editor[hidden],
+.pn-widget-form[hidden],
+.pn-problems[hidden],
+.pn-empty[hidden] {
+  display: none;
+}
+
+.pn-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pn-label {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.pn-select {
+  max-width: 22em;
+}
+
+.pn-name-input {
+  width: 18em;
+  max-width: 100%;
+}
+
+.pn-title {
+  width: 18em;
+  max-width: 100%;
+}
+
+.pn-limit {
+  width: 5em;
+}
+
+.pn-event-input {
+  width: 14em;
+}
+
+.pn-group,
+.pn-measure {
+  max-width: 16em;
+}
+
+.pn-confirm-text {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pn-heading {
+  margin: 4px 0;
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.pn-heading:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pn-meta {
+  margin: 2px 0 6px;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.pn-problems {
+  margin: 4px 0;
+  padding-left: 1.2em;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.pn-widgets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22em, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.pn-widget {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 4px);
+}
+
+.pn-widget-title {
+  margin: 0 0 4px;
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+}
+
+.pn-state,
+.pn-note {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.pn-state.pn-error,
+.pn-form-error {
+  color: var(--status-error-ink);
+}
+
+.pn-form-error {
+  margin: 4px 0;
+  font-size: 0.9em;
+}
+
+.pn-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0;
+}
+
+.pn-stat-value {
+  font-size: 2em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.pn-stat-label {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.pn-table .pn-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pn-text {
+  overflow-wrap: anywhere;
+}
+
+.pn-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0;
+}
+
+.pn-bar-row {
+  display: grid;
+  grid-template-columns: minmax(6em, 12em) 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.pn-bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+
+.pn-bar-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pn-bar-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pn-bar-track {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 10px;
+  background: var(--panel-alt);
+}
+
+.pn-bar-fill {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+
+.pn-bar-value {
+  min-width: 3.5em;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9em;
+}
+
+.pn-plot {
+  position: relative;
+  width: 100%;
+  min-height: 120px;
+}
+
+.pn-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 4px 0;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+.pn-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 28em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pn-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.pn-details {
+  margin-top: 4px;
+}
+
+.pn-summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.pn-summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pn-edit-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+}
+
+.pn-edit-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pn-edit-item.is-editing {
+  background: var(--panel-alt);
+}
+
+.pn-edit-name {
+  font-weight: 600;
+  min-width: 8em;
+  overflow-wrap: anywhere;
+}
+
+.pn-edit-meta {
+  flex: 1;
+  min-width: 10em;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.pn-edit-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.pn-widget-form {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+}
+
+@media (forced-colors: active) {
+  .pn-bar-track {
+    background: Canvas;
+    border: 1px solid CanvasText;
+  }
+
+  .pn-bar-fill,
+  .pn-swatch {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+
+  .pn-widget,
+  .pn-widget-form,
+  .pn-edit-item {
+    border-color: CanvasText;
+  }
+
+  .pn-edit-item.is-editing {
+    background: Canvas;
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .pn-heading:focus,
+  .pn-summary:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .pn-state.pn-error,
+  .pn-form-error {
+    color: CanvasText;
+  }
+}

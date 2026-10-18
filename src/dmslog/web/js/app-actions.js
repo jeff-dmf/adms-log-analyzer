@@ -307,6 +307,35 @@ export function registerAppPanels(dock, deps) {
     },
   });
 
+  // User-built panels (9.11). Not tied to a view or a case reason: the panel itself reruns on a case change (reset +
+  // refresh), and shows and hides with its tab (the dock's "activate" event), so a tab behind another one is idle.
+  dock.register({
+    id: "panels",
+    titleKey: "actPanels",
+    listens: ["case"],
+    mount: async (host, ctx) => {
+      const module = await import("./panels-panel.js");
+      const panel = module.mountPanelsPanel(host, {
+        api,
+        getCase: ctx.caseId,
+        getFieldNames: deps.fieldNames,
+        onRequestClose: () => ctx.dock.close("panels"),
+      });
+      ctx.dock.on("activate", ({ id }) => panel.show(id === "panels" && ctx.dock.isOpen("panels")));
+      ctx.dock.on("close", ({ id }) => {
+        if (id === "panels") {
+          panel.show(false);
+        }
+      });
+      return {
+        refresh: () => panel.refresh(),
+        closed: () => panel.closed(),
+        reset: () => panel.reset(),
+        focusTarget: panel.focusTarget,
+      };
+    },
+  });
+
   dock.register({
     id: "extract",
     titleKey: "actExtract",
@@ -363,6 +392,7 @@ export function registerAppActions(actions, deps) {
   analyze("analyze.distinct", "actDistinct", "distinct", "./distinct-panel.js");
   analyze("analyze.groupByType", "actGroupByType", "groupByType", "./distinct-panel.js");
   analyze("analyze.aggregate", "actAggregate", "aggregate", "./aggregate-panel.js");
+  analyze("analyze.panels", "actPanels", "panels", "./panels-panel.js");
   analyze("analyze.extract", "actExtract", "extract", "./extract-panel.js");
   analyze("analyze.operations", "actOperations", "operations", "./events-panel.js");
   analyze("analyze.dashboard", "actDashboard", "dashboard", "./dashboard.js");
