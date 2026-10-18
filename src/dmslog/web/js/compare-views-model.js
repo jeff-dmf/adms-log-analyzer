@@ -349,19 +349,21 @@ export function processOptions(events) {
     if (e && Number.isSafeInteger(e.stream_id) && !seen.has(e.stream_id)) {
       seen.add(e.stream_id);
       const label = [e.family, e.process].filter((x, i, all) => x && all.indexOf(x) === i).join(" / ");
-      out.push({ value: String(e.stream_id), label: label || S.cvUnknownType });
+      out.push({ value: String(e.stream_id), label: format(S.cvProcessOption, { name: label || S.cvUnknownType, id: e.stream_id }) });
     }
   }
   return out;
 }
 
-// One loader per list. A list belongs to a case and to the load that asked for it: an older load, or one of another
-// case, never publishes. state(name) = { status: "idle"|"loading"|"ready"|"error", items, caseId }.
-export function createListsFlow({ api, getCase, onChange }) {
+// One loader per list. A list belongs to a SCOPE: the case, the collections chosen and the view (getScope() is one string
+// for all three). An answer publishes only if it is the latest load of its list AND the scope is still the one it was asked
+// for; a list read for another scope is dropped as soon as the scope changes (sync) and never served from the cache
+// (ensure). state(name) = { status: "idle"|"loading"|"ready"|"error", items, scope }.
+export function createListsFlow({ api, getCase, getScope = () => "", onChange }) {
   const lists = {
-    views: { status: "idle", items: [], caseId: null },
-    operation: { status: "idle", items: [], caseId: null },
-    process: { status: "idle", items: [], caseId: null },
+    views: { status: "idle", items: [], scope: null },
+    operation: { status: "idle", items: [], scope: null },
+    process: { status: "idle", items: [], scope: null },
   };
   const tokens = { views: 0, operation: 0, process: 0 };
   const controllers = { views: null, operation: null, process: null };
@@ -370,6 +372,7 @@ export function createListsFlow({ api, getCase, onChange }) {
     operation: async (caseId, signal) => (await api.events(caseId, { kind: "operation", limit: LIST_LIMIT }, signal)).items,
     process: async (caseId, signal) => (await api.events(caseId, { limit: LIST_LIMIT }, signal)).items,
   };
+  const scopeNow = () => (getCase() ? String(getCase()) + "|" + getScope() : null);
 
   function stop(name) {
     tokens[name] += 1;
@@ -379,30 +382,38 @@ export function createListsFlow({ api, getCase, onChange }) {
     }
   }
 
+  function empty(name) {
+    stop(name);
+    Object.assign(lists[name], { status: "idle", items: [], scope: null });
+    onChange(name);
+  }
+
   async function load(name) {
     stop(name);
     const mine = tokens[name];
     const caseId = getCase();
+    const scope = scopeNow();
     if (!caseId) {
-      Object.assign(lists[name], { status: "idle", items: [], caseId: null });
+      Object.assign(lists[name], { status: "idle", items: [], scope: null });
       onChange(name);
       return;
     }
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     controllers[name] = controller;
-    Object.assign(lists[name], { status: "loading", items: [], caseId });
+    Object.assign(lists[name], { status: "loading", items: [], scope });
     onChange(name);
+    const current = () => mine === tokens[name] && getCase() === caseId && scopeNow() === scope;
     let items;
     let failed = false;
     try {
       items = await fetchers[name](caseId, controller ? controller.signal : undefined);
     } catch (err) {
-      if (mine !== tokens[name] || getCase() !== caseId || (err && err.name === "AbortError")) {
+      if (!current() || (err && err.name === "AbortError")) {
         return;
       }
       failed = true;
     }
-    if (mine !== tokens[name] || getCase() !== caseId) {
+    if (!current()) {
       return;
     }
     controllers[name] = null;
@@ -413,10 +424,19 @@ export function createListsFlow({ api, getCase, onChange }) {
   return {
     lists,
     load,
-    // Loads a list that was never loaded for the case now open (or failed); a loading or ready list is left alone.
+    // Drops every list (and its load on the way) that was asked for another scope.
+    sync() {
+      const now = scopeNow();
+      for (const name of Object.keys(lists)) {
+        if (lists[name].status !== "idle" && lists[name].scope !== now) {
+          empty(name);
+        }
+      }
+    },
+    // Loads a list that is not loaded, failed, or was read for another scope; a loading or ready one of this scope is left alone.
     ensure(name) {
       const list = lists[name];
-      if (list.status === "idle" || list.status === "error" || list.caseId !== getCase()) {
+      if (list.status === "idle" || list.status === "error" || list.scope !== scopeNow()) {
         return load(name);
       }
       return Promise.resolve();
@@ -425,16 +445,15 @@ export function createListsFlow({ api, getCase, onChange }) {
     cancelPending() {
       for (const name of Object.keys(lists)) {
         if (lists[name].status === "loading") {
-          stop(name);
-          Object.assign(lists[name], { status: "idle", items: [], caseId: null });
-          onChange(name);
+          empty(name);
         }
       }
     },
+    // Forgets everything without touching the server.
     clear() {
       for (const name of Object.keys(lists)) {
         stop(name);
-        Object.assign(lists[name], { status: "idle", items: [], caseId: null });
+        Object.assign(lists[name], { status: "idle", items: [], scope: null });
       }
       onChange(null);
     },
@@ -447,13 +466,14 @@ export function createListsFlow({ api, getCase, onChange }) {
 // page, a failure) first checks that it is still THE operation (same object) of the same case. A newer start(), cancel(),
 // reset() or a case change makes every earlier answer drop itself. The frozen `body` is what the result describes: later
 // edits of the form do not change it, "Only differences" and a larger limit rerun it.
-export function createCompareFlow({ api, getCase, onState }) {
+export function createCompareFlow({ api, getCase, onState, getViewKey = () => "" }) {
   const state = {
     status: "idle", // idle | loading | ok | too_large | error
     errors: [], // [{ side, key }] of the last submitted form that was refused
     error: null, // { code, kind, key } of a failed run
     cancelled: false,
     stale: false, // the view changed after the result was read
+    viewKey: null, // the view the shown result was compared for (a rerun keeps the one of the frozen request)
     caseId: null,
     body: null,
     result: null, // buildResult(first page)
@@ -478,7 +498,7 @@ export function createCompareFlow({ api, getCase, onState }) {
   function clearResult() {
     Object.assign(state, {
       errors: [], error: null, cancelled: false, stale: false, result: null, rows: [], nextOffset: null,
-      loadingMore: false, moreError: null, changed: false, body: null, caseId: null, names: null,
+      loadingMore: false, moreError: null, changed: false, body: null, caseId: null, names: null, viewKey: null,
     });
   }
 
@@ -486,7 +506,7 @@ export function createCompareFlow({ api, getCase, onState }) {
     return current === op && getCase() === op.caseId;
   }
 
-  async function start(body, names) {
+  async function start(body, names, viewKey) {
     const caseId = getCase();
     drop();
     if (!caseId) {
@@ -499,7 +519,7 @@ export function createCompareFlow({ api, getCase, onState }) {
     const op = { id: counter, caseId, body, controller: typeof AbortController === "function" ? new AbortController() : null };
     current = op;
     clearResult();
-    Object.assign(state, { status: "loading", caseId, body, names: names || null });
+    Object.assign(state, { status: "loading", caseId, body, names: names || null, viewKey, stale: viewKey !== getViewKey() });
     emit();
     let data;
     try {
@@ -539,7 +559,7 @@ export function createCompareFlow({ api, getCase, onState }) {
         emit();
         return Promise.resolve();
       }
-      return start(built.body, names);
+      return start(built.body, names, getViewKey());
     },
     // The same comparison with other options (only differences, a larger limit): from the frozen request, never the form.
     rerun(patch) {
@@ -553,7 +573,7 @@ export function createCompareFlow({ api, getCase, onState }) {
       if (patch.maxSide !== undefined && MAX_SIDE_CHOICES.includes(patch.maxSide)) {
         body.max_side = patch.maxSide;
       }
-      return start(body, state.names);
+      return start(body, state.names, state.viewKey);
     },
     // The next page of the rows of the result that is shown.
     async more() {
@@ -620,8 +640,8 @@ export function createCompareFlow({ api, getCase, onState }) {
     },
     // The view of the grid changed: a result read for the old one says so; an operation in progress is cancelled.
     viewChanged() {
-      if (state.status === "idle") {
-        return;
+      if (state.status === "idle" || state.viewKey === getViewKey()) {
+        return; // nothing compared, or the view is the one the result was read for (a refresh without a change)
       }
       if (current !== null) {
         const wasMore = state.loadingMore;

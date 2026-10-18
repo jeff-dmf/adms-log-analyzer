@@ -53,11 +53,15 @@ function number(n) {
 }
 
 const SIDE_NAMES = { a: "A", b: "B" };
+const GONE = "x:"; // value of the option kept for a choice that is no longer in its list (never a valid id)
+// The choice of each picker, kept while its list is reloaded: undefined = the user never chose (B starts on a saved view).
+const freshKeep = () => ({ filter: undefined, operation: "", process: "" });
 
 // Options:
 //   api                   { compareViews: { run }, views: { list }, events }  (see compare-views-model.js)
 //   getCase()             the open case id or null
 //   getFilter()           the ONE composed filter of the grid (the current view)
+//   getScope()            a string that changes with the collections chosen (the lists belong to case + collections + view)
 //   onReveal(row)         "Show in grid": row = { id, ts }
 //   onRequestClose()      the dock closes the tab (the default hides the host)
 // Returns { refresh(), reset(), closed(), focus() }:
@@ -65,13 +69,19 @@ const SIDE_NAMES = { a: "A", b: "B" };
 //   reset     the case changed: forget everything of the old case
 //   closed    the tab was closed: cancel what is pending (the form and the result stay for the next opening)
 export function mountCompareViewsPanel(host, options) {
-  const { api, getCase, getFilter, onReveal, onRequestClose = null } = options;
+  const { api, getCase, getFilter, onReveal, onRequestClose = null, getScope = () => "" } = options;
+  const viewKey = () => JSON.stringify(getFilter() || null);
   uid += 1;
   const prefix = "cv" + uid + "-";
   const shell = createPanelShell(host, {
     title: S.cvTitle,
     onRequestClose,
-    onRefresh: () => lists.load(modeNow()),
+    onRefresh: () => {
+      const name = listNameOf[modeNow()];
+      if (name) {
+        lists.load(name);
+      }
+    },
     refreshLabel: S.cvRefreshLists,
   });
   const listNameOf = { filter: "views", window: null, operation: "operation", process: "process" };
@@ -147,13 +157,18 @@ export function mountCompareViewsPanel(host, options) {
       pfrom: textField(groups.process, name + "-pfrom", S.cvFromOptional, S.cvTimePlaceholder),
       pto: textField(groups.process, name + "-pto", S.cvToOptional, S.cvTimePlaceholder),
       error: element("div", "ui-error cv-side-error"),
-      touched: false,
+      keep: freshKeep(),
       options: { filter: [], operation: [], process: [] },
     };
     side.error.id = prefix + name + "-error";
     side.error.hidden = true;
     box.appendChild(side.error);
-    side.filter.addEventListener("change", () => { side.touched = true; });
+    for (const list of ["filter", "operation", "process"]) {
+      side[list].addEventListener("change", () => {
+        const value = side[list].value;
+        side.keep[list] = value.startsWith(GONE) ? value.slice(GONE.length) : value;
+      });
+    }
     sides[name] = side;
     sidesBox.appendChild(box);
   }
@@ -276,8 +291,8 @@ export function mountCompareViewsPanel(host, options) {
   }
 
   // ---- state -> DOM
-  const flow = createCompareFlow({ api, getCase, onState: onFlowState });
-  const lists = createListsFlow({ api, getCase, onChange: onListChange });
+  const flow = createCompareFlow({ api, getCase, onState: onFlowState, getViewKey: viewKey });
+  const lists = createListsFlow({ api, getCase, getScope: () => getScope() + "|" + viewKey(), onChange: onListChange });
   const modeNow = () => (MODES.includes(modeSelect.value) ? modeSelect.value : "filter");
 
   function say(text, isError) {
@@ -430,7 +445,7 @@ export function mountCompareViewsPanel(host, options) {
   let lastStatus = "";
   function onFlowState(state) {
     // The focus sits on something this render removes (a button of the results): the main action takes it.
-    const hadFocus = results.contains(document.activeElement);
+    const hadFocus = host.contains(document.activeElement) && document.activeElement !== host;
     const moreHadFocus = document.activeElement === moreButton;
     const before = rendered;
     renderResult(state);
@@ -440,11 +455,10 @@ export function mountCompareViewsPanel(host, options) {
     staleNote.hidden = !state.stale;
     staleNote.textContent = state.stale ? S.cvViewChanged : "";
     runButton.setAttribute("aria-disabled", "false");
-    if (hadFocus && !within(results, document.activeElement)) {
-      runButton.focus();
-    }
     if (moreHadFocus && moreButton.hidden && before < rendered && cells[before]) {
       setActive(before, 0, true); // the end of the list: the focus goes on to the first row that was just added
+    } else if (hadFocus && !within(host, document.activeElement)) {
+      runButton.focus(); // what had the focus went away (a button of the results, Cancel): the main action takes it
     }
     const line = statusText(state);
     const key = (line.error ? "e:" : "i:") + line.text;
@@ -455,16 +469,28 @@ export function mountCompareViewsPanel(host, options) {
   }
 
   // ---- the pickers
-  function fill(select, choices, placeholder, wanted) {
-    const keep = wanted !== undefined ? wanted : select.value;
+  // A choice made before a list was reloaded is restored when it is still there; when it is not, it stays selected as
+  // "(no longer available)" and the form refuses it. It is never replaced by another one without the user knowing.
+  function fill(side, list, select, choices, placeholder, status, defaultValue) {
+    const keep = side.keep[list];
     select.textContent = "";
-    const entries = placeholder === null ? choices : [{ value: "", label: placeholder }, ...choices];
+    const entries = placeholder === null ? choices.slice() : [{ value: "", label: placeholder }, ...choices];
+    let value = null;
+    if (keep !== undefined && keep !== "" && entries.some((c) => c.value === keep)) {
+      value = keep;
+    } else if (keep !== undefined && keep !== "" && keep !== CURRENT && (status === "ready" || status === "error")) {
+      entries.push({ value: GONE + keep, label: S.cvUnavailable });
+      value = GONE + keep;
+    } else if (keep === undefined && status === "ready" && defaultValue !== undefined) {
+      value = defaultValue;
+      side.keep[list] = defaultValue; // from now on it is a choice: a reload never swaps it for the current view
+    }
     for (const choice of entries) {
       const option = element("option", "", choice.label);
       option.value = choice.value;
       select.appendChild(option);
     }
-    select.value = entries.some((c) => c.value === keep) ? keep : entries[0].value;
+    select.value = value !== null ? value : entries[0].value;
   }
 
   function listPlaceholder(name, kind) {
@@ -488,22 +514,25 @@ export function mountCompareViewsPanel(host, options) {
         const choices = viewOptions(lists.lists.views.items);
         side.options.filter = choices;
         // B starts on the first saved view (A is the current view) until the user chooses.
-        const wanted = key === "b" && !side.touched && choices.length > 1 ? choices[1].value : undefined;
-        fill(side.filter, choices, null, wanted);
+        fill(side, "filter", side.filter, choices, null, lists.lists.views.status, key === "b" && choices.length > 1 ? choices[1].value : undefined);
       }
       if (name === null || name === "operation") {
         side.options.operation = operationOptions(lists.lists.operation.items);
-        fill(side.operation, side.options.operation, listPlaceholder("operation", "operation"));
+        fill(side, "operation", side.operation, side.options.operation, listPlaceholder("operation", "operation"), lists.lists.operation.status);
       }
       if (name === null || name === "process") {
         side.options.process = processOptions(lists.lists.process.items);
-        fill(side.process, side.options.process, listPlaceholder("process", "process"));
+        fill(side, "process", side.process, side.options.process, listPlaceholder("process", "process"), lists.lists.process.status);
       }
     }
   }
 
   function onListChange(name) {
     paintLists(name);
+    if (name !== null && lists.lists[name].status === "error") {
+      lastStatus = "e:" + S.cvListFailed;
+      say(S.cvListFailed, true);
+    }
   }
 
   function showMode() {
@@ -513,9 +542,16 @@ export function mountCompareViewsPanel(host, options) {
         side.groups[m].hidden = m !== mode;
       }
     }
-    if (listNameOf[mode]) {
-      lists.ensure(listNameOf[mode]);
-    }
+    const name = listNameOf[mode];
+    shell.refreshButton.disabled = !name;
+    shell.refreshButton.title = name ? "" : S.cvNoListHere;
+  }
+
+  // Loads the list the current mode needs when it is missing, failed or was read for another scope.
+  function ensureMode() {
+    lists.sync();
+    const name = listNameOf[modeNow()];
+    return name ? lists.ensure(name) : Promise.resolve();
   }
 
   function labelOf(side, value) {
@@ -540,6 +576,13 @@ export function mountCompareViewsPanel(host, options) {
 
   function run() {
     const mode = modeNow();
+    const needs = listNameOf[mode];
+    if (needs && lists.lists[needs].status === "error") {
+      // The pickers could not be filled: nothing is compared from half a form.
+      lastStatus = "e:" + S.cvListFailed;
+      say(S.cvListFailed, true);
+      return Promise.resolve();
+    }
     const names = mode === "filter"
       ? {
         a: sides.a.filter.value === CURRENT ? "" : labelOf(sides.a, sides.a.filter.value),
@@ -563,7 +606,10 @@ export function mountCompareViewsPanel(host, options) {
     flow.cancel();
     runButton.focus(); // the Cancel button hides itself
   });
-  modeSelect.addEventListener("change", showMode);
+  modeSelect.addEventListener("change", () => {
+    showMode();
+    ensureMode();
+  });
   diffBox.addEventListener("change", () => {
     // The same comparison, other rows; a form that was never run has nothing to redo.
     if (flow.state.body !== null) {
@@ -631,19 +677,23 @@ export function mountCompareViewsPanel(host, options) {
     }
   });
 
-  showMode();
+  showMode(); // lists are read when the dock opens the tab (refresh), never here
   onFlowState(flow.state);
 
   return {
-    refresh: () => flow.viewChanged(),
-    // Another case: the results and the lists are forgotten; the form (modes, times) stays.
+    // The dock opens the tab, or the view, the collections or the case changed: a result read for another view says so
+    // (it is never recomputed by itself) and the lists of the current mode are read again when their scope changed.
+    refresh() {
+      flow.viewChanged();
+      return ensureMode();
+    },
+    // Another case: the results and the lists are forgotten. Nothing is asked of the server (refresh does that when the tab shows).
     reset() {
+      for (const side of Object.values(sides)) {
+        side.keep = freshKeep();
+      }
       lists.clear();
       flow.reset();
-      for (const side of Object.values(sides)) {
-        side.touched = false;
-      }
-      showMode();
     },
     closed() {
       flow.cancel({ quiet: true });

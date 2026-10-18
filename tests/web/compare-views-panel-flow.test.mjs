@@ -46,7 +46,8 @@ const answer = (extra = {}) => ({
   ...extra,
 });
 
-function world(overrides = {}) {
+function world(overrides = {}, extra = {}) {
+  const scope = extra.scope || { v: "C1" };
   const calls = [];
   const lists = [];
   const revealed = [];
@@ -73,10 +74,12 @@ function world(overrides = {}) {
     getFilter: () => current.filter,
     onReveal: (row) => revealed.push(row),
     onRequestClose: () => { closed += 1; },
+    getScope: () => scope.v,
   });
   const byId = (suffix) => host.all().find((n) => n.id.endsWith("-" + suffix));
+  panel.refresh(); // what the dock does when it opens the tab
   const w = {
-    host, panel, calls, lists, revealed, current, byId, closed: () => closed,
+    host, panel, scope, calls, lists, revealed, current, byId, closed: () => closed,
     compare: () => calls.filter((c) => c.name === "compare"),
     mode: () => host.all().find((n) => n.id.endsWith("-mode")),
     max: () => host.all().find((n) => n.id.endsWith("-max")),
@@ -154,7 +157,7 @@ test("modes show their own fields and load their own lists once; names from the 
   w.setMode("process");
   await ready(w);
   assert.deepEqual(w.lists.at(-1), ["events", "A", { limit: 200 }]);
-  assert.deepEqual(w.byId("b-proc").options.map((o) => o.textContent), [S.cvChooseProcess, "Wfm", "Smn"]);
+  assert.deepEqual(w.byId("b-proc").options.map((o) => o.textContent), [S.cvChooseProcess, "Wfm (process 3)", "Smn (process 4)"]);
   w.setMode("operation");
   await ready(w);
   assert.equal(w.lists.length, 3, "a list already loaded for the case is not asked again");
@@ -351,7 +354,7 @@ test("closing the tab cancels what is pending (comparison and lists); the form s
   assert.equal(w.byId("a-op").options[0].textContent, S.cvChooseOperation, "a dropped list can be asked again");
 });
 
-test("the case changing: a late answer is dropped and reset() forgets the result and the lists", async () => {
+test("the case changing: a late answer is dropped; reset() forgets the result and the lists and asks for nothing", async () => {
   const w = world();
   await ready(w);
   w.run().click();
@@ -363,13 +366,17 @@ test("the case changing: a late answer is dropped and reset() forgets the result
   w.current.caseId = "A";
   await compared(w);
   assert.equal(w.results().hidden, false);
+  const asked = w.lists.length;
   w.current.caseId = "B";
   w.panel.reset();
   await ready(w);
   assert.equal(w.results().hidden, true);
   assert.equal(w.rows().length, 0);
   assert.equal(w.status().textContent, S.cvIdle);
-  assert.deepEqual(w.lists.at(-1), ["views", "B"], "the lists are read again for the new case");
+  assert.equal(w.lists.length, asked, "reset reads nothing: the tab may be closed");
+  assert.deepEqual(w.byId("b-view").options.map((o) => o.textContent), [S.cvCurrentView]);
+  await w.panel.refresh(); // the dock shows the tab (or the case notification reaches the open tab)
+  assert.deepEqual(w.lists.at(-1), ["views", "B"], "the lists are read for the new case when the tab is shown");
 });
 
 test("the view changing: the result stays, marked out of date; a run in progress is cancelled with an explanation", async () => {
@@ -378,16 +385,41 @@ test("the view changing: the result stays, marked out of date; a run in progress
   const stale = byClass(w.host, "cv-stale")[0];
   assert.equal(stale.hidden, true);
   w.panel.refresh();
+  assert.equal(stale.hidden, true, "a refresh without a change of view marks nothing");
+  w.current.filter = { sev: { le: 1 } };
+  w.panel.refresh();
   assert.equal(stale.hidden, false);
   assert.equal(stale.textContent, S.cvViewChanged);
   assert.equal(w.rows().length, 3);
   w.run().click();
   assert.equal(stale.hidden, true, "a new run is for the new view");
+  w.current.filter = { sev: { le: 2 } };
   w.panel.refresh();
   assert.equal(w.compare().at(-1).signal.aborted, true);
   assert.equal(w.status().textContent, S.cvViewChangedRun);
   assert.equal(stale.hidden, false);
   assert.equal(w.results().hidden, true);
+});
+
+test("Only differences and a larger limit on a result of an old view keep saying it is out of date", async () => {
+  const w = world();
+  await compared(w, { a: { count: 5000, truncated: true, first_ts: 1, last_ts: 2 } });
+  w.current.filter = { sev: { le: 1 } };
+  w.panel.refresh();
+  const stale = byClass(w.host, "cv-stale")[0];
+  assert.equal(stale.hidden, false);
+  w.diff().checked = true;
+  w.diff().dispatch("change");
+  w.compare().at(-1).d.resolve(answer({ a: { count: 5000, truncated: true, first_ts: 1, last_ts: 2 } }));
+  await tick();
+  await tick();
+  assert.equal(stale.hidden, false);
+  w.raise().click();
+  w.compare().at(-1).d.resolve(answer());
+  await tick();
+  await tick();
+  assert.equal(stale.hidden, false, "the rows are still those of the old view");
+  assert.deepEqual(w.compare().at(-1).args[0].a, { filter: { sev: { le: 3 } } });
 });
 
 test("an error says why in the live region and the next run clears it; the server's text is not shown", async () => {
@@ -511,4 +543,142 @@ test("a message repeated by the panel (no later difference twice) is announced a
   next.click();
   next.click();
   assert.deepEqual(writes, ["", S.cvNoNextDiff, "", S.cvNoNextDiff], "the text is cleared first, so a screen reader reads it again");
+});
+
+test("Reload lists reloads the list of the mode; windows have none, so the button is disabled instead of failing", async () => {
+  const w = world();
+  await ready(w);
+  const reload = byClass(w.host, "panel-refresh")[0];
+  assert.equal(reload.disabled, false);
+  reload.click();
+  assert.equal(w.lists.at(-1)[0], "views");
+  const count = w.lists.length;
+  w.setMode("window");
+  assert.equal(reload.disabled, true);
+  assert.equal(reload.title, S.cvNoListHere);
+  assert.doesNotThrow(() => reload.dispatch("click"));
+  assert.equal(w.lists.length, count);
+  w.setMode("operation");
+  assert.equal(reload.disabled, false);
+  reload.click();
+  assert.equal(w.lists.at(-1)[0], "events");
+  w.setMode("process");
+  reload.click();
+  assert.deepEqual(w.lists.at(-1), ["events", "A", { limit: 200 }]);
+});
+
+test("the collections chosen are part of the scope: lists of the old ones are dropped and a pending answer never fills the picker", async () => {
+  const pending = [];
+  const w = world({ events: (caseId, params) => { const d = deferred(); pending.push({ params, d }); return d.promise; } }, { scope: { v: "C1" } });
+  await ready(w);
+  w.setMode("operation");
+  assert.equal(pending.length, 1);
+  w.scope.v = "C2";
+  w.panel.refresh();
+  assert.equal(pending.length, 2, "read again for C2");
+  assert.deepEqual(w.byId("a-op").options.map((o) => o.textContent), [S.cvListLoading]);
+  pending[0].d.resolve({ items: EVENTS }); // C1 answers late
+  await tick();
+  assert.deepEqual(w.byId("a-op").options.map((o) => o.textContent), [S.cvListLoading], "the C1 events did not fill the picker");
+  pending[1].d.resolve({ items: [EVENTS[0]] });
+  await tick();
+  assert.equal(w.byId("a-op").options.length, 2);
+  w.scope.v = "C3";
+  w.panel.refresh();
+  assert.equal(pending.length, 3, "a ready list of another scope is not served");
+  pending[2].d.resolve({ items: [] });
+  await tick();
+});
+
+test("lifecycle: closing drops the lists on the way, reopening (refresh) reads them again and keeps the choices", async () => {
+  const w = world();
+  await ready(w);
+  w.setMode("operation");
+  await ready(w);
+  w.byId("a-op").value = "5";
+  w.byId("a-op").dispatch("change");
+  const asked = w.lists.length;
+  w.panel.closed();
+  assert.equal(w.lists.length, asked);
+  await w.panel.refresh();
+  assert.equal(w.byId("a-op").value, "5", "the choice survived the closing");
+});
+
+test("reloading a list keeps a choice that is still there; one that is gone stays selected as unavailable and is refused", async () => {
+  let items = EVENTS;
+  const w = world({ events: () => Promise.resolve({ items }) });
+  await ready(w);
+  w.setMode("operation");
+  await ready(w);
+  w.byId("a-op").value = "6";
+  w.byId("a-op").dispatch("change");
+  w.byId("b-op").value = "5";
+  w.byId("b-op").dispatch("change");
+  byClass(w.host, "panel-refresh")[0].click();
+  assert.deepEqual(w.byId("a-op").options.map((o) => o.textContent), [S.cvListLoading], "while loading only the placeholder shows");
+  await ready(w);
+  assert.equal(w.byId("a-op").value, "6", "restored after the reload");
+  assert.equal(w.byId("b-op").value, "5");
+  items = [EVENTS[1]]; // operation 5 is gone
+  byClass(w.host, "panel-refresh")[0].click();
+  await ready(w);
+  assert.equal(w.byId("a-op").value, "6");
+  assert.equal(w.byId("b-op").value, "x:5");
+  assert.equal(w.byId("b-op").options.at(-1).textContent, S.cvUnavailable);
+  w.run().click();
+  assert.equal(w.compare().length, 0, "a choice that is gone is not compared");
+  assert.equal(byClass(w.host, "cv-side-error")[1].textContent, S.cvInvalid.noOperation);
+  items = EVENTS; // it comes back
+  byClass(w.host, "panel-refresh")[0].click();
+  await ready(w);
+  assert.equal(w.byId("b-op").value, "5");
+});
+
+test("a list that fails to load says so in the live region, keeps the choice as unavailable and compares nothing", async () => {
+  let fail = false;
+  const w = world({
+    views: { list: () => (fail ? Promise.reject(Object.assign(new Error("x"), { status: 500 })) : Promise.resolve({ views: VIEWS })) },
+  });
+  await ready(w);
+  assert.equal(w.byId("b-view").value, "7");
+  fail = true;
+  byClass(w.host, "panel-refresh")[0].click();
+  await ready(w);
+  assert.equal(w.status().textContent, S.cvListFailed);
+  assert.ok(cls(w.status(), "is-error"));
+  assert.equal(w.byId("b-view").value, "x:7", "not silently replaced by the current view");
+  assert.equal(w.byId("b-view").options.at(-1).textContent, S.cvUnavailable);
+  w.run().click();
+  assert.equal(w.compare().length, 0);
+  assert.equal(w.status().textContent, S.cvListFailed);
+  fail = false;
+  byClass(w.host, "panel-refresh")[0].click();
+  await ready(w);
+  assert.equal(w.byId("b-view").value, "7");
+  w.run().click();
+  assert.equal(w.compare().length, 1);
+});
+
+test("saved view B that disappeared is refused with its own message", async () => {
+  let views = VIEWS;
+  const w = world({ views: { list: () => Promise.resolve({ views }) } });
+  await ready(w);
+  views = [];
+  byClass(w.host, "panel-refresh")[0].click();
+  await ready(w);
+  w.run().click();
+  assert.equal(w.compare().length, 0);
+  assert.equal(byClass(w.host, "cv-side-error")[1].textContent, S.cvInvalid.noView);
+});
+
+test("Cancel disappearing after the answer hands the focus to Compare", async () => {
+  const w = world();
+  await ready(w);
+  w.run().click();
+  w.cancel().focus();
+  w.compare()[0].d.resolve(answer());
+  await tick();
+  await tick();
+  assert.equal(w.cancel().hidden, true);
+  assert.equal(doc.activeElement, w.run());
 });

@@ -33,7 +33,7 @@ test("listens and closeOnCase follow the contract table", () => {
   assert.deepEqual(listens("groupByType"), ["view"]);
   assert.deepEqual(listens("aggregate"), ["view"]);
   assert.deepEqual(listens("extract"), ["view"]);
-  assert.deepEqual(listens("compareViews"), ["view"]);
+  assert.deepEqual(listens("compareViews"), ["case", "view", "derived"]);
   assert.deepEqual(listens("operations"), ["derived"]);
   assert.deepEqual(listens("dashboard"), ["derived"]);
   assert.deepEqual(listens("missingSteps"), ["derived"]);

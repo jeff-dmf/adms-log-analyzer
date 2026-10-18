@@ -31,7 +31,7 @@ const SPEC = { mode: "operation", a: { event: "5" }, b: { event: "6" }, common: 
 
 function world() {
   const calls = [];
-  const current = { caseId: "A" };
+  const current = { caseId: "A", view: "v1" };
   const states = [];
   const api = {
     compareViews: {
@@ -43,7 +43,7 @@ function world() {
       },
     },
   };
-  const flow = createCompareFlow({ api, getCase: () => current.caseId, onState: (s) => states.push(s.status + (s.loadingMore ? "+more" : "")) });
+  const flow = createCompareFlow({ api, getCase: () => current.caseId, getViewKey: () => current.view, onState: (s) => states.push(s.status + (s.loadingMore ? "+more" : "")) });
   return { flow, calls, current, states, state: flow.state };
 }
 
@@ -329,7 +329,8 @@ test("cancelling a page keeps the rows already read", async () => {
 
 test("the view changing: a run in progress is cancelled, a result is marked out of date, a page in flight is dropped", async () => {
   let w = world();
-  let running = w.flow.run(SPEC, null);
+  const running = w.flow.run(SPEC, null);
+  w.current.view = "v2";
   w.flow.viewChanged();
   assert.equal(w.calls[0].signal.aborted, true);
   assert.equal(w.state.status, "idle");
@@ -338,27 +339,56 @@ test("the view changing: a run in progress is cancelled, a result is marked out 
   await running;
   assert.equal(w.state.result, null);
   w = world();
+  w.current.view = "v2";
   w.flow.viewChanged();
   assert.equal(w.state.stale, false, "nothing was compared: nothing is out of date");
   await done(w, { next_offset: 2 });
   w.flow.viewChanged();
+  assert.equal(w.state.stale, false, "a refresh without a change of view marks nothing");
+  w.current.view = "v3";
+  w.flow.viewChanged();
   assert.equal(w.state.stale, true);
   assert.equal(w.state.status, "ok");
   assert.equal(w.state.rows.length, 2, "the result stays readable");
-  w.flow.rerun({ onlyDiff: true });
-  assert.equal(w.state.stale, false, "a new run is for the new state");
-  w.calls.at(-1).d.resolve(answer());
-  await tick();
   // a page in flight
   w = world();
   await done(w, { next_offset: 2 });
   const more = w.flow.more();
+  w.current.view = "v2";
   w.flow.viewChanged();
   assert.equal(w.state.loadingMore, false);
   w.calls[1].d.resolve(answer({ offset: 2, next_offset: null, rows: [{ op: "only_b", a: null, b: { id: 9 } }] }));
   await more;
   assert.equal(w.state.rows.length, 2);
   assert.equal(w.state.stale, true);
+});
+
+test("a rerun of the frozen request (only differences, a larger limit) keeps the out-of-date mark of the view it was read for", async () => {
+  const w = world();
+  await done(w, { a: { count: 5000, truncated: true, first_ts: 1, last_ts: 2 } });
+  assert.equal(w.state.viewKey, "v1");
+  w.current.view = "v2";
+  w.flow.viewChanged();
+  assert.equal(w.state.stale, true);
+  for (const patch of [{ onlyDiff: true }, { maxSide: 20000 }]) {
+    const rerun = w.flow.rerun(patch);
+    assert.equal(w.state.stale, true, "while it loads");
+    assert.equal(w.state.viewKey, "v1");
+    w.calls.at(-1).d.resolve(answer());
+    await rerun;
+    assert.equal(w.state.status, "ok");
+    assert.equal(w.state.stale, true, "the rows are still those of the old view: " + JSON.stringify(patch));
+  }
+  const fresh = w.flow.run(SPEC, null);
+  assert.equal(w.state.stale, false, "a new run reads the view that is shown now");
+  assert.equal(w.state.viewKey, "v2");
+  w.calls.at(-1).d.resolve(answer());
+  await fresh;
+  assert.equal(w.state.stale, false);
+  const rerun = w.flow.rerun({ onlyDiff: true }); // same view as the result: not stale
+  assert.equal(w.state.stale, false);
+  w.calls.at(-1).d.resolve(answer());
+  await rerun;
 });
 
 test("reset forgets everything of the case", async () => {
@@ -485,4 +515,66 @@ test("lists: an older load that ignores the abort cannot overwrite the newer one
   calls[0].resolve({ views: [{ id: 1 }] });
   await first;
   assert.deepEqual(flow.lists.views.items, [{ id: 2 }]);
+});
+
+test("lists: they belong to a scope (case + collections + view): a change drops cached lists and pending answers", async () => {
+  const calls = [];
+  const scope = { value: "C1" };
+  const flow = createListsFlow({
+    api: { views: { list: () => Promise.resolve({ views: [] }) }, events: (caseId, params) => { const d = deferred(); calls.push({ params, d }); return d.promise; } },
+    getCase: () => "A",
+    getScope: () => scope.value,
+    onChange: () => {},
+  });
+  // an answer still on the way for C1 (the API ignores the abort) must not fill the list of C2
+  const pending = flow.load("operation");
+  scope.value = "C2";
+  flow.sync();
+  assert.equal(flow.lists.operation.status, "idle");
+  const second = flow.ensure("operation");
+  assert.equal(calls.length, 2);
+  calls[0].d.resolve({ items: [{ id: "c1-event" }] });
+  await pending;
+  assert.equal(flow.lists.operation.status, "loading", "the C1 answer published nothing");
+  calls[1].d.resolve({ items: [{ id: 22 }] });
+  await second;
+  assert.deepEqual(flow.lists.operation.items, [{ id: 22 }]);
+  // a ready list is not served for another scope
+  scope.value = "C3";
+  const third = flow.ensure("operation");
+  assert.equal(calls.length, 3, "ensure reads again without sync");
+  calls[2].d.resolve({ items: [] });
+  await third;
+  // the same scope is a cache hit
+  await flow.ensure("operation");
+  assert.equal(calls.length, 3);
+  // the answer of an old scope must not publish even when the scope changes back
+  const back = flow.load("operation");
+  scope.value = "C4";
+  scope.value = "C3";
+  calls[3].d.resolve({ items: [{ id: 5 }] });
+  await back;
+  assert.deepEqual(flow.lists.operation.items, [{ id: 5 }], "same scope again: the answer is still for it");
+  // clear() asks for nothing
+  const before = calls.length;
+  flow.clear();
+  assert.equal(flow.lists.operation.status, "idle");
+  assert.equal(calls.length, before);
+});
+
+test("lists: an answer whose scope changed meanwhile never publishes, even before anyone calls sync()", async () => {
+  const d = deferred();
+  const scope = { value: "C1" };
+  const flow = createListsFlow({
+    api: { views: { list: () => d.promise }, events: () => new Promise(() => {}) },
+    getCase: () => "A",
+    getScope: () => scope.value,
+    onChange: () => {},
+  });
+  const loading = flow.load("views");
+  scope.value = "C2";
+  d.resolve({ views: [{ id: 1 }] });
+  await loading;
+  assert.deepEqual(flow.lists.views.items, []);
+  assert.equal(flow.lists.views.status, "loading");
 });

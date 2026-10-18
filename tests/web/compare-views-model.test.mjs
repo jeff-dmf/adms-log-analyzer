@@ -168,7 +168,14 @@ test("pickers: views start with the current one, operations and processes list e
     { id: "x", stream_id: 4, family: "Smn", process: "Smn2" },
   ];
   assert.deepEqual(operationOptions(events).map((o) => o.label), ["Op at " + formatTs(T1) + " ok", "(no name) at " + formatTs(T2)]);
-  assert.deepEqual(processOptions(events), [{ value: "3", label: "Wfm" }, { value: "4", label: "Smn / Smn2" }]);
+  assert.deepEqual(processOptions(events), [{ value: "3", label: "Wfm (process 3)" }, { value: "4", label: "Smn / Smn2 (process 4)" }]);
+});
+
+test("two processes of the same family get distinct labels", () => {
+  const options = processOptions([
+    { stream_id: 3, family: "Wfm", process: "Wfm" }, { stream_id: 9, family: "Wfm", process: "Wfm" },
+  ]);
+  assert.equal(new Set(options.map((o) => o.label)).size, 2);
 });
 
 test("keyboard: arrows, page, home and end stay inside the rows; the next difference skips the same rows", () => {
