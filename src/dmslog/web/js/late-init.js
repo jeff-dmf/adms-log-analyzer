@@ -93,3 +93,69 @@ export function openWhenLoaded({ current, load, which, onError }) {
   }
   return Promise.resolve().then(load).then((loaded) => loaded.open(which)).catch(onError);
 }
+
+/**
+ * One way to make the detail show a record, for the grid (a selection), the record menu and the palette. Pieces from main.js:
+ *   getEntry()  the record the detail shows (or null)     show(id)  loads it (resolves when the request ended)
+ *   hold(id)    true when `id` is the one shown, after aborting any request for another record that is still loading
+ * ensure(row) -> Promise<boolean>: true when the detail shows `row`. A record already shown is only held (so a late answer for
+ * another record cannot replace it); a request already running for the same record is shared; `refresh` loads it again.
+ */
+export function createRecordLoader({ getEntry, show, hold }) {
+  let running = null; // { id, promise }
+  const shown = (row) => {
+    const entry = getEntry();
+    return Boolean(entry) && String(entry.id) === String(row.id);
+  };
+  return {
+    ensure(row, { refresh = false } = {}) {
+      if (!refresh && shown(row) && hold(row.id)) {
+        running = null;
+        return Promise.resolve(true);
+      }
+      if (running !== null && String(running.id) === String(row.id)) {
+        return running.promise;
+      }
+      const mine = { id: row.id, promise: null };
+      mine.promise = Promise.resolve(show(row.id)).then(() => shown(row), () => false).finally(() => {
+        if (running === mine) {
+          running = null;
+        }
+      });
+      running = mine;
+      return mine.promise;
+    },
+  };
+}
+
+/**
+ * Watches what makes a pending request for a menu obsolete before its module is in: a scroll, a wheel, a click or the focus
+ * moving to another control (`keep`, the grid, may have it), the window losing the focus or resizing. Calls cancel() on each.
+ * Returns stop(), which removes every listener (safe to call twice).
+ */
+export function watchGesture({ doc, win, keep = null, cancel }) {
+  const hit = () => cancel();
+  const focusHit = (event) => {
+    if (event.target !== keep) {
+      cancel();
+    }
+  };
+  doc.addEventListener("scroll", hit, true);
+  doc.addEventListener("wheel", hit, true);
+  doc.addEventListener("pointerdown", hit, true);
+  doc.addEventListener("focusin", focusHit);
+  win.addEventListener("blur", hit);
+  win.addEventListener("resize", hit);
+  let on = true;
+  return () => {
+    if (on) {
+      on = false;
+      doc.removeEventListener("scroll", hit, true);
+      doc.removeEventListener("wheel", hit, true);
+      doc.removeEventListener("pointerdown", hit, true);
+      doc.removeEventListener("focusin", focusHit);
+      win.removeEventListener("blur", hit);
+      win.removeEventListener("resize", hit);
+    }
+  };
+}

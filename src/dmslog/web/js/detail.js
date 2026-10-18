@@ -147,6 +147,16 @@ export class Detail {
     }
   }
 
+  // A menu or the palette acts on the record that is shown: a request for ANOTHER record that is still loading must not
+  // replace it. Aborts that request and says whether the record `id` is the one shown.
+  hold(id) {
+    if (this.entry && String(this.entry.id) === String(id)) {
+      this.entryGuard.invalidate();
+      return true;
+    }
+    return false;
+  }
+
   setTerms(terms) {
     this.terms = terms;
     if (this.entry) {

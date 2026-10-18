@@ -42,18 +42,33 @@ test("the palette gets the record loader (prepare) so its record commands act on
   assert.match(block, /prepare: showRecordFor,/);
 });
 
-test("a menu request takes its generation, case and the selection before the module loads, and revalidates after", () => {
+test("a menu request takes its generation, case and the selection, and starts watching, BEFORE the module loads; it revalidates after and stops watching on every path", () => {
   const main = read("js/main.js");
   const body = /const requestRowMenu = async \(request\) => \{([\s\S]*?)\n  \};/.exec(main)[1];
   const load = body.indexOf("await loadRowMenu()");
   assert.ok(load > 0);
-  for (const before of ["++rowMenuGen", "const forCase = caseId", "grid.holdSelection()", "showRecordFor(request.row)"]) {
+  for (const before of ["++rowMenuGen", "const forCase = caseId", "grid.holdSelection()", "showRecordFor(request.row)", "watchGesture({"]) {
     assert.ok(body.indexOf(before) >= 0 && body.indexOf(before) < load, before);
   }
   const after = body.slice(load);
   for (const check of ["gen !== rowMenuGen", "caseId !== forCase", "grid.selectedRow()"]) {
     assert.ok(after.includes(check), check);
   }
+  assert.match(after, /\} finally \{\s*stop\(\);\s*\}/, "stops watching on every path out");
+});
+
+test("the selection, the menu and the palette show a record through the one loader", () => {
+  const main = read("js/main.js");
+  assert.match(main, /return recordLoader\.ensure\(row, \{ refresh: true \}\);/);
+  assert.match(main, /const showRecordFor = \(row\) => recordLoader\.ensure\(row\);/);
+  assert.ok(!/onSelect: \(row\) => \{[\s\S]{0,300}detail\.show\(/.test(main), "onSelect no longer calls detail.show directly");
+});
+
+test("the palette opened in one case does nothing when the module arrives in another", () => {
+  const main = read("js/main.js");
+  const body = /openPalette: async \(\) => \{([\s\S]*?)\n    \},/.exec(main)[1];
+  assert.ok(body.indexOf("const forCase = caseId") < body.indexOf("await loadPalette()"));
+  assert.match(body, /if \(caseId !== forCase\) \{\s*return;/);
 });
 
 test("Shift+F10 goes through the same request (generation, shown record, selection held) as the right click", () => {

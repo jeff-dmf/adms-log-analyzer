@@ -121,8 +121,13 @@ export function createPalette({
     }
     // Close first: the focus is back where it was before the action runs (the actions that open a dialog read it).
     const runWith = bound;
+    const runTarget = target;
     close();
-    Promise.resolve(actions.invoke(command.actionId, runWith, command.args)).catch(onError);
+    // The loader of the action may still be arriving: wait for it here, then check the target once more and run in the same
+    // turn (invoke() finds the loader done), so an action never runs in another case or on another record.
+    Promise.resolve(actions.preload(command.actionId))
+      .then(() => (targetCurrent(ctx, runTarget) ? actions.invoke(command.actionId, runWith, command.args) : undefined))
+      .catch(onError);
   }
 
   function onKeydown(event) {
@@ -214,18 +219,22 @@ export function createPalette({
     }
     const mine = ++opening;
     const before = captureTarget(ctx); // what was selected when the key was pressed
+    // Still the latest request, and the case and the selection are what they were. Checked right before each effect.
+    const alive = () => mine === opening && !(shell !== null && shell.isOpen()) && ctx.caseId() === before.caseId &&
+      (ctx.selectedRow() ? ctx.selectedRow().id : null) === before.rowId;
     await loadChoices();
+    if (!alive()) {
+      return;
+    }
     if (before.row !== null && typeof prepare === "function") {
       try {
         await prepare(before.row); // the detail shows the selected record, or the record commands stay off
       } catch {
         // the record could not be shown: capture() sees a detail that is not the selection
       }
-    }
-    // After the waits: still the latest request, and the case and the selection are what they were.
-    if (mine !== opening || (shell !== null && shell.isOpen()) || ctx.caseId() !== before.caseId ||
-      (ctx.selectedRow() ? ctx.selectedRow().id : null) !== before.rowId) {
-      return;
+      if (!alive()) {
+        return;
+      }
     }
     from = origin;
     fromRegion = region;

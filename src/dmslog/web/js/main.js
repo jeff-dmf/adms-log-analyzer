@@ -3,7 +3,9 @@
 import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
 import { api, isRetryable, onForbidden, onNetworkError } from "./api.js";
-import { afterDrawerOpen, createButtonGate, loadSections, mountLate, openWhenLoaded, retryable } from "./late-init.js";
+import {
+  afterDrawerOpen, createButtonGate, createRecordLoader, loadSections, mountLate, openWhenLoaded, retryable, watchGesture,
+} from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
@@ -404,7 +406,7 @@ function start() {
       if (rowMenuTarget === null || String(rowMenuTarget) !== String(row.id)) {
         closeRowMenu(); // the menu of another record; the menu of this very record stays
       }
-      return detail.show(row.id);
+      return recordLoader.ensure(row, { refresh: true });
     },
     // Right click, Menu key or Shift+F10 on a record (UI-29): the grid selected it; the menu opens once the detail shows it.
     onContextMenu: (request) => {
@@ -428,6 +430,11 @@ function start() {
       }
     },
     onView: () => followTail && followTail.viewChanged(),
+  });
+  const recordLoader = createRecordLoader({
+    getEntry: () => detail.entry,
+    show: (id) => detail.show(id),
+    hold: (id) => detail.hold(id),
   });
   const detail = new Detail({
     empty: byId("detail-empty"),
@@ -1499,8 +1506,12 @@ function start() {
     // The opener and its region are read before anything loads or moves: the palette gives the focus back to them.
     openPalette: async () => {
       const opener = document.activeElement;
+      const forCase = caseId;
       let region = shortcuts === null ? null : shortcuts.regions.regionOf(opener);
       const module = await loadPalette();
+      if (caseId !== forCase) {
+        return; // the case changed while the module loaded
+      }
       if (region === null && shortcuts !== null) {
         region = shortcuts.regions.regionOf(opener);
       }
@@ -1509,25 +1520,9 @@ function start() {
   };
   const singleKeysOn = () => (shortcuts === null ? true : shortcuts.singleKeys());
   // The record actions work on the shown record: a menu opened on another row makes the detail show it first.
-  // One request per record at a time: the grid's hook and the menu's own prepare share it.
-  let recordShowing = null;
-  const showRecordFor = (row) => {
-    const same = () => detail.entry !== null && String(detail.entry.id) === String(row.id);
-    if (same()) {
-      return Promise.resolve(true);
-    }
-    if (recordShowing !== null && String(recordShowing.id) === String(row.id)) {
-      return recordShowing.promise;
-    }
-    const mine = { id: row.id, promise: null };
-    mine.promise = detail.show(row.id).then(same, () => false).finally(() => {
-      if (recordShowing === mine) {
-        recordShowing = null;
-      }
-    });
-    recordShowing = mine;
-    return mine.promise;
-  };
+  // One way to show a record for the selection, the menu and the palette (late-init.js): they share the running request and a
+  // record that is shown is held against a late answer for another one.
+  const showRecordFor = (row) => recordLoader.ensure(row);
   const loadRowMenu = retryable(() => import("./context-menu.js").then((module) => {
     if (rowMenu === null) {
       rowMenu = module.createContextMenu({
@@ -1552,12 +1547,30 @@ function start() {
     rowMenuTarget = request.row.id;
     grid.holdSelection();
     showRecordFor(request.row);
-    const menu = await loadRowMenu();
-    const selected = grid.selectedRow();
-    if (gen !== rowMenuGen || caseId !== forCase || !selected || String(selected.id) !== String(request.row.id)) {
-      return false; // overtaken while the module loaded
+    // Watched from now on, not from the moment the menu opens: a scroll, a click or the focus moving while the module
+    // loads cancels the request (the menu module watches the same things once it has the request).
+    const stop = watchGesture({
+      doc: document,
+      win: window,
+      keep: byId("grid-viewport"),
+      cancel: () => {
+        if (gen === rowMenuGen) {
+          closeRowMenu();
+        }
+      },
+    });
+    try {
+      const menu = await loadRowMenu();
+      const selected = grid.selectedRow();
+      if (gen !== rowMenuGen || caseId !== forCase || !selected || String(selected.id) !== String(request.row.id)) {
+        return false; // overtaken while the module loaded
+      }
+      const opening = menu.open(request); // starts watching synchronously
+      stop();
+      return await opening;
+    } finally {
+      stop();
     }
-    return menu.open(request);
   };
   const loadPalette = retryable(() => import("./commands.js").then((module) => {
     if (palette === null) {

@@ -510,3 +510,77 @@ test("the case changing while the palette loads drops the opening", async () => 
   await pending;
   assert.equal(p.palette.isOpen(), false);
 });
+
+// ---- cancelled or overtaken openings and runs never touch the detail or run an action -----------------------------------------
+
+test("an opening cancelled by a case change while the choices load never asks for the detail of the old record", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const seen = [];
+  const p = page({
+    prepare: async (row) => { seen.push(row.id); return true; },
+    extra: (actions) => actions.register({
+      id: "view.slow", labelKey: "actTheme", group: "view", enabled: () => true, children: () => [{ label: "a", args: 1 }], load: () => gate, run() {},
+    }),
+  });
+  p.opener.focus();
+  p.st.record = true;
+  const pending = p.palette.open(p.opener);
+  p.st.caseId = "C2";
+  p.palette.close();
+  release();
+  await pending;
+  assert.deepEqual(seen, [], "prepare() was not called: not with the record of case C1 inside case C2");
+  assert.equal(p.palette.isOpen(), false);
+});
+
+test("a selection that moved while the choices load also stops the opening before prepare", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const seen = [];
+  const p = page({
+    prepare: async (row) => { seen.push(row.id); return true; },
+    extra: (actions) => actions.register({
+      id: "view.slow", labelKey: "actTheme", group: "view", enabled: () => true, children: () => [{ label: "a", args: 1 }], load: () => gate, run() {},
+    }),
+  });
+  p.opener.focus();
+  const pending = p.palette.open(p.opener);
+  p.st.sel = p.st.row(4);
+  release();
+  await pending;
+  assert.deepEqual(seen, []);
+});
+
+test("an action whose loader is still arriving does not run if the case changed meanwhile, and runs when nothing moved", async () => {
+  for (const [move, runs] of [[(st) => { st.caseId = "C2"; }, 0], [(st) => { st.sel = st.row(3); }, 0], [() => {}, 1]]) {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let ran = 0;
+    const p = page({
+      extra: (actions) => actions.register({
+        id: "view.late", labelKey: "actTheme", group: "view", enabled: () => true, load: () => gate, run() { ran += 1; },
+      }),
+    });
+    await open(p);
+    type(p, "theme");
+    const late = p.parts().options.find((o) => o.dataset.action === "view.late");
+    late.children[0].dispatch("click");
+    await tick(); // the palette is closed and waits for the loader; the move comes after that
+    move(p.st);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(ran, runs);
+  }
+});
+
+test("the selection or the case changing WHILE the record is being prepared drops the opening (checked again after prepare)", async () => {
+  for (const move of [(st) => { st.sel = st.row(5); }, (st) => { st.caseId = "C2"; }]) {
+    let p;
+    p = page({ prepare: async () => { move(p.st); return true; } });
+    p.opener.focus();
+    await p.palette.open(p.opener);
+    assert.equal(p.palette.isOpen(), false);
+    assert.equal(p.doc.body.children.filter((c) => c.tagName === "DIALOG").length, 0, "nothing was built");
+  }
+});
