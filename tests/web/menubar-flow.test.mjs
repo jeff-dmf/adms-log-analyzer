@@ -191,7 +191,7 @@ test("the View menu: Columns, Follow tail (pressed), Theme with System, Light an
   let menu = open(doc, refs.menus.view);
   assert.deepEqual(labels(menu), [
     S.actColumns, S.actSources, S.actDetail, S.actFollowTail, S.actMarkRepeats, S.actHideRepeats, S.actRepeatWindow, S.actTheme,
-    S.actShortcuts,
+    S.actShortcuts, S.actPalette,
   ]);
   assert.equal(menu.children[8].attrs.role, "separator");
   // UI-17: the two panels are toggles of the same registry (the ones the keyboard regions and the menus share)

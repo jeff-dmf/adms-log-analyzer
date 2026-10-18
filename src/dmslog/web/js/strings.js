@@ -1700,6 +1700,25 @@ export const S = {
   actContext: "Context",
   actOnlyThisType: "Only this message type",
   actHighlightType: "Highlight this message type",
+  // Record menu and command palette (UI-29).
+  actPalette: "Command palette…",
+  actContextMenu: "Record menu",
+  actOnlySource: "Only this source",
+  actHideType: "Hide this message type",
+  actSameKeyNone: "This record has no correlation keys.",
+  ctxMenuLabel: "Record actions",
+  cmdTitle: "Command palette",
+  cmdPlaceholder: "Type a command",
+  cmdListLabel: "Commands",
+  cmdEmpty: "No command matches.",
+  cmdCountOne: "{count} command",
+  cmdCountOther: "{count} commands",
+  cmdHint: "Up and Down to choose, Enter to run, Esc to close.",
+  cmdChoice: "{action}: {choice}",
+  cmdGroups: {
+    case: "Case", toggle: "Panels", analyze: "Analyze", export: "Export", view: "View", views: "Views",
+    navigate: "Navigate", record: "Record", help: "Help",
+  },
   detailHighlightLoading: "Loading the highlight rules…",
   errorStartup: "The viewer could not start. Reload the page; if it happens again, restart dmslog.",
   actionUnavailable: "This feature could not be loaded.",
@@ -1838,7 +1857,7 @@ export const S = {
   scTimelineTitle: "Timeline:",
   sbHelp: "?",
   keyNames: {
-    ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down", Escape: "Esc",
+    ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down", Escape: "Esc", k: "K",
   },
 };
 

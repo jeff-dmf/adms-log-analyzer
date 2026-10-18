@@ -1,0 +1,130 @@
+/* UI-29: the command palette (Ctrl+K). The record context menu is a plain .ui-menu (components.css) and needs nothing here.
+   Colors, spacing and type come from tokens.css; the focus stays in the text field, so the active option is marked by a
+   ring and a fill, never by color alone. */
+
+.command-palette {
+  width: min(640px, 92vw);
+  margin-top: 10vh;
+}
+
+.command-palette .ui-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.command-palette .cmd-field {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cmd-list {
+  max-height: min(50vh, 420px);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.cmd-list[hidden] {
+  display: none;
+}
+
+.cmd-option {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  min-height: 24px;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  cursor: pointer;
+}
+
+.cmd-option:hover {
+  background: var(--row-hover);
+}
+
+.cmd-option[aria-selected="true"] {
+  background: var(--row-selected);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.cmd-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-group,
+.cmd-reason {
+  flex: none;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.cmd-key {
+  flex: none;
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+  background: var(--surface-field);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+
+.cmd-option[aria-disabled="true"] {
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+
+.cmd-option[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.cmd-status {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.cmd-hint {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+/* A narrow window: the group name goes (the label and the key are what is needed). */
+@media (max-width: 480px) {
+  .cmd-group {
+    display: none;
+  }
+}
+
+/* Forced colors (Windows high contrast): system colors, the active option filled with Highlight. */
+@media (forced-colors: active) {
+  .cmd-option[aria-selected="true"] {
+    color: HighlightText;
+    background: Highlight;
+    outline-color: HighlightText;
+  }
+
+  .cmd-option[aria-selected="true"] .cmd-group,
+  .cmd-option[aria-selected="true"] .cmd-reason,
+  .cmd-option[aria-selected="true"] .cmd-key {
+    color: HighlightText;
+  }
+
+  .cmd-option[aria-disabled="true"],
+  .cmd-option[aria-disabled="true"]:hover {
+    color: GrayText;
+    background: transparent;
+  }
+
+  .cmd-key {
+    border-color: ButtonText;
+  }
+}
