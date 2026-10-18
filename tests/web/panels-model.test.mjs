@@ -176,10 +176,17 @@ test("deriveOptions keeps a valid earlier choice and drops one the query no long
   assert.deepEqual(deriveOptions("line", { group_by: ["tpl"], measures: ["count"] }), {}, "does not fit: nothing to derive");
 });
 
+// The interpreters to try: DMSLOG_PYTHON, the repository's own venv (either layout), then the PATH.
+function pythonCandidates() {
+  const venv = process.platform === "win32" ? path.join(ROOT, ".venv", "Scripts", "python.exe") : path.join(ROOT, ".venv", "bin", "python");
+  return [process.env.DMSLOG_PYTHON, venv, "python3", "python"].filter(Boolean);
+}
+// PYTHONUTF8: on Windows the child would read stdin with the locale code page and mangle astral characters.
+const PYTHON_ENV = { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" };
+
 // The widgets the editor can make are checked by the server's own validator, when a python is at hand.
 function pythonValidates(widgets) {
-  const python = process.env.DMSLOG_PYTHON || path.join("/home/jeffdmf/Projects/adms-log-analyzer", ".venv/bin/python");
-  const candidates = [python, "python3", "python"];
+  const candidates = pythonCandidates();
   const script = [
     "import json, sys",
     "sys.path.insert(0, 'src')",
@@ -194,7 +201,7 @@ function pythonValidates(widgets) {
     "print(json.dumps(out))",
   ].join("\n");
   for (const exe of candidates) {
-    const run = spawnSync(exe, ["-c", script], { cwd: ROOT, input: JSON.stringify(widgets), encoding: "utf8", timeout: 30000 });
+    const run = spawnSync(exe, ["-c", script], { cwd: ROOT, env: PYTHON_ENV, input: JSON.stringify(widgets), encoding: "utf8", timeout: 30000 });
     if (run.status === 0) {
       return JSON.parse(run.stdout.trim().split("\n").pop());
     }
@@ -441,9 +448,8 @@ test("revisions: a number is kept while it is exact; the digits of a 64-bit one 
 });
 
 function pythonRun(script, input) {
-  const python = process.env.DMSLOG_PYTHON || path.join("/home/jeffdmf/Projects/adms-log-analyzer", ".venv/bin/python");
-  for (const exe of [python, "python3", "python"]) {
-    const run = spawnSync(exe, ["-c", script], { cwd: ROOT, input: JSON.stringify(input), encoding: "utf8", timeout: 30000 });
+  for (const exe of pythonCandidates()) {
+    const run = spawnSync(exe, ["-c", script], { cwd: ROOT, env: PYTHON_ENV, input: JSON.stringify(input), encoding: "utf8", timeout: 30000 });
     if (run.status === 0) {
       return JSON.parse(run.stdout.trim().split("\n").pop());
     }
