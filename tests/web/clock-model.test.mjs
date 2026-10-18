@@ -45,33 +45,58 @@ test("parseOffset: whole milliseconds within 31 days, nothing else", () => {
 
 test("recordRef keeps ids and times, needs a time and a known collection", () => {
   const groupOfSource = (id) => ({ 1: 1, 2: 2 })[id] ?? null;
-  const made = model.recordRef({ id: 7, ts: T, source_id: 2, ts_adjusted: T + 5 }, { caseId: "A", groupOfSource });
-  assert.deepEqual(made, { ok: true, ref: { caseId: "A", id: 7, ts: T, tsAdjusted: T + 5, group: 2 } });
+  const made = model.recordRef({ id: 7, ts: T, source_id: 2, ts_adjusted: T + 5 }, { scope: { caseId: "A", generation: 1 }, groupOfSource });
+  assert.deepEqual(made, { ok: true, ref: { caseId: "A", generation: 1, id: 7, ts: T, tsAdjusted: T + 5, group: 2 } });
   assert.ok(Object.isFrozen(made.ref));
-  assert.equal(model.recordRef({ id: 7, ts: T, source_id: 1 }, { caseId: "A", groupOfSource }).ref.tsAdjusted, T, "no offsets: adjusted = original");
-  assert.deepEqual(model.recordRef({ id: 7, ts: null, source_id: 1 }, { caseId: "A", groupOfSource }), { ok: false, reason: "no_time" });
-  assert.deepEqual(model.recordRef({ id: 7, ts: T, source_id: 99 }, { caseId: "A", groupOfSource }), { ok: false, reason: "no_collection" });
-  assert.deepEqual(model.recordRef({ id: 0, ts: T, source_id: 1 }, { caseId: "A", groupOfSource }), { ok: false, reason: "record" });
-  assert.deepEqual(model.recordRef(null, { caseId: "A", groupOfSource }), { ok: false, reason: "record" });
-  assert.deepEqual(model.recordRef({ id: 7, ts: T, source_id: 1 }, { caseId: null, groupOfSource }), { ok: false, reason: "record" });
+  assert.equal(model.recordRef({ id: 7, ts: T, source_id: 1 }, { scope: { caseId: "A", generation: 1 }, groupOfSource }).ref.tsAdjusted, T, "no offsets: adjusted = original");
+  assert.deepEqual(model.recordRef({ id: 7, ts: null, source_id: 1 }, { scope: { caseId: "A", generation: 1 }, groupOfSource }), { ok: false, reason: "no_time" });
+  assert.deepEqual(model.recordRef({ id: 7, ts: T, source_id: 99 }, { scope: { caseId: "A", generation: 1 }, groupOfSource }), { ok: false, reason: "no_collection" });
+  assert.deepEqual(model.recordRef({ id: 0, ts: T, source_id: 1 }, { scope: { caseId: "A", generation: 1 }, groupOfSource }), { ok: false, reason: "record" });
+  assert.deepEqual(model.recordRef(null, { scope: { caseId: "A", generation: 1 }, groupOfSource }), { ok: false, reason: "record" });
+  assert.deepEqual(model.recordRef({ id: 7, ts: T, source_id: 1 }, { scope: { caseId: null, generation: 1 }, groupOfSource }), { ok: false, reason: "record" });
   assert.equal(model.refReasonText("no_time"), S.ckRefNoTime);
   assert.equal(model.refReasonText("no_collection"), S.ckRefNoCollection);
   assert.equal(model.refReasonText("record"), S.ckErrFailed);
 });
 
-test("picks belong to a case: another case never sees them, clear forgets both", () => {
+test("picks belong to a scope (case AND generation): A opened again is not the same scope; clear forgets both", () => {
   const picks = model.createPicks();
-  const a = { caseId: "A", id: 1, group: 1 };
-  const b = { caseId: "A", id: 2, group: 2 };
+  const a = { caseId: "A", generation: 1, id: 1, group: 1 };
+  const b = { caseId: "A", generation: 1, id: 2, group: 2 };
   picks.setAnchor(a);
   picks.setTarget(b);
-  assert.equal(picks.anchor("A"), a);
-  assert.equal(picks.target("A"), b);
-  assert.equal(picks.anchor("B"), null);
-  assert.equal(picks.target(null), null);
+  assert.equal(picks.anchor({ caseId: "A", generation: 1 }), a);
+  assert.equal(picks.target({ caseId: "A", generation: 1 }), b);
+  assert.equal(picks.anchor({ caseId: "B", generation: 1 }), null);
+  assert.equal(picks.anchor({ caseId: "A", generation: 2 }), null, "the same case id opened again");
+  assert.equal(picks.target({ caseId: null, generation: 1 }), null);
   picks.clear();
-  assert.equal(picks.anchor("A"), null);
-  assert.equal(picks.target("A"), null);
+  assert.equal(picks.anchor({ caseId: "A", generation: 1 }), null);
+  assert.equal(picks.target({ caseId: "A", generation: 1 }), null);
+});
+
+test("consume removes only the picks an operation used, by identity", () => {
+  const picks = model.createPicks();
+  const scope = { caseId: "A", generation: 1 };
+  const a1 = { caseId: "A", generation: 1, id: 1, group: 1 };
+  const t1 = { caseId: "A", generation: 1, id: 2, group: 2 };
+  picks.setAnchor(a1);
+  picks.setTarget(t1);
+  const a2 = { ...a1 }; // the same record picked again afterwards: a new pick
+  picks.setAnchor(a2);
+  picks.consume(a1, t1);
+  assert.equal(picks.anchor(scope), a2, "the newer anchor survives");
+  assert.equal(picks.target(scope), null);
+  picks.consume(null, null);
+  assert.equal(picks.anchor(scope), a2);
+});
+
+test("sameScope needs a case and an equal generation", () => {
+  assert.equal(model.sameScope({ caseId: "A", generation: 1 }, { caseId: "A", generation: 1 }), true);
+  assert.equal(model.sameScope({ caseId: "A", generation: 1 }, { caseId: "A", generation: 2 }), false);
+  assert.equal(model.sameScope({ caseId: "A", generation: 1 }, { caseId: "B", generation: 1 }), false);
+  assert.equal(model.sameScope({ caseId: null, generation: 1 }, { caseId: null, generation: 1 }), false);
+  assert.equal(model.sameScope(null, { caseId: "A", generation: 1 }), false);
 });
 
 test("pairOf: the anchor must be in another collection and the target in the aligned one", () => {

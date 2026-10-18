@@ -20,7 +20,8 @@
 //   copyRecord(), loadContext(same), filterType(), highlightType(), highlightReady()   the record actions
 //   navigateRecord(kind, dir), navigateHighlight(dir), toggleBookmark(), compareSelected(), viewsBack(), viewsForward(),
 //   focusSearch(), moveRegion(dir), openShortcuts()   the keyboard actions (UI-28), see "Keys" below
-//   clockOptions()             { api, getCase, getCollections, groupOfSource, onApplied, onMessage } of clock-dialog.js (9.15)
+//   clockOptions()             { api, getContext, getCollections, groupOfSource, view, onMessage } of clock-dialog.js (9.15)
+//   clockContext()             {caseId, generation} of the open case (the generation grows every time a case is opened)
 import { S } from "./strings.js";
 import { THEME_CHOICES } from "./theme.js";
 
@@ -555,7 +556,8 @@ export function registerAppActions(actions, deps) {
     load: loadClock,
     run: async (ctx) => {
       const entry = ctx.entry();
-      (await loadClock()).setAnchor(entry);
+      const expected = deps.clockContext(); // the case and its generation now: the module may load after a case change
+      (await loadClock()).setAnchor(entry, expected);
     },
   });
   recordAction({
@@ -567,7 +569,8 @@ export function registerAppActions(actions, deps) {
     run: async (ctx) => {
       const entry = ctx.entry();
       const opener = document.activeElement; // read before the module loads: the dialog gives the focus back to it
-      (await loadClock()).setTarget(entry, opener); // opens the dialog when the anchor is in another collection
+      const expected = deps.clockContext();
+      (await loadClock()).setTarget(entry, opener, expected); // opens the dialog when the anchor is in another collection
     },
   });
   // Shift+F10 in the grid (the Menu key and the right click reach the menu through the grid's contextmenu event).
@@ -627,8 +630,16 @@ export function registerAppActions(actions, deps) {
     },
     // What the Collections panel's row menu calls (collections-panel.js `clock` option).
     clock: {
-      align: (group, opener) => loadClock().then((clock) => clock.align(group, opener)).catch((err) => deps.onError(err)),
-      reset: (group) => loadClock().then((clock) => clock.reset(group)).catch((err) => deps.onError(err)),
+      // The case and its generation are read BEFORE the module loads and handed back: an action started in case A never acts
+      // on case B (or on A opened again) because the import took a while.
+      align(group, opener) {
+        const expected = deps.clockContext();
+        return loadClock().then((clock) => clock.align(group, opener, expected)).catch((err) => deps.onError(err));
+      },
+      reset(group) {
+        const expected = deps.clockContext();
+        return loadClock().then((clock) => clock.reset(group, expected)).catch((err) => deps.onError(err));
+      },
       busy: () => clockController !== null && clockController.busy(),
     },
   };

@@ -260,3 +260,14 @@ test("the order note is a live region: its text is written only when the sentenc
   panel.render();
   assert.equal(writes, 0);
 });
+
+test("a list that fails to load says it with a static sentence, never the server's text", async () => {
+  const panel = new CollectionsPanel({
+    host: new FakeNode("section"), note: new FakeNode("div"),
+    api: { collections: async () => { throw Object.assign(new Error("database is locked: /secret/case.db"), { code: "database_error" }); } },
+    getCase: () => "case1", loadMenu: fakeMenuLoader,
+  });
+  await panel.refresh();
+  assert.equal(panel.status.textContent, S.colLoadError);
+  assert.ok(!panel.status.textContent.includes("secret"));
+});

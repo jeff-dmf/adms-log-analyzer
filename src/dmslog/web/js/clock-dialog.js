@@ -10,7 +10,7 @@
 import { createDialogShell, node, setStatusLine, statusLine } from "./panel-shell.js";
 import {
   acceptApplied, acceptPreview, createPicks, currentText, errorText, formatOffset, isAbort, pairBody, pairOf, parseOffset,
-  previewText, problemText, recordRef, refReasonText, timeText,
+  previewText, problemText, recordRef, refReasonText, sameScope, timeText,
 } from "./clock-model.js";
 import { S, format } from "./strings.js";
 
@@ -18,21 +18,38 @@ let uid = 0;
 
 // host: where the dialog is added (document.body). Options:
 //   api                   { clock: { set(caseId, group, body, signal), reset(caseId, group, signal) } }
-//   getCase()             the open case id or null
+//   getContext()          {caseId, generation}: the open case (null when none) and its generation, a counter that grows every time
+//                         a case is opened, so an answer meant for case A cannot act on A opened again later
+//                         (every method that takes `expected` does nothing when it no longer matches the live context)
 //   getCollections()      the list of GET /collections of the open case
 //   groupOfSource(id)     the collection group of a source, or null
-//   onApplied(result)     the offsets changed: reload the list and the view (a promise); only called for the current case
+//   view                  what the page offers to put the view right after an offset changed (the sequence and its checks live
+//                         here, so every wait is followed by a check of the scope):
+//                         keep() -> {id, ts} | null     the record the user is on (selected, else shown in the detail)
+//                         refreshList() -> Promise      reload GET /collections (offsets, `clocks`, the Adjusted time column)
+//                         applyView() -> Promise        reload the grid, the timeline and the filter strip
+//                         refreshDerived()              the panels fed by derived events
+//                         reveal({id, ts}) -> Promise   select that record again, at its adjusted time
+//                         selectedId() -> id | null     the selected record
+//                         clearDetail()                 the record left the view: the detail is emptied
 //   onMessage(text, isError)   the page's message region (the dialog has its own for what happens while it is open)
-// Returns { setAnchor(entry), setTarget(entry, opener), align(group, opener), reset(group), forgetCase(), busy(), isOpen(),
-//           picked() }; align() resolves when the dialog is closed.
+// Returns { setAnchor(entry, expected), setTarget(entry, opener, expected), align(group, opener, expected), reset(group, expected),
+//           forgetCase(), busy(), isOpen(), picked() }; align() resolves when the dialog is closed.
 export function mountClock(host, options) {
   const doc = host.ownerDocument || document;
-  const { api, getCase, getCollections, groupOfSource, onApplied, onMessage } = options;
+  const { api, getContext, getCollections, groupOfSource, view, onMessage } = options;
+  const scopeNow = () => {
+    const context = getContext();
+    return { caseId: context.caseId, generation: context.generation };
+  };
+  const here = (scope) => sameScope(scope, scopeNow());
+  // `expected` (optional): the scope the caller saw when it decided; a caller that waited (a module load) passes it back.
+  const stale = (expected) => expected !== undefined && expected !== null && !here(expected);
   const picks = createPicks();
   let seq = 0;
   let current = null; // the operation the dialog shows
   let ui = null; // the dialog's elements while it is open
-  let mutating = null; // {caseId, group}: the PUT/DELETE in flight
+  let mutating = null; // {scope, group}: the PUT/DELETE in flight
   let waiters = []; // align() promises waiting for the close
 
   function collectionOf(group) {
@@ -50,13 +67,12 @@ export function mountClock(host, options) {
     return item ? item.tag || format(S.colTag, { number: item.number }) : String(group);
   }
 
-  const live = (op) => current === op && ui !== null && getCase() === op.caseId;
+  const live = (op) => current === op && ui !== null && here(op.scope);
 
   // ---- picking the records ------------------------------------------------------------------------------------------
 
   function pick(entry) {
-    const caseId = getCase();
-    const made = recordRef(entry, { caseId, groupOfSource });
+    const made = recordRef(entry, { scope: scopeNow(), groupOfSource });
     if (!made.ok) {
       onMessage(refReasonText(made.reason), true);
       return null;
@@ -64,7 +80,10 @@ export function mountClock(host, options) {
     return made.ref;
   }
 
-  function setAnchor(entry) {
+  function setAnchor(entry, expected) {
+    if (stale(expected)) {
+      return false;
+    }
     const ref = pick(entry);
     if (ref === null) {
       return false;
@@ -75,13 +94,16 @@ export function mountClock(host, options) {
   }
 
   // The target completes the pair: with an anchor in another collection the dialog opens for the target's collection.
-  function setTarget(entry, opener) {
+  function setTarget(entry, opener, expected) {
+    if (stale(expected)) {
+      return Promise.resolve();
+    }
     const ref = pick(entry);
     if (ref === null) {
       return Promise.resolve();
     }
     picks.setTarget(ref);
-    const anchor = picks.anchor(ref.caseId);
+    const anchor = picks.anchor(ref);
     if (anchor === null) {
       onMessage(format(S.ckTargetNoAnchor, { id: ref.id, tag: tagOf(ref.group), time: timeText(ref.ts) }), false);
       return Promise.resolve();
@@ -90,14 +112,17 @@ export function mountClock(host, options) {
       onMessage(S.ckSameCollection, true);
       return Promise.resolve();
     }
-    return align(ref.group, opener);
+    return align(ref.group, opener, ref);
   }
 
   // ---- the dialog ---------------------------------------------------------------------------------------------------
 
-  function align(group, opener) {
-    const caseId = getCase();
-    if (caseId === null || caseId === undefined || collectionOf(group) === null || (getCollections() || []).length < 2) {
+  function align(group, opener, expected) {
+    const scope = scopeNow();
+    if (stale(expected) || scope.caseId === null || scope.caseId === undefined) {
+      return Promise.resolve();
+    }
+    if (collectionOf(group) === null || (getCollections() || []).length < 2) {
       onMessage(S.ckAlignNeedTwo, true);
       return Promise.resolve();
     }
@@ -108,10 +133,10 @@ export function mountClock(host, options) {
       onMessage(S.ckBusy, true);
       return Promise.resolve();
     }
-    const anchor = picks.anchor(caseId);
-    const target = picks.target(caseId);
+    const anchor = picks.anchor(scope);
+    const target = picks.target(scope);
     const op = {
-      token: (seq += 1), caseId, group, anchor, target, pair: pairOf(group, anchor, target), mode: "pair",
+      token: (seq += 1), scope, caseId: scope.caseId, group, anchor, target, pair: pairOf(group, anchor, target), mode: "pair",
       previous: collectionOf(group).clock_offset_ms || 0, manualText: "", preview: null, dry: null, dryToken: 0, applying: false,
     };
     current = op;
@@ -366,8 +391,8 @@ export function mountClock(host, options) {
   // ---- apply --------------------------------------------------------------------------------------------------------
 
   // Sends one PUT/DELETE; at most one in flight. Resolves to {result, error}; it never rejects.
-  async function mutate(caseId, group, send) {
-    mutating = { caseId, group };
+  async function mutate(scope, group, send) {
+    mutating = { scope, group };
     try {
       return { result: await send(), error: null };
     } catch (err) {
@@ -381,11 +406,37 @@ export function mountClock(host, options) {
   // applied, so the view is read again. A 4xx changed nothing.
   const uncertain = (err) => !(err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500);
 
-  async function reload(result) {
+  // The page is put right after the offsets changed: list, view, derived panels, then the record the user was on (by id, at
+  // its adjusted time). The scope is checked after EVERY wait, so a case opened meanwhile (even the same one again) is never
+  // reloaded or selected by this old operation. A failure is reported with the static sentence of its code.
+  async function reload(scope) {
     try {
-      await onApplied(result);
+      const keep = view.keep();
+      await view.refreshList();
+      if (!here(scope)) {
+        return;
+      }
+      await view.applyView();
+      if (!here(scope)) {
+        return;
+      }
+      view.refreshDerived();
+      if (keep === null) {
+        return;
+      }
+      try {
+        await view.reveal(keep);
+      } catch (err) {
+        // the record may be outside the view: decided below
+      }
+      if (here(scope) && view.selectedId() !== keep.id) {
+        view.clearDetail();
+        onMessage(S.ckRecordLeftView, false); // explicit: the detail does not silently show another record
+      }
     } catch (err) {
-      onMessage(err && err.message ? err.message : String(err), true);
+      if (here(scope)) {
+        onMessage(errorText(err), true);
+      }
     }
   }
 
@@ -402,7 +453,7 @@ export function mountClock(host, options) {
       }
       return;
     }
-    const { caseId, group } = op; // align() and reset() refuse to run while a change is in flight: this one is alone
+    const { scope, group } = op; // align() and reset() refuse to run while a change is in flight: this one is alone
     const tag = tagOf(group);
     const pair = op.mode === "pair";
     const body = pair ? pairBody(op.pair.anchor, op.pair.target, false) : { offset_ms: parseOffset(op.manualText).ms };
@@ -411,10 +462,10 @@ export function mountClock(host, options) {
     setStatus(op, S.ckApplying, false);
     paint(op);
     ui.applyButton.focus();
-    const { result, error } = await mutate(caseId, group, () => api.clock.set(caseId, group, body));
+    const { result, error } = await mutate(scope, group, () => api.clock.set(scope.caseId, group, body));
     op.applying = false;
-    if (getCase() !== caseId) {
-      return; // another case is open: this answer is not about it
+    if (!here(scope)) {
+      return; // another case (or the same one opened again) is open: this answer is not about it
     }
     if (error !== null || !acceptApplied(result, group)) {
       const text = error !== null ? errorText(error) : S.ckErrFailed;
@@ -425,26 +476,26 @@ export function mountClock(host, options) {
         onMessage(text, true);
       }
       if (error === null || uncertain(error)) {
-        await reload(null);
+        await reload(scope);
       }
       return;
     }
     if (pair) {
-      picks.clear();
+      picks.consume(op.pair.anchor, op.pair.target); // only what this operation used; newer picks stay
     }
     if (live(op)) {
       ui.shell.close(); // the focus goes back to the opener before the list is drawn again
     }
     onMessage(result.clock_offset_ms === 0 ? format(S.ckAppliedNone, { tag }) : format(S.ckApplied, { tag, offset: formatOffset(result.clock_offset_ms) }), false);
-    await reload(result);
+    await reload(scope);
   }
 
   // ---- reset --------------------------------------------------------------------------------------------------------
 
-  async function reset(group) {
-    const caseId = getCase();
+  async function reset(group, expected) {
+    const scope = scopeNow();
     const item = collectionOf(group);
-    if (caseId === null || caseId === undefined || item === null) {
+    if (stale(expected) || scope.caseId === null || scope.caseId === undefined || item === null) {
       return;
     }
     const tag = tagOf(group);
@@ -456,20 +507,19 @@ export function mountClock(host, options) {
       onMessage(format(S.ckResetNone, { tag }), false);
       return;
     }
-    const { result, error } = await mutate(caseId, group, () => api.clock.reset(caseId, group));
-    if (getCase() !== caseId) {
+    const { result, error } = await mutate(scope, group, () => api.clock.reset(scope.caseId, group));
+    if (!here(scope)) {
       return;
     }
     if (error !== null || !acceptApplied(result, group)) {
       onMessage(error !== null ? errorText(error) : S.ckErrFailed, true);
       if (error === null || uncertain(error)) {
-        await reload(null);
+        await reload(scope);
       }
       return;
     }
-    picks.clear();
     onMessage(format(S.ckResetDone, { tag, offset: formatOffset(result.previous_ms) }), false);
-    await reload(result);
+    await reload(scope);
   }
 
   // ---- closing ------------------------------------------------------------------------------------------------------
@@ -509,6 +559,6 @@ export function mountClock(host, options) {
     forgetCase,
     busy: () => mutating !== null,
     isOpen: () => current !== null,
-    picked: () => ({ anchor: picks.anchor(getCase()), target: picks.target(getCase()) }),
+    picked: () => ({ anchor: picks.anchor(scopeNow()), target: picks.target(scopeNow()) }),
   };
 }

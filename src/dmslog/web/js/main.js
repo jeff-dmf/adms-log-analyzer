@@ -236,6 +236,7 @@ function start() {
   let sources = [];
   let sourceNames = new Map();
   let caseId = null;
+  let caseGen = 0; // grows every time a case is opened: an answer for case A cannot act on A opened again (9.15)
   let formState = { sevMax: null, levelMax: null, from: null, to: null };
   let searchText = "";
   let userFilter = null; // the filter tree's filter (plus timeline range and template clicks)
@@ -602,11 +603,16 @@ function start() {
     currentFilter = filter;
     attempt.filter = filter;
     navRequests.invalidate();
-    const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to);
+    // With clock offsets the cursors, the time filters and the scrollbar all use the adjusted axis (ARQUITETURA 10.13).
+    const offsetOf = (source) => {
+      const found = collections.find((item) => item.group === source.collection);
+      return found && Number.isSafeInteger(found.clock_offset_ms) ? found.clock_offset_ms : 0;
+    };
+    const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to, offsetOf);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
     detail.setTerms(terms); // the detail pane stays until the new page is confirmed (a failure must not blank it)
-    const caseRange = timeSpan(sources, [], null, null); // the whole case: decides the date in the time column
+    const caseRange = timeSpan(sources, [], null, null, offsetOf); // the whole case: decides the date in the time column
     const loaded = grid.setView({ caseId, filter, range, caseRange });
     loaded.then(firstViewDone, firstViewDone);
     viewFlow.track(token, loaded, () => (grid.failure ? grid.failure.kind : "unknown"), isRetryable);
@@ -640,6 +646,7 @@ function start() {
     emptyHost: byId("grid-panel"), // the empty state without a case (case-empty.js, loaded on demand)
   }, {
     onCase: (id) => {
+      caseGen += 1;
       caseId = id;
       closeRowMenu();
       if (palette !== null) {
@@ -1398,6 +1405,7 @@ function start() {
   });
   dock.bind(ctx); // step 2 of the dock
   const caseSelect = byId("case-select");
+  const clockContext = () => ({ caseId, generation: caseGen });
   const deps = {
     api,
     derivedApi,
@@ -1409,22 +1417,34 @@ function start() {
     onError: showError,
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
+    clockContext,
     clockOptions: () => ({
       api,
-      getCase: () => caseId,
+      getContext: clockContext,
       getCollections: () => collections,
       groupOfSource: (id) => {
         const found = sources.find((source) => source.id === id);
         return found ? found.collection : null;
       },
-      // The order across collections changed: reload the list, the view, the derived panels and the shown record.
-      onApplied: async () => {
-        await collectionsPanel.refresh();
-        await applyView();
-        refreshDerived();
-        if (detail.entry) {
-          detail.show(detail.entry.id, true);
-        }
+      // The order across collections changed: clock-dialog.js runs the reload (list, view, derived panels, the record the user
+      // was on) with these pieces and checks the case and its generation after every wait.
+      view: {
+        keep: () => {
+          const row = grid.selectedRow();
+          if (row) {
+            return { id: row.id, ts: row.ts };
+          }
+          return detail.entry ? { id: detail.entry.id, ts: detail.entry.ts } : null;
+        },
+        refreshList: () => collectionsPanel.refresh(),
+        applyView: () => applyView(),
+        refreshDerived: () => refreshDerived(),
+        reveal: (keep) => grid.revealRow(keep), // reads the record's adjusted time first: the cursor axis is the adjusted one
+        selectedId: () => {
+          const row = grid.selectedRow();
+          return row ? row.id : null;
+        },
+        clearDetail: () => detail.clear(),
       },
       onMessage: showMessage,
     }),

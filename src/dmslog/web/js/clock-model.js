@@ -35,11 +35,17 @@ export function formatSpan(ms) {
 
 // ---- the picked records -------------------------------------------------------------------------------------------
 
+// The scope an operation belongs to: the open case AND its generation (a counter that grows every time a case is opened, so
+// A -> B -> A is not the same scope as before). {caseId, generation}; null caseId = no case.
+export function sameScope(a, b) {
+  return Boolean(a) && Boolean(b) && a.caseId !== null && a.caseId !== undefined && a.caseId === b.caseId && a.generation === b.generation;
+}
+
 // What the dialog keeps of a record: ids and times, never the element or the row object (a row leaves the grid window).
 // `entry` is a record as GET /api/entries/{id} returns it (id, ts, source_id, and ts_adjusted when the case has offsets).
 // groupOfSource(sourceId) -> the collection group of that source or null. Resolves to {ok: true, ref} or {ok: false, reason}.
-export function recordRef(entry, { caseId, groupOfSource }) {
-  if (!entry || !isId(Number(entry.id)) || caseId === null || caseId === undefined) {
+export function recordRef(entry, { scope, groupOfSource }) {
+  if (!entry || !isId(Number(entry.id)) || !scope || scope.caseId === null || scope.caseId === undefined) {
     return { ok: false, reason: "record" };
   }
   if (typeof entry.ts !== "number" || !Number.isFinite(entry.ts)) {
@@ -50,7 +56,7 @@ export function recordRef(entry, { caseId, groupOfSource }) {
     return { ok: false, reason: "no_collection" };
   }
   const adjusted = typeof entry.ts_adjusted === "number" && Number.isFinite(entry.ts_adjusted) ? entry.ts_adjusted : entry.ts;
-  return { ok: true, ref: Object.freeze({ caseId, id: Number(entry.id), ts: entry.ts, tsAdjusted: adjusted, group }) };
+  return { ok: true, ref: Object.freeze({ caseId: scope.caseId, generation: scope.generation, id: Number(entry.id), ts: entry.ts, tsAdjusted: adjusted, group }) };
 }
 
 // The text for a failed recordRef.
@@ -58,10 +64,12 @@ export function refReasonText(reason) {
   return reason === "no_time" ? S.ckRefNoTime : reason === "no_collection" ? S.ckRefNoCollection : S.ckErrFailed;
 }
 
-// The anchor and the target the user picked, per case: a pick made in another case is never returned.
+// The anchor and the target the user picked, per scope (case and generation): a pick of another scope is never returned.
+// An operation consumes only the picks it used (`consume`), so a late answer cannot erase picks made after it started.
 export function createPicks() {
   let anchor = null;
   let target = null;
+  const inScope = (ref, scope) => ref !== null && sameScope(ref, scope);
   return {
     setAnchor(ref) {
       anchor = ref;
@@ -69,8 +77,16 @@ export function createPicks() {
     setTarget(ref) {
       target = ref;
     },
-    anchor: (caseId) => (anchor !== null && anchor.caseId === caseId ? anchor : null),
-    target: (caseId) => (target !== null && target.caseId === caseId ? target : null),
+    anchor: (scope) => (inScope(anchor, scope) ? anchor : null),
+    target: (scope) => (inScope(target, scope) ? target : null),
+    consume(usedAnchor, usedTarget) {
+      if (usedAnchor !== null && anchor === usedAnchor) {
+        anchor = null;
+      }
+      if (usedTarget !== null && target === usedTarget) {
+        target = null;
+      }
+    },
     clear() {
       anchor = null;
       target = null;

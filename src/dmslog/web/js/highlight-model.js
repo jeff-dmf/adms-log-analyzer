@@ -4,6 +4,7 @@
 // most MARK_BATCH ids, every enabled rule at once) and POST /api/entries/highlight/next finds the next
 // highlighted record by keyset.
 import { parseTplList } from "./filters.js";
+import { cursorTime } from "./time.js";
 import { S, format } from "./strings.js";
 
 export const PALETTE = Object.freeze(["yellow", "orange", "red", "pink", "purple", "blue", "cyan", "green"]);
@@ -130,7 +131,8 @@ export function cursorOf(row) {
   if (!row) {
     return null;
   }
-  return (row.ts === null || row.ts === undefined ? "null" : String(row.ts)) + ":" + row.id;
+  const at = cursorTime(row);
+  return (at === null || at === undefined ? "null" : String(at)) + ":" + row.id;
 }
 
 function isAbort(error) {

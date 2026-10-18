@@ -85,18 +85,19 @@ function actionsSetup({ multi = true, caseId = "A" } = {}) {
   doc.body.children = [];
   doc.activeElement = doc.body;
   const registry = createActionRegistry({ onError: (err) => { throw err; } });
-  const state = { caseId, multi, messages: [], sets: [], applied: 0, entry: null, errors: [] };
+  const state = { caseId, gen: 1, multi, messages: [], sets: [], applied: 0, entry: null, errors: [] };
   const list = [{ group: 1, number: 1, tag: "C1", clock_offset_ms: 0 }, { group: 2, number: 2, tag: "C2", clock_offset_ms: 0 }];
   const app = registerAppActions(registry, {
     ready: {},
     hasCollections: () => state.multi,
+    clockContext: () => ({ caseId: state.caseId, generation: state.gen }),
     onError: (err) => state.errors.push(err),
     clockOptions: () => ({
       api: { clock: { set: (c, g, body, signal) => { state.sets.push([c, g, body, signal]); return new Promise(() => {}); }, reset: async () => ({}) } },
-      getCase: () => state.caseId,
+      getContext: () => ({ caseId: state.caseId, generation: state.gen }),
       getCollections: () => list,
       groupOfSource: (id) => ({ 1: 1, 2: 2 })[id] ?? null,
-      onApplied: async () => { state.applied += 1; },
+      view: { keep: () => null, refreshList: async () => {}, applyView: async () => { state.applied += 1; }, refreshDerived() {}, reveal: async () => {}, selectedId: () => null, clearDetail() {} },
       onMessage: (text, isError) => state.messages.push([text, isError]),
     }),
   });
@@ -157,9 +158,11 @@ test("onCase closes the dialog and forgets the picks; the rows' clock object is 
   await tick();
   assert.equal(doc.body.all().filter((n) => n.tagName === "DIALOG").length, 1);
   state.caseId = "B";
+  state.gen += 1;
   app.onCase();
   assert.equal(doc.body.all().filter((n) => n.tagName === "DIALOG").length, 0);
   state.caseId = "A";
+  state.gen += 1;
   state.entry = { id: 21, ts: T, source_id: 2 };
   await registry.invoke("record.clockTarget", ctx);
   assert.ok(state.messages.at(-1)[0].startsWith("Clock target: record 21"), "the anchor was forgotten: no dialog");
@@ -170,9 +173,63 @@ test("a failed load of the dialog module is reported through onError and tried a
   const boom = new Error("no options");
   let tries = 0;
   const errors = [];
-  const app = registerAppActions(registry, { ready: {}, onError: (e) => errors.push(e), clockOptions: () => { tries += 1; throw boom; } });
+  const app = registerAppActions(registry, { ready: {}, onError: (e) => errors.push(e), clockContext: () => ({ caseId: "A", generation: 1 }), clockOptions: () => { tries += 1; throw boom; } });
   await app.clock.align(2, null);
   await app.clock.reset(2);
   assert.deepEqual(errors, [boom, boom]);
   assert.equal(tries, 2, "the second use tried again");
+});
+
+function lateLoadApp() {
+  doc.body.children = [];
+  const registry = createActionRegistry({ onError: () => {} });
+  const state = { caseId: "A", gen: 1, resets: [], messages: [], errors: [] };
+  const list = [{ group: 1, number: 1, tag: "C1", clock_offset_ms: 0 }, { group: 2, number: 2, tag: "C2", clock_offset_ms: 20 }];
+  const app = registerAppActions(registry, {
+    ready: {},
+    onError: (e) => state.errors.push(e),
+    clockContext: () => ({ caseId: state.caseId, generation: state.gen }),
+    clockOptions: () => {
+      state.caseId = "A"; // the import finishes: the page is on A again, but it is another opening of A
+      state.gen += 2;
+      return {
+        api: { clock: { reset: async (...args) => { state.resets.push(args); return {}; }, set: async () => ({}) } },
+        getContext: () => ({ caseId: state.caseId, generation: state.gen }),
+        getCollections: () => list,
+        groupOfSource: () => 1,
+        view: { keep: () => null, refreshList: async () => {}, applyView: async () => {}, refreshDerived() {}, reveal: async () => {}, selectedId: () => null, clearDetail() {} },
+        onMessage: (text, isError) => state.messages.push([text, isError]),
+      };
+    },
+  });
+  return { app, state };
+}
+
+test("Reset decided in A never reaches the server when the module loads after the case was opened again", async () => {
+  const { app, state } = lateLoadApp();
+  await app.clock.reset(2);
+  assert.deepEqual(state.resets, [], "no DELETE");
+  assert.deepEqual(state.messages, []);
+  assert.deepEqual(state.errors, []);
+  await app.clock.reset(2); // a new decision, taken in the live scope, goes through
+  assert.equal(state.resets.length, 1);
+});
+
+test("Align clock decided in A opens no dialog in the case opened meanwhile", async () => {
+  const { app, state } = lateLoadApp();
+  await app.clock.align(2, null);
+  assert.equal(doc.body.all().filter((n) => n.tagName === "DIALOG").length, 0);
+  assert.deepEqual(state.errors, []);
+});
+
+// main.js is the page's wiring and has no unit harness: these checks read its text for the pieces the review asked for.
+test("main.js wiring: a generation per opened case, one clock scope for the actions and the dialog, offsets on both time spans", async () => {
+  const { readFileSync } = await import("node:fs");
+  const main = readFileSync(new URL("../../src/dmslog/web/js/main.js", import.meta.url), "utf8");
+  assert.match(main, /caseGen \+= 1;\s*caseId = id;/, "every opened case gets a new generation");
+  assert.match(main, /const clockContext = \(\) => \(\{ caseId, generation: caseGen \}\);/);
+  assert.match(main, /clockContext,\s*clockOptions: \(\) => \(\{[\s\S]*getContext: clockContext,/);
+  assert.match(main, /timeSpan\(sources, effectiveSourceIds\(sources, ids, groups\), formState\.from, formState\.to, offsetOf\)/);
+  assert.match(main, /timeSpan\(sources, \[\], null, null, offsetOf\)/);
+  assert.doesNotMatch(main, /onApplied/, "the reload sequence lives in clock-dialog.js, where every wait is followed by a scope check");
 });

@@ -184,7 +184,7 @@ export class CollectionsPanel {
       data = await this.api.collections(caseId, controller.signal);
     } catch (err) {
       if (mine === this.seq && !(err && err.name === "AbortError")) {
-        this.status.textContent = format(S.colLoadError, { message: err && err.message ? err.message : String(err) });
+        this.status.textContent = S.colLoadError; // a static sentence: the server's text is not repeated
       }
       return false;
     }

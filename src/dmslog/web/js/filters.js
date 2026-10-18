@@ -1,5 +1,5 @@
 // Simple filters -> the JSON filter tree of ARQUITETURA section 10 (compiled to SQL on the server).
-import { parseTs } from "./time.js";
+import { cursorTime, parseTs } from "./time.js";
 
 export const EMPTY_FILTER_STATE = Object.freeze({
   sourceIds: [],
@@ -65,17 +65,19 @@ export function stateFromForm(raw) {
 }
 
 // Time span (ms) covered by the selected sources (all when none selected), narrowed by the
-// time window. Returns {min, max} or null when unknown.
-export function timeSpan(sources, selectedIds, from, to) {
+// time window. Returns {min, max} or null when unknown. `offsetOf(source)` (clock offsets, 9.15) shifts each source's
+// bounds onto the adjusted axis the cursors and the time filters use; from/to are on that axis already.
+export function timeSpan(sources, selectedIds, from, to, offsetOf = null) {
   const chosen = sources.filter((s) => selectedIds.length === 0 || selectedIds.includes(s.id));
   let min = null;
   let max = null;
   for (const s of chosen) {
-    if (s.ts_min !== null && s.ts_min !== undefined && (min === null || s.ts_min < min)) {
-      min = s.ts_min;
+    const shift = offsetOf ? offsetOf(s) || 0 : 0;
+    if (s.ts_min !== null && s.ts_min !== undefined && (min === null || s.ts_min + shift < min)) {
+      min = s.ts_min + shift;
     }
-    if (s.ts_max !== null && s.ts_max !== undefined && (max === null || s.ts_max > max)) {
-      max = s.ts_max;
+    if (s.ts_max !== null && s.ts_max !== undefined && (max === null || s.ts_max + shift > max)) {
+      max = s.ts_max + shift;
     }
   }
   if (min === null || max === null) {
@@ -179,7 +181,8 @@ export const NAV_ERROR_FILTER = Object.freeze({ sev: { le: 2 } });
 // Request for the keyboard navigation: the next/previous entry that matches `extra` inside the
 // current filter, starting after/before the selected row. dir: "fwd" | "back".
 export function navRequest(filter, extra, row, dir) {
-  const cursor = row ? (row.ts === null || row.ts === undefined ? "null" : String(row.ts)) + ":" + row.id : null;
+  const at = row ? cursorTime(row) : null;
+  const cursor = row ? (at === null || at === undefined ? "null" : String(at)) + ":" + row.id : null;
   return { filter: andFilters(filter, extra), cursor, dir, limit: 1 };
 }
 

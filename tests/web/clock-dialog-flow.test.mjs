@@ -37,7 +37,7 @@ const apiError = (status, code, message = "server text 12345") => Object.assign(
 function setup({ list = [collection(1, 1), collection(2, 2)], caseId = "A", ignoreAbort = false } = {}) {
   doc.body.children = [];
   doc.activeElement = doc.body;
-  const state = { caseId, list, calls: [], messages: [], applied: [] };
+  const state = { caseId, gen: 1, list, calls: [], messages: [], applied: [], order: [], keep: null, selected: null, cleared: 0, onList: null };
   const api = {
     clock: {
       set(c, g, body, signal) {
@@ -61,10 +61,18 @@ function setup({ list = [collection(1, 1), collection(2, 2)], caseId = "A", igno
   doc.body.appendChild(host);
   const clock = mountClock(host, {
     api,
-    getCase: () => state.caseId,
+    getContext: () => ({ caseId: state.caseId, generation: state.gen }),
     getCollections: () => state.list,
     groupOfSource: (id) => ({ 1: 1, 2: 2, 3: 3 })[id] ?? null,
-    onApplied: async (result) => { state.applied.push(result); },
+    view: {
+      keep: () => state.keep,
+      refreshList: async () => { state.order.push("list"); if (state.onList) await state.onList(); },
+      applyView: async () => { state.order.push("view"); if (state.onApply) { await state.onApply(); } if (state.applyFail) { throw state.applyFail; } state.applied.push(1); },
+      refreshDerived: () => state.order.push("derived"),
+      reveal: async (keep) => { state.order.push("reveal"); state.revealed = keep; if (state.revealFail) { throw state.revealFail; } },
+      selectedId: () => state.selected,
+      clearDetail: () => { state.cleared += 1; },
+    },
     onMessage: (text, isError) => state.messages.push([text, isError]),
   });
   const opener = doc.createElement("button");
@@ -185,7 +193,7 @@ test("a case switch closes the dialog, forgets the picks and drops a late dry ru
   const ctx = setup();
   const dlg = await pairOpen(ctx);
   const dry = ctx.state.calls[0];
-  ctx.state.caseId = "B";
+  ctx.state.caseId = "B"; ctx.state.gen += 1;
   ctx.clock.forgetCase();
   assert.equal(isOpen(dlg), false);
   assert.equal(dry.signal.aborted, true);
@@ -200,7 +208,7 @@ test("a dry run that answers for another case is dropped even if nothing told th
   const ctx = setup();
   const dlg = await pairOpen(ctx);
   const dry = ctx.state.calls[0];
-  ctx.state.caseId = "B"; // forgetCase() was not called
+  ctx.state.caseId = "B"; ctx.state.gen += 1; // forgetCase() was not called
   dry.resolve(dryAnswer(dry.body));
   await tick();
   assert.equal(one(dlg, "ck-row-adj").children[2].textContent, "");
@@ -219,7 +227,7 @@ test("a case switch while the PUT is in flight: no message, no reload, and the l
   await tick();
   const put = ctx.state.calls[1];
   const before = ctx.state.messages.length;
-  ctx.state.caseId = "B";
+  ctx.state.caseId = "B"; ctx.state.gen += 1;
   ctx.clock.forgetCase();
   assert.equal(isOpen(dlg), false);
   assert.equal(ctx.clock.busy(), true, "the request is still running");
@@ -458,7 +466,7 @@ test("a Reset whose answer arrives in another case is dropped", async () => {
   const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
   const done = ctx.clock.reset(2);
   await tick();
-  ctx.state.caseId = "B";
+  ctx.state.caseId = "B"; ctx.state.gen += 1;
   ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
   await done;
   assert.equal(ctx.state.messages.length, 0);
@@ -560,4 +568,172 @@ test("Align clock is refused while a change runs", async () => {
   ctx.clock.align(1, ctx.opener);
   await tick();
   assert.equal(dialogs().length, 1, "once the change finished it opens");
+});
+
+// ---- the operation's scope: case AND generation (review of PR 227) ---------------------------------------------------
+
+const reopen = (ctx, id) => { ctx.state.caseId = id; ctx.state.gen += 1; ctx.clock.forgetCase(); };
+
+test("a Reset started in A that answers after A -> B -> A announces nothing, reloads nothing and keeps the new picks", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  const done = ctx.clock.reset(2);
+  await tick();
+  reopen(ctx, "B");
+  reopen(ctx, "A");
+  assert.equal(ctx.clock.setAnchor(entry(30, 1)), true);
+  const messages = ctx.state.messages.length;
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.equal(ctx.state.messages.length, messages, "no 'Clock of C2 reset' for a case that was opened again");
+  assert.deepEqual(ctx.state.order, []);
+  assert.equal(ctx.clock.picked().anchor.id, 30, "Reset never touches the picks, and the old answer least of all");
+  assert.equal(ctx.clock.busy(), false);
+});
+
+test("a PUT sent in A that answers after A -> B -> A changes nothing in the new A", async () => {
+  const ctx = setup();
+  const dlg = await pairOpen(ctx);
+  ctx.state.calls[0].resolve(dryAnswer(ctx.state.calls[0].body));
+  await tick();
+  one(dlg, "ck-apply").click();
+  await tick();
+  reopen(ctx, "B");
+  reopen(ctx, "A");
+  ctx.clock.setAnchor(entry(31, 1));
+  const messages = ctx.state.messages.length;
+  ctx.state.calls[1].resolve(appliedAnswer());
+  await tick();
+  assert.equal(ctx.state.messages.length, messages);
+  assert.deepEqual(ctx.state.order, []);
+  assert.equal(ctx.clock.picked().anchor.id, 31);
+});
+
+test("closing during the PUT and picking new records: the old answer consumes only what it used", async () => {
+  const ctx = setup();
+  const dlg = await pairOpen(ctx);
+  ctx.state.calls[0].resolve(dryAnswer(ctx.state.calls[0].body));
+  await tick();
+  one(dlg, "ck-apply").click();
+  await tick();
+  dlg.dispatch("cancel");
+  assert.equal(ctx.clock.setAnchor(entry(41, 1)), true);
+  ctx.clock.setTarget(entry(42, 2), ctx.opener); // refused to open (a change runs) but remembered
+  assert.deepEqual(ctx.state.messages.at(-1), [S.ckBusy, true]);
+  ctx.state.calls[1].resolve(appliedAnswer());
+  await tick();
+  assert.deepEqual(ctx.state.order, ["list", "view", "derived"]);
+  const picked = ctx.clock.picked();
+  assert.deepEqual([picked.anchor.id, picked.target.id], [41, 42], "the picks made after the PUT started are still there");
+});
+
+test("an action decided in A and delivered after the case changed does nothing (expected scope)", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  const old = { caseId: "A", generation: 0 };
+  await ctx.clock.reset(2, old);
+  assert.equal(ctx.state.calls.length, 0, "no DELETE");
+  await ctx.clock.align(2, ctx.opener, old);
+  assert.equal(dialogs().length, 0);
+  assert.equal(ctx.clock.setAnchor(entry(10, 1), old), false);
+  await ctx.clock.setTarget(entry(20, 2), ctx.opener, old);
+  assert.deepEqual(ctx.clock.picked(), { anchor: null, target: null });
+  assert.deepEqual(ctx.state.messages, []);
+  const live = { caseId: "A", generation: 1 };
+  assert.equal(ctx.clock.setAnchor(entry(10, 1), live), true);
+});
+
+test("the reload runs list, view and derived panels, then selects the record again by id; the scope is checked after every wait", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.keep = { id: 77, ts: T };
+  ctx.state.selected = 77;
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.deepEqual(ctx.state.order, ["list", "view", "derived", "reveal"]);
+  assert.deepEqual(ctx.state.revealed, { id: 77, ts: T });
+  assert.equal(ctx.state.cleared, 0);
+  // the case changes while the list reloads: the old operation does not reload the new case's view
+  const other = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  other.state.keep = { id: 5, ts: T };
+  other.state.onList = async () => { reopen(other, "A"); };
+  const second = other.clock.reset(2);
+  await tick();
+  other.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await second;
+  assert.deepEqual(other.state.order, ["list"], "applyView() is not called for the case opened meanwhile");
+});
+
+test("a record that is no longer in the view is announced and the detail is cleared, not left showing something else", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.keep = { id: 77, ts: T };
+  ctx.state.selected = null; // the view does not hold it any more
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.equal(ctx.state.cleared, 1);
+  assert.deepEqual(ctx.state.messages.at(-1), [S.ckRecordLeftView, false]);
+});
+
+test("a failed reload says it with the static sentence of its code, never the server's text", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.applyFail = apiError(500, "database_error", "disk image malformed: /secret/case.db");
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.deepEqual(ctx.state.messages.at(-1), [S.ckErrors.database_error, true]);
+  assert.ok(!ctx.state.messages.some(([text]) => text.includes("secret")));
+});
+
+test("a reveal that fails (the record is outside the view) is handled like a record that left it", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.keep = { id: 9, ts: T };
+  ctx.state.selected = null;
+  ctx.state.revealFail = apiError(404, "entry_not_found");
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.equal(ctx.state.cleared, 1);
+  assert.deepEqual(ctx.state.messages.at(-1), [S.ckRecordLeftView, false]);
+});
+
+test("Reset keeps the picks the user made (it consumes none)", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.clock.setAnchor(entry(10, 1));
+  ctx.clock.setTarget(entry(20, 2), ctx.opener).catch(() => {});
+  one(dialogs()[0], "ck-cancel").click();
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls.at(-1).resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.equal(ctx.state.messages.at(-1)[0], "Clock of C2 reset (it was +0.020s).");
+  const picked = ctx.clock.picked();
+  assert.deepEqual([picked.anchor.id, picked.target.id], [10, 20]);
+});
+
+test("the case opened while the view reloads stops the reload: no derived refresh, no reveal, no message", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.keep = { id: 5, ts: T };
+  ctx.state.onApply = async () => { reopen(ctx, "B"); };
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.deepEqual(ctx.state.order, ["list", "view"]);
+  assert.equal(ctx.state.cleared, 0);
+  assert.equal(ctx.state.messages.filter(([t]) => t === S.ckRecordLeftView).length, 0);
+});
+
+test("the record to restore is the one the user was on BEFORE the list reloaded", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.keep = { id: 5, ts: T };
+  ctx.state.selected = 5;
+  ctx.state.onList = async () => { ctx.state.keep = null; }; // whatever the page does meanwhile, the choice was taken first
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.deepEqual(ctx.state.revealed, { id: 5, ts: T });
 });

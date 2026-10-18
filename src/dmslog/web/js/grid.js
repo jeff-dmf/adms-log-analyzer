@@ -10,7 +10,7 @@ import { baseName } from "./source-filter-model.js";
 import { markerLabel } from "./bookmarks-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format, pluralKey } from "./strings.js";
-import { formatTs } from "./time.js";
+import { cursorTime, formatTs } from "./time.js";
 import { CELL_PAD_PX, SOURCE_CH_MULTIDAY, TS_CH_MULTIDAY } from "./column-resize-model.js";
 
 export const COLUMNS = [
@@ -434,9 +434,29 @@ export class Grid {
     return this.window.rows[this.window.selected] || null;
   }
 
+  // The instant a cursor for `row` must name. With clock offsets the cursor axis is the adjusted time; a record that comes
+  // from elsewhere (events, bookmarks, links) only has its log time, so its adjusted time is read first (GET /entries/{id}).
+  // undefined = the case changed meanwhile.
+  async revealTime(row) {
+    if (typeof row.ts_adjusted === "number" || !this.adjustedColumn || row.ts === null || row.ts === undefined) {
+      const at = cursorTime(row);
+      return at === undefined ? null : at;
+    }
+    const caseId = this.caseId;
+    const entry = await api.entry(caseId, row.id);
+    if (this.destroyed || caseId !== this.caseId) {
+      return undefined;
+    }
+    return cursorTime(entry && entry.id === row.id ? entry : row);
+  }
+
   // Loads the window at `row` and selects it (used by the keyboard navigation).
   async revealRow(row) {
-    await this.jump(row.ts === null || row.ts === undefined ? "null:" + (row.id - 1) : row.ts + ":" + (row.id - 1), "fwd");
+    const at = await this.revealTime(row);
+    if (at === undefined) {
+      return; // another case (or view) took over while the adjusted time was being read
+    }
+    await this.jump(at === null ? "null:" + (row.id - 1) : at + ":" + (row.id - 1), "fwd");
     const index = this.window.rows.findIndex((r) => r.id === row.id);
     if (index >= 0) {
       this.window.selected = index;
@@ -1034,7 +1054,7 @@ export class Grid {
     // Write only: reading scrollTop back would force a layout on every wheel frame. The target is an integer inside
     // the scroll travel (the rows layer fills the viewport, the spacer adds exactly SCROLL_SPAN), so it is what the
     // browser keeps, and the scroll event it causes matches lastScroll within onScrollBar's 3 px tolerance.
-    const top = tsToScroll(row.ts, this.range);
+    const top = tsToScroll(cursorTime(row), this.range); // the range is on the same (adjusted) axis as the jumps
     this.viewport.scrollTop = top;
     this.lastScroll = top;
   }

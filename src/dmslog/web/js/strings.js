@@ -1403,7 +1403,7 @@ export const S = {
   colVariantNames: { enterprise: "Enterprise", sensitive: "Sensitive" },
   colShowing: "Showing only {tags}.",
   colShowingAll: "Showing all collections.",
-  colLoadError: "Could not load the collections: {message}",
+  colLoadError: "Could not load the collections. Try again.",
   colApproxOrderMore: "Collections come from servers with different clocks. Order across collections is approximate; inside one collection it is exact.",
   // Clock offset between collections (9.15, ARQUITETURA 10.13): the badge of a collection, the Align clock dialog, the adjusted time.
   actClockAnchor: "Use as clock anchor",
@@ -1464,6 +1464,7 @@ export const S = {
   ckAnchorSet: "Clock anchor: record {id} of {tag}, {time}. Now pick a record of another collection and run Use as clock target.",
   ckTargetNoAnchor: "Clock target: record {id} of {tag}, {time}. Now pick the anchor in another collection (Use as clock anchor), then choose Align clock in the menu of {tag}.",
   ckSameCollection: "The anchor and the target must be in different collections.",
+  ckRecordLeftView: "The selected record is not in the view after the clock change, so the detail was cleared.",
   ckRefNoTime: "This record has no time.",
   ckRefNoCollection: "Cannot tell which collection this record belongs to.",
   ckErrFailed: "Could not change the clock. Try again.",

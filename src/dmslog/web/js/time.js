@@ -15,6 +15,12 @@ export function formatTs(ms) {
     "." + pad(d.getUTCMilliseconds(), 3);
 }
 
+// The instant a keyset cursor names for a record: the adjusted time while the case has clock offsets (the row carries
+// `ts_adjusted` then, and the server reads every cursor on that axis), else the log time. null = no time.
+export function cursorTime(row) {
+  return row && typeof row.ts_adjusted === "number" ? row.ts_adjusted : row ? row.ts : null;
+}
+
 // A clock offset in milliseconds as signed seconds: "+1.234s", "-0.500s", "0.000s". Not an integer: "".
 export function formatOffset(ms) {
   if (!Number.isSafeInteger(ms)) {
