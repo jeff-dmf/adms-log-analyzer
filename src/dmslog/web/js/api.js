@@ -362,6 +362,14 @@ export const api = {
     export: (format) => request("GET", "/api/presets/export" + query({ format })),
     import: (format, data) => request("POST", "/api/presets/import", { format, data }),
   },
+  // Versioned preferences package (ARQUITETURA 10.12). `sections` must name at least one section: an empty list would
+  // reach the server as "no filter" and export all of them, redaction terms included.
+  preferences: {
+    export: (sections, signal) => (Array.isArray(sections) && sections.length > 0
+      ? request("GET", "/api/preferences/export" + query({ sections: sections.join(",") }), undefined, signal)
+      : Promise.reject(new TypeError("export needs at least one section"))),
+    import: (body, signal) => request("POST", "/api/preferences/import", body, signal),
+  },
   // Highlight rules of the case (store/highlights.py), batch marking of rows and the ]/[ navigation.
   highlights: {
     list: (caseId, signal) => request("GET", "/api/highlights" + query({ case: caseId }), undefined, signal),

@@ -169,7 +169,7 @@ test("every label, title and disabled key used by the registered actions exists 
   const ids = registry.list().map((d) => d.id);
   for (const id of ["case.open", "case.new", "case.addFiles", "case.close", "toggle.filterTree", "toggle.highlights",
     "toggle.bookmarks", "toggle.alerts", "analyze.distinct", "analyze.groupByType", "analyze.aggregate", "analyze.panels", "analyze.extract", "analyze.compareViews", "analyze.operations",
-    "analyze.dashboard", "analyze.payloads", "analyze.unknownTypes", "analyze.config", "export.report", "export.copyAs",
+    "analyze.dashboard", "analyze.payloads", "analyze.unknownTypes", "analyze.config", "export.report", "export.copyAs", "export.preferences",
     "view.columns", "view.followTail", "view.theme", "help.shortcuts", "record.copy", "record.context", "record.filterType",
     "record.highlightType", "navigate.nextError", "navigate.prevError", "navigate.nextType", "navigate.prevType",
     "navigate.nextHighlight", "navigate.prevHighlight", "navigate.focusSearch", "navigate.nextRegion", "navigate.prevRegion",
