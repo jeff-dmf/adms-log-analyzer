@@ -72,7 +72,7 @@ const request = (extra = {}) => ({ row: { id: 7 }, x: 15, y: 25, keyboard: false
 
 const LABELS = [
   S.actSameKey, S.actOnlySource, S.actOnlyThisType, S.actHideType, S.actHighlightType, S.actContext,
-  S.actBookmark, S.actCompare, S.actCopyRecord,
+  S.actBookmark, S.actCompare, S.actCopyRecord, S.actClockAnchor, S.actClockTarget,
 ];
 
 test("a right click opens the menu at the pointer: the record actions with their keys, in sections, the menu itself focused", async () => {
@@ -82,7 +82,7 @@ test("a right click opens the menu at the pointer: the record actions with their
   assert.equal(el.attrs.role, "menu");
   assert.equal(el.attrs["aria-label"], S.ctxMenuLabel);
   assert.deepEqual(labelsOf(doc), LABELS);
-  assert.deepEqual(el.children.map((c) => c.attrs.role).filter((r) => r === "separator").length, 1, "one divider between the two sections");
+  assert.deepEqual(el.children.map((c) => c.attrs.role).filter((r) => r === "separator").length, 2, "dividers between the three sections (the clock actions come last)");
   assert.equal(el.style.left, "15px");
   assert.equal(el.style.top, "25px");
   assert.deepEqual(itemsOf(doc).filter((n) => n.children[1]?.className === "ui-menu-shortcut").map((n) => [labelOf(n), n.children[1].textContent]),

@@ -6,7 +6,7 @@
 // `deps` is built in main.js and is visible only here (the AppContext stays small). What it holds:
 //   api, derivedApi            the plain API and the one whose queries carry the chosen collection
 //   highlightStore, bookmarkStore
-//   fieldNames(), hasCollections(), sourceName(id), typeLabel(tplId) ("" when unknown)
+//   fieldNames(), hasCollections(), collectionGroups() (the chosen collections), sourceName(id), typeLabel(tplId) ("" when unknown)
 //   showKeyInGrid({type, value, filter})   "Show in grid" of the same-key panel: a chained view with the key filter
 //   showEntry(id), reveal(row), showEventInGrid({from, to, entryId}), exportContext()
 //   filterTreeOptions()        { onChange, getExtraFilter, onSavedApplied } of the filter tree
@@ -20,6 +20,8 @@
 //   copyRecord(), loadContext(same), filterType(), highlightType(), highlightReady()   the record actions
 //   navigateRecord(kind, dir), navigateHighlight(dir), toggleBookmark(), compareSelected(), viewsBack(), viewsForward(),
 //   focusSearch(), moveRegion(dir), openShortcuts()   the keyboard actions (UI-28), see "Keys" below
+//   clockOptions()             { api, getContext, getCollections, groupOfSource, view, onMessage } of clock-dialog.js (9.15)
+//   clockContext()             {caseId, generation} of the open case (the generation grows every time a case is opened)
 import { S } from "./strings.js";
 import { THEME_CHOICES } from "./theme.js";
 
@@ -323,6 +325,28 @@ export function registerAppPanels(dock, deps) {
       return { refresh: () => panel.refresh(), closed: () => panel.closed(), reset: () => panel.reset() };
     },
   });
+
+  // Comparison of two views by message type (9.7). The lists of operations and processes are scoped to the chosen
+  // collections like the other derived panels; the comparison itself takes the filter of the grid. "view" only marks a
+  // result as out of date (it is never recomputed by itself); "case" and "derived" (collections, indexing) reload the lists
+  // whose scope (case + collections + view) changed. The panel reads nothing from the server before refresh().
+  dock.register({
+    id: "compareViews",
+    titleKey: "actCompareViews",
+    listens: ["case", "view", "derived"],
+    mount: async (host, ctx) => {
+      const module = await import("./compare-views-panel.js");
+      const panel = module.mountCompareViewsPanel(host, {
+        api: { compareViews: api.compareViews, views: api.views, events: derivedApi.events },
+        getCase: ctx.caseId,
+        getFilter: () => ctx.filter(),
+        getScope: () => JSON.stringify(deps.collectionGroups()),
+        onReveal: ctx.reveal,
+        onRequestClose: () => ctx.dock.close("compareViews"),
+      });
+      return { refresh: () => panel.refresh(), closed: () => panel.closed(), reset: () => panel.reset() };
+    },
+  });
 }
 
 // Until the tabs of UI-15 a panel has no tab to close, so the menu item and the toggle button open it when it is
@@ -364,6 +388,7 @@ export function registerAppActions(actions, deps) {
   analyze("analyze.groupByType", "actGroupByType", "groupByType", "./distinct-panel.js");
   analyze("analyze.aggregate", "actAggregate", "aggregate", "./aggregate-panel.js");
   analyze("analyze.extract", "actExtract", "extract", "./extract-panel.js");
+  analyze("analyze.compareViews", "actCompareViews", "compareViews", "./compare-views-panel.js");
   analyze("analyze.operations", "actOperations", "operations", "./events-panel.js");
   analyze("analyze.dashboard", "actDashboard", "dashboard", "./dashboard.js");
   analyze("analyze.missingSteps", "actMissingSteps", "missingSteps", "./missing-panel.js");
@@ -527,6 +552,56 @@ export function registerAppActions(actions, deps) {
       }
     },
   });
+  // ---- Clock offset between collections (9.15, ARQUITETURA 10.13). clock-dialog.js loads with the first use; the record
+  // actions pick the anchor and the target, and the collection rows' menu (collections-panel.js) opens the dialog or resets.
+  let clockController = null;
+  let clockLoading = null;
+  const loadClock = () => {
+    if (clockLoading === null) {
+      clockLoading = import("./clock-dialog.js").then((module) => {
+        clockController = module.mountClock(document.body, deps.clockOptions());
+        return clockController;
+      });
+      clockLoading.catch(() => {
+        clockLoading = null; // a failed load is tried again on the next use
+      });
+    }
+    return clockLoading;
+  };
+  // {caseId, generation} the action was started in: the one the captured target carries (menu and palette hand a bound context,
+  // made before invoke() waits for preload()), or the live one for a caller without a target. invoke()'s guard refuses to run
+  // the action once the live case or generation differ from it.
+  const clockScope = (ctx) => {
+    const live = deps.clockContext();
+    const generation = typeof ctx.generation === "function" ? ctx.generation() : null;
+    return { caseId: ctx.caseId(), generation: generation === null ? live.generation : generation };
+  };
+  const clockRecord = (ctx) => recordShown(ctx) && typeof ctx.entry().ts === "number" && deps.hasCollections();
+  recordAction({
+    id: "record.clockAnchor",
+    labelKey: "actClockAnchor",
+    enabled: clockRecord,
+    disabledKey: "ckNeedTwo",
+    load: loadClock,
+    run: async (ctx) => {
+      const entry = ctx.entry();
+      const expected = clockScope(ctx); // the scope of the captured target, taken before the module and the preload waited
+      (await loadClock()).setAnchor(entry, expected);
+    },
+  });
+  recordAction({
+    id: "record.clockTarget",
+    labelKey: "actClockTarget",
+    enabled: clockRecord,
+    disabledKey: "ckNeedTwo",
+    load: loadClock,
+    run: async (ctx) => {
+      const entry = ctx.entry();
+      const opener = document.activeElement; // read before the module loads: the dialog gives the focus back to it
+      const expected = clockScope(ctx);
+      (await loadClock()).setTarget(entry, opener, expected); // opens the dialog when the anchor is in another collection
+    },
+  });
   // Shift+F10 in the grid (the Menu key and the right click reach the menu through the grid's contextmenu event).
   actions.register({
     id: "record.contextMenu",
@@ -572,11 +647,29 @@ export function registerAppActions(actions, deps) {
   actions.register({ id: "help.palette", labelKey: "actPalette", group: "help", shortcut: "Ctrl+k", enabled: always, run: () => deps.openPalette() });
 
   return {
-    // A case change (also back to a case seen before): the export dialog forgets its report, open or not.
+    // A case change (also back to a case seen before): the export dialog forgets its report, open or not; the clock dialog
+    // closes and the records picked for it are forgotten.
     onCase() {
       if (exportDialogs !== null) {
         exportDialogs.reset();
       }
+      if (clockController !== null) {
+        clockController.forgetCase();
+      }
+    },
+    // What the Collections panel's row menu calls (collections-panel.js `clock` option).
+    clock: {
+      // The case and its generation are read BEFORE the module loads and handed back: an action started in case A never acts
+      // on case B (or on A opened again) because the import took a while.
+      align(group, opener) {
+        const expected = deps.clockContext();
+        return loadClock().then((clock) => clock.align(group, opener, expected)).catch((err) => deps.onError(err));
+      },
+      reset(group) {
+        const expected = deps.clockContext();
+        return loadClock().then((clock) => clock.reset(group, expected)).catch((err) => deps.onError(err));
+      },
+      busy: () => clockController !== null && clockController.busy(),
     },
   };
 }

@@ -359,6 +359,14 @@ export const api = {
     request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/collections", undefined, signal),
   removeCollection: (caseId, group) =>
     request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group)),
+  // Clock offset of a collection (9.15, ARQUITETURA 10.13): set from {anchor, target} (entry ids; dry_run: true computes only)
+  // or from {offset_ms}; reset puts the offset back to 0. `group` is the collection group id.
+  clock: {
+    set: (caseId, group, body, signal) =>
+      request("PUT", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group) + "/clock", body, signal),
+    reset: (caseId, group, signal) =>
+      request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group) + "/clock", undefined, signal),
+  },
   // Local alerts (store/alerts.py): the user's rules, and the alert history of a case.
   alerts: {
     rules: (caseId, signal) => request("GET", "/api/alerts/rules" + query({ case: caseId }), undefined, signal),
@@ -372,6 +380,10 @@ export const api = {
   aggregate: (caseId, body, signal) => request("POST", "/api/entries/aggregate", { ...body, case: caseId }, signal),
   aggregateCsv: (caseId, body, signal) =>
     requestFile("/api/entries/aggregate", { ...body, case: caseId, format: "csv" }, "text", signal),
+  // Comparison of two views by message type (ARQUITETURA 10.10). The answer is one page of aligned rows; `offset` pages it.
+  compareViews: {
+    run: (caseId, body, signal) => request("POST", "/api/entries/compare", { ...body, case: caseId }, signal),
+  },
   // Ad hoc regex extractor (ARQUITETURA 10.11): `check` needs no case; `promote` only returns the TOML text.
   extract: {
     check: (body, signal) => request("POST", "/api/extract/check", body, signal),

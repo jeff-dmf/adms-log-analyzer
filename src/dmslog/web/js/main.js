@@ -137,7 +137,7 @@ function start() {
     // The "?" button opens the shortcuts dialog (help.shortcuts); actions and ctx exist by the time it is clicked.
     onHelp: () => actions.invoke("help.shortcuts", ctx),
   });
-  const showMessage = (text, isError) => status.message(text, { kind: isError ? "error" : "info" });
+  const showMessage = (text, isError, action) => status.message(text, { kind: isError ? "error" : "info", action });
   // Connection errors already own the bar: do not repeat them as a message.
   const showError = (err) => {
     if (err && (err.code === "network" || err.code === "forbidden")) {
@@ -236,6 +236,7 @@ function start() {
   let sources = [];
   let sourceNames = new Map();
   let caseId = null;
+  let caseGen = 0; // grows every time a case is opened: an answer for case A cannot act on A opened again (9.15)
   let formState = { sevMax: null, levelMax: null, from: null, to: null };
   let searchText = "";
   let userFilter = null; // the filter tree's filter (plus timeline range and template clicks)
@@ -602,11 +603,17 @@ function start() {
     currentFilter = filter;
     attempt.filter = filter;
     navRequests.invalidate();
-    const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to);
+    // With clock offsets the cursors, the time filters and the scrollbar all use the adjusted axis (ARQUITETURA 10.13).
+    const offsetOf = (source) => {
+      const found = collections.find((item) => item.group === source.collection);
+      return found && Number.isSafeInteger(found.clock_offset_ms) ? found.clock_offset_ms : 0;
+    };
+    const range = timeSpan(sources, effectiveSourceIds(sources, ids, groups), formState.from, formState.to, offsetOf);
     const terms = searchTerms(searchText);
     grid.setTerms(terms);
     detail.setTerms(terms); // the detail pane stays until the new page is confirmed (a failure must not blank it)
-    const caseRange = timeSpan(sources, [], null, null); // the whole case: decides the date in the time column
+    // The whole case decides the date in the time columns: both axes count (offsets can put two original days on one adjusted day).
+    const caseRange = [timeSpan(sources, [], null, null, offsetOf), timeSpan(sources, [], null, null)];
     const loaded = grid.setView({ caseId, filter, range, caseRange });
     loaded.then(firstViewDone, firstViewDone);
     viewFlow.track(token, loaded, () => (grid.failure ? grid.failure.kind : "unknown"), isRetryable);
@@ -640,6 +647,7 @@ function start() {
     emptyHost: byId("grid-panel"), // the empty state without a case (case-empty.js, loaded on demand)
   }, {
     onCase: (id) => {
+      caseGen += 1;
       caseId = id;
       closeRowMenu();
       if (palette !== null) {
@@ -763,9 +771,16 @@ function start() {
       refreshDerived(); // Operations, Dashboard and the clock banner follow the chosen collection
       return removingChip ? undefined : applyView();
     },
-    onList: (list) => {
+    // Align / reset the clock of a collection (9.15): the dialog and the applied offset live in app-actions.js.
+    clock: {
+      align: (group, opener) => appActions.clock.align(group, opener),
+      reset: (group) => appActions.clock.reset(group),
+      busy: () => appActions !== null && appActions.clock.busy(),
+    },
+    onList: (list, ordering, clocks) => {
       const multiChanged = isMulti(list) !== isMulti(collections);
       collections = list;
+      grid.setAdjustedColumn(clocks === "adjusted"); // "Adjusted time" next to Time while an offset is on
       grid.setCollectionTags(gridTags(list));
       syncCollectionColumn();
       if (multiChanged) {
@@ -1379,6 +1394,7 @@ function start() {
   // item of every menu exists from the first paint (see app-actions.js).
   const ctx = Object.freeze({
     caseId: () => caseId,
+    generation: () => caseGen, // grows every time a case is opened: a captured target of case A is not A opened again
     filter: () => currentFilter,
     userFilter: () => userFilter,
     selectedRow: () => grid.selectedRow(),
@@ -1391,6 +1407,7 @@ function start() {
   });
   dock.bind(ctx); // step 2 of the dock
   const caseSelect = byId("case-select");
+  const clockContext = () => ({ caseId, generation: caseGen });
   const deps = {
     api,
     derivedApi,
@@ -1402,6 +1419,38 @@ function start() {
     onError: showError,
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
+    clockContext,
+    clockOptions: () => ({
+      api,
+      getContext: clockContext,
+      getCollections: () => collections,
+      groupOfSource: (id) => {
+        const found = sources.find((source) => source.id === id);
+        return found ? found.collection : null;
+      },
+      // The order across collections changed: clock-dialog.js runs the reload (list, view, derived panels, the record the user
+      // was on) with these pieces and checks the case and its generation after every wait.
+      view: {
+        keep: () => {
+          const row = grid.selectedRow();
+          if (row) {
+            return { id: row.id, ts: row.ts };
+          }
+          return detail.entry ? { id: detail.entry.id, ts: detail.entry.ts } : null;
+        },
+        refreshList: () => collectionsPanel.reload(), // "failed" stops the reload (clock-dialog.js)
+        applyView: () => applyView(),
+        refreshDerived: () => refreshDerived(),
+        reveal: (keep) => grid.revealRow(keep), // reads the record's adjusted time first: the cursor axis is the adjusted one
+        selectedId: () => {
+          const row = grid.selectedRow();
+          return row ? row.id : null;
+        },
+        clearDetail: () => detail.clear(),
+      },
+      onMessage: showMessage,
+    }),
+    collectionGroups: () => (collectionsPanel ? collectionsPanel.selectedGroups() : []),
     sourceName: (id) => sourceNames.get(id) || String(id),
     typeLabel: (id) => templateTitles.get(id) || "",
     showKeyInGrid,

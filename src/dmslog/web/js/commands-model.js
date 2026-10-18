@@ -16,11 +16,16 @@ const sameId = (a, b) => a !== null && a !== undefined && b !== null && b !== un
  * detail that belongs to it (null when the detail shows another record). Everything the actions need (source, message type,
  * keys) comes from this object, never from a second look at the live detail.
  */
+function generationOf(ctx) {
+  return typeof ctx.generation === "function" ? ctx.generation() : null;
+}
+
 export function captureTarget(ctx) {
   const row = ctx.selectedRow() || null;
   const entry = ctx.entry() || null;
   return {
     caseId: ctx.caseId(),
+    generation: generationOf(ctx), // case A opened again is not the A that was captured (null when the context has none)
     row,
     rowId: row ? row.id : null,
     entry: row && entry && sameId(entry.id, row.id) ? entry : null,
@@ -31,7 +36,7 @@ export function captureTarget(ctx) {
 export function targetCurrent(ctx, target) {
   try {
     const row = ctx.selectedRow() || null;
-    if (ctx.caseId() !== target.caseId || (row ? row.id : null) !== target.rowId) {
+    if (ctx.caseId() !== target.caseId || generationOf(ctx) !== (target.generation === undefined ? null : target.generation) || (row ? row.id : null) !== target.rowId) {
       return false;
     }
     if (target.entry !== null) {
@@ -52,6 +57,7 @@ export function targetContext(ctx, target) {
   return Object.freeze({
     ...ctx,
     caseId: () => target.caseId,
+    generation: () => (target.generation === undefined ? null : target.generation),
     selectedRow: () => target.row,
     entry: () => target.entry,
     setUserFilter: (filter) => (targetCurrent(ctx, target) ? ctx.setUserFilter(filter) : undefined),

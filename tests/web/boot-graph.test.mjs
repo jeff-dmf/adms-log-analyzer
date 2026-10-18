@@ -36,10 +36,10 @@ const NOT_AT_OPENING = [
   "filter-tree", "tpl-leaf", "presets", "saved-views", "folder-browser", "links", "payload", "bookmarks-panel",
   "highlight-panel", "copy-export", "distinct-panel", "aggregate-panel", "extract-panel", "extract-model", "events-panel", "dashboard", "unknown-panel",
   "config-panel", "key-panel", "payload-list", "side-by-side", "compare", "export-panel", "redaction-panel", "preferences-dialog", "preferences-model",
-  "alerts-panel", "follow-tail", "clock-banner", "dock-model", "case-dialogs", "case-empty", "shortcuts", "shortcuts-model",
+  "alerts-panel", "follow-tail", "clock-banner", "clock-dialog", "clock-model", "dock-model", "case-dialogs", "case-empty", "shortcuts", "shortcuts-model",
   "partial-open", "partial-open-model", "resume-banner",
   "commands", "commands-model", "context-menu",
-  "missing-panel", "missing-model", "repeat-model", "repeat-detail",
+  "missing-panel", "missing-model", "repeat-model", "repeat-detail", "compare-views-panel", "compare-views-model",
 ];
 const MAX_STATIC_MODULES = 40; // main.js + boot.js, uPlot included; the budget on open is 40 with everything else
 
