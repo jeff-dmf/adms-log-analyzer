@@ -14,7 +14,11 @@ export function keySpec(event) {
   if (!event || typeof event.key !== "string" || event.key === "" || event.metaKey) {
     return null;
   }
-  const key = event.key;
+  let key = event.key;
+  // With Ctrl or Alt the case of a letter is the Shift key, not Caps Lock: "Ctrl+k" also arrives as "K" with Caps Lock on.
+  if (key.length === 1 && (event.ctrlKey || event.altKey) && key.toLowerCase() !== key.toUpperCase()) {
+    key = event.shiftKey ? key.toUpperCase() : key.toLowerCase();
+  }
   if (key === "Control" || key === "Alt" || key === "Shift" || key === "Meta") {
     return null; // a modifier on its own is not a shortcut
   }
@@ -190,7 +194,11 @@ export function createActionRegistry({ onError = () => {}, singleKeysOn = () => 
     return entry.promise;
   }
 
-  async function invoke(id, ctx, args) {
+  /**
+   * Runs an action. `isCurrent` (optional) is asked synchronously after the LAST wait (the loader) and right before run():
+   * false gives { ok: false, reason: "stale" } and run() is not called, so nothing can change in between.
+   */
+  async function invoke(id, ctx, args, isCurrent) {
     const def = defs.get(id);
     if (!def) {
       return { ok: false, reason: "error" };
@@ -202,6 +210,9 @@ export function createActionRegistry({ onError = () => {}, singleKeysOn = () => 
     }
     if (!now.enabled) {
       return { ok: false, reason: "disabled" };
+    }
+    if (typeof isCurrent === "function" && !guard(isCurrent, undefined, false)) {
+      return { ok: false, reason: "stale" };
     }
     try {
       await def.run(ctx, args);
@@ -241,11 +252,11 @@ export function createActionRegistry({ onError = () => {}, singleKeysOn = () => 
 }
 
 /** The `.ui-menu` item of one child (a theme choice, a case, ...). */
-function childItem(def, child, index, ctx, registry) {
+function childItem(def, child, index, ctx, registry, isCurrent) {
   const item = {
     id: def.id + ":" + index,
     label: String(child.label),
-    run: () => registry.invoke(def.id, ctx, child.args),
+    run: () => registry.invoke(def.id, ctx, child.args, isCurrent),
   };
   if (child.checked !== undefined) {
     item.role = "menuitemradio";
@@ -256,9 +267,10 @@ function childItem(def, child, index, ctx, registry) {
 
 /**
  * Bridge to ui-menu.js: MenuItem[] for `defs` (ActionDefs, or {separator: true}). enabled/pressed are computed
- * now, when the menu opens. A disabled item stays in the menu with the reason as its title.
+ * now, when the menu opens. A disabled item stays in the menu with the reason as its title. `isCurrent` (optional) is handed
+ * to invoke() so an item never runs once its target is gone.
  */
-export function toMenuItems(registry, defs, ctx, strings = defaultStrings) {
+export function toMenuItems(registry, defs, ctx, strings = defaultStrings, isCurrent = undefined) {
   const items = [];
   for (const def of defs) {
     if (def.separator) {
@@ -272,7 +284,7 @@ export function toMenuItems(registry, defs, ctx, strings = defaultStrings) {
       shortcut: def.shortcut ? shortcutLabel(def.shortcut, strings.keyNames || {}) : null,
       disabled: !now.enabled,
       title: now.enabled ? null : strings[now.reasonKey] || null,
-      run: () => registry.invoke(def.id, ctx),
+      run: () => registry.invoke(def.id, ctx, undefined, isCurrent),
       preload: () => registry.preload(def.id),
     };
     if (now.pressed !== null) {
@@ -285,7 +297,7 @@ export function toMenuItems(registry, defs, ctx, strings = defaultStrings) {
       } catch (err) {
         children = [];
       }
-      item.children = children.map((child, i) => childItem(def, child, i, ctx, registry));
+      item.children = children.map((child, i) => childItem(def, child, i, ctx, registry, isCurrent));
       item.run = undefined;
       if (children.length === 0) {
         item.disabled = true; // a submenu with nothing in it is not offered

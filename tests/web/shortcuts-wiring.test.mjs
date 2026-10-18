@@ -79,10 +79,10 @@ test("the registry holds every shortcut once, the single-key ones are the letter
     "navigate.nextRegion": "F6", "navigate.prevRegion": "Shift+F6",
     "record.bookmark": "b", "record.compare": "c",
     "views.back": "Alt+ArrowLeft", "views.forward": "Alt+ArrowRight",
-    "help.shortcuts": "?",
+    "help.shortcuts": "?", "help.palette": "Ctrl+k", "record.contextMenu": "Shift+F10",
   });
   assert.deepEqual(withKeys.filter((d) => !isSingleKey(d.shortcut)).map((d) => d.id).sort(),
-    ["navigate.nextRegion", "navigate.prevRegion", "views.back", "views.forward"]);
+    ["help.palette", "navigate.nextRegion", "navigate.prevRegion", "record.contextMenu", "views.back", "views.forward"]);
   for (const d of withKeys) {
     assert.ok(S[d.labelKey], d.id);
   }
