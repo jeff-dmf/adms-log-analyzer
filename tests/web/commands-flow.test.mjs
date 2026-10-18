@@ -43,7 +43,7 @@ function page({ record = true, cases = [{ id: "1", name: "Case one" }], singleKe
   deps.followTailOn = () => false;
   deps.highlightReady = () => true;
   const ctx = {
-    caseId: () => st.caseId, entry: () => st.det, selectedRow: () => st.sel,
+    caseId: () => { if (st.afterCheck) { const later = st.afterCheck; st.afterCheck = null; queueMicrotask(later); } return st.caseId; }, entry: () => st.det, selectedRow: () => st.sel,
     userFilter: () => null, setUserFilter: (filter) => { st.filters.push(filter); }, dock: { isOpen: () => false },
   };
   const errors = [];
@@ -84,6 +84,7 @@ const activeOption = (p) => {
   const id = field.getAttribute("aria-activedescendant");
   return id === null ? null : options.find((o) => o.id === id) ?? null;
 };
+const actionsLoaded = (p, id) => p.actions.preload(id);
 const open = async (p, from = p.opener) => {
   from.focus();
   await p.palette.open(from);
@@ -582,5 +583,22 @@ test("the selection or the case changing WHILE the record is being prepared drop
     await p.palette.open(p.opener);
     assert.equal(p.palette.isOpen(), false);
     assert.equal(p.doc.body.children.filter((c) => c.tagName === "DIALOG").length, 0, "nothing was built");
+  }
+});
+
+test("the interval between the guard and run(): a case or selection change in a microtask right after the click never lets the action run", async () => {
+  for (const move of [(st) => { st.caseId = "C2"; }, (st) => { st.sel = st.row(2); st.det = st.entry(2); }]) {
+    let ran = 0;
+    const p = page({
+      extra: (actions) => actions.register({ id: "view.fast", labelKey: "actTheme", group: "view", enabled: () => true, load: () => Promise.resolve(), run() { ran += 1; } }),
+    });
+    await open(p);
+    type(p, "theme");
+    const fast = p.parts().options.find((o) => o.dataset.action === "view.fast");
+    await actionsLoaded(p, "view.fast"); // the loader is done: invoke() has nothing real to wait for
+    p.st.afterCheck = () => move(p.st); // queued by the palette's own check: lands between that check and the action's run()
+    fast.children[0].dispatch("click");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(ran, 0);
   }
 });

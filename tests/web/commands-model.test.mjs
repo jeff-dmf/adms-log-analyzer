@@ -378,3 +378,21 @@ test("captureTarget / targetCurrent / targetContext: the record, its detail and 
   assert.equal(targetCurrent(ctx, empty), false);
   assert.equal(targetCurrent({ caseId() { throw new Error("x"); } }, empty), false);
 });
+
+test("invoke(): the optional guard is asked after the last wait and right before run(); false means stale and run() is not called", async () => {
+  let ran = 0;
+  let allowed = true;
+  const actions = createActionRegistry({ strings: T, singleKeysOn: () => true });
+  actions.register({ id: "analyze.x", labelKey: "aDistinct", group: "analyze", enabled: () => true, load: () => Promise.resolve(), run: () => { ran += 1; } });
+  const ctx = { caseId: () => "C1" };
+  assert.deepEqual(await actions.invoke("analyze.x", ctx), { ok: true });
+  assert.deepEqual(await actions.invoke("analyze.x", ctx, undefined, () => allowed), { ok: true });
+  const pending = actions.invoke("analyze.x", ctx, undefined, () => allowed);
+  allowed = false; // changes while invoke() waits
+  assert.deepEqual(await pending, { ok: false, reason: "stale" });
+  assert.equal(ran, 2);
+  assert.deepEqual(await actions.invoke("analyze.x", ctx, undefined, () => { throw new Error("x"); }), { ok: false, reason: "stale" }, "a guard that throws is a no");
+  const items = toMenuItems(actions, [actions.get("analyze.x")], ctx, T, () => false);
+  assert.deepEqual(await items[0].run(), { ok: false, reason: "stale" }, "toMenuItems hands the guard to invoke()");
+  assert.equal(ran, 2);
+});

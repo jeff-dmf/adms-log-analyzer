@@ -4,7 +4,7 @@ import { createActionRegistry } from "./actions.js";
 import { registerAppActions, registerAppPanels } from "./app-actions.js";
 import { api, isRetryable, onForbidden, onNetworkError } from "./api.js";
 import {
-  afterDrawerOpen, createButtonGate, createRecordLoader, loadSections, mountLate, openWhenLoaded, retryable, watchGesture,
+  afterDrawerOpen, createButtonGate, createMenuRequests, createRecordLoader, loadSections, mountLate, openWhenLoaded, retryable,
 } from "./late-init.js";
 import { takeCollections } from "./prefetch.js";
 import { createBookmarkStore } from "./bookmarks-model.js";
@@ -188,14 +188,13 @@ function start() {
   // The record context menu (context-menu.js) and the command palette (commands.js) load on their first use.
   let rowMenu = null;
   let palette = null;
-  // Generation of the record menu requests: anything that makes a request obsolete (a selection elsewhere, a view or a case
-  // change) bumps it, so a request that is still loading the module or the record drops itself.
-  let rowMenuGen = 0;
-  let rowMenuTarget = null; // id of the record of the request in flight or of the open menu
+  // The requests for the menu of a record (createMenuRequests, assigned below): anything that makes one obsolete (a selection
+  // elsewhere, a view or a case change) closes it, and a request still loading the module or the record drops itself.
+  let rowMenus = null;
   const closeRowMenu = () => {
-    rowMenuGen += 1;
-    rowMenuTarget = null;
-    if (rowMenu !== null) {
+    if (rowMenus !== null) {
+      rowMenus.close();
+    } else if (rowMenu !== null) {
       rowMenu.close();
     }
   };
@@ -403,7 +402,7 @@ function start() {
     spacer: byId("grid-spacer"),
     header: byId("grid-header"),
     onSelect: (row) => {
-      if (rowMenuTarget === null || String(rowMenuTarget) !== String(row.id)) {
+      if (rowMenus === null || rowMenus.targetId() === null || String(rowMenus.targetId()) !== String(row.id)) {
         closeRowMenu(); // the menu of another record; the menu of this very record stays
       }
       return recordLoader.ensure(row, { refresh: true });
@@ -1539,39 +1538,19 @@ function start() {
     }
     return rowMenu;
   }));
-  // A request for the menu of a record (right click, Menu key, Shift+F10). The generation and the case are taken BEFORE the
-  // module loads; the grid has handed the selection over (no pending "show the record"), so the record is shown here.
-  const requestRowMenu = async (request) => {
-    const gen = ++rowMenuGen;
-    const forCase = caseId;
-    rowMenuTarget = request.row.id;
-    grid.holdSelection();
-    showRecordFor(request.row);
-    // Watched from now on, not from the moment the menu opens: a scroll, a click or the focus moving while the module
-    // loads cancels the request (the menu module watches the same things once it has the request).
-    const stop = watchGesture({
-      doc: document,
-      win: window,
-      keep: byId("grid-viewport"),
-      cancel: () => {
-        if (gen === rowMenuGen) {
-          closeRowMenu();
-        }
-      },
-    });
-    try {
-      const menu = await loadRowMenu();
-      const selected = grid.selectedRow();
-      if (gen !== rowMenuGen || caseId !== forCase || !selected || String(selected.id) !== String(request.row.id)) {
-        return false; // overtaken while the module loaded
-      }
-      const opening = menu.open(request); // starts watching synchronously
-      stop();
-      return await opening;
-    } finally {
-      stop();
-    }
-  };
+  // A request for the menu of a record (right click, Menu key, Shift+F10): late-init.js createMenuRequests.
+  rowMenus = createMenuRequests({
+    doc: document,
+    win: window,
+    keep: () => byId("grid-viewport"),
+    getCase: () => caseId,
+    selectedRow: () => grid.selectedRow(),
+    holdSelection: () => grid.holdSelection(),
+    show: (row) => showRecordFor(row),
+    load: () => loadRowMenu(),
+    getMenu: () => rowMenu,
+  });
+  const requestRowMenu = (request) => rowMenus.request(request);
   const loadPalette = retryable(() => import("./commands.js").then((module) => {
     if (palette === null) {
       palette = module.createPalette({

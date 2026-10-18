@@ -21,8 +21,8 @@ test("main.js loads the palette and the record menu on first use, with a retry a
 test("the grid hands the record menu its request; the owner closes the menu on a selection, a view change and a case change", () => {
   const main = read("js/main.js");
   assert.match(main, /onContextMenu: \(request\) => \{\s*requestRowMenu\(request\)\.catch\(showError\);/);
-  assert.match(main, /onSelect: \(row\) => \{\s*if \(rowMenuTarget === null \|\| String\(rowMenuTarget\) !== String\(row\.id\)\) \{\s*closeRowMenu\(\);/);
-  assert.match(main, /const closeRowMenu = \(\) => \{\s*rowMenuGen \+= 1;/);
+  assert.match(main, /onSelect: \(row\) => \{\s*if \(rowMenus === null \|\| rowMenus\.targetId\(\) === null \|\| String\(rowMenus\.targetId\(\)\) !== String\(row\.id\)\) \{\s*closeRowMenu\(\);/);
+  assert.match(main, /const closeRowMenu = \(\) => \{\s*if \(rowMenus !== null\) \{\s*rowMenus\.close\(\);/);
   assert.match(main, /const applyView = \(\) => \{\s*closeRowMenu\(\);/);
   assert.match(main, /caseId = id;\s*closeRowMenu\(\);\s*if \(palette !== null\) \{\s*palette\.close\(\);/);
 });
@@ -42,19 +42,14 @@ test("the palette gets the record loader (prepare) so its record commands act on
   assert.match(block, /prepare: showRecordFor,/);
 });
 
-test("a menu request takes its generation, case and the selection, and starts watching, BEFORE the module loads; it revalidates after and stops watching on every path", () => {
+test("main.js builds the menu requests from the pieces of the page (the behavior is tested in record-loader.test.mjs)", () => {
   const main = read("js/main.js");
-  const body = /const requestRowMenu = async \(request\) => \{([\s\S]*?)\n  \};/.exec(main)[1];
-  const load = body.indexOf("await loadRowMenu()");
-  assert.ok(load > 0);
-  for (const before of ["++rowMenuGen", "const forCase = caseId", "grid.holdSelection()", "showRecordFor(request.row)", "watchGesture({"]) {
-    assert.ok(body.indexOf(before) >= 0 && body.indexOf(before) < load, before);
+  const block = /rowMenus = createMenuRequests\(\{([\s\S]*?)\n  \}\);/.exec(main)[1];
+  for (const piece of ["doc: document", "win: window", "getCase: () => caseId", "selectedRow: () => grid.selectedRow()",
+    "holdSelection: () => grid.holdSelection()", "show: (row) => showRecordFor(row)", "load: () => loadRowMenu()", "getMenu: () => rowMenu"]) {
+    assert.ok(block.includes(piece), piece);
   }
-  const after = body.slice(load);
-  for (const check of ["gen !== rowMenuGen", "caseId !== forCase", "grid.selectedRow()"]) {
-    assert.ok(after.includes(check), check);
-  }
-  assert.match(after, /\} finally \{\s*stop\(\);\s*\}/, "stops watching on every path out");
+  assert.match(main, /const requestRowMenu = \(request\) => rowMenus\.request\(request\);/);
 });
 
 test("the selection, the menu and the palette show a record through the one loader", () => {

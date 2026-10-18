@@ -42,7 +42,7 @@ function page({ entry = RECORD(), prepare = null, singleKeysOn = true, withAncho
   deps.hasType = () => st.entry !== null && st.entry.tpl_id > 0;
   deps.highlightReady = () => true;
   const ctx = {
-    caseId: () => st.caseId,
+    caseId: () => { if (st.afterCheck) { const later = st.afterCheck; st.afterCheck = null; queueMicrotask(later); } return st.caseId; },
     entry: () => st.entry,
     selectedRow: () => st.selected,
     userFilter: () => null,
@@ -556,4 +556,32 @@ test("an action that reads the live detail (Copy text) also waits for its module
   release();
   await settle();
   assert.deepEqual(p.calls.filter(([name]) => name === "copyRecord"), []);
+});
+
+test("the interval between the guard and run(): a selection or case change in a microtask right after Enter never lets the action run", async () => {
+  for (const move of [(st) => { st.selected = { id: 8 }; st.entry = { ...RECORD(), id: 8 }; }, (st) => { st.caseId = "C2"; }]) {
+    const p = page();
+    await p.menu.open(request({ keyboard: true }));
+    press(p.doc, "End"); // Copy text
+    p.st.afterCheck = () => move(p.st); // queued by the item's own check: lands between that check and run()
+    press(p.doc, "Enter");
+    await settle();
+    assert.deepEqual(p.calls.filter(([name]) => name === "copyRecord"), []);
+  }
+  const ok = page();
+  await ok.menu.open(request({ keyboard: true }));
+  press(ok.doc, "End");
+  press(ok.doc, "Enter");
+  await settle();
+  assert.deepEqual(ok.calls.filter(([name]) => name === "copyRecord"), [["copyRecord"]], "and it runs when nothing moved");
+});
+
+test("the same guard stands in a Same key choice: a change right after the choice never opens the panel", async () => {
+  const p = page();
+  await p.menu.open(request({ keyboard: true }));
+  press(p.doc, "ArrowRight");
+  p.st.afterCheck = () => { p.st.selected = { id: 8 }; };
+  press(p.doc, "Enter");
+  await settle();
+  assert.deepEqual(p.calls.filter(([name]) => name === "showSameKey"), []);
 });

@@ -123,11 +123,9 @@ export function createPalette({
     const runWith = bound;
     const runTarget = target;
     close();
-    // The loader of the action may still be arriving: wait for it here, then check the target once more and run in the same
-    // turn (invoke() finds the loader done), so an action never runs in another case or on another record.
-    Promise.resolve(actions.preload(command.actionId))
-      .then(() => (targetCurrent(ctx, runTarget) ? actions.invoke(command.actionId, runWith, command.args) : undefined))
-      .catch(onError);
+    // invoke() waits for the loader of the action and asks the guard synchronously after that wait, right before run(): an
+    // action never runs in another case or on another record, whatever happens in between.
+    Promise.resolve(actions.invoke(command.actionId, runWith, command.args, () => targetCurrent(ctx, runTarget))).catch(onError);
   }
 
   function onKeydown(event) {

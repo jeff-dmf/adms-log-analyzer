@@ -218,13 +218,10 @@ export function createContextMenu({
     }
     // The actions run with the captured record (its source, message type and keys), never with a second look at the detail.
     const bound = targetContext(ctx, record);
-    const wrap = (run, item) => async () => {
-      if (item && typeof item.preload === "function") {
-        await item.preload(); // never rejects; the module is in before the target is checked, so nothing waits after it
-      }
-      return targetCurrent(ctx, record) ? run() : undefined;
-    };
-    const built = adaptMenuItems(toMenuItems(actions, contextMenuDefs(actions), bound, strings), actions, {
+    // Checked when the item is chosen and AGAIN by invoke(), synchronously after its last wait and right before run().
+    const current = () => targetCurrent(ctx, record);
+    const wrap = (run) => () => (current() ? run() : undefined);
+    const built = adaptMenuItems(toMenuItems(actions, contextMenuDefs(actions), bound, strings, current), actions, {
       singleKeysOn: singleKeysOn(), strings, wrap,
     });
     if (built.length === 0) {

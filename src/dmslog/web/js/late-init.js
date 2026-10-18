@@ -159,3 +159,51 @@ export function watchGesture({ doc, win, keep = null, cancel }) {
     }
   };
 }
+
+/**
+ * The requests for the menu of a record (right click, Menu key, Shift+F10), from the gesture until the menu module has taken
+ * the request over. Pieces from main.js: doc, win, keep() (the grid element), getCase(), selectedRow(), holdSelection(),
+ * show(row) (the detail shows it), load() -> Promise<menu> (the module), getMenu() (the menu when loaded, else null).
+ * A request takes its generation, case and selection BEFORE the module loads and is watched (watchGesture) from that moment;
+ * cancelling, replacing or closing stops the watching at once, not when the import ends.
+ * Returns { request(req), close(), targetId() }.
+ */
+export function createMenuRequests({ doc, win, keep, getCase, selectedRow, holdSelection, show, load, getMenu }) {
+  let gen = 0;
+  let target = null; // id of the record of the request in flight or of the open menu
+  let stopWatch = () => {};
+  const close = () => {
+    stopWatch();
+    gen += 1;
+    target = null;
+    const menu = getMenu();
+    if (menu) {
+      menu.close();
+    }
+  };
+  async function request(req) {
+    stopWatch(); // an older request stops being watched the moment it is replaced
+    const mine = ++gen;
+    const forCase = getCase();
+    target = req.row.id;
+    holdSelection();
+    show(req.row);
+    const stop = watchGesture({
+      doc, win, keep: keep(), cancel: () => { if (mine === gen) { close(); } },
+    });
+    stopWatch = stop;
+    try {
+      const menu = await load();
+      const selected = selectedRow();
+      if (mine !== gen || getCase() !== forCase || !selected || String(selected.id) !== String(req.row.id)) {
+        return false; // overtaken while the module loaded
+      }
+      const opening = menu.open(req); // starts watching synchronously
+      stop();
+      return await opening;
+    } finally {
+      stop();
+    }
+  }
+  return { request, close, targetId: () => target };
+}
