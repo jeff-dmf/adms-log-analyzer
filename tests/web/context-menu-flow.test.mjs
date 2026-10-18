@@ -368,7 +368,7 @@ test("closing removes every listener the menu added to the document", async () =
   const before = count();
   for (let i = 0; i < 3; i += 1) {
     await menu.open(request({ keyboard: true }));
-    assert.deepEqual(count(), before.map((n) => n + 1), "added while open");
+    assert.deepEqual(count(), before.map((n, at) => n + (at === 3 ? 2 : 1)), "added while open (pointerdown: the menu's own and the one that watches the request)");
     press(doc, "Escape");
     assert.deepEqual(count(), before, "removed on close, round " + i);
   }
@@ -422,4 +422,138 @@ test("destroy closes the menu", async () => {
   await menu.open(request());
   menu.destroy();
   assert.equal(menuEls(doc).length, 0);
+});
+
+// ---- the target is captured once and revalidated after every wait --------------------------------------------------------
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+function slowPreload(p) {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const original = p.actions.preload;
+  let armed = false;
+  p.actions.preload = (id) => (armed ? gate.then(() => original(id)) : original(id)); // the loader of an action is still arriving
+  const arm = () => { armed = true; };
+  return Object.assign(() => release(), { arm });
+}
+
+test("an action waiting for its module does not hit another record: the selection moved before the filter was applied", async () => {
+  const p = page();
+  const release = slowPreload(p);
+  await p.menu.open(request({ keyboard: true }));
+  release.arm();
+  press(p.doc, "ArrowDown");
+  assert.equal(focusedLabel(p.doc), S.actOnlySource);
+  press(p.doc, "Enter");
+  p.st.selected = { id: 8 };
+  p.st.entry = { ...RECORD(), id: 8, source_id: 5 };
+  release();
+  await settle();
+  assert.deepEqual(p.st.filters, [], "nothing was applied, and certainly not the source of record 8");
+});
+
+test("the same wait with nothing moved applies the filter of the record the menu was opened on", async () => {
+  const p = page();
+  const release = slowPreload(p);
+  await p.menu.open(request({ keyboard: true }));
+  release.arm();
+  press(p.doc, "ArrowDown");
+  press(p.doc, "Enter");
+  p.st.entry = { ...RECORD(), source_id: 77 }; // the detail reloaded the same record meanwhile
+  release();
+  await settle();
+  assert.deepEqual(p.st.filters, [{ and: [{ source: [3] }] }], "the source read when the menu opened");
+});
+
+test("an action waiting for its module is dropped when the case changed", async () => {
+  const p = page();
+  const release = slowPreload(p);
+  await p.menu.open(request({ keyboard: true }));
+  release.arm();
+  press(p.doc, "ArrowDown");
+  press(p.doc, "Enter");
+  p.st.caseId = "C2";
+  release();
+  await settle();
+  assert.deepEqual(p.st.filters, []);
+});
+
+test("a filter that is applied late is dropped when the record is gone by then (setUserFilter of the bound context)", async () => {
+  const p = page();
+  await p.menu.open(request({ keyboard: true }));
+  press(p.doc, "ArrowDown");
+  const run = p.actions.invoke;
+  p.actions.invoke = async (id, ctx, args) => { // the action runs, but the target changes while its module loads
+    p.st.selected = { id: 8 };
+    return run(id, ctx, args);
+  };
+  press(p.doc, "Enter");
+  await settle();
+  assert.deepEqual(p.st.filters, []);
+});
+
+test("the record must be the selected one before anything is loaded for it", async () => {
+  const seen = [];
+  const p = page({ prepare: async (row) => { seen.push(row.id); return true; } });
+  p.st.selected = { id: 8 };
+  assert.equal(await p.menu.open(request()), false);
+  assert.deepEqual(seen, [], "no detail request for a record that is not selected");
+  p.st.selected = null;
+  assert.equal(await p.menu.open(request()), false);
+});
+
+test("while the record loads the request is watched: a scroll, a click elsewhere or the focus moving drop it", async () => {
+  const cases = [
+    (p) => { for (const fn of p.doc.listeners.wheel ?? []) fn({ type: "wheel", target: p.viewport }); },
+    (p) => { for (const fn of p.doc.listeners.scroll ?? []) fn({ type: "scroll", target: p.viewport }); },
+    (p) => { for (const fn of p.doc.listeners.pointerdown ?? []) fn({ type: "pointerdown", target: p.outside }); },
+    (p) => { p.outside.focus(); },
+  ];
+  for (const act of cases) {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const p = page({ prepare: async () => { await gate; return true; } });
+    const pending = p.menu.open(request());
+    assert.equal(p.menu.targetId(), 7, "the request is known while it loads");
+    act(p);
+    release();
+    assert.equal(await pending, false);
+    assert.equal(menuEls(p.doc).length, 0);
+    assert.equal(p.menu.targetId(), null);
+    for (const type of ["scroll", "wheel", "focusin", "pointerdown"]) {
+      assert.deepEqual(p.doc.listeners[type] ?? [], [], type + " listeners are gone");
+    }
+  }
+});
+
+test("targetId names the record of the open menu", async () => {
+  const p = page();
+  assert.equal(p.menu.targetId(), null);
+  await p.menu.open(request());
+  assert.equal(p.menu.targetId(), 7);
+  p.menu.close();
+  assert.equal(p.menu.targetId(), null);
+});
+
+test("a request that failed or was refused leaves no listener behind", async () => {
+  const p = page({ prepare: async () => false });
+  await p.menu.open(request());
+  for (const type of ["scroll", "wheel", "focusin", "pointerdown"]) {
+    assert.deepEqual(p.doc.listeners[type] ?? [], [], type);
+  }
+});
+
+test("an action that reads the live detail (Copy text) also waits for its module and is dropped if the record moved meanwhile", async () => {
+  const p = page();
+  const release = slowPreload(p);
+  await p.menu.open(request({ keyboard: true }));
+  release.arm();
+  press(p.doc, "End"); // Copy text
+  press(p.doc, "Enter");
+  p.st.selected = { id: 8 };
+  p.st.entry = { ...RECORD(), id: 8 };
+  release();
+  await settle();
+  assert.deepEqual(p.calls.filter(([name]) => name === "copyRecord"), []);
 });

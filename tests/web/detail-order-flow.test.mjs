@@ -524,8 +524,6 @@ async function recordRegistry(over = {}) {
   const state = { shown: true, type: true, hlReady: true };
   registerAppActions(registry, {
     ready: {},
-    recordShown: () => state.shown,
-    hasType: () => state.type,
     highlightReady: () => state.hlReady,
     copyRecord: () => calls.push(["copy"]),
     loadContext: (same) => calls.push(["context", same]),
@@ -551,7 +549,8 @@ test("record actions: copy, context, filterType and highlightType are registered
 
 test("record actions: run through invoke with their arguments and follow the record and its message type", async () => {
   const { registry, calls, state } = await recordRegistry();
-  const ctx = { caseId: () => "c1" };
+  // The record is read from ctx.entry() (the menu and the palette hand in the one they captured).
+  const ctx = { caseId: () => "c1", entry: () => (state.shown ? { id: 1, tpl_id: state.type ? 5 : 0 } : null) };
   assert.deepEqual(await registry.invoke("record.copy", ctx), { ok: true });
   await registry.invoke("record.context", ctx, "tid");
   await registry.invoke("record.filterType", ctx);

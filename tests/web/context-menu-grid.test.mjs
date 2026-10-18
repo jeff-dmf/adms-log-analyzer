@@ -101,3 +101,23 @@ test("a target without closest() (a text node) is treated as the grid itself", (
   assert.equal(t.requests.length, 1);
   assert.equal(t.requests[0].keyboard, true);
 });
+
+test("the menu takes the selection over: a pending 'show the selected record' is cancelled (pointer and keyboard)", () => {
+  for (const [pick, button] of [[(t) => t.onRow(1), 2], [(t) => t.onViewport(), 0]]) {
+    const t = setup();
+    t.grid.selectTimer = setTimeout(() => { throw new Error("the pending selection fired"); }, 5);
+    t.fire({ target: pick(t), button });
+    assert.equal(t.grid.selectTimer, null);
+    assert.equal(t.requests.length, 1);
+  }
+});
+
+test("holdSelection() cancels the pending notification and is safe to call twice", async () => {
+  const t = setup();
+  let fired = false;
+  t.grid.selectTimer = setTimeout(() => { fired = true; }, 1);
+  t.grid.holdSelection();
+  t.grid.holdSelection();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(fired, false);
+});

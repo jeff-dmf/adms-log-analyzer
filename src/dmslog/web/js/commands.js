@@ -4,9 +4,9 @@
 // gives the focus back to what opened it. The rules (filter, order, disabled commands) are pure and live in
 // commands-model.js. It loads on the first use (import() in main.js, tried again after a failure).
 // Texts come from strings.js; labels (a case name, a key value) can come from a log: textContent only, never markup.
-import { isComposingEvent } from "./shortcuts-model.js";
+import { hasAltGraph, isComposingEvent } from "./shortcuts-model.js";
 import {
-  buildCommands, filterCommands, keepActive, returnFocus, stepActive,
+  buildCommands, captureTarget, filterCommands, keepActive, returnFocus, stepActive, targetContext, targetCurrent,
 } from "./commands-model.js";
 import { createDialogShell, node } from "./panel-shell.js";
 import { S as defaultStrings, format, pluralKey } from "./strings.js";
@@ -15,12 +15,12 @@ let uid = 0;
 
 /**
  * Options: actions (the registry), ctx (AppContext), doc, strings, singleKeysOn() (the one-letter shortcut preference),
- * restoreFocus(el) -> boolean (gives the focus back; the default tries `el`, then the grid and the case button),
- * onError(err).
- * Returns { open(opener), close(), isOpen(), destroy() }.
+ * restoreFocus(el, region) -> boolean (gives the focus back; the default tries `el`, then the grid and the case button),
+ * prepare(row) -> Promise<boolean> (makes the detail show the selected record, so the record commands act on it), onError(err).
+ * Returns { open(opener, region), close(), isOpen(), destroy() }.
  */
 export function createPalette({
-  actions, ctx, doc = document, strings = defaultStrings, singleKeysOn = () => true, restoreFocus = null, onError = () => {},
+  actions, ctx, doc = document, strings = defaultStrings, singleKeysOn = () => true, restoreFocus = null, prepare = null, onError = () => {},
 } = {}) {
   const id = "cmd" + String(++uid);
   let shell = null;
@@ -32,13 +32,16 @@ export function createPalette({
   let nodes = []; // the option elements, parallel to `list`
   let active = -1;
   let from = null; // what had the focus when the palette opened
+  let fromRegion = null; // the region of the page it was in, read before anything changed
+  let target = null; // the case, the selected record and its detail, captured when the palette opened
+  let bound = ctx; // the context the commands run with (the target's, not the live one)
   let opening = 0; // generation of open(): a close or a second open while the choices load drops the first
 
-  const giveBack = (el) => {
+  const giveBack = (el, region) => {
     let landed = false;
     if (typeof restoreFocus === "function") {
       try {
-        landed = restoreFocus(el) === true;
+        landed = restoreFocus(el, region) === true;
       } catch {
         landed = false;
       }
@@ -110,14 +113,21 @@ export function createPalette({
     if (!command || !command.enabled) {
       return; // a disabled command never runs, from the keyboard or the pointer
     }
+    if (!targetCurrent(ctx, target)) {
+      // The selection or the case moved under the palette: the commands were made for another record. Make them again.
+      capture();
+      refresh();
+      return;
+    }
     // Close first: the focus is back where it was before the action runs (the actions that open a dialog read it).
+    const runWith = bound;
     close();
-    Promise.resolve(actions.invoke(command.actionId, ctx, command.args)).catch(onError);
+    Promise.resolve(actions.invoke(command.actionId, runWith, command.args)).catch(onError);
   }
 
   function onKeydown(event) {
-    if (isComposingEvent(event)) {
-      return; // an input method owns the key (Enter confirms the composition)
+    if (isComposingEvent(event) || hasAltGraph(event)) {
+      return; // an input method owns the key (Enter confirms the composition); AltGr is typing a character
     }
     const key = event.key;
     if (event.ctrlKey && !event.altKey && !event.metaKey && String(key).toLowerCase() === "k") {
@@ -190,25 +200,43 @@ export function createPalette({
   // The choices of an action with choices (a case, the repeat window) exist only after its loader ran: wait for those.
   const loadChoices = () => Promise.all(actions.list().filter((def) => def.children && def.load).map((def) => actions.preload(def.id)));
 
-  async function open(opener) {
+  // Captures the target and the commands made for it (enabled is computed now).
+  function capture() {
+    target = captureTarget(ctx);
+    bound = targetContext(ctx, target);
+    commands = buildCommands(actions, bound, { strings, singleKeysOn: singleKeysOn() });
+  }
+
+  async function open(opener, region = null) {
     const origin = opener || doc.activeElement || null;
     if (shell !== null && shell.isOpen()) {
       return;
     }
     const mine = ++opening;
+    const before = captureTarget(ctx); // what was selected when the key was pressed
     await loadChoices();
-    if (mine !== opening || (shell !== null && shell.isOpen())) {
-      return; // closed or opened again meanwhile
+    if (before.row !== null && typeof prepare === "function") {
+      try {
+        await prepare(before.row); // the detail shows the selected record, or the record commands stay off
+      } catch {
+        // the record could not be shown: capture() sees a detail that is not the selection
+      }
+    }
+    // After the waits: still the latest request, and the case and the selection are what they were.
+    if (mine !== opening || (shell !== null && shell.isOpen()) || ctx.caseId() !== before.caseId ||
+      (ctx.selectedRow() ? ctx.selectedRow().id : null) !== before.rowId) {
+      return;
     }
     from = origin;
+    fromRegion = region;
     if (shell === null) {
       build();
     }
-    commands = buildCommands(actions, ctx, { strings, singleKeysOn: singleKeysOn() });
+    capture();
     field.value = "";
     refresh();
     // The shell gives the focus back through this object: the opener if it still takes it, else the grid.
-    shell.open({ focus: () => giveBack(from) });
+    shell.open({ focus: () => giveBack(from, fromRegion) });
     field.focus();
   }
 

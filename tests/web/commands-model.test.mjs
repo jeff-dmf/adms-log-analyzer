@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { createActionRegistry, toMenuItems } from "../../src/dmslog/web/js/actions.js";
 import { registerAppActions } from "../../src/dmslog/web/js/app-actions.js";
 import {
-  CONTEXT_MENU_EXCLUDED, PAGE_STEP, PALETTE_EXCLUDED, adaptMenuItems, buildCommands, contextMenuDefs, filterCommands, firstEnabled,
-  fold, hideTypeFilter, keepActive, onlySourceFilter, returnFocus, shortcutText, stepActive,
+  CONTEXT_MENU_EXCLUDED, PAGE_STEP, PALETTE_EXCLUDED, adaptMenuItems, buildCommands, captureTarget, contextMenuDefs, filterCommands, firstEnabled,
+  fold, hideTypeFilter, keepActive, onlySourceFilter, returnFocus, shortcutText, stepActive, targetContext, targetCurrent,
 } from "../../src/dmslog/web/js/commands-model.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 import { makeDoc } from "./fixtures/fake-dom.mjs";
@@ -339,4 +339,42 @@ test("returnFocus: the element if it takes the focus, else the first fallback th
   caseButton.disabled = true;
   assert.equal(returnFocus(doc, opener), false);
   assert.equal(returnFocus(doc, null, []), false);
+});
+
+test("captureTarget / targetCurrent / targetContext: the record, its detail and the case are taken once", () => {
+  const live = { caseId: "C1", sel: { id: 7 }, entry: { id: 7, source_id: 3 }, filters: [] };
+  const ctx = {
+    caseId: () => live.caseId, selectedRow: () => live.sel, entry: () => live.entry, userFilter: () => null,
+    setUserFilter: (f) => { live.filters.push(f); },
+  };
+  const target = captureTarget(ctx);
+  assert.deepEqual([target.caseId, target.rowId, target.entry.source_id], ["C1", 7, 3]);
+  assert.equal(targetCurrent(ctx, target), true);
+  const bound = targetContext(ctx, target);
+  live.entry = { id: 7, source_id: 99 };
+  assert.equal(bound.entry().source_id, 3, "the captured detail, not the live one");
+  assert.equal(bound.selectedRow().id, 7);
+  live.caseId = "C2";
+  assert.equal(bound.caseId(), "C1", "the captured case");
+  live.caseId = "C1";
+  bound.setUserFilter("kept");
+  assert.deepEqual(live.filters, ["kept"]);
+  for (const change of [() => { live.caseId = "C2"; }, () => { live.sel = { id: 8 }; }, () => { live.sel = null; }, () => { live.entry = { id: 8 }; }, () => { live.entry = null; }]) {
+    live.caseId = "C1"; live.sel = { id: 7 }; live.entry = { id: 7 };
+    change();
+    assert.equal(targetCurrent(ctx, target), false);
+    live.filters.length = 0;
+    bound.setUserFilter("late");
+    assert.deepEqual(live.filters, [], "a late setUserFilter is dropped");
+  }
+  // The detail shows another record than the selection: no entry in the target.
+  live.caseId = "C1"; live.sel = { id: 9 }; live.entry = { id: 7, source_id: 3 };
+  assert.equal(captureTarget(ctx).entry, null);
+  live.sel = null; live.entry = null;
+  const empty = captureTarget(ctx);
+  assert.deepEqual([empty.rowId, empty.entry], [null, null]);
+  assert.equal(targetCurrent(ctx, empty), true);
+  live.sel = { id: 1 };
+  assert.equal(targetCurrent(ctx, empty), false);
+  assert.equal(targetCurrent({ caseId() { throw new Error("x"); } }, empty), false);
 });

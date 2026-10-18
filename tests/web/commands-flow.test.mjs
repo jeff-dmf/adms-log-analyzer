@@ -10,7 +10,7 @@ import { createPalette } from "../../src/dmslog/web/js/commands.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 import { makeDoc, tick } from "./fixtures/fake-dom.mjs";
 
-function page({ record = true, cases = [{ id: "1", name: "Case one" }], singleKeysOn = true, restoreFocus = null, extra = null } = {}) {
+function page({ record = true, cases = [{ id: "1", name: "Case one" }], singleKeysOn = true, restoreFocus = null, extra = null, prepare = null } = {}) {
   const doc = makeDoc();
   doc.getElementById = (id) => doc.body.all().find((n) => n.id === id) ?? null;
   const make = (tag, id, parent = doc.body) => {
@@ -23,7 +23,11 @@ function page({ record = true, cases = [{ id: "1", name: "Case one" }], singleKe
   const viewport = make("div", "grid-viewport");
   viewport.setAttribute("tabindex", "0");
   const opener = make("button", "view-button");
-  const st = { record, focusAtRun: [], calls: [] };
+  const row = (id) => ({ id });
+  const entry = (id) => ({ id, source_id: id * 10, tpl_id: 1, keys: [] });
+  const st = { caseId: "C1", sel: null, det: null, filters: [], focusAtRun: [], calls: [], row, entry };
+  Object.defineProperty(st, "record", { set(on) { st.sel = on ? row(1) : null; st.det = on ? entry(1) : null; } });
+  st.record = record;
   const deps = new Proxy({}, {
     get: (target, name) => (name in target ? target[name] : (...args) => {
       st.calls.push([name, ...args]);
@@ -37,12 +41,10 @@ function page({ record = true, cases = [{ id: "1", name: "Case one" }], singleKe
   deps.drawerOpen = () => false;
   deps.repeats = () => null;
   deps.followTailOn = () => false;
-  deps.recordShown = () => st.record;
-  deps.hasType = () => st.record;
   deps.highlightReady = () => true;
   const ctx = {
-    caseId: () => "C1", entry: () => (st.record ? { id: 1, source_id: 1, tpl_id: 1, keys: [] } : null), selectedRow: () => (st.record ? { id: 1 } : null),
-    userFilter: () => null, setUserFilter() {}, dock: { isOpen: () => false },
+    caseId: () => st.caseId, entry: () => st.det, selectedRow: () => st.sel,
+    userFilter: () => null, setUserFilter: (filter) => { st.filters.push(filter); }, dock: { isOpen: () => false },
   };
   const errors = [];
   const actions = createActionRegistry({ strings: S, singleKeysOn: () => singleKeysOn, onError: (err, id) => errors.push([id, err.message]) });
@@ -54,7 +56,7 @@ function page({ record = true, cases = [{ id: "1", name: "Case one" }], singleKe
     focusAtInvoke.push(doc.activeElement); // synchronously: before any await of the registry
     return actions.invoke(...args);
   };
-  const palette = createPalette({ actions: seen, ctx, doc, singleKeysOn: () => singleKeysOn, restoreFocus, onError: (err) => errors.push(err) });
+  const palette = createPalette({ actions: seen, ctx, doc, singleKeysOn: () => singleKeysOn, restoreFocus, prepare, onError: (err) => errors.push(err) });
   const parts = () => {
     const dialog = doc.body.children.find((c) => c.tagName === "DIALOG");
     const all = dialog ? dialog.all() : [];
@@ -407,4 +409,104 @@ test("a failing command is reported by the registry and the palette is already c
   assert.equal(p.palette.isOpen(), false);
   assert.deepEqual(p.errors, [["view.boom", "boom"]]);
   assert.equal(p.doc.activeElement, p.opener);
+});
+
+// ---- the target: the record the palette was opened on ------------------------------------------------------------------
+
+test("the palette makes the detail show the SELECTED record before it builds the commands (the detail still on the previous one)", async () => {
+  const seen = [];
+  let p;
+  p = page({ prepare: async (row) => { seen.push(row.id); p.st.det = p.st.entry(row.id); return true; } });
+  p.st.sel = p.st.row(2); // record 2 selected, the detail still shows 1
+  await open(p);
+  assert.deepEqual(seen, [2]);
+  type(p, "only this source");
+  press(p, "Enter");
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(p.st.filters, [{ and: [{ source: [20] }] }], "the source of record 2, not of record 1");
+});
+
+test("when the selected record cannot be shown, the record commands are off (they never act on the previous detail)", async () => {
+  const p = page({ prepare: async () => false });
+  p.st.sel = p.st.row(2);
+  await open(p);
+  type(p, "only this source");
+  const [option] = p.parts().options;
+  assert.equal(option.attrs["aria-disabled"], "true");
+  press(p, "Enter");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(p.st.filters, []);
+});
+
+test("the commands run with the record captured when the palette opened; a later change of the detail does not move them", async () => {
+  const p = page();
+  await open(p);
+  type(p, "only this source");
+  p.st.det = { ...p.st.entry(1), source_id: 999 }; // the same record reloaded with other data
+  press(p, "Enter");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(p.st.filters, [{ and: [{ source: [10] }] }]);
+});
+
+test("the selection moved while the palette is open: Enter runs nothing and the commands are made again for the new record", async () => {
+  const p = page();
+  await open(p);
+  type(p, "only this source");
+  p.st.sel = p.st.row(2);
+  p.st.det = p.st.entry(2);
+  press(p, "Enter");
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(p.st.filters, [], "nothing ran for the old target");
+  assert.equal(p.palette.isOpen(), true);
+  press(p, "Enter");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(p.st.filters, [{ and: [{ source: [20] }] }], "the next Enter acts on the new record");
+});
+
+test("the selection changing while the palette loads drops the opening", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const p = page({ prepare: async () => { await gate; return true; } });
+  p.opener.focus();
+  const pending = p.palette.open(p.opener);
+  p.st.sel = p.st.row(5);
+  release();
+  await pending;
+  assert.equal(p.palette.isOpen(), false);
+});
+
+test("the region the opener was in is handed to restoreFocus (read before the opening, kept if the opener is gone)", async () => {
+  const log = [];
+  const p = page({ restoreFocus: (el, region) => { log.push([el.id, region]); return true; } });
+  p.opener.focus();
+  await p.palette.open(p.opener, "bar");
+  p.opener.remove();
+  press(p, "Escape");
+  assert.deepEqual(log, [["view-button", "bar"]]);
+});
+
+test("AltGr (AltGraph without Ctrl or Alt flags) is typing: Enter, arrows and Ctrl+K are left alone", async () => {
+  const p = page();
+  await open(p);
+  type(p, "keyboard shortcuts");
+  const altGr = { getModifierState: (name) => name === "AltGraph" };
+  assert.equal(press(p, "Enter", altGr).prevented, false);
+  assert.equal(press(p, "ArrowDown", altGr).prevented, false);
+  await tick();
+  assert.deepEqual(p.st.calls, []);
+  assert.equal(p.palette.isOpen(), true);
+});
+
+test("the case changing while the palette loads drops the opening", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const p = page({ prepare: async () => { await gate; return true; } });
+  p.opener.focus();
+  const pending = p.palette.open(p.opener);
+  p.st.caseId = "C2";
+  release();
+  await pending;
+  assert.equal(p.palette.isOpen(), false);
 });

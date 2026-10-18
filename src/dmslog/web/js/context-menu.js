@@ -7,7 +7,9 @@
 // selected one, in the same case, and it closes (focus back to the grid) when the case, the view or the selection change.
 // Labels (a key value, a case name) can come from a log: ui-menu.js writes them with textContent only.
 import { toMenuItems } from "./actions.js";
-import { adaptMenuItems, contextMenuDefs, returnFocus } from "./commands-model.js";
+import {
+  adaptMenuItems, captureTarget, contextMenuDefs, returnFocus, targetContext, targetCurrent,
+} from "./commands-model.js";
 import { isInMenu } from "./filters.js";
 import { S as defaultStrings } from "./strings.js";
 import { createMenu } from "./ui-menu.js";
@@ -27,7 +29,8 @@ export function createContextMenu({
   prepare = async () => true, focusRow = null, anchorFor = null, onOpenChange = null,
 } = {}) {
   let seq = 0; // generation: an open() that is overtaken by another open() or by close() drops itself
-  let target = null; // { rowId, caseId } while a menu is open
+  let pending = null; // { rowId } while the record loads, before the menu is on screen
+  let target = null; // the captured target (commands-model.js captureTarget) while a menu is open
   let items = [];
   let anchor = { x: 0, y: 0 };
   let listening = false;
@@ -37,16 +40,6 @@ export function createContextMenu({
       return ctx.caseId();
     } catch {
       return null;
-    }
-  };
-  // The record is still the target: same case, still the selected row, and the detail shows it.
-  const isCurrent = (mine) => {
-    try {
-      const row = ctx.selectedRow();
-      const entry = ctx.entry();
-      return caseNow() === mine.caseId && Boolean(row) && sameId(row.id, mine.rowId) && Boolean(entry) && sameId(entry.id, mine.rowId);
-    } catch {
-      return false;
     }
   };
 
@@ -81,7 +74,8 @@ export function createContextMenu({
     getBoundingClientRect: () => ({ left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y, width: 0, height: 0 }),
   };
 
-  // Anything that moves the page under the menu, or the focus away from it, closes it.
+  // Anything that moves the page under the menu, or the focus away from it, closes it; this holds from the moment the
+  // request is made (the record may still be loading) until the menu is closed.
   const onMove = (event) => {
     if (!isInMenu(event && event.target)) {
       close();
@@ -89,7 +83,12 @@ export function createContextMenu({
   };
   const onFocusIn = (event) => {
     if (!isInMenu(event && event.target)) {
-      closeMenu(false);
+      cancel(false);
+    }
+  };
+  const onPointerDown = (event) => {
+    if (!isInMenu(event && event.target)) {
+      cancel(false);
     }
   };
   const view = () => doc.defaultView || null;
@@ -101,6 +100,7 @@ export function createContextMenu({
     doc.addEventListener("scroll", onMove, true);
     doc.addEventListener("wheel", onMove, true);
     doc.addEventListener("focusin", onFocusIn);
+    doc.addEventListener("pointerdown", onPointerDown, true);
     const win = view();
     if (win && typeof win.addEventListener === "function") {
       win.addEventListener("resize", close);
@@ -115,6 +115,7 @@ export function createContextMenu({
     doc.removeEventListener("scroll", onMove, true);
     doc.removeEventListener("wheel", onMove, true);
     doc.removeEventListener("focusin", onFocusIn);
+    doc.removeEventListener("pointerdown", onPointerDown, true);
     const win = view();
     if (win && typeof win.removeEventListener === "function") {
       win.removeEventListener("resize", close);
@@ -155,10 +156,17 @@ export function createContextMenu({
     menu.close(restore && (lost || isInMenu(at)));
   }
 
-  function close() {
+  // Drops the request that is loading and closes the menu that is open.
+  function cancel(restore) {
     seq += 1;
-    closeMenu(true);
+    pending = null;
+    if (menu.isOpen()) {
+      closeMenu(restore);
+    } else {
+      unlisten();
+    }
   }
+  const close = () => cancel(true);
 
   // The loaders of the actions with choices (Same key): their choices exist only after them.
   const loadChoices = () => Promise.all(actions.list({ group: "record" }).filter((def) => def.children && def.load).map((def) => actions.preload(def.id)));
@@ -166,34 +174,63 @@ export function createContextMenu({
   async function open({ row, x = 0, y = 0, keyboard = false } = {}) {
     const mine = ++seq;
     closeMenu(false);
+    pending = null;
     if (!row || row.id === undefined || row.id === null) {
       return false;
     }
     const caseId = caseNow();
-    if (caseId === null) {
+    const selected = (() => {
+      try {
+        return ctx.selectedRow();
+      } catch {
+        return null;
+      }
+    })();
+    // The record is the selected one, in this case, before anything is loaded for it.
+    if (caseId === null || !selected || !sameId(selected.id, row.id)) {
       return false;
     }
-    const overtaken = () => mine !== seq; // isCurrent() below also checks the case
+    pending = { rowId: row.id };
+    listen();
+    const abort = () => {
+      if (mine === seq) {
+        pending = null;
+        unlisten();
+      }
+      return false;
+    };
     let ready = false;
     try {
       ready = (await prepare(row)) === true;
-      if (ready) {
+      if (ready && mine === seq) {
         await loadChoices();
       }
     } catch {
       ready = false;
     }
-    const record = { rowId: row.id, caseId };
-    if (!ready || overtaken() || !isCurrent(record)) {
-      return false;
+    // Revalidated after every wait: this request is the latest, and the case, the selection and the detail are still it.
+    if (!ready || mine !== seq) {
+      return abort();
     }
-    const wrap = (run) => () => (isCurrent(record) ? run() : undefined);
-    const built = adaptMenuItems(toMenuItems(actions, contextMenuDefs(actions), ctx, strings), actions, {
+    const record = captureTarget(ctx);
+    if (record.caseId !== caseId || record.entry === null || !sameId(record.rowId, row.id) || !targetCurrent(ctx, record)) {
+      return abort();
+    }
+    // The actions run with the captured record (its source, message type and keys), never with a second look at the detail.
+    const bound = targetContext(ctx, record);
+    const wrap = (run, item) => async () => {
+      if (item && typeof item.preload === "function") {
+        await item.preload(); // never rejects; the module is in before the target is checked, so nothing waits after it
+      }
+      return targetCurrent(ctx, record) ? run() : undefined;
+    };
+    const built = adaptMenuItems(toMenuItems(actions, contextMenuDefs(actions), bound, strings), actions, {
       singleKeysOn: singleKeysOn(), strings, wrap,
     });
     if (built.length === 0) {
-      return false;
+      return abort();
     }
+    pending = null;
     target = record;
     items = built;
     anchor = { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
@@ -231,6 +268,8 @@ export function createContextMenu({
     openForSelection,
     close,
     isOpen: () => menu.isOpen(),
+    // The record a menu is open or loading for (null when none): the owner keeps the menu when that record is selected.
+    targetId: () => (target ? target.rowId : pending ? pending.rowId : null),
     destroy() {
       close();
     },

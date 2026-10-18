@@ -1011,6 +1011,7 @@ export class Grid {
         return;
       }
       event.preventDefault();
+      this.holdSelection();
       if (this.window.selected !== index) {
         this.window.selected = index;
         this.render();
@@ -1024,8 +1025,16 @@ export class Grid {
       return; // a right click outside the records, or nothing selected: the browser's own menu
     }
     event.preventDefault();
+    this.holdSelection();
     const at = this.selectedAnchor();
     this.onContextMenu({ row, x: at.x, y: at.y, keyboard: true });
+  }
+
+  // The record menu takes over the selection: a "show the selected record" still waiting for its delay (arrows pressed a
+  // moment ago) must not fire later and close the menu. The owner of the menu shows the record itself.
+  holdSelection() {
+    clearTimeout(this.selectTimer);
+    this.selectTimer = null;
   }
 
   // Where a menu opened from the keyboard goes: under the selected row, a little to the right of its left edge.

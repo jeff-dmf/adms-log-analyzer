@@ -17,7 +17,7 @@
 //   cases()                    [{id, name}] known cases;  selectCase(id), closeCase(), focusNewCase(), focusAddFiles()
 //   drawerOpen(id), toggleDrawer(id)   the sources rail and drawers of UI-17 ("side" | "detail"); loaded on demand, retried on failure
 //   openColumns(), copyExportOpen(), followTailOn(), toggleFollowTail(), setTheme(choice), theme()
-//   recordShown(), hasType(), copyRecord(), loadContext(same), filterType(), highlightType(), highlightReady()   the record actions
+//   copyRecord(), loadContext(same), filterType(), highlightType(), highlightReady()   the record actions
 //   navigateRecord(kind, dir), navigateHighlight(dir), toggleBookmark(), compareSelected(), viewsBack(), viewsForward(),
 //   focusSearch(), moveRegion(dir), openShortcuts()   the keyboard actions (UI-28), see "Keys" below
 import { S } from "./strings.js";
@@ -438,9 +438,9 @@ export function registerAppActions(actions, deps) {
   });
 
   // ---- Record (UI-20): the actions of the detail pane. The buttons of the pane run them through the registry.
-  //   deps.recordShown(), deps.hasType()     is there a record in the detail / does it have a message type
+  //   The record is read from ctx.entry(): the menu and the palette hand in the record they captured when they opened.
   //   deps.copyRecord(), deps.loadContext(same), deps.filterType(), deps.highlightType(), deps.highlightReady()
-  const recordShown = () => deps.recordShown();
+  const recordShown = (ctx) => Boolean(ctx.entry());
   const recordAction = (def) => actions.register({ group: "record", enabled: recordShown, disabledKey: "cmpNeedRecord", ...def });
   recordAction({ id: "record.copy", labelKey: "actCopyRecord", run: () => deps.copyRecord() });
   recordAction({
@@ -453,13 +453,13 @@ export function registerAppActions(actions, deps) {
   recordAction({
     id: "record.filterType",
     labelKey: "actOnlyThisType",
-    enabled: () => recordShown() && deps.hasType(),
+    enabled: (ctx) => recordShown(ctx) && ctx.entry().tpl_id > 0,
     run: () => deps.filterType(),
   });
   recordAction({
     id: "record.highlightType",
     labelKey: "actHighlightType",
-    enabled: () => recordShown() && deps.hasType() && deps.highlightReady(),
+    enabled: (ctx) => recordShown(ctx) && ctx.entry().tpl_id > 0 && deps.highlightReady(),
     run: () => deps.highlightType(),
   });
 

@@ -14,7 +14,11 @@ export function keySpec(event) {
   if (!event || typeof event.key !== "string" || event.key === "" || event.metaKey) {
     return null;
   }
-  const key = event.key;
+  let key = event.key;
+  // With Ctrl or Alt the case of a letter is the Shift key, not Caps Lock: "Ctrl+k" also arrives as "K" with Caps Lock on.
+  if (key.length === 1 && (event.ctrlKey || event.altKey) && key.toLowerCase() !== key.toUpperCase()) {
+    key = event.shiftKey ? key.toUpperCase() : key.toLowerCase();
+  }
   if (key === "Control" || key === "Alt" || key === "Shift" || key === "Meta") {
     return null; // a modifier on its own is not a shortcut
   }

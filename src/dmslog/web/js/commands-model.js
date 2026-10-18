@@ -7,6 +7,57 @@ import { isSingleKey, shortcutLabel } from "./actions.js";
 import { topNodes, wrapNodes } from "./filters.js";
 import { S as defaultStrings, format } from "./strings.js";
 
+// ---- the target of a menu or of the palette ------------------------------------------------------------------------------
+
+const sameId = (a, b) => a !== null && a !== undefined && b !== null && b !== undefined && String(a) === String(b);
+
+/**
+ * What a record menu or the palette acts on, captured ONCE when it opens: the case, the selected record (by id) and the
+ * detail that belongs to it (null when the detail shows another record). Everything the actions need (source, message type,
+ * keys) comes from this object, never from a second look at the live detail.
+ */
+export function captureTarget(ctx) {
+  const row = ctx.selectedRow() || null;
+  const entry = ctx.entry() || null;
+  return {
+    caseId: ctx.caseId(),
+    row,
+    rowId: row ? row.id : null,
+    entry: row && entry && sameId(entry.id, row.id) ? entry : null,
+  };
+}
+
+/** The target is still what the user sees: same case, same selected record, and the detail still shows the captured one. */
+export function targetCurrent(ctx, target) {
+  try {
+    const row = ctx.selectedRow() || null;
+    if (ctx.caseId() !== target.caseId || (row ? row.id : null) !== target.rowId) {
+      return false;
+    }
+    if (target.entry !== null) {
+      const entry = ctx.entry();
+      return Boolean(entry) && sameId(entry.id, target.entry.id);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The AppContext the actions of a menu or of the palette run with: the captured case, record and detail instead of the live
+ * ones, and a setUserFilter() that does nothing once the target is gone (an action that waited for its module).
+ */
+export function targetContext(ctx, target) {
+  return Object.freeze({
+    ...ctx,
+    caseId: () => target.caseId,
+    selectedRow: () => target.row,
+    entry: () => target.entry,
+    setUserFilter: (filter) => (targetCurrent(ctx, target) ? ctx.setUserFilter(filter) : undefined),
+  });
+}
+
 // ---- palette -------------------------------------------------------------------------------------------------------
 
 // The palette lists every action of the registry except the one that opens it.
@@ -228,7 +279,7 @@ export function contextMenuDefs(registry) {
 
 /**
  * MenuItems of toMenuItems() made ready for the context menu: a one-letter shortcut is not shown while those are turned
- * off, and every run() goes through `wrap` (which can refuse it when the record is no longer the target). Children
+ * off, and every run() goes through `wrap(run, item)` (which can refuse it when the record is no longer the target). Children
  * (Same key choices) get the same treatment. Pure: returns new items.
  */
 export function adaptMenuItems(items, registry, { singleKeysOn = true, strings = defaultStrings, wrap = (fn) => fn } = {}) {
@@ -242,7 +293,7 @@ export function adaptMenuItems(items, registry, { singleKeysOn = true, strings =
       next.shortcut = shortcutText(def.shortcut, strings, singleKeysOn);
     }
     if (typeof item.run === "function") {
-      next.run = wrap(item.run);
+      next.run = wrap(item.run, item);
     }
     if (Array.isArray(item.children)) {
       next.children = adaptMenuItems(item.children, registry, { singleKeysOn, strings, wrap });

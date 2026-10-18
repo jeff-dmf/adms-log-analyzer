@@ -142,3 +142,27 @@ test("both entries are in the registry with their keys, so the shortcuts dialog 
   assert.equal(actions.get("record.contextMenu").shortcut, "Shift+F10");
   assert.equal(actions.get("record.contextMenu").scope, "grid");
 });
+
+test("Ctrl+K with Caps Lock on (the key arrives as K, Shift not down) opens the palette; Ctrl+Shift+K does not", async () => {
+  const p = page();
+  const caps = p.press(p.viewport, "K", { ctrlKey: true, shiftKey: false });
+  await tick();
+  assert.equal(caps.prevented, true);
+  assert.deepEqual(p.calls, ["openPalette"]);
+  p.calls.length = 0;
+  p.press(p.viewport, "K", { ctrlKey: true, shiftKey: true });
+  await tick();
+  assert.deepEqual(p.calls, []);
+});
+
+test("keySpec: a letter with Ctrl or Alt follows Shift, not Caps Lock; plain letters are unchanged", async () => {
+  const { keySpec } = await import("../../src/dmslog/web/js/actions.js");
+  assert.equal(keySpec({ key: "K", ctrlKey: true }), "Ctrl+k");
+  assert.equal(keySpec({ key: "k", ctrlKey: true, shiftKey: true }), "Ctrl+K");
+  assert.equal(keySpec({ key: "K", ctrlKey: true, shiftKey: true }), "Ctrl+K");
+  assert.equal(keySpec({ key: "K", altKey: true }), "Alt+k");
+  assert.equal(keySpec({ key: "N", shiftKey: true }), "N", "a plain capital stays (n / N are two shortcuts)");
+  assert.equal(keySpec({ key: "n" }), "n");
+  assert.equal(keySpec({ key: "F10", shiftKey: true }), "Shift+F10");
+  assert.equal(keySpec({ key: "]", ctrlKey: true }), "Ctrl+]");
+});

@@ -186,7 +186,13 @@ function start() {
   // The record context menu (context-menu.js) and the command palette (commands.js) load on their first use.
   let rowMenu = null;
   let palette = null;
+  // Generation of the record menu requests: anything that makes a request obsolete (a selection elsewhere, a view or a case
+  // change) bumps it, so a request that is still loading the module or the record drops itself.
+  let rowMenuGen = 0;
+  let rowMenuTarget = null; // id of the record of the request in flight or of the open menu
   const closeRowMenu = () => {
+    rowMenuGen += 1;
+    rowMenuTarget = null;
     if (rowMenu !== null) {
       rowMenu.close();
     }
@@ -395,12 +401,14 @@ function start() {
     spacer: byId("grid-spacer"),
     header: byId("grid-header"),
     onSelect: (row) => {
-      closeRowMenu();
+      if (rowMenuTarget === null || String(rowMenuTarget) !== String(row.id)) {
+        closeRowMenu(); // the menu of another record; the menu of this very record stays
+      }
       return detail.show(row.id);
     },
     // Right click, Menu key or Shift+F10 on a record (UI-29): the grid selected it; the menu opens once the detail shows it.
     onContextMenu: (request) => {
-      openRowMenu(request).catch(showError);
+      requestRowMenu(request).catch(showError);
     },
     onCount: (value, options) => status.count(value, options),
     onPosition: (ts) => status.position(ts),
@@ -1448,8 +1456,6 @@ function start() {
     },
     theme: themePreference,
     setTheme: (choice) => setThemePreference(choice),
-    recordShown: () => detail.entry !== null,
-    hasType: () => detail.entry !== null && detail.entry.tpl_id > 0,
     copyRecord: () => detail.copyText(),
     loadContext: (same) => detail.loadContext(same),
     filterType: () => detail.filterType(),
@@ -1482,22 +1488,45 @@ function start() {
     },
     // Record menu and palette (UI-29).
     showSameKey: ({ type, value }) => dock.open("sameKey", { type, value }),
+    // Shift+F10: the menu of the selected record, under its row.
     openRecordMenu: async () => {
-      (await loadRowMenu()).openForSelection();
+      const row = grid.selectedRow();
+      if (row !== null) {
+        const at = grid.selectedAnchor();
+        await requestRowMenu({ row, x: at.x, y: at.y, keyboard: true });
+      }
     },
+    // The opener and its region are read before anything loads or moves: the palette gives the focus back to them.
     openPalette: async () => {
       const opener = document.activeElement;
-      (await loadPalette()).open(opener);
+      let region = shortcuts === null ? null : shortcuts.regions.regionOf(opener);
+      const module = await loadPalette();
+      if (region === null && shortcuts !== null) {
+        region = shortcuts.regions.regionOf(opener);
+      }
+      module.open(opener, region);
     },
   };
   const singleKeysOn = () => (shortcuts === null ? true : shortcuts.singleKeys());
   // The record actions work on the shown record: a menu opened on another row makes the detail show it first.
-  const showRecordFor = async (row) => {
+  // One request per record at a time: the grid's hook and the menu's own prepare share it.
+  let recordShowing = null;
+  const showRecordFor = (row) => {
     const same = () => detail.entry !== null && String(detail.entry.id) === String(row.id);
-    if (!same()) {
-      await detail.show(row.id);
+    if (same()) {
+      return Promise.resolve(true);
     }
-    return same();
+    if (recordShowing !== null && String(recordShowing.id) === String(row.id)) {
+      return recordShowing.promise;
+    }
+    const mine = { id: row.id, promise: null };
+    mine.promise = detail.show(row.id).then(same, () => false).finally(() => {
+      if (recordShowing === mine) {
+        recordShowing = null;
+      }
+    });
+    recordShowing = mine;
+    return mine.promise;
   };
   const loadRowMenu = retryable(() => import("./context-menu.js").then((module) => {
     if (rowMenu === null) {
@@ -1511,12 +1540,25 @@ function start() {
           viewport.focus();
           return document.activeElement === viewport;
         },
-        anchorFor: () => grid.selectedAnchor(),
       });
     }
     return rowMenu;
   }));
-  const openRowMenu = async (request) => (await loadRowMenu()).open(request);
+  // A request for the menu of a record (right click, Menu key, Shift+F10). The generation and the case are taken BEFORE the
+  // module loads; the grid has handed the selection over (no pending "show the record"), so the record is shown here.
+  const requestRowMenu = async (request) => {
+    const gen = ++rowMenuGen;
+    const forCase = caseId;
+    rowMenuTarget = request.row.id;
+    grid.holdSelection();
+    showRecordFor(request.row);
+    const menu = await loadRowMenu();
+    const selected = grid.selectedRow();
+    if (gen !== rowMenuGen || caseId !== forCase || !selected || String(selected.id) !== String(request.row.id)) {
+      return false; // overtaken while the module loaded
+    }
+    return menu.open(request);
+  };
   const loadPalette = retryable(() => import("./commands.js").then((module) => {
     if (palette === null) {
       palette = module.createPalette({
@@ -1524,7 +1566,8 @@ function start() {
         ctx,
         singleKeysOn,
         // The keyboard layer knows the regions: the opener if it still takes the focus, else the region it was in.
-        restoreFocus: (el) => (shortcuts === null ? false : shortcuts.regions.restore(el, shortcuts.regions.regionOf(el))),
+        restoreFocus: (el, region) => (shortcuts === null ? false : shortcuts.regions.restore(el, region)),
+        prepare: showRecordFor,
         onError: showError,
       });
     }
