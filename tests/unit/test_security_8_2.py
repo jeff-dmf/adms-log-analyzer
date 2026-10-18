@@ -14,6 +14,7 @@ from test_api import client, server  # noqa: F401  (fixtures)
 from test_api_export import body, case_module, demo  # noqa: F401  (fixtures)
 
 import dmslog.ingest.reader as reader_module
+from dmslog import paths
 from dmslog.cli import main
 from dmslog.ingest.discover import discover
 from dmslog.ingest.pipeline import IngestOptions, run_ingest, validate_case_name
@@ -115,9 +116,9 @@ def test_cli_export_racing_a_delete_never_recreates_the_case(tmp_path, monkeypat
         real = redact.write_value_map
         monkeypatch.setattr(redact, "write_value_map", lambda *a, **k: (delete_case(), real(*a, **k))[1])
     else:
-        real_mkstemp = redact.tempfile.mkstemp
+        real_mkstemp = paths.tempfile.mkstemp  # redact writes through paths.atomic_write_bytes
         monkeypatch.setattr(
-            redact.tempfile, "mkstemp", lambda *a, **k: (delete_case(), real_mkstemp(*a, **k))[1]
+            paths.tempfile, "mkstemp", lambda *a, **k: (delete_case(), real_mkstemp(*a, **k))[1]
         )
     args = ["--data-dir", str(data_dir), "export", "--case", "demo", "--ids", "3", "--anonymize"]
     main(args)

@@ -22,7 +22,6 @@ import datetime as dt
 import json
 import os
 import re
-import tempfile
 import threading
 import tomllib
 from collections.abc import Mapping
@@ -31,7 +30,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from ..paths import private_mkdir
+from ..paths import atomic_write_bytes
 from .filters import FilterError
 from .views import MAX_NAME_CHARS, ViewError, sanitize_name, validate_filter
 
@@ -328,20 +327,8 @@ def load_user(data_dir: str | os.PathLike[str]) -> Document:
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    private_mkdir(path.parent)
-    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-        try:
-            tmp.chmod(0o600)  # POSIX only
-        except OSError:
-            pass
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    """``paths.atomic_write_bytes``: fsync, retry of a locked target on Windows, 0600 (review 8.2 M9)."""
+    atomic_write_bytes(path, data)
 
 
 def _save(data_dir: str | os.PathLike[str], doc: Document) -> None:
