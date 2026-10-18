@@ -156,7 +156,6 @@ import os
 import re
 import secrets
 import sys
-import tempfile
 import threading
 import tomllib
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -165,7 +164,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from dmslog.paths import private_mkdir
+from dmslog.paths import atomic_write_bytes
 
 PROFILE_FILENAME = "redaction.toml"
 MAP_FOLDER = "redaction-maps"
@@ -380,21 +379,8 @@ _SAVE_LOCK = threading.Lock()
 
 
 def _atomic_write(path: Path, data: bytes, *, create_parents: bool = True) -> None:
-    if create_parents:
-        private_mkdir(path.parent)
-    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-        try:
-            tmp.chmod(0o600)  # POSIX only; a no-op where permissions do not apply
-        except OSError:
-            pass
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    """``paths.atomic_write_bytes``: fsync, retry of a locked target on Windows, 0600 (review 8.2 M9)."""
+    atomic_write_bytes(path, data, create_parents=create_parents)
 
 
 def save_profile(data_dir: str | os.PathLike[str], profile: Profile) -> None:

@@ -1161,6 +1161,8 @@ class Api:
         self.store.delete(cid)
         self.jobs.alerts.forget_case(cid)
         self.jobs.panel_watch.forget_case(cid)
+        with self._knowledge_lock:  # ERS paths and Registry parameters of the deleted case (review 8.2 M9)
+            self._case_knowledge.pop(cid, None)
         return Response(204)
 
     def add_collection(self, request: Request) -> Response:
