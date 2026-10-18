@@ -883,6 +883,19 @@ export class Grid {
     return { atEnd: this.window.atEnd, top: this.window.top, visible: this.visible, length: this.window.rows.length };
   }
 
+  // Follow tail counted the case while the view is scrolled up: the status bar shows the newest total, so it
+  // agrees with the collection and the "new records" button. Nothing is announced (the live region stays quiet).
+  // Skipped while a view change or a count failure owns the count. True when it was shown.
+  showTotal(count, exact = true) {
+    const n = Number(count);
+    if (this.destroyed || this.caseId === null || this.pending || this.countFailure !== null || !Number.isFinite(n)) {
+      return false;
+    }
+    this.total = n;
+    this.emitCount({ n, exact: Boolean(exact) });
+    return true;
+  }
+
   // Reloads the end of the data and keeps the view at the bottom; the selected entry stays selected
   // when it is still in the buffer.
   async followTail() {

@@ -98,3 +98,23 @@ test("the grid reports the count and the position through onCount and onPosition
   assert.equal(emitted.at(-1)[0], null);
   assert.equal(positions.at(-1), null);
 });
+
+test("showTotal (Follow tail) shows the newest total without announcing; not without a case or during a view change", async () => {
+  const { grid, counts, emitted } = setup();
+  assert.equal(grid.showTotal(5, true), false); // no case yet
+  await grid.setView({ caseId: "A", filter: null, range: null });
+  counts[0].d.resolve({ count: 100, exact: true });
+  await Promise.resolve();
+  await Promise.resolve();
+  const before = emitted.length;
+  assert.equal(grid.showTotal(130, true), true);
+  assert.equal(grid.total, 130);
+  assert.deepEqual(emitted.at(-1)[0], { n: 130, exact: true });
+  assert.equal(emitted.at(-1)[1], undefined); // no { announce }
+  assert.equal(emitted.length, before + 1);
+  assert.equal(grid.showTotal("x", true), false);
+  assert.equal(grid.total, 130);
+  grid.pending = { caseId: "A" }; // a view change is waiting for its page: it owns the count
+  assert.equal(grid.showTotal(200, true), false);
+  assert.equal(grid.total, 130);
+});
