@@ -763,9 +763,16 @@ function start() {
       refreshDerived(); // Operations, Dashboard and the clock banner follow the chosen collection
       return removingChip ? undefined : applyView();
     },
-    onList: (list) => {
+    // Align / reset the clock of a collection (9.15): the dialog and the applied offset live in app-actions.js.
+    clock: {
+      align: (group, opener) => appActions.clock.align(group, opener),
+      reset: (group) => appActions.clock.reset(group),
+      busy: () => appActions !== null && appActions.clock.busy(),
+    },
+    onList: (list, ordering, clocks) => {
       const multiChanged = isMulti(list) !== isMulti(collections);
       collections = list;
+      grid.setAdjustedColumn(clocks === "adjusted"); // "Adjusted time" next to Time while an offset is on
       grid.setCollectionTags(gridTags(list));
       syncCollectionColumn();
       if (multiChanged) {
@@ -1402,6 +1409,25 @@ function start() {
     onError: showError,
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
+    clockOptions: () => ({
+      api,
+      getCase: () => caseId,
+      getCollections: () => collections,
+      groupOfSource: (id) => {
+        const found = sources.find((source) => source.id === id);
+        return found ? found.collection : null;
+      },
+      // The order across collections changed: reload the list, the view, the derived panels and the shown record.
+      onApplied: async () => {
+        await collectionsPanel.refresh();
+        await applyView();
+        refreshDerived();
+        if (detail.entry) {
+          detail.show(detail.entry.id, true);
+        }
+      },
+      onMessage: showMessage,
+    }),
     sourceName: (id) => sourceNames.get(id) || String(id),
     typeLabel: (id) => templateTitles.get(id) || "",
     showKeyInGrid,

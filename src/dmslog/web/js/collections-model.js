@@ -2,7 +2,7 @@
 // becomes the `{"collection": [group]}` filter leaf, the tag map for the grid column, and the
 // plain-language outcome of removing one. The DOM layer lives in collections-panel.js.
 // Everything that comes from the API is untrusted text: callers write it with textContent only.
-import { formatTs } from "./time.js";
+import { formatOffset, formatTs } from "./time.js";
 import { S, format, countNoun } from "./strings.js";
 
 export const TAG_COLORS = 8; // fixed palette: collection number n always uses color ((n - 1) % 8) + 1
@@ -112,6 +112,29 @@ export function windowLine(item) {
     return "";
   }
   return format(S.colWindow, { first: formatTs(item.first_ts), last: formatTs(item.last_ts) });
+}
+
+// Clock offset of a collection (9.15): "Clock +1.234s (from pair)", "" without an offset. `clock_source` says how it was set.
+export function clockLine(item) {
+  const ms = item ? item.clock_offset_ms : 0;
+  if (!Number.isSafeInteger(ms) || ms === 0) {
+    return "";
+  }
+  const method = item.clock_source ? item.clock_source.method : "";
+  const source = method === "pair" ? S.ckSourcePair : method === "manual" ? S.ckSourceManual : "";
+  const offset = formatOffset(ms);
+  return source === "" ? format(S.ckBadgeBare, { offset }) : format(S.ckBadge, { offset, source });
+}
+
+// Tooltip of that line: what the offset does, and when it was set.
+export function clockTitle(item) {
+  const when = item && item.clock_source && typeof item.clock_source.set_at === "string" ? item.clock_source.set_at : "";
+  return when === "" ? S.ckBadgeTitle : S.ckBadgeTitle + " " + format(S.ckBadgeSet, { when });
+}
+
+// "adjusted" while some collection has an offset (GET /collections `clocks`); anything else is "raw".
+export function clocksMode(value) {
+  return value === "adjusted" ? "adjusted" : "raw";
 }
 
 // Everything the row needs, as plain strings.

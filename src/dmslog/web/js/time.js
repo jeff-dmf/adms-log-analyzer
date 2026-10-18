@@ -15,6 +15,15 @@ export function formatTs(ms) {
     "." + pad(d.getUTCMilliseconds(), 3);
 }
 
+// A clock offset in milliseconds as signed seconds: "+1.234s", "-0.500s", "0.000s". Not an integer: "".
+export function formatOffset(ms) {
+  if (!Number.isSafeInteger(ms)) {
+    return "";
+  }
+  const abs = Math.abs(ms);
+  return (ms < 0 ? "-" : ms > 0 ? "+" : "") + Math.floor(abs / 1000) + "." + pad(abs % 1000, 3) + "s";
+}
+
 const TIME_PATTERN =
   /^\s*(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,3}))?)?)?\s*$/;
 

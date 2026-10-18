@@ -4,7 +4,7 @@
 // Everything from the API reaches the page through textContent only.
 import { ApiError } from "./api.js";
 import {
-  describe, pruneSelection, removeConfirmText, removeErrorMessage, removedMessage, selectionLine,
+  clockLine, clockTitle, clocksMode, describe, pruneSelection, removeConfirmText, removeErrorMessage, removedMessage, selectionLine,
 } from "./collections-model.js";
 import { unreadableCount, unreadableLine } from "./sources.js";
 import { S, format } from "./strings.js";
@@ -33,7 +33,9 @@ export class CollectionsPanel {
   // onSelection(groups): the chosen groups changed; onList(collections, ordering): a new list arrived;
   // onRemoved(summary): a removal finished (lists of sources, grid and panels reload); onMessage(text, isError).
   // loadMenu() -> Promise of the ui-menu.js module (loaded on the first click of a row's menu; tests replace it).
-  constructor({ host, note, api, getCase, onSelection, onList, onRemoved, onMessage, loadMenu }) {
+  // clock (optional, 9.15): { align(group, opener) -> Promise, reset(group) -> Promise, busy() -> boolean }; without it the row
+  // menu has no clock items. onList(collections, ordering, clocks): `clocks` is "raw" or "adjusted".
+  constructor({ host, note, api, getCase, onSelection, onList, onRemoved, onMessage, loadMenu, clock }) {
     this.host = host;
     this.note = note;
     this.api = api;
@@ -42,6 +44,8 @@ export class CollectionsPanel {
     this.onList = onList || (() => {});
     this.onRemoved = onRemoved || (() => Promise.resolve());
     this.onMessage = onMessage || (() => {});
+    this.clock = clock || null;
+    this.clocks = "raw"; // GET /collections `clocks`: "adjusted" while some collection has a clock offset
     this.collections = [];
     this.ordering = "exact";
     this.selected = new Set();
@@ -116,6 +120,7 @@ export class CollectionsPanel {
     }
     this.collections = [];
     this.ordering = "exact";
+    this.clocks = "raw";
     this.selected = new Set();
     this.expanded = new Set();
     this.open = null;
@@ -125,7 +130,7 @@ export class CollectionsPanel {
     this.sourceList = [];
     this.unreadable = { total: 0, byGroup: new Map() };
     this.render();
-    this.onList(this.collections, this.ordering);
+    this.onList(this.collections, this.ordering, this.clocks);
   }
 
   // Sources that could not be read: in total and per collection (their `collection` is the group id).
@@ -189,18 +194,19 @@ export class CollectionsPanel {
     this.controller = null;
     this.collections = Array.isArray(data.collections) ? data.collections : [];
     this.ordering = data.ordering === "approximate" ? "approximate" : "exact";
+    this.clocks = clocksMode(data.clocks);
     const kept = pruneSelection(this.selected, this.collections);
     const changed = kept.length !== this.selected.size;
     this.selected = new Set(kept);
     if (this.confirming !== null && !this.collections.some((c) => c.group === this.confirming)) {
       this.confirming = null;
     }
-    const signature = JSON.stringify([this.ordering, this.collections]);
+    const signature = JSON.stringify([this.ordering, this.clocks, this.collections]);
     if (signature !== this.signature || changed) {
       this.signature = signature;
       this.render();
     }
-    this.onList(this.collections, this.ordering);
+    this.onList(this.collections, this.ordering, this.clocks);
     if (changed) {
       this.onSelection(this.selectedGroups());
     }
@@ -358,8 +364,15 @@ export class CollectionsPanel {
     this.fold.title = open ? S.colFoldHide : S.colFoldShow;
     this.unreadableText.textContent = unreadableLine(this.unreadable.total);
     this.unreadableText.hidden = this.unreadable.total === 0;
-    this.note.hidden = !(this.ordering === "approximate" && multi);
+    const adjusted = this.clocks === "adjusted";
+    this.note.hidden = !((this.ordering === "approximate" && multi) || adjusted);
     this.orderText.hidden = this.note.hidden;
+    const noteText = adjusted ? S.ckOrderNote : S.colApproxOrder;
+    if (this.note.textContent !== noteText) {
+      this.note.textContent = noteText; // a live region: written only when the sentence changes
+    }
+    this.note.title = adjusted ? S.ckOrderMore : S.colApproxOrderMore;
+    this.orderText.textContent = adjusted ? S.ckOrderMore : S.colApproxOrderMore;
     this.allButton.hidden = !multi;
     this.allButton.disabled = this.selected.size === 0;
     this.list.textContent = "";
@@ -399,6 +412,12 @@ export class CollectionsPanel {
       if (value !== "") {
         text.appendChild(el("span", cls, value));
       }
+    }
+    const clock = clockLine(item);
+    if (clock !== "") {
+      const badge = el("span", "col-clock", clock);
+      badge.title = clockTitle(item);
+      text.appendChild(badge);
     }
     label.title = [d.title, d.counts, d.window, d.guidFull].filter((x) => x !== "").join("\n");
     label.append(box, chip, text);
@@ -488,6 +507,52 @@ export class CollectionsPanel {
     this.activeMenuGroup = group;
   }
 
+  // "Align clock…" and "Reset clock" (9.15) of a row's menu; none without the clock option.
+  clockItems(item, tag) {
+    if (this.clock === null) {
+      return [];
+    }
+    const busy = this.clock.busy();
+    const items = [{
+      id: "col-clock-align",
+      label: format(S.ckAlignItem, { tag }),
+      disabled: busy || this.collections.length < 2,
+      title: this.collections.length < 2 ? S.ckAlignNeedTwo : busy ? S.ckBusy : null,
+      run: () => this.alignClock(item.group),
+    }];
+    if (item.clock_offset_ms) {
+      items.push({
+        id: "col-clock-reset",
+        label: format(S.ckResetItem, { tag }),
+        disabled: busy,
+        title: busy ? S.ckBusy : null,
+        run: () => this.resetClock(item.group),
+      });
+    }
+    return items;
+  }
+
+  // The dialog gives the focus back to this object, which finds the row's menu button again (the rows are drawn anew when the
+  // offset changes, so the button that opened the dialog may be gone).
+  alignClock(group) {
+    const back = { isConnected: true, focus: () => this.applyFocus({ group, act: "menu" }) };
+    return this.clock.align(group, back);
+  }
+
+  async resetClock(group) {
+    const gen = this.gen;
+    await this.clock.reset(group);
+    if (gen === this.gen && this.focusLost()) {
+      this.applyFocus({ group, act: "menu" });
+    }
+  }
+
+  // The focus is on nothing useful (the row it was on was drawn anew).
+  focusLost() {
+    const active = typeof document !== "undefined" ? document.activeElement : null;
+    return !active || active === document.body || active.isConnected === false;
+  }
+
   // The row's "..." menu: loaded on the first click, then it toggles itself. Its one item starts the two-step removal.
   openRowMenu(item, tag, trigger, event) {
     if (this.menus.has(trigger)) {
@@ -507,7 +572,7 @@ export class CollectionsPanel {
         label: format(S.colRowMenuLabel, { tag }),
         getItems: () => {
           this.claimMenu(menu, item.group); // asked at every opening: first, built, keyboard or pointer
-          return [{
+          return [...this.clockItems(item, tag), {
             id: "col-remove",
             label: format(S.colRemoveItem, { tag }),
             disabled: this.removing !== null,

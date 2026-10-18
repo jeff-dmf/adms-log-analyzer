@@ -26,6 +26,10 @@ export const COLUMNS = [
 // stored column choice and the Columns menu of the fixed columns do not depend on it.
 export const COLLECTION_COLUMN = { key: "collection", label: () => S.columnCollection };
 
+// Shown (right after Time) while some collection has a clock offset (9.15): Time keeps the original time, this one the adjusted
+// time the order uses. Never part of COLUMNS: the Columns menu does not list it and the stored column choice ignores it.
+export const ADJUSTED_COLUMN = { key: "adjusted", label: () => S.ckColumnAdjusted };
+
 function cellClass(column) {
   return column.field === undefined ? "col-" + column.key : "col-field";
 }
@@ -117,6 +121,7 @@ export class Grid {
     this.multiDay = false;                  // the case covers several days: the time column shows MM-DD too
     this.collectionColumn = false; // the Collection column (C<n>) is shown
     this.collectionTags = new Map(); // collection group -> {tag, color}
+    this.adjustedColumn = false; // the Adjusted time column is shown (clock offsets in the case)
     this.terms = [];
     this.caseId = null;
     this.filter = null;
@@ -375,6 +380,19 @@ export class Grid {
     return this.caseId === null || !reload ? Promise.resolve() : this.reload();
   }
 
+  // Shows or hides the Adjusted time column. The rows already carry ts_adjusted (the server adds it while an offset exists),
+  // so no reload is needed; the view reloads anyway when an offset changes (the order moves).
+  setAdjustedColumn(on) {
+    const next = Boolean(on);
+    if (next === this.adjustedColumn) {
+      return;
+    }
+    this.adjustedColumn = next;
+    this.discardPool();
+    this.renderHeader();
+    this.render();
+  }
+
   // tags: Map group id -> {tag: "C2", color: 2}
   setCollectionTags(tags) {
     this.collectionTags = tags;
@@ -386,10 +404,14 @@ export class Grid {
   columnDefs() {
     const defs = [];
     for (const column of COLUMNS) {
-      if (!this.visibleColumns.includes(column.key)) {
+      // The original time stays visible while the adjusted one is shown, even when the user hid the Time column.
+      if (!this.visibleColumns.includes(column.key) && !(column.key === "ts" && this.adjustedColumn)) {
         continue;
       }
       defs.push(column);
+      if (column.key === "ts" && this.adjustedColumn) {
+        defs.push(ADJUSTED_COLUMN);
+      }
       if (column.key === "source" && this.collectionColumn) {
         defs.push(COLLECTION_COLUMN);
       }
@@ -468,6 +490,7 @@ export class Grid {
     }
     this.multiDay = next;
     this.resizer.setDefaultCh("ts", next ? TS_CH_MULTIDAY : null, false);
+    this.resizer.setDefaultCh("adjusted", next ? TS_CH_MULTIDAY : null, false);
     this.resizer.setDefaultCh("source", next ? SOURCE_CH_MULTIDAY : null);
     this.render();
   }
@@ -1287,6 +1310,12 @@ export class Grid {
       const full = formatTs(row.ts);
       cells.ts.textContent = shortTs(full, this.multiDay);
       cells.ts.title = full; // the full date, also when the cell shows the clock only
+    }
+    if (cells.adjusted) {
+      const adjusted = typeof row.ts_adjusted === "number" ? row.ts_adjusted : row.ts;
+      const full = formatTs(adjusted);
+      cells.adjusted.textContent = shortTs(full, this.multiDay);
+      cells.adjusted.title = full;
     }
     if (cells.pid) {
       cells.pid.textContent = row.pid === null || row.pid === undefined ? "" : String(row.pid);
