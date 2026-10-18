@@ -108,6 +108,8 @@ EXPECTED_MODULES = {
     "folder-browser.js",
     "collections-model.js",
     "collections-panel.js",
+    "compare-views-model.js",
+    "compare-views-panel.js",
     "missing-model.js",
     "missing-panel.js",
     "repeat-detail.js",

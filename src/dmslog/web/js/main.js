@@ -1428,6 +1428,7 @@ function start() {
       },
       onMessage: showMessage,
     }),
+    collectionGroups: () => (collectionsPanel ? collectionsPanel.selectedGroups() : []),
     sourceName: (id) => sourceNames.get(id) || String(id),
     typeLabel: (id) => templateTitles.get(id) || "",
     showKeyInGrid,
