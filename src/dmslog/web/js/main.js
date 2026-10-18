@@ -1229,9 +1229,18 @@ function start() {
         grid,
         getCase: () => caseId,
         getFilter: () => currentFilter,
-        onChanged: () => {
+        // Derived panels and the timeline follow the same debounce; the sources list reloads only when a source
+        // appeared or was rewritten (the watch event says so) or the tab came back (UI-30).
+        onChanged: ({ sources = false } = {}) => {
           refreshDerived();
-          panel.refreshSources(true).catch(showError);
+          if (timeline) {
+            timeline.refresh();
+          }
+          if (sources) {
+            panel.refreshSources(true).catch(showError); // also reloads the collections (onSources)
+          } else if (collectionsPanel) {
+            collectionsPanel.refresh(); // the collection's record count follows the case without asking /api/sources
+          }
         },
         onError: showError,
         // The watch stream gave up after 3 failures in a row: say so in the bar; Retry starts it again.

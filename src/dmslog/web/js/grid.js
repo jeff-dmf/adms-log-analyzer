@@ -103,6 +103,9 @@ export class Grid {
     this.shownCount = null; // what the status bar shows now: {n, exact} | null
     this.busy = false;
     this.countGeneration = 0;
+    this.navEpoch = 0;     // counts the user's own moves of the view (rows, keys, Home/End, scrollbar, jumps)
+    this.tailOp = null;    // the operation (followTail) that is loading the end: a move by the user cancels that load
+    this.tailJump = false; // set only while followTail() starts its own jump (not a user move)
     this.countController = null;
     this.total = null; // last entry count of the filter (a number), the baseline of "follow tail"
     this.fieldColumns = [];
@@ -187,6 +190,7 @@ export class Grid {
         const at = this.resizer.scrollX;
         this.wheelX = Math.min(Math.max(this.wheelX + travel.amount, -at), this.resizer.maxScrollX - at);
       } else {
+        this.userMoved(); // the gesture itself is the later intention: an end-of-data load in flight must not replace the rows
         this.wheelRemainder = Math.min(Math.max(this.wheelRemainder + travel.amount, -w.top), w.maxTop(this.visible) - w.top);
       }
       if (this.wheelFrame === null) {
@@ -702,7 +706,7 @@ export class Grid {
 
   // The count has its own generation: navigation (jump, scroll) must not discard its answer; only a newer
   // count or a reload (new case or filter) does. `view`: the pending view change it belongs to, if any.
-  async refreshCount(announce = false, view = null) {
+  async refreshCount(announce = false, view = null, isCurrent = null) {
     if (this.destroyed) {
       return;
     }
@@ -712,13 +716,14 @@ export class Grid {
       this.countController.abort();
     }
     const controller = new AbortController();
-    bindCurrent(controller.signal, () => generation === this.countGeneration);
+    const live = () => generation === this.countGeneration && (isCurrent === null || isCurrent());
+    bindCurrent(controller.signal, live);
     this.countController = controller;
     const caseId = view ? view.caseId : this.caseId;
     const filter = view ? view.filter : this.filter;
     try {
       const result = await api.count(caseId, filter, controller.signal);
-      if (generation === this.countGeneration) {
+      if (live()) {
         const value = { n: Number(result.count), exact: Boolean(result.exact) };
         if (view && !view.committed) {
           view.count = value; // shown with its page, never before it (dropped if the page fails)
@@ -732,7 +737,7 @@ export class Grid {
         }
       }
     } catch (err) {
-      if (generation === this.countGeneration && !(err && err.name === "AbortError")) {
+      if (live() && !(err && err.name === "AbortError")) {
         if (view && !view.committed) {
           view.countFailed = true; // reported with its page, or dropped with it
           view.countError = err;
@@ -763,18 +768,21 @@ export class Grid {
   // Replaces the window with the page found at `cursor` (null = first page). `view`: a pending view change, adopted
   // only when its page arrives. On failure the window, the selection and the scroll position are left as they were.
   // Resolves to "ok", "failed" or "superseded".
-  async jump(cursor, dir, view = null) {
+  async jump(cursor, dir, view = null, guard = null) {
     if (this.destroyed) {
       return "superseded";
     }
     this.cancelWheel(); // Home, End, a time and the scrollbar land here: older wheel travel must not move the new rows
     if (view === null) {
+      if (!this.tailJump) {
+        this.navEpoch += 1; // a move by the user (Follow tail's own jump is not one)
+      }
       this.abandonPending();
     }
     this.cancel();
     const generation = this.generation;
     this.controller = new AbortController();
-    bindCurrent(this.controller.signal, () => generation === this.generation);
+    bindCurrent(this.controller.signal, () => generation === this.generation && (guard === null || guard()));
     this.loading = true;
     this.failure = null;
     this.setBusy(true, view !== null);
@@ -783,8 +791,8 @@ export class Grid {
     const adoptedEarly = view !== null && view.committed; // another case: its count was never held back
     try {
       const page = await api.page(target.caseId, target.filter, cursor, dir, PAGE_LIMIT, this.controller.signal, this.columnNames());
-      if (generation !== this.generation) {
-        return "superseded";
+      if (generation !== this.generation || (guard !== null && !guard())) {
+        return "superseded"; // a newer jump, or the caller's operation is obsolete: the page is not applied
       }
       if (view) {
         this.adopt(view);
@@ -799,7 +807,7 @@ export class Grid {
       }
       outcome = "ok";
     } catch (err) {
-      if (generation === this.generation && !(err && err.name === "AbortError")) {
+      if (generation === this.generation && (guard === null || guard()) && !(err && err.name === "AbortError")) {
         if (view) {
           view.failed = true;
           this.pending = null;
@@ -890,11 +898,59 @@ export class Grid {
     return { atEnd: this.window.atEnd, top: this.window.top, visible: this.visible, length: this.window.rows.length };
   }
 
-  // Reloads the end of the data and keeps the view at the bottom; the selected entry stays selected
-  // when it is still in the buffer.
-  async followTail() {
+  // Follow tail counted the case while the view is scrolled up: the status bar shows the newest total, so it
+  // agrees with the collection and the "new records" button. Nothing is announced (the live region stays quiet).
+  // Skipped while a view change or a count failure owns the count. True when it was shown.
+  showTotal(count, exact = true, requestId = undefined) {
+    const n = Number(count);
+    if (requestId !== undefined && requestId !== this.countGeneration) {
+      return false; // a newer count (a reload, another total) was ordered after this request
+    }
+    if (this.destroyed || this.caseId === null || this.pending || this.countFailure !== null || !Number.isFinite(n)) {
+      return false;
+    }
+    this.invalidateCount(); // one order for the answers: a count requested before this total must not overwrite it
+    this.total = n;
+    this.emitCount({ n, exact: Boolean(exact) });
+    return true;
+  }
+
+  // The order of count requests, shared with Follow tail: a request takes the current id here, and its answer is
+  // accepted by showTotal() only while no newer count (reload, other total, invalidation) was ordered after it.
+  beginCount() {
+    return this.countGeneration;
+  }
+
+  // Reloads the end of the data and keeps the view at the bottom; the selected entry stays selected when it is
+  // still in the buffer. `op` (optional): the caller's operation, {isCurrent()}. It is checked right before every effect (applying the
+  // end page, showing its failure, requesting and publishing the count). A move by the user while the end loads
+  // also ends it: the later intention prevails. Resolves to true when the view is at the end and its count was
+  // requested, false when the operation was dropped.
+  async followTail(op = null) {
     const selected = this.selectedRow();
-    await this.goEnd();
+    const mine = { isCurrent: () => op === null || op.isCurrent() };
+    const epoch = this.navEpoch;
+    const current = () => !this.destroyed && this.navEpoch === epoch && this.tailOp === mine && mine.isCurrent();
+    this.tailOp = mine;
+    let jumping;
+    this.tailJump = true;
+    try {
+      jumping = this.goEnd(current);
+    } finally {
+      this.tailJump = false;
+    }
+    let outcome;
+    try {
+      outcome = await jumping;
+    } finally {
+      if (this.tailOp === mine) {
+        this.tailOp = null; // only the owner clears it: an older load must not drop the protection of a newer one
+      }
+    }
+    const done = () => !this.destroyed && this.navEpoch === epoch && mine.isCurrent();
+    if (outcome !== "ok" || !done()) {
+      return false;
+    }
     if (selected) {
       const index = this.window.rows.findIndex((r) => r.id === selected.id);
       if (index >= 0) {
@@ -902,7 +958,18 @@ export class Grid {
         this.render();
       }
     }
-    await this.refreshCount();
+    await this.refreshCount(false, null, done);
+    return done();
+  }
+
+  // The user moved the view: the end-of-data load Follow tail has in flight is dropped (its page would replace the
+  // rows the user chose).
+  userMoved() {
+    this.navEpoch += 1;
+    if (this.tailOp !== null) {
+      this.tailOp = null;
+      this.cancel();
+    }
   }
 
   jumpToTime(ms) {
@@ -913,8 +980,8 @@ export class Grid {
     return this.jump(null, "fwd");
   }
 
-  goEnd() {
-    return this.jump(END_CURSOR, "back");
+  goEnd(guard = null) {
+    return this.jump(END_CURSOR, "back", null, guard);
   }
 
   // -- scrolling ----------------------------------------------------------------------------
@@ -929,6 +996,7 @@ export class Grid {
     if (this.destroyed) {
       return;
     }
+    this.userMoved();
     this.window.moveTop(delta, this.visible);
     this.render();
     this.syncScroll();
@@ -979,6 +1047,7 @@ export class Grid {
     if (Object.prototype.hasOwnProperty.call(moves, event.key)) {
       event.preventDefault();
       this.cancelWheel(); // the selection moved the rows: older wheel travel is stale
+      this.userMoved();
       this.window.moveSelection(moves[event.key], this.visible);
       this.render();
       this.syncScroll();
