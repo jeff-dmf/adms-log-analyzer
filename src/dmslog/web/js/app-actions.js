@@ -6,7 +6,7 @@
 // `deps` is built in main.js and is visible only here (the AppContext stays small). What it holds:
 //   api, derivedApi            the plain API and the one whose queries carry the chosen collection
 //   highlightStore, bookmarkStore
-//   fieldNames(), hasCollections(), sourceName(id), typeLabel(tplId) ("" when unknown)
+//   fieldNames(), hasCollections(), collectionGroups() (the chosen collections), sourceName(id), typeLabel(tplId) ("" when unknown)
 //   showKeyInGrid({type, value, filter})   "Show in grid" of the same-key panel: a chained view with the key filter
 //   showEntry(id), reveal(row), showEventInGrid({from, to, entryId}), exportContext()
 //   filterTreeOptions()        { onChange, getExtraFilter, onSavedApplied } of the filter tree
@@ -323,6 +323,28 @@ export function registerAppPanels(dock, deps) {
       return { refresh: () => panel.refresh(), closed: () => panel.closed(), reset: () => panel.reset() };
     },
   });
+
+  // Comparison of two views by message type (9.7). The lists of operations and processes are scoped to the chosen
+  // collections like the other derived panels; the comparison itself takes the filter of the grid. "view" only marks a
+  // result as out of date (it is never recomputed by itself); "case" and "derived" (collections, indexing) reload the lists
+  // whose scope (case + collections + view) changed. The panel reads nothing from the server before refresh().
+  dock.register({
+    id: "compareViews",
+    titleKey: "actCompareViews",
+    listens: ["case", "view", "derived"],
+    mount: async (host, ctx) => {
+      const module = await import("./compare-views-panel.js");
+      const panel = module.mountCompareViewsPanel(host, {
+        api: { compareViews: api.compareViews, views: api.views, events: derivedApi.events },
+        getCase: ctx.caseId,
+        getFilter: () => ctx.filter(),
+        getScope: () => JSON.stringify(deps.collectionGroups()),
+        onReveal: ctx.reveal,
+        onRequestClose: () => ctx.dock.close("compareViews"),
+      });
+      return { refresh: () => panel.refresh(), closed: () => panel.closed(), reset: () => panel.reset() };
+    },
+  });
 }
 
 // Until the tabs of UI-15 a panel has no tab to close, so the menu item and the toggle button open it when it is
@@ -364,6 +386,7 @@ export function registerAppActions(actions, deps) {
   analyze("analyze.groupByType", "actGroupByType", "groupByType", "./distinct-panel.js");
   analyze("analyze.aggregate", "actAggregate", "aggregate", "./aggregate-panel.js");
   analyze("analyze.extract", "actExtract", "extract", "./extract-panel.js");
+  analyze("analyze.compareViews", "actCompareViews", "compareViews", "./compare-views-panel.js");
   analyze("analyze.operations", "actOperations", "operations", "./events-panel.js");
   analyze("analyze.dashboard", "actDashboard", "dashboard", "./dashboard.js");
   analyze("analyze.missingSteps", "actMissingSteps", "missingSteps", "./missing-panel.js");

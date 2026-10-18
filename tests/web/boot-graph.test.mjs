@@ -39,7 +39,7 @@ const NOT_AT_OPENING = [
   "alerts-panel", "follow-tail", "clock-banner", "dock-model", "case-dialogs", "case-empty", "shortcuts", "shortcuts-model",
   "partial-open", "partial-open-model", "resume-banner",
   "commands", "commands-model", "context-menu",
-  "missing-panel", "missing-model", "repeat-model", "repeat-detail",
+  "missing-panel", "missing-model", "repeat-model", "repeat-detail", "compare-views-panel", "compare-views-model",
 ];
 const MAX_STATIC_MODULES = 40; // main.js + boot.js, uPlot included; the budget on open is 40 with everything else
 

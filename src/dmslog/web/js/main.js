@@ -1402,6 +1402,7 @@ function start() {
     onError: showError,
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
+    collectionGroups: () => (collectionsPanel ? collectionsPanel.selectedGroups() : []),
     sourceName: (id) => sourceNames.get(id) || String(id),
     typeLabel: (id) => templateTitles.get(id) || "",
     showKeyInGrid,

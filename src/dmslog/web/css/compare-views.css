@@ -1,0 +1,224 @@
+/* "Compare views" panel (9.7). Only tokens of tokens.css. The kind of difference is always written in the first column
+   ("Only in A", "Replaced"...); the border style on the row is an extra cue, never the only one. */
+.cv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.cv-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.cv-sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-3);
+}
+
+.cv-side {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.cv-side legend {
+  padding: 0 var(--space-1);
+  font-weight: var(--weight-strong);
+}
+
+.cv-group[hidden],
+.cv-rows-tools[hidden],
+.cv-results [hidden] {
+  display: none !important;
+}
+
+.cv-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.cv-field label {
+  min-width: 6rem;
+}
+
+.cv-field select,
+.cv-field input {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.cv-help,
+.cv-note {
+  margin: var(--space-2) 0;
+  font-size: var(--text-sm);
+}
+
+.cv-status {
+  margin: var(--space-2) 0;
+}
+
+.cv-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.cv-card,
+.cv-stats {
+  min-width: 12rem;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.cv-card dd,
+.cv-stats dd {
+  margin: 0 0 var(--space-1);
+}
+
+.cv-card-title,
+.cv-stats dt {
+  font-weight: var(--weight-strong);
+}
+
+.cv-stats {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0 var(--space-3);
+}
+
+.cv-notes {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+}
+
+.cv-types,
+.cv-rows {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.cv-types .is-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-type.is-diff .cv-type-label {
+  font-weight: var(--weight-strong);
+}
+
+.cv-rows-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.cv-rows td,
+.cv-rows th {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.cv-op {
+  width: 8rem;
+  white-space: nowrap;
+}
+
+.cv-op-only_a .cv-op {
+  border-left: 4px solid var(--accent);
+}
+
+.cv-op-only_b .cv-op {
+  border-left: 4px dashed var(--accent);
+}
+
+.cv-op-changed .cv-op {
+  border-left: 4px double var(--accent);
+}
+
+.cv-op-same {
+  color: var(--ink-muted);
+}
+
+.cv-cell {
+  width: 45%;
+  min-width: 0;
+}
+
+.cv-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cv-open:hover {
+  background: var(--row-hover);
+}
+
+.cv-open:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.cv-cell-type {
+  font-weight: var(--weight-strong);
+  overflow-wrap: anywhere;
+}
+
+.cv-cell-time {
+  font-size: var(--text-sm);
+}
+
+.cv-cell-text {
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.cv-none {
+  color: var(--ink-muted);
+}
+
+@media (forced-colors: active) {
+  .cv-op-only_a .cv-op,
+  .cv-op-only_b .cv-op,
+  .cv-op-changed .cv-op {
+    border-left-color: CanvasText;
+  }
+
+  .cv-open:hover {
+    outline: 1px solid Highlight;
+    background: transparent;
+  }
+
+  .cv-open:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
