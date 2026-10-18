@@ -373,6 +373,13 @@ class IngestJobs:
         with self._lock:
             return self._hubs.setdefault(case_id, ProgressHub())
 
+    def forget_case(self, case_id: str) -> None:
+        """Drop the retained events of a deleted case (source names, alert copies, the last watch change)."""
+        with self._lock:
+            hub = self._hubs.get(case_id)
+        if hub is not None:
+            hub.forget()
+
     def followed(self, case_id: str) -> str | None:
         """Resolved path of the folder ``serve --watch`` follows into the case, if any."""
         with self._lock:
@@ -992,6 +999,8 @@ class Api:
         self._knowledge_lock = threading.Lock()
         self._pack_knowledge: Knowledge | None = None
         self._case_knowledge: dict[str, tuple[Any, Knowledge]] = {}
+        # bumped by delete_case: a load that started before the delete never publishes into the cache
+        self._knowledge_gen: dict[str, int] = {}
         self.picker = filepick.Picker()
         self._routes: list[tuple[str, re.Pattern[str], Callable[[Request], Response | Stream | Download]]] = [
             ("GET", re.compile(r"/api/cases\Z"), self.list_cases),
@@ -1161,8 +1170,10 @@ class Api:
         self.store.delete(cid)
         self.jobs.alerts.forget_case(cid)
         self.jobs.panel_watch.forget_case(cid)
+        self.jobs.forget_case(cid)
         with self._knowledge_lock:  # ERS paths and Registry parameters of the deleted case (review 8.2 M9)
             self._case_knowledge.pop(cid, None)
+            self._knowledge_gen[cid] = self._knowledge_gen.get(cid, 0) + 1
         return Response(204)
 
     def add_collection(self, request: Request) -> Response:
@@ -1368,6 +1379,7 @@ class Api:
             cached = self._case_knowledge.get(cid)
             if cached is not None and cached[0] == key:
                 return cached[1]
+            generation = self._knowledge_gen.get(cid, 0)
         installations: dict[int, Any] = {}
         for path in paths:
             try:
@@ -1378,7 +1390,8 @@ class Api:
                 installations[len(installations)] = installation
         knowledge = Knowledge(installations=installations)
         with self._knowledge_lock:
-            self._case_knowledge[cid] = (key, knowledge)
+            if self._knowledge_gen.get(cid, 0) == generation:  # the case was not deleted meanwhile
+                self._case_knowledge[cid] = (key, knowledge)
         return knowledge
 
     def get_knowledge(self, request: Request) -> Response:

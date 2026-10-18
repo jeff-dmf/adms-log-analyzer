@@ -100,3 +100,75 @@ def test_deleting_a_case_forgets_its_installation_knowledge(client, server, demo
     assert client.request("DELETE", f"/api/cases/{demo}")[0] == 204
     with api._knowledge_lock:
         assert demo not in api._case_knowledge
+
+
+def test_a_knowledge_load_racing_the_delete_does_not_republish_the_case(client, server, demo, monkeypatch):  # noqa: F811
+    """The load passes the cache check, the DELETE lands while it reads the ERS, then the load finishes."""
+    import threading
+
+    from dmslog.server import api as api_module
+
+    api = server.api
+    started, go = threading.Event(), threading.Event()
+    real = api_module.Knowledge
+
+    def slow_knowledge(*args, **kwargs):
+        started.set()
+        assert go.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(api_module, "Knowledge", slow_knowledge)
+    results = []
+
+    def load():
+        conn = api_module.db.connect(api.store.db_path(demo))
+        try:
+            results.append(api._knowledge(conn, demo, with_ers=True))
+        finally:
+            conn.close()
+
+    worker = threading.Thread(target=load)
+    worker.start()
+    assert started.wait(10)
+    assert client.request("DELETE", f"/api/cases/{demo}")[0] == 204
+    go.set()
+    worker.join(10)
+    assert results and not worker.is_alive()
+    with api._knowledge_lock:
+        assert demo not in api._case_knowledge
+
+
+def test_a_load_after_the_delete_is_cached_again(server, demo):  # noqa: F811
+    from dmslog.server import api as api_module
+
+    api = server.api
+    with api._knowledge_lock:
+        api._knowledge_gen[demo] = 3  # deleted three times before: later loads still publish
+    conn = api_module.db.connect(api.store.db_path(demo))
+    try:
+        api._knowledge(conn, demo, with_ers=True)
+    finally:
+        conn.close()
+    with api._knowledge_lock:
+        assert demo in api._case_knowledge
+
+
+def test_deleting_a_case_drops_the_events_its_hub_retains(client, server, demo):  # noqa: F811
+    hub = server.api.jobs.hub(demo)
+    assert hub.try_begin("job1")
+    hub.publish("progress", {"source": "AdapterOne_1111.log"})
+    hub.publish("watch", {"following": True})
+    hub.finish({"status": "ok", "message": "synthetic"})
+    assert hub.wait(0, 0)[0]
+    assert client.request("DELETE", f"/api/cases/{demo}")[0] == 204
+    assert hub.wait(0, 0)[0] == []  # no source names, alert copies or watch change left behind
+
+
+def test_a_running_hub_keeps_its_events():
+    from dmslog.server.sse import ProgressHub
+
+    hub = ProgressHub()
+    assert hub.try_begin("job1")
+    hub.publish("progress", {"n": 1})
+    assert hub.forget() is False
+    assert len(hub.wait(0, 0)[0]) == 1

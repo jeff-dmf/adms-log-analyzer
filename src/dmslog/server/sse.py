@@ -60,6 +60,16 @@ class ProgressHub:
             self._events.clear()
             return True
 
+    def forget(self) -> bool:
+        """Drop the retained events (the case was deleted); False, keeping them, while a job runs. Subscribers
+        stay connected and only get what is published afterwards."""
+        with self._cond:
+            if self._running:
+                return False
+            self._events.clear()
+            self._last_watch = None
+            return True
+
     def publish(self, name: str, data: dict[str, Any], *, coalesce: bool = False) -> None:
         """Append an event; a ``coalesce`` event replaces a directly preceding ``coalesce`` event."""
         with self._cond:
