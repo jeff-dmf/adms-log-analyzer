@@ -410,6 +410,14 @@ export function mountClock(host, options) {
   // The page is put right after the offsets changed: list, view, derived panels, then the record the user was on (by id, at
   // its adjusted time). The scope is checked after EVERY wait, so a case opened meanwhile (even the same one again) is never
   // reloaded or selected by this old operation. A failure is reported with the static sentence of its code.
+  let retryNote = null; // the message handle of a failed reload (dismissed when a reload completes or the case changes)
+  function dismissRetry() {
+    if (retryNote !== null) {
+      retryNote.dismiss();
+      retryNote = null;
+    }
+  }
+
   async function reload(scope) {
     try {
       const keep = view.keep();
@@ -417,12 +425,15 @@ export function mountClock(host, options) {
       if (!here(scope)) {
         return;
       }
-      if (listed === "failed") {
-        // The offsets changed but the list (offsets, `clocks`, the Adjusted column) is the old one: reloading the grid now would
-        // mix the new order with the old column and interval. Stop, say so, and offer to repeat the reload.
-        onMessage(S.ckReloadFailed, true, { label: S.ckReloadRetry, run: () => reload(scope) });
+      if (listed !== "changed" && listed !== "same") {
+        // "failed", or "stale" (a newer list read replaced this one): the list (offsets, `clocks`, the Adjusted column) is not the
+        // one this change produced, so reloading the grid now would mix the new order with old data. Stop and offer to repeat.
+        dismissRetry();
+        const shown = onMessage(listed === "stale" ? S.ckReloadStale : S.ckReloadFailed, true, { label: S.ckReloadRetry, run: () => reload(scope) });
+        retryNote = shown && typeof shown.dismiss === "function" ? shown : null;
         return;
       }
+      dismissRetry(); // the recovery worked: the error and its button go
       await view.applyView();
       if (!here(scope)) {
         return;
@@ -552,6 +563,7 @@ export function mountClock(host, options) {
   // The case changed: what was picked and the dialog belong to the old one. A change in flight is left to finish; its
   // answer is dropped by the case check.
   function forgetCase() {
+    dismissRetry();
     picks.clear();
     if (current !== null && ui !== null) {
       ui.shell.close();

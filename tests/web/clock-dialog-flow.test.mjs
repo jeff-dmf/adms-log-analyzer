@@ -73,7 +73,7 @@ function setup({ list = [collection(1, 1), collection(2, 2)], caseId = "A", igno
       selectedId: () => state.selected,
       clearDetail: () => { state.cleared += 1; },
     },
-    onMessage: (text, isError, action) => { state.messages.push([text, isError]); state.actions.push(action); },
+    onMessage: (text, isError, action) => { state.messages.push([text, isError]); state.actions.push(action); return { dismiss: () => { state.dismissed = (state.dismissed || 0) + 1; } }; },
   });
   const opener = doc.createElement("button");
   host.appendChild(opener);
@@ -768,4 +768,32 @@ test("the retry of a failed reload does nothing once another case is open", asyn
   await action.run();
   assert.equal(ctx.state.order.length, before + 1, "only the list read started; the scope check stops the rest");
   assert.equal(ctx.state.applied.length, 0);
+});
+
+test("a stale list read (replaced by a newer one) stops the reload like a failure and offers to repeat it", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.listResult = "stale";
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.deepEqual(ctx.state.order, ["list"], "the view is not reloaded with the old offsets");
+  assert.deepEqual(ctx.state.messages.at(-1), [S.ckReloadStale, true]);
+});
+
+test("the error and its button are dismissed when the repeated reload completes, and when the case changes", async () => {
+  const ctx = setup({ list: [collection(1, 1), collection(2, 2, { clock_offset_ms: 20 })] });
+  ctx.state.listResult = "failed";
+  const done = ctx.clock.reset(2);
+  await tick();
+  ctx.state.calls[0].resolve(appliedAnswer({ clock_offset_ms: 0, previous_ms: 20 }));
+  await done;
+  assert.equal(ctx.state.dismissed || 0, 0);
+  ctx.state.listResult = "changed";
+  await ctx.state.actions.at(-1).run();
+  assert.equal(ctx.state.dismissed, 1);
+  ctx.state.listResult = "failed";
+  await ctx.state.actions.at(-1).run();
+  ctx.clock.forgetCase();
+  assert.equal(ctx.state.dismissed, 2);
 });
