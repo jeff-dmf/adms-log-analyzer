@@ -269,6 +269,7 @@ export function initPresets(container, { api, caseId, getFilter, onApply, onErro
     try {
       const done = await guard.run(currentCase, () => currentCase, () => api.presets.remove(preset.name, preset.family));
       if (done.stale) {
+        await refresh(); // a reload started meanwhile may have read the list before this delete
         return;
       }
       if (renaming && renaming.name === preset.name && (renaming.family || "") === (preset.family || "")) {
@@ -381,6 +382,7 @@ export function initPresets(container, { api, caseId, getFilter, onApply, onErro
         say(plan.action === "rename" ? S.prRenamed : S.prOverwritten, false);
       }
       if (!guard.isCurrent(ticket, currentCase)) {
+        await refresh(); // a reload started meanwhile may have read the list before this save wrote
         return;
       }
       nameInput.value = "";

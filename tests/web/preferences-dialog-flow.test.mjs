@@ -512,3 +512,72 @@ test("a save that throws becomes the static message of the dialog", async () => 
   assert.equal(text(t.status), S.pfErrSave);
   assert.ok(!text(t.root).includes("secret"));
 });
+
+// ---- 9.10 review round
+test("closing during an Apply keeps following it: the reload runs, and reopening cannot start another import", async () => {
+  const t = setup();
+  await toChecked(t);
+  button(t.root, "pf-apply").click();
+  assert.equal(t.imports.length, 2);
+  t.dialog.close();
+  assert.equal(t.imports[1].signal.aborted, false);
+  t.dialog.open(t.opener);
+  const input = t.root.all().find((n) => n.type === "file");
+  assert.equal(input.disabled, true);
+  assert.equal(button(t.root, "pf-check").disabled, true);
+  assert.equal(button(t.root, "pf-apply").disabled, true);
+  t.imports[1].d.resolve(changed(false));
+  await tick();
+  assert.deepEqual(t.applied, [{ unknown: false }]);
+  assert.equal(input.disabled, false);
+});
+
+test("an Apply answered after the dialog closed reloads and leaves nothing behind", async () => {
+  const t = setup();
+  await toChecked(t);
+  button(t.root, "pf-apply").click();
+  t.dialog.close();
+  t.imports[1].d.resolve(changed(false));
+  await tick();
+  assert.deepEqual(t.applied, [{ unknown: false }]);
+  assert.equal(one(t.root, "pf-report").hidden, true);
+  assert.equal(text(one(t.root, "pf-file-info")), S.pfFileNone);
+});
+
+test("controls whose changes would be ignored are disabled: the file, mode and policy during Apply", async () => {
+  const t = setup();
+  await toChecked(t);
+  button(t.root, "pf-apply").click();
+  const inputs = t.root.all().filter((n) => n.tagName === "INPUT" && (n.type === "file" || n.type === "radio" || n.name.endsWith("-skip")));
+  assert.ok(inputs.length >= 4);
+  assert.ok(inputs.every((n) => n.disabled === true));
+  t.imports[1].d.resolve(changed(false));
+  await tick();
+  assert.ok(inputs.every((n) => n.disabled === false));
+});
+
+test("controls are disabled during an export: the section boxes and the button", async () => {
+  const t = setup();
+  t.dialog.open(t.opener);
+  button(t.root, "pf-export").click();
+  const boxes = t.root.all().filter((n) => n.name && n.name.startsWith("pf-section-"));
+  assert.equal(boxes.length, 3);
+  assert.ok(boxes.every((n) => n.disabled === true));
+  assert.equal(button(t.root, "pf-export").disabled, true);
+  t.exports[0].d.resolve({ package: { presets: [] }, text: "x", warnings: [] });
+  await tick();
+  assert.ok(boxes.every((n) => n.disabled === false));
+  assert.equal(button(t.root, "pf-export").disabled, false);
+});
+
+test("reopened during an Apply, the result stays visible when it arrives", async () => {
+  const t = setup();
+  await toChecked(t);
+  button(t.root, "pf-apply").click();
+  t.dialog.close();
+  t.dialog.open(t.opener);
+  t.imports[1].d.resolve(changed(false));
+  await tick();
+  assert.equal(one(t.root, "pf-report").hidden, false);
+  assert.deepEqual(t.applied, [{ unknown: false }]);
+});

@@ -53,7 +53,7 @@ test("running it opens one dialog (also the second time), from the active elemen
   assert.equal(dialogs.length, 1);
   assert.equal(dialogs[0].getAttribute("open"), "");
   const input = dialogs[0].all().find((n) => n.type === "file");
-  input.files = { length: 1, 0: { name: "p.json", size: 5, text: async () => '{"schema":1}' } };
+  input.files = { length: 1, 0: { name: "p.json", size: 5, arrayBuffer: async () => new TextEncoder().encode('{"schema":1}').buffer } };
   input.dispatch("change");
   const check = dialogs[0].all().find((n) => has(n, "pf-check"));
   await until(() => !check.disabled, "file read");

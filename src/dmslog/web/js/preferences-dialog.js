@@ -345,7 +345,13 @@ export function mountPreferencesDialog(host, {
       radios.get(mode).checked = state.mode === mode;
     }
     skipInput.checked = state.skipInvalid;
-    checkButton.disabled = state.phase === "empty" || state.phase === "reading";
+    // Frozen while an Apply runs (the operation sent what Check looked at): a change would be ignored, so it is not offered.
+    fileInput.disabled = state.frozen;
+    skipInput.disabled = state.frozen;
+    for (const radio of radios.values()) {
+      radio.disabled = state.frozen;
+    }
+    checkButton.disabled = state.frozen || state.phase === "empty" || state.phase === "reading";
     applyButton.disabled = !state.canApply;
     confirm.hidden = !state.confirming;
     renderReport(state.report);
@@ -368,7 +374,9 @@ export function mountPreferencesDialog(host, {
     say("export", state);
     for (const [section, box] of boxes) {
       box.checked = state.selection[section] === true;
+      box.disabled = state.busy; // the export in flight keeps the sections it started with
     }
+    exportButton.disabled = state.busy;
   }
 
   exporting = createExportFlow({ api, save, now, onState: drawExport });
@@ -377,7 +385,10 @@ export function mountPreferencesDialog(host, {
   drawImport(importing.state);
 
   return {
-    open: (opener) => shell.open(opener),
+    open: (opener) => {
+      importing.attach();
+      shell.open(opener);
+    },
     close: () => shell.close(),
     isOpen: () => shell.isOpen(),
     // The page is going away (or the dialog is not wanted any more): pending work stops, the element leaves.

@@ -1483,15 +1483,6 @@ function start() {
       bookmarksPanel = bookmarks;
     },
     alerts: () => alertsUi,
-    // Preferences were imported: the presets list and the alert rules reload (redaction reads the server on open).
-    preferencesApplied: () => {
-      if (filterTree !== null) {
-        filterTree.refreshPresets();
-      }
-      if (alertsUi !== null) {
-        alertsUi.refresh().catch(() => {});
-      }
-    },
     // Preferences import applied (9.10): the presets and the alert rules come from files the import may have written.
     // The redaction profile is read from the server each time its dialog opens, so it needs nothing here.
     preferencesApplied: () => {

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { ApiError } from "../../src/dmslog/web/js/api.js";
 import {
   MAX_PACKAGE_BYTES, MAX_ROWS, buildReportView, createExportFlow, createImportFlow, defaultSelection, exportFileName,
-  failureMessage, formatSize, renderMessage, renderMessages, selectedSections,
+  failureMessage, formatSize, readUtf8, renderMessage, renderMessages, selectedSections,
 } from "../../src/dmslog/web/js/preferences-model.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 
@@ -696,4 +696,84 @@ test("a reload hook that throws does not undo a finished import", async () => {
   s.calls[1].d.resolve(changed(false));
   assert.equal(await applying, true);
   assert.equal(s.flow.state.phase, "applied");
+});
+
+// ---- 9.10 review round: an Apply survives the close, the file is read as strict UTF-8
+test("a reset during an Apply does not stop it: the reload still runs and nothing is kept afterwards", async () => {
+  const s = importSetup();
+  await checked(s);
+  const applying = s.flow.apply();
+  s.flow.reset();
+  assert.equal(s.calls[1].signal.aborted, false, "the wait is not aborted");
+  assert.equal(s.flow.state.phase, "applying");
+  assert.equal(s.flow.state.busy, true);
+  assert.equal(await s.flow.chooseFile(fileOf("again.json")), false, "no new import while the Apply runs");
+  assert.equal(await s.flow.check(), false);
+  s.calls[1].d.resolve(changed(false));
+  assert.equal(await applying, true);
+  assert.deepEqual(s.applied, [{ unknown: false }]);
+  assert.equal(s.flow.state.phase, "empty", "closed dialog: the file, the report and the text are forgotten");
+  assert.equal(s.flow.state.report, null);
+  assert.equal(s.flow.state.file, null);
+});
+
+test("a reset during an Apply that is lost still reloads, as unknown", async () => {
+  const s = importSetup();
+  await checked(s);
+  const applying = s.flow.apply();
+  s.flow.reset();
+  s.calls[1].d.reject(new ApiError(0, "network", "SERVER"));
+  await applying;
+  assert.deepEqual(s.applied, [{ unknown: true }]);
+  assert.equal(s.flow.state.phase, "empty");
+});
+
+test("reopening during an Apply keeps it frozen and shows its result", async () => {
+  const s = importSetup();
+  await checked(s);
+  const applying = s.flow.apply();
+  s.flow.reset();
+  s.flow.attach();
+  assert.equal(s.flow.state.frozen, true);
+  assert.equal(s.flow.setMode("replace"), false);
+  s.calls[1].d.resolve(changed(false));
+  await applying;
+  assert.equal(s.flow.state.phase, "applied");
+  assert.equal(s.flow.state.report.dryRun, false);
+});
+
+test("a dispose during an Apply still asks for the reload (the outcome is unknown)", async () => {
+  const s = importSetup();
+  await checked(s);
+  const applying = s.flow.apply();
+  s.flow.dispose();
+  s.calls[1].d.resolve(changed(false));
+  await applying;
+  assert.deepEqual(s.applied, [{ unknown: true }]);
+});
+
+const fileOfBytes = (bytes) => ({ name: "p.json", size: bytes.length, arrayBuffer: async () => Uint8Array.from(bytes).buffer });
+
+test("the default reader decodes UTF-8 strictly: invalid bytes are an error, never U+FFFD", async () => {
+  const good = [...new TextEncoder().encode('{"n":"caf\u00e9 \u00e9"}')];
+  assert.equal(await readUtf8(fileOfBytes(good)), '{"n":"caf\u00e9 \u00e9"}');
+  const accented = [...new TextEncoder().encode('{"n":"café"}')];
+  assert.equal(await readUtf8(fileOfBytes(accented)), '{"n":"café"}');
+  const bad = [...new TextEncoder().encode('{"n":"caf')], tail = [0xe9, 0x22, 0x7d];
+  await assert.rejects(readUtf8(fileOfBytes([...bad, ...tail])), (err) => err.code === "not_utf8");
+});
+
+test("the reader keeps a BOM as it is (the server decides: it refuses it)", async () => {
+  const text = await readUtf8(fileOfBytes([0xef, 0xbb, 0xbf, 0x7b, 0x7d]));
+  assert.equal(text, "\ufeff{}");
+});
+
+test("a file with invalid UTF-8 is a static error and leaves no file", async () => {
+  const s = importSetup({ readFile: readUtf8 });
+  const f = fileOfBytes([0x7b, 0xe9, 0x7d]);
+  assert.equal(await s.flow.chooseFile(f), false);
+  assert.equal(s.flow.state.phase, "empty");
+  assert.equal(s.flow.state.file, null);
+  assert.equal(renderMessages(s.flow.state.messages), S.pfErrNotUtf8);
+  assert.equal(s.calls.length, 0, "nothing is sent");
 });

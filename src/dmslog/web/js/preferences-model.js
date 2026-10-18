@@ -69,12 +69,12 @@ export function formatSize(bytes) {
     return "";
   }
   if (bytes < 1024) {
-    return bytes + " bytes";
+    return format(S.pfSizeBytes, { value: bytes });
   }
   if (bytes < 1024 * 1024) {
-    return (bytes / 1024).toFixed(1) + " KB";
+    return format(S.pfSizeKb, { value: (bytes / 1024).toFixed(1) });
   }
-  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  return format(S.pfSizeMb, { value: (bytes / (1024 * 1024)).toFixed(1) });
 }
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -323,9 +323,20 @@ export function createExportFlow({ api, save, now = () => new Date(), onState = 
 }
 
 // ---- import
-const defaultRead = (file) => file.text();
+// The bytes of the file as text, or a "not_utf8" error. Blob.text() would replace invalid bytes by U+FFFD and change the
+// package silently (a redaction term, a name); the server refuses invalid UTF-8, so the browser must too. A BOM is kept
+// (ignoreBOM) so the text is the file as it is: the server refuses a BOM too (bad_json), and the user sees that error.
+export async function readUtf8(file) {
+  const bytes = await file.arrayBuffer();
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw Object.assign(new Error("not utf-8"), { code: "not_utf8" });
+  }
+}
+const defaultRead = readUtf8;
 
-// deps: api (preferences.import(body, signal)), readFile(file) -> Promise<string> (default file.text()),
+// deps: api (preferences.import(body, signal)), readFile(file) -> Promise<string> (default: readUtf8),
 // onState(state), onApplied({unknown}) after an Apply that wrote files or whose outcome is unknown.
 // Phases: empty, reading, ready, checking, checked, applying, applied.
 export function createImportFlow({ api, readFile = defaultRead, onState = () => {}, onApplied = () => {} }) {
@@ -337,6 +348,7 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
   let report = null;
   let checked = null; // { mode, policy, text }: exactly what the Check looked at
   let confirming = false;
+  let detached = false; // the dialog closed while an Apply was running: the Apply is followed to its end anyway
   let messages = [];
   let isError = false;
   let seq = 0;
@@ -356,6 +368,7 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
     isError,
     seq,
     busy: busy(),
+    frozen: phase === "applying", // file, mode and policy cannot change while the Apply runs
     canCheck: text !== null && (phase === "ready" || phase === "checked" || phase === "applied"),
     canApply: phase === "checked" && report !== null && report.canApply,
   });
@@ -381,6 +394,15 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
     report = null;
     checked = null;
     confirming = false;
+  };
+  const wipe = () => {
+    dropReport();
+    text = null;
+    file = null;
+    mode = "merge";
+    skipInvalid = false;
+    phase = "empty";
+    say([], false);
   };
   const backToReady = () => {
     phase = text === null ? "empty" : "ready";
@@ -424,11 +446,11 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
     let content;
     try {
       content = await readFile(chosen);
-    } catch {
+    } catch (err) {
       if (mine === gen) {
         file = null;
         phase = "empty";
-        say([message("pfErrRead")], true);
+        say([message(err && err.code === "not_utf8" ? "pfErrNotUtf8" : "pfErrRead")], true);
         emit();
       }
       return false;
@@ -544,7 +566,7 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
       );
     } catch (err) {
       if (mine !== gen) {
-        return false;
+        return lost();
       }
       controller = null;
       const ref = failureMessage(err, { unknownOutcome: true }) || message("pfErrApplyUnknown");
@@ -555,10 +577,10 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
       if (ref.key === "pfErrApplyUnknown") {
         notifyApplied(true);
       }
-      return false;
+      return finishDetached(false);
     }
     if (mine !== gen) {
-      return false;
+      return lost();
     }
     controller = null;
     const view = buildReportView(raw);
@@ -568,7 +590,7 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
       say([message("pfErrApplyUnknown")], true);
       emit();
       notifyApplied(true);
-      return false;
+      return finishDetached(false);
     }
     report = view;
     checked = null;
@@ -578,7 +600,24 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
     if (view.applied) {
       notifyApplied(false);
     }
-    return view.applied;
+    return finishDetached(view.applied);
+  }
+
+  // An Apply whose answer was dropped (only a dispose does that): the files may have been written, so the reload still
+  // happens, and nothing else is drawn.
+  function lost() {
+    notifyApplied(true);
+    return false;
+  }
+
+  // The dialog closed during the Apply and was not reopened: the result was followed (reload done), now nothing is kept.
+  function finishDetached(result) {
+    if (detached && !disposed) {
+      detached = false;
+      wipe();
+      emit();
+    }
+    return result;
   }
 
   function notifyApplied(unknown) {
@@ -620,16 +659,22 @@ export function createImportFlow({ api, readFile = defaultRead, onState = () => 
       }
     },
     // The dialog closed: nothing pending, nothing kept (the file may hold the user's redaction terms).
+    // An Apply in flight is NOT stopped: it keeps being followed (the server may finish writing), nothing else is kept.
     reset() {
+      if (phase === "applying" && !disposed) {
+        detached = true;
+        text = null;
+        file = null;
+        emit();
+        return;
+      }
       stop();
-      dropReport();
-      text = null;
-      file = null;
-      mode = "merge";
-      skipInvalid = false;
-      phase = "empty";
-      say([], false);
+      wipe();
       emit();
+    },
+    // The dialog opened again: an Apply still running is shown as it is and its result stays visible.
+    attach() {
+      detached = false;
     },
     dispose() {
       stop();
