@@ -586,3 +586,108 @@ test("a case change: the results of the old case go, the new case runs when the 
   assert.deepEqual(m.w.held.run.at(-1).args, ["B", P.id, undefined]);
   assert.deepEqual(byClass(m.host, "pn-widget").map((c) => c.children[1].textContent), Array(4).fill(S.pnWidgetLoading));
 });
+
+// ---- review round: stored values, writing, focus
+
+test("editing a query keeps a stored grouping that the options do not have (yet): changing only the limit does not erase it", async () => {
+  const keyed = widget("w1", { title: "By key", query: { rows: "entries", group_by: ["key.msgid"], measures: ["count"], limit: 100 } });
+  const Pk = panel("kkkkkkkkkkkk", "Keyed", [keyed]);
+  const w0 = makeWorld({ panels: [Pk] });
+  let release;
+  w0.api.keyTypes = () => new Promise((resolve) => { release = resolve; }); // the key types of the case have not arrived
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const ui = mountPanelsPanel(host, {
+    api: w0.api, getCase: () => w0.caseId, getFieldNames: () => [], onRequestClose: () => {},
+    flowOptions: { now: w0.options.now, setTimer: w0.options.setTimer, clearTimer: w0.options.clearTimer, connect: w0.options.connect },
+    loadUplot: async () => fakeUplot(),
+  });
+  ui.refresh();
+  w0.answerList();
+  await flush();
+  w0.held.run[0].resolve(runAnswer(Pk));
+  await flush();
+  first(host, "pn-edit").click();
+  byClass(host, "pn-edit-item")[0].all().find((n) => n.dataset.key === "edit:w1").click();
+  const groups = byClass(host, "pn-group");
+  assert.equal(groups[0].value, "key.msgid", "the stored grouping is selected although it is not among the options yet");
+  assert.equal(groups[1].value, "");
+  const limit = first(host, "pn-limit");
+  limit.value = "50";
+  limit.dispatch("change");
+  first(host, "pn-save").click();
+  assert.deepEqual(w0.held.update[0].args[1].widgets[0].query.group_by, ["key.msgid"]);
+  assert.equal(w0.held.update[0].args[1].widgets[0].query.limit, 50);
+  w0.held.update[0].reject(new ApiFail(500, "boom"));
+  await flush();
+  release({ types: [{ type: "msgid" }] }); // now the option exists: the select shows it once, in its group
+  await flush();
+  assert.equal(groups[0].value, "key.msgid");
+  assert.equal(groups[0].options.filter((o) => o.value === "key.msgid").length, 1);
+  const extra = groups[0].options.filter((o) => o.value === "key.msgid");
+  assert.equal(extra[0].parent.tagName, "OPTGROUP");
+});
+
+test("while a panel is written its fields are disabled; after a failure they are back and the next Save sends what they show", async () => {
+  const m = await editing();
+  byClass(m.host, "pn-edit-item")[0].all().find((n) => n.dataset.key === "edit:w1").click();
+  const title = first(m.host, "pn-title");
+  title.value = "Mine";
+  title.dispatch("input");
+  first(m.host, "pn-save").click();
+  const fields = [title, first(m.host, "pn-chart"), first(m.host, "pn-rows"), first(m.host, "pn-limit"), first(m.host, "pn-order"),
+    ...byClass(m.host, "pn-group"), ...byClass(m.host, "pn-measure"), first(m.host, "pn-add")];
+  for (const field of fields) {
+    assert.equal(field.disabled, true, field.className);
+  }
+  for (const key of ["edit", "up", "down", "remove"]) {
+    for (const button of byClass(m.host, "pn-" + key).concat(byClass(m.host, "pn-" + key + "-widget"))) {
+      assert.equal(button.disabled, true, button.className);
+    }
+  }
+  title.value = "Late"; // a script, not a user: the model refuses
+  title.dispatch("input");
+  assert.equal(m.ui.flow.state.draft.widgets[0].title, "Mine");
+  m.w.held.update[0].reject(new ApiFail(409, "busy"));
+  await flush();
+  for (const field of fields) {
+    assert.equal(field.disabled, false, field.className);
+  }
+  assert.equal(doc.activeElement, title, "the focus returns to the field that was in use");
+  title.value = "Mine"; // what the user sees after the failure is what the next Save sends
+  first(m.host, "pn-save").click();
+  assert.equal(m.w.held.update[1].args[1].widgets[0].title, "Mine");
+});
+
+test("an automatic update keeps the focus on the \"Data table\" summary of its widget", async () => {
+  const { host, w } = await opened();
+  const summary = first(byClass(host, "pn-widget")[2], "pn-summary");
+  summary.focus();
+  assert.equal(doc.activeElement, summary);
+  w.advance(10000);
+  w.streams.at(-1).onNotice(JSON.stringify({ seq: 1, min_interval_ms: 5000 }));
+  w.held.run[1].resolve(answerFor(w.server.panels[0]));
+  await flush();
+  const again = first(byClass(host, "pn-widget")[2], "pn-summary");
+  assert.notEqual(again, summary, "the card was rebuilt");
+  assert.equal(doc.activeElement, again);
+  const other = first(byClass(host, "pn-widget")[3], "pn-summary");
+  assert.notEqual(doc.activeElement, other, "and not on another widget's summary");
+});
+
+test("bars of values that are negative, huge or stacked keep their place on one scale with a zero line", async () => {
+  const wide = widget("w1", { title: "Signed", chart: "bar", query: { rows: "entries", group_by: ["tpl"], measures: ["count"], limit: 10 }, options: { x: "tpl", y: "count" } });
+  const m = await opened({ panels: [panel("aaaaaaaaaaaa", "A", [wide])] }, (p) => {
+    const a = runAnswer(p);
+    a.results[0].result = result(TPL, [{ values: [1, -50], labels: ["neg", null] }, { values: [2, 100], labels: ["pos", null] }]);
+    return a;
+  });
+  const rows = byClass(m.host, "pn-bar-row");
+  const fill = (row) => first(row, "pn-bar-fill").style;
+  assert.equal(fill(rows[0]).width, "33.3%");
+  assert.equal(fill(rows[0]).left, "0.0%");
+  assert.equal(fill(rows[1]).width, "66.7%");
+  assert.equal(fill(rows[1]).left, "33.3%");
+  assert.equal(byClass(m.host, "pn-bar-zero").length, 2);
+  assert.equal(byClass(m.host, "pn-bar-zero")[0].style.left, "33.3%");
+});

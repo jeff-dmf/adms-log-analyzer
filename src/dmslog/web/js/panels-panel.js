@@ -5,7 +5,7 @@
 // The panel has ONE live region (the status line). Charts are drawn from the data and always have a table next to them.
 import { EXAMPLES, MAX_GROUP_BY, MAX_LIMIT, MAX_MEASURES, applicableLookups, dimLabel, dimOptions, emptyForm, exampleForm, measureLabel, measureOptions } from "./aggregate-model.js";
 import {
-  CHARTS, chartFit, createPanelsFlow, formFromQuery, formToQuery, problemLines, queryEditable, sortedPanels, summarizeQuery,
+  CHARTS, barLayout, chartFit, createPanelsFlow, formFromQuery, formToQuery, problemLines, queryEditable, sortedPanels, summarizeQuery,
   widgetBody, widgetErrorText, widgetName,
 } from "./panels-model.js";
 import { createPanelShell, setStatusLine, statusLine } from "./panel-shell.js";
@@ -85,6 +85,7 @@ export function mountPanelsPanel(host, {
   let formWidgetId = null; // the widget whose values the persistent form shows
   let form = emptyForm();
   let formEditable = true;
+  let formBusy = false; // a change is being written: the fields are disabled, so what they show is what was sent
   let destroyed = false;
 
   // ---- tools: the panel list and its buttons
@@ -261,7 +262,9 @@ export function mountPanelsPanel(host, {
     }
   }
 
-  function fillSelect(selectNode, options, groups, current, withNone) {
+  // A saved value that is not among the options (a key type the case does not have, or one that has not been loaded
+  // yet) stays selectable: the form must show what is stored and never turn it into "none" on its own.
+  function fillSelect(selectNode, options, groups, current, withNone, labelOf) {
     selectNode.textContent = "";
     if (withNone) {
       selectNode.appendChild(option("", S.aggNone));
@@ -279,6 +282,9 @@ export function mountPanelsPanel(host, {
       }
       parent.appendChild(option(item.value, item.label));
     }
+    if (current !== "" && !options.some((item) => item.value === current)) {
+      selectNode.appendChild(option(current, labelOf(current)));
+    }
     selectNode.value = current;
   }
 
@@ -291,10 +297,10 @@ export function mountPanelsPanel(host, {
     const fields = getFieldNames();
     const dims = dimOptions(form.rows, keyTypes, fields);
     const dimGroups = { column: S.aggGroupColumns, time: S.aggGroupTime, key: S.aggGroupKeys, field: S.aggGroupFields };
-    groupSelects.forEach((g, k) => fillSelect(g, dims, dimGroups, form.groupBy[k] || "", true));
+    groupSelects.forEach((g, k) => fillSelect(g, dims, dimGroups, form.groupBy[k] || "", true, dimLabel));
     const measures = measureOptions(form.rows, keyTypes, fields);
     const mGroups = { count: S.aggGroupCount, distinct: S.aggGroupDistinct, number: S.aggGroupNumbers };
-    measureSelects.forEach((m, k) => fillSelect(m, measures, mGroups, form.measures[k] || "", k > 0));
+    measureSelects.forEach((m, k) => fillSelect(m, measures, mGroups, form.measures[k] || "", k > 0, measureLabel));
     rowsSelect.value = form.rows;
     onlyErrors.checked = Boolean(form.onlyErrors);
     lineE.hidden = form.rows !== "events";
@@ -332,9 +338,23 @@ export function mountPanelsPanel(host, {
       box.type = "checkbox";
       box.value = name;
       box.checked = (form.lookups || []).includes(name);
+      box.disabled = formBusy;
       lookupBoxes.push(box);
       box.addEventListener("change", onFormInput);
       lookupHost.appendChild(labelled(S.aggLookupNames[name] || name, box));
+    }
+  }
+
+  // While the panel is written the fields cannot change (a change made after the request left would be shown but never
+  // saved, and a retry would send the old value).
+  function setFormBusy(on) {
+    formBusy = on;
+    const controls = [
+      titleInput, chartSelect, examples, rowsSelect, onlyErrors, orderSelect, dirSelect, limitInput,
+      ...groupSelects, ...measureSelects, ...Object.values(eventInputs), ...lookupBoxes,
+    ];
+    for (const control of controls) {
+      control.disabled = on;
     }
   }
 
@@ -363,7 +383,7 @@ export function mountPanelsPanel(host, {
   // The form changed: a valid query goes to the draft, an invalid one blocks Save and says why next to the fields.
   function onFormInput() {
     const id = formWidgetId;
-    if (id === null || !formEditable || !draftWidget(id)) {
+    if (id === null || !formEditable || !draftWidget(id) || flow.state.busy !== null) {
       return;
     }
     readForm();
@@ -380,6 +400,9 @@ export function mountPanelsPanel(host, {
   }
 
   function onStructureInput() {
+    if (flow.state.busy !== null) {
+      return;
+    }
     // A different list of rows: the choices of the selects change with it.
     const rows = rowsSelect.value;
     if (rows !== form.rows) {
@@ -453,12 +476,12 @@ export function mountPanelsPanel(host, {
   }
 
   titleInput.addEventListener("input", () => {
-    if (formWidgetId !== null) {
+    if (formWidgetId !== null && flow.state.busy === null) {
       flow.updateWidget(formWidgetId, { title: titleInput.value });
     }
   });
   chartSelect.addEventListener("change", () => {
-    if (formWidgetId !== null) {
+    if (formWidgetId !== null && flow.state.busy === null) {
       flow.updateWidget(formWidgetId, { chart: chartSelect.value });
       paintFit();
     }
@@ -473,7 +496,7 @@ export function mountPanelsPanel(host, {
   limitInput.addEventListener("input", onFormInput);
   examples.addEventListener("change", () => {
     const next = exampleForm(examples.value);
-    if (next && formWidgetId !== null && formEditable) {
+    if (next && formWidgetId !== null && formEditable && flow.state.busy === null) {
       form = { ...next, baseFilter: null };
       paintFormControls();
       onFormInput();
@@ -508,14 +531,16 @@ export function mountPanelsPanel(host, {
         const up = makeButton("pn-up", S.pnMoveUp, () => flow.moveWidget(widget.id, "up"));
         up.setAttribute("aria-label", format(S.pnMoveUpLabel, { name }));
         up.dataset.key = "up:" + widget.id;
-        up.disabled = index === 0;
+        edit.disabled = state.busy !== null;
+        up.disabled = index === 0 || state.busy !== null;
         const down = makeButton("pn-down", S.pnMoveDown, () => flow.moveWidget(widget.id, "down"));
         down.setAttribute("aria-label", format(S.pnMoveDownLabel, { name }));
         down.dataset.key = "down:" + widget.id;
-        down.disabled = index === draft.widgets.length - 1;
+        down.disabled = index === draft.widgets.length - 1 || state.busy !== null;
         const remove = makeButton("pn-remove", S.pnRemoveWidget, () => flow.removeWidget(widget.id));
         remove.setAttribute("aria-label", format(S.pnRemoveWidgetLabel, { name }));
         remove.dataset.key = "remove:" + widget.id;
+        remove.disabled = state.busy !== null;
         actions.append(edit, up, down, remove);
         item.append(label, detail, actions);
         editList.appendChild(item);
@@ -525,6 +550,7 @@ export function mountPanelsPanel(host, {
       editList.appendChild(make("li", "ui-empty", S.pnNoWidgets));
     }
     addButton.disabled = state.busy !== null;
+    setFormBusy(state.busy !== null);
     const widget = state.editingWidget !== null ? draftWidget(state.editingWidget) : null;
     widgetForm.hidden = widget === null;
     if (widget === null) {
@@ -599,27 +625,41 @@ export function mountPanelsPanel(host, {
       const label = make("span", "pn-bar-label", category);
       label.title = category;
       const lines = make("div", "pn-bar-lines");
-      const widthOf = (v) => (spec.max > 0 && v > 0 ? Math.min(100, (v / spec.max) * 100).toFixed(1) + "%" : "0%");
+      const layout = barLayout(spec, i);
+      // Every parcel sits where the shared scale puts it: negative values grow to the left of the zero line.
+      const paint = (fill, part) => {
+        fill.style.left = part.from.toFixed(1) + "%";
+        fill.style.width = (part.to - part.from).toFixed(1) + "%";
+      };
+      const zeroMark = (track) => {
+        if (spec.lo < 0) {
+          const mark = make("span", "pn-bar-zero");
+          mark.style.left = layout.zero.toFixed(1) + "%";
+          track.appendChild(mark);
+        }
+      };
       if (spec.stacked) {
         const track = make("div", "pn-bar-track");
+        zeroMark(track);
         let total = 0;
         spec.series.forEach((s, k) => {
-          const v = Math.max(0, s.values[i] || 0);
-          total += v;
+          const part = layout.parts[k];
+          total += part.value === null ? 0 : part.value;
           const fill = make("span", "pn-bar-fill agg-c" + (k % COLORS));
-          fill.style.width = widthOf(v);
+          paint(fill, part);
           track.appendChild(fill);
         });
-        lines.append(track, make("span", "pn-bar-value", formatValue(total)));
+        lines.append(track, make("span", "pn-bar-value", formatValue(Math.max(-Number.MAX_VALUE, Math.min(Number.MAX_VALUE, total)))));
       } else {
         spec.series.forEach((s, k) => {
-          const v = s.values[i];
+          const part = layout.parts[k];
           const one = make("div", "pn-bar-line");
           const track = make("div", "pn-bar-track");
+          zeroMark(track);
           const fill = make("span", "pn-bar-fill agg-c" + (k % COLORS));
-          fill.style.width = widthOf(v === null ? 0 : v);
+          paint(fill, part);
           track.appendChild(fill);
-          one.append(track, make("span", "pn-bar-value", v === null ? "" : formatValue(v)));
+          one.append(track, make("span", "pn-bar-value", part.value === null ? "" : formatValue(part.value)));
           lines.appendChild(one);
         });
       }
@@ -742,7 +782,9 @@ export function mountPanelsPanel(host, {
     card.appendChild(chartBlock(name, body, renderStamp));
     const details = make("details", "pn-details");
     details.open = openTables.has(widget.id);
-    details.appendChild(make("summary", "pn-summary", S.pnDataTable));
+    const summary = make("summary", "pn-summary", S.pnDataTable);
+    summary.dataset.key = "summary:" + widget.id;
+    details.appendChild(summary);
     const fill = () => {
       if (details.children.length === 1) {
         details.appendChild(tableOf(body.view, name));
@@ -792,15 +834,18 @@ export function mountPanelsPanel(host, {
     resultsKey = key;
     destroyCharts();
     renderStamp += 1;
-    widgetsHost.textContent = "";
-    if (!panel || state.mode !== "view" || !state.shown) {
-      return;
-    }
-    if (panel.widgets.length === 0) {
-      widgetsHost.appendChild(make("p", "ui-empty", S.pnNoWidgetsYet));
-      return;
-    }
-    panel.widgets.forEach((widget, index) => widgetsHost.appendChild(widgetCard(widget, index, state)));
+    // The elements are rebuilt on every update: the one that has the focus (a "Data table" summary) is found again by
+    // its widget id and gets the focus back.
+    rebuild(widgetsHost, () => {
+      if (!panel || state.mode !== "view" || !state.shown) {
+        return;
+      }
+      if (panel.widgets.length === 0) {
+        widgetsHost.appendChild(make("p", "ui-empty", S.pnNoWidgetsYet));
+        return;
+      }
+      panel.widgets.forEach((widget, index) => widgetsHost.appendChild(widgetCard(widget, index, state)));
+    });
   }
 
   // ---- the paint

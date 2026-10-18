@@ -8,9 +8,9 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
-  CHARTS, DEFAULT_LIMITS, chartFit, chartSpec, cleanList, cleanPanel, defaultQuery, defaultWidget, deriveOptions, draftProblem,
+  CHARTS, DEFAULT_LIMITS, barLayout, chartFit, chartSpec, charCount, cleanList, cleanPanel, cleanRev, defaultQuery, defaultWidget, deriveOptions, draftProblem,
   errorMessage, formFromQuery, formToQuery, nameProblem, nextWidgetId, parseNotice, problemLines, queryEditable, refreshDelay,
-  sortedPanels, statValue, summarizeQuery, widgetBody, widgetErrorText,
+  sanitizeName, sortedPanels, statValue, summarizeQuery, titleProblem, widgetBody, widgetErrorText,
 } from "../../src/dmslog/web/js/panels-model.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
 
@@ -65,7 +65,7 @@ test("problemLines: an unusable file and each skipped panel, as static text", ()
 test("cleanPanel and cleanList: only well-formed panels get in, whatever else the server said", () => {
   const good = { id: "aaaaaaaaaaaa", rev: 2, name: "A", widgets: [{ id: "w1", title: "t", query: { rows: "entries" }, chart: "table", options: {} }] };
   assert.equal(cleanPanel(good).rev, 2);
-  for (const bad of [null, [], { ...good, rev: "2" }, { ...good, name: 3 }, { ...good, widgets: "x" }, { ...good, widgets: [{ id: 1 }] },
+  for (const bad of [null, [], { ...good, rev: "x" }, { ...good, rev: 1.5 }, { ...good, rev: -1 }, { ...good, rev: "9223372036854775808x" }, { ...good, name: 3 }, { ...good, widgets: "x" }, { ...good, widgets: [{ id: 1 }] },
     { ...good, widgets: [{ ...good.widgets[0], chart: "pie" }] }, { ...good, id: 5 }]) {
     assert.equal(cleanPanel(bad), null);
   }
@@ -239,7 +239,7 @@ test("draftProblem: form errors first, then limits, then fit, then the sum of th
   const limits = { ...DEFAULT_LIMITS, widgets: 2, rows: 150 };
   const mk = (id, extra = {}) => ({ id, title: "t", query: defaultQuery(), chart: "table", options: {}, ...extra });
   assert.equal(draftProblem({ widgets: [mk("a")] }, limits), null);
-  assert.deepEqual(draftProblem({ widgets: [mk("a")] }, limits, { a: "Fix this." }), { widgetId: "a", text: "Fix this." });
+  assert.deepEqual(draftProblem({ widgets: [mk("a")] }, limits, new Map([["a", "Fix this."]])), { widgetId: "a", text: "Fix this." });
   assert.equal(draftProblem({ widgets: [mk("a"), mk("b"), mk("c")] }, limits).widgetId, null);
   assert.deepEqual(draftProblem({ widgets: [mk("a", { chart: "stat" })] }, limits), { widgetId: "a", text: S.pnFit.stat });
   assert.match(draftProblem({ widgets: [mk("a", { title: "x".repeat(81) })] }, limits).text, /at most 80/);
@@ -354,4 +354,143 @@ test("chartSpec draws the eight largest series and says there are more", () => {
   assert.equal(spec.series.length, 8);
   assert.equal(spec.truncated.series, true);
   assert.equal(spec.series[0].values[0], 10, "the largest first");
+});
+
+// ---- review round: charts with default options, scales, names, revisions, hostile ids
+
+test("a bar or line chart with no options is drawn with the server's defaults (first dimension / first time bucket, first measure)", () => {
+  const bars = chartSpec({ chart: "bar", query: { group_by: ["tpl", "sev"], measures: ["count"] }, options: {} }, RESULT);
+  assert.equal(bars.kind, "bars");
+  assert.equal(bars.kind, "bars");
+  assert.equal(bars.categories.length, 4, "x is the first dimension; without a series every combination is a bar");
+  assert.ok(bars.categories[0].startsWith("Alpha"));
+  const result = {
+    columns: [{ id: "status", role: "group" }, { id: "bucket:1h", role: "group" }, { id: "count", role: "measure" }],
+    rows: [{ values: ["ok", 3600000, 1] }, { values: ["ok", 7200000, 2] }],
+  };
+  const line = chartSpec({ chart: "line", query: { group_by: ["status", "bucket:1h"], measures: ["count"] }, options: {} }, result);
+  assert.deepEqual(line.xs, [3600, 7200], "the first time bucket, not the first dimension");
+  assert.deepEqual(line.series.map((s) => s.values), [[1, 2]]);
+});
+
+test("the defaults of an empty options object are the ones store/panels.py accepts", (t) => {
+  const widgets = [
+    { id: "w1", title: "", query: { rows: "entries", group_by: ["tpl"], measures: ["count"], limit: 5 }, chart: "bar", options: {} },
+    { id: "w1", title: "", query: { rows: "entries", group_by: ["bucket:1h"], measures: ["count"], limit: 5 }, chart: "line", options: {} },
+  ];
+  const results = pythonValidates(widgets);
+  if (results === null) {
+    t.skip("no python with the dmslog sources at hand");
+    return;
+  }
+  assert.deepEqual(results.map((r) => r.ok), [true, true]);
+});
+
+test("widget ids that are properties of every object (constructor, __proto__) are ordinary ids", () => {
+  const limits = DEFAULT_LIMITS;
+  const mk = (id) => ({ id, title: "t", query: defaultQuery(), chart: "table", options: {} });
+  for (const id of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+    assert.equal(draftProblem({ widgets: [mk(id)] }, limits, new Map()), null, id);
+    assert.deepEqual(draftProblem({ widgets: [mk(id)] }, limits, new Map([[id, "Fix."]])), { widgetId: id, text: "Fix." });
+  }
+  assert.equal(errorMessage({ code: "constructor" }), S.pnErrGeneric);
+});
+
+test("the scale of bars: sums of huge parcels do not overflow, negative values grow left of zero, stacks keep their signs", () => {
+  const big = Number.MAX_VALUE / 1.5;
+  const widget = { chart: "bar", query: { group_by: ["tpl", "sev"], measures: ["count"] }, options: { x: "tpl", y: "count", series: "sev" } };
+  const result = (rows) => ({ columns: [{ id: "tpl", role: "group" }, { id: "sev", role: "group" }, { id: "count", role: "measure" }], rows: rows.map((values) => ({ values })) });
+  const huge = chartSpec({ ...widget, options: { ...widget.options, stacked: true } }, result([["a", 1, big], ["a", 2, big]]));
+  assert.ok(Number.isFinite(huge.hi) && Number.isFinite(huge.max));
+  const layout = barLayout(huge, 0);
+  assert.deepEqual(layout.parts.map((p) => [Math.round(p.from), Math.round(p.to)]), [[0, 50], [50, 100]]);
+  const flat = chartSpec(widget, result([["a", 1, 1e308], ["a", 2, 1e308]]));
+  assert.ok(Number.isFinite(flat.hi));
+  assert.deepEqual(barLayout(flat, 0).parts.map((p) => [Math.round(p.from), Math.round(p.to)]), [[0, 100], [0, 100]]);
+
+  const mixed = chartSpec(widget, result([["a", 1, -50], ["b", 1, 100]]));
+  assert.equal(Math.round(barLayout(mixed, 0).zero), 33);
+  assert.deepEqual(barLayout(mixed, 0).parts.map((p) => [Math.round(p.from), Math.round(p.to)]), [[0, 33]]);
+  assert.deepEqual(barLayout(mixed, 1).parts.map((p) => [Math.round(p.from), Math.round(p.to)]), [[33, 100]]);
+
+  const signed = chartSpec({ ...widget, options: { ...widget.options, stacked: true } }, result([["a", 1, 30], ["a", 2, -10], ["a", 3, 10]]));
+  const parts = barLayout(signed, 0).parts;
+  assert.equal(signed.series.length, 3);
+  const spans = parts.map((p) => Math.round(p.to - p.from)).sort((a, b) => a - b);
+  assert.deepEqual(spans, [20, 20, 60], "10, 10 and 30 on a scale from -10 to 40");
+  const zero = barLayout(signed, 0).zero;
+  assert.ok(parts.every((p) => p.from >= zero - 0.001 || p.to <= zero + 0.001), "no parcel straddles the zero line");
+
+  const none = chartSpec(widget, result([["a", 1, 0]]));
+  assert.deepEqual(barLayout(none, 0).parts.map((p) => p.to - p.from), [0], "all zeros: nothing to scale");
+  const gap = chartSpec(widget, result([["a", 1, 5], ["b", 2, 7]]));
+  assert.equal(barLayout(gap, 0).parts.length, 2);
+  assert.equal(barLayout(gap, 0).parts.find((p) => p.value === null).to, 0, "a missing value is an empty part");
+});
+
+test("revisions: a number is kept while it is exact; the digits of a 64-bit one stay exact as a string", () => {
+  assert.equal(cleanRev(7), 7);
+  assert.equal(cleanRev("7"), 7);
+  assert.equal(cleanRev("9223372036854775807"), "9223372036854775807");
+  assert.equal(cleanRev("0009007199254740993"), "9007199254740993");
+  for (const bad of [-1, 1.5, "x", "", "1e5", null, undefined, 2 ** 60, "92233720368547758070"]) {
+    assert.equal(cleanRev(bad), null, String(bad));
+  }
+  const panel = cleanPanel({ id: "aaaaaaaaaaaa", rev: "9223372036854775807", name: "A", widgets: [] });
+  assert.equal(panel.rev, "9223372036854775807");
+});
+
+function pythonRun(script, input) {
+  const python = process.env.DMSLOG_PYTHON || path.join("/home/jeffdmf/Projects/adms-log-analyzer", ".venv/bin/python");
+  for (const exe of [python, "python3", "python"]) {
+    const run = spawnSync(exe, ["-c", script], { cwd: ROOT, input: JSON.stringify(input), encoding: "utf8", timeout: 30000 });
+    if (run.status === 0) {
+      return JSON.parse(run.stdout.trim().split("\n").pop());
+    }
+  }
+  return null;
+}
+
+const NAMES = [
+  "Alpha", "  spaced \t out\n ", "\u{1F600}".repeat(41), "\u{1F600}".repeat(80), "\u{1F600}".repeat(81), "x".repeat(80), "x".repeat(81),
+  "e\u0301".repeat(30), "\u0085a\u001fb", "\ufeffc", "\u200b", "\u202eRTL", "", "   ", "a\u00a0b\u3000c", "tab\u0000nul",
+];
+
+test("names and titles are sanitized and counted like store/views.py sanitize_name (code points, NFC, control and format characters)", (t) => {
+  const script = [
+    "import json, sys",
+    "sys.path.insert(0, 'src')",
+    "from dmslog.store import panels, views",
+    "out = []",
+    "for raw in json.load(sys.stdin):",
+    "    try:",
+    "        name = views.sanitize_name(raw)",
+    "    except views.ViewError:",
+    "        name = None",
+    "    try:",
+    "        panels._title(raw)",
+    "        title = True",
+    "    except panels.PanelError:",
+    "        title = False",
+    "    out.append({'name': name, 'titleOk': title})",
+    "print(json.dumps(out))",
+  ].join("\n");
+  const expected = pythonRun(script, NAMES);
+  if (expected === null) {
+    t.skip("no python with the dmslog sources at hand");
+    return;
+  }
+  NAMES.forEach((raw, i) => {
+    const label = JSON.stringify(raw);
+    const py = expected[i];
+    if (py.name === null) {
+      assert.notEqual(nameProblem(raw, DEFAULT_LIMITS), null, "name " + label);
+    } else {
+      assert.equal(sanitizeName(raw), py.name, "sanitized " + label);
+      assert.equal(nameProblem(raw, DEFAULT_LIMITS), null, "name " + label);
+    }
+    assert.equal(!titleProblem(raw, DEFAULT_LIMITS), py.titleOk, "title " + label);
+  });
+  assert.equal(charCount("\u{1F600}".repeat(41)), 41);
+  assert.equal(nameProblem("\u{1F600}".repeat(41), DEFAULT_LIMITS), null, "41 emoji are 41 characters, not 82");
 });

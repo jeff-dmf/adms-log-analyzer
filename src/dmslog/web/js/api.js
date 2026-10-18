@@ -86,11 +86,30 @@ function networkFailed(signal) {
   return new ApiError(0, "network", S.errorNetwork);
 }
 
-async function request(method, url, body, signal) {
+// A body that is already JSON text (the caller guarantees it is valid).
+class JsonText {
+  constructor(text) {
+    this.text = text;
+  }
+}
+
+// Revisions of panels are 64-bit integers. A JS number holds them exactly only up to 2^53, so in an answer a "rev" of
+// 16 or more digits is read as its digits (a string; panels-model.js cleanRev) and goes back to the server as the same
+// digits written as a number. `"rev"` inside a string is always `\"rev\"`, which the pattern does not match.
+const BIG_REV = /(?<!\\)"rev"(\s*:\s*)([0-9]{16,19})(?=\s*[,}\]])/g;
+
+async function readJson(response, exactRev) {
+  if (!exactRev || typeof response.text !== "function") {
+    return response.json();
+  }
+  return JSON.parse((await response.text()).replace(BIG_REV, '"rev"$1"$2"'));
+}
+
+async function request(method, url, body, signal, { exactRev = false } = {}) {
   const options = { method, credentials: "same-origin", signal };
   if (body !== undefined) {
     options.headers = { "Content-Type": "application/json" };
-    options.body = JSON.stringify(body);
+    options.body = body instanceof JsonText ? body.text : JSON.stringify(body);
   }
   let response;
   try {
@@ -106,7 +125,7 @@ async function request(method, url, body, signal) {
   }
   let data = null;
   try {
-    data = await response.json();
+    data = await readJson(response, exactRev);
   } catch (err) {
     data = null;
   }
@@ -122,6 +141,17 @@ async function request(method, url, body, signal) {
     throw new ApiError(response.status, code, message);
   }
   return data;
+}
+
+// The body of PUT /api/panels. `ifRev` may be the digits of a revision a number cannot hold (see BIG_REV).
+function panelUpdateBody(id, panel, ifRev) {
+  if (ifRev === undefined || ifRev === null) {
+    return { id, panel };
+  }
+  if (typeof ifRev === "string" && /^[0-9]{1,19}$/.test(ifRev)) {
+    return new JsonText(JSON.stringify({ id, panel }).slice(0, -1) + ',"if_rev":' + ifRev + "}");
+  }
+  return { id, panel, if_rev: ifRev };
 }
 
 // POST that answers with a file (streamed by the server): `as` is "text" or "blob". Resolves to
@@ -371,13 +401,12 @@ export const api = {
   // The user's panels (store/panels.py, store/panelrun.py; ARQUITETURA 10.14). `panel` is {name, widgets}; `ifRev` is the
   // revision the caller saw (409 rev_conflict when it moved). `run` runs the STORED panel (all widgets, or `widgets`: ids).
   panels: {
-    list: (signal) => request("GET", "/api/panels", undefined, signal),
-    create: (panel) => request("POST", "/api/panels", panel),
-    update: (id, panel, ifRev) =>
-      request("PUT", "/api/panels", ifRev === undefined || ifRev === null ? { id, panel } : { id, panel, if_rev: ifRev }),
+    list: (signal) => request("GET", "/api/panels", undefined, signal, { exactRev: true }),
+    create: (panel) => request("POST", "/api/panels", panel, undefined, { exactRev: true }),
+    update: (id, panel, ifRev) => request("PUT", "/api/panels", panelUpdateBody(id, panel, ifRev), undefined, { exactRev: true }),
     remove: (id) => request("DELETE", "/api/panels" + query({ id })),
     run: (caseId, id, widgets, signal) =>
-      request("POST", "/api/panels/run", widgets ? { case: caseId, id, widgets } : { case: caseId, id }, signal),
+      request("POST", "/api/panels/run", widgets ? { case: caseId, id, widgets } : { case: caseId, id }, signal, { exactRev: true }),
   },
   // Declarative aggregation (store/aggregate.py): JSON result, or the same result as CSV text.
   aggregate: (caseId, body, signal) => request("POST", "/api/entries/aggregate", { ...body, case: caseId }, signal),

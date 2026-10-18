@@ -68,12 +68,12 @@ for (const reject of [true, false]) test("an answer after a case change is dropp
   w.caseId = "B";
   w.flow.caseChanged();
   assert.equal(w.flow.state.run.status, "idle");
-  assert.deepEqual(w.flow.state.run.results, {});
+  assert.equal(Object.keys(w.flow.state.run.results).length, 0);
   assert.equal(w.live().length, 0, "the stream of the old case is closed");
   w.held.run[1].resolve(runAnswer(A, { elapsed_ms: 7 }));
   await running;
   assert.equal(w.flow.state.run.status, "idle");
-  assert.deepEqual(w.flow.state.run.results, {});
+  assert.equal(Object.keys(w.flow.state.run.results).length, 0);
   w.flow.setShown(true); // the dock refreshes the open tab
   await flush();
   assert.deepEqual(lastRun(w).args, ["B", A.id, undefined]);
@@ -134,8 +134,10 @@ test("a throttled notice waits the time the server asked for; notices meanwhile 
   assert.equal(w.held.run.length, 1);
   assert.equal([...w.timers.values()][0].ms, 3000);
   noticeAt(w, { seq: 2, throttled: true, retry_after_ms: 4000, min_interval_ms: 5000 });
-  assert.equal(w.timers.size, 1, "a later deadline adds nothing");
-  assert.equal([...w.timers.values()][0].ms, 3000);
+  assert.equal(w.timers.size, 1, "one timer: the newest notice has the last word");
+  assert.equal([...w.timers.values()][0].ms, 4000, "a later deadline moves the timer (retry_after_ms is a minimum)");
+  w.advance(3999);
+  assert.equal(w.held.run.length, 1, "the earlier timer did not outrun the new deadline");
   noticeAt(w, { seq: 3, throttled: true, retry_after_ms: 1000, min_interval_ms: 5000 });
   assert.equal(w.timers.size, 1, "an earlier deadline replaces it");
   assert.equal([...w.timers.values()][0].ms, 1000);
@@ -232,15 +234,40 @@ test("an answer for a case the page has already left is dropped even if nobody t
   assert.notEqual(w.flow.state.run.elapsedMs, 31337);
 });
 
-test("reconnecting reruns the panel; the first connection does not", async () => {
+test("the first connection reruns the panel too (a change between the snapshot of the run and the subscription would be lost); so does every reconnection", async () => {
   const w = setup();
   await opened(w);
   const stream = w.streams.at(-1);
   w.advance(10000);
   stream.onOpen();
-  assert.equal(w.held.run.length, 1, "the first open: the run that just finished covers it");
+  assert.equal(w.held.run.length, 2, "the first open: the snapshot of the run may predate the subscription");
+  w.held.run[1].resolve(runAnswer(A));
+  await flush();
+  w.advance(10000);
   stream.onOpen();
-  assert.equal(w.held.run.length, 2, "reconnected");
+  assert.equal(w.held.run.length, 3, "reconnected");
+});
+
+test("the rerun of the first connection waits for the minimum interval after the start of the last run", async () => {
+  const w = setup();
+  w.flow.setShown(true);
+  w.answerList();
+  await flush();
+  const stream = w.streams.at(-1);
+  w.held.run[0].resolve(runAnswer(A));
+  await flush();
+  stream.onOpen(); // the run started right after connecting, before the stream opened
+  assert.equal(w.held.run.length, 1);
+  assert.equal([...w.timers.values()][0].ms, 5000, "no sooner than the interval after the last run started");
+  w.advance(4999);
+  assert.equal(w.held.run.length, 1);
+  w.advance(1);
+  assert.equal(w.held.run.length, 2);
+  w.held.run[1].resolve(runAnswer(A));
+  await flush();
+  stream.onOpen();
+  stream.onOpen();
+  assert.equal(w.timers.size, 1, "opens in a row share the one timer");
 });
 
 test("after repeated failures the stream stops, the panel says so, and Run gives live updates another chance", async () => {
@@ -731,4 +758,154 @@ test("a panel holds at most the number of widgets the server said", async () => 
   assert.equal(w.flow.addWidget(), null, "Alpha already has two");
   assert.match(w.flow.state.notice.text, /at most 2 widgets/);
   assert.equal(w.flow.state.draft.widgets.length, 2);
+});
+
+// ---- review round: stale confirmations, stuck runs, lost notices
+
+test("a Delete confirmation opened for A is closed when the list moves the selection to B: Confirm cannot delete B", async () => {
+  const w = setup();
+  await opened(w);
+  w.flow.askDelete();
+  assert.equal(w.flow.state.confirming, true);
+  w.flow.run();
+  w.held.run[1].reject(new ApiFail(404, "not_found")); // A is gone
+  await flush();
+  w.server.panels = [B];
+  w.answerList();
+  await flush();
+  assert.equal(w.flow.state.selectedId, B.id);
+  assert.equal(w.flow.state.confirming, false, "the confirmation was about A");
+  assert.equal(await w.flow.confirmDelete(), false);
+  assert.equal(w.held.remove.length, 0);
+  assert.equal(w.held.list.length, 2, "and nothing was read to delete");
+});
+
+test("a Delete confirmation is closed when the revision it was opened for moves", async () => {
+  const w = setup();
+  await opened(w);
+  w.flow.askDelete();
+  const reloading = w.flow.reloadAll();
+  w.server.panels = [panel(A.id, "Alpha", A.widgets, 2), B];
+  w.answerList();
+  await reloading;
+  assert.equal(w.flow.state.confirming, false);
+  assert.equal(w.flow.state.notice.text, S.pnErrors.changed_before_delete);
+  assert.equal(await w.flow.confirmDelete(), false);
+  assert.equal(w.held.remove.length, 0);
+});
+
+test("choosing another panel closes the confirmation of the first one", async () => {
+  const w = setup();
+  await opened(w);
+  w.flow.askDelete();
+  w.flow.select(B.id);
+  assert.equal(w.flow.state.confirming, false);
+  assert.equal(await w.flow.confirmDelete(), false);
+});
+
+test("the list cannot be read after a moved revision: the run ends as an error, and the next notice runs again", async () => {
+  const w = setup();
+  w.flow.setShown(true);
+  w.answerList();
+  await flush();
+  const moved = panel(A.id, "Alpha", A.widgets, 2);
+  w.held.run[0].resolve(runAnswer(moved));
+  await flush();
+  assert.equal(w.held.list.length, 2);
+  w.held.list[1].reject(new ApiFail(500, "boom"));
+  await flush();
+  assert.notEqual(w.flow.state.run.status, "running", "no request is behind it");
+  assert.equal(w.flow.state.run.status, "error");
+  assert.equal(w.flow.state.list.status, "ready", "the panels already on screen stay");
+  w.advance(10000);
+  noticeAt(w, { seq: 1, min_interval_ms: 5000 });
+  assert.equal(w.held.run.length, 2, "a notice runs the panel again");
+});
+
+test("a notice that arrives during a run that fails is answered once the interval passes", async () => {
+  const w = setup();
+  await opened(w);
+  w.advance(10000);
+  const running = w.flow.run();
+  noticeAt(w, { seq: 1, min_interval_ms: 5000 });
+  assert.equal(w.held.run.length, 2, "it waits for the run in flight");
+  w.held.run[1].reject(new ApiFail(500, "boom"));
+  await running;
+  await flush();
+  assert.equal(w.flow.state.run.status, "error");
+  assert.equal(w.timers.size, 1, "one run is scheduled for the notice");
+  assert.equal([...w.timers.values()][0].ms, 5000);
+  w.advance(5000);
+  assert.equal(w.held.run.length, 3);
+  w.held.run[2].reject(new ApiFail(500, "boom"));
+  await flush();
+  assert.equal(w.timers.size, 0, "a failure without a new notice schedules nothing: no endless retry");
+});
+
+test("a run that fails because the panel is gone does not run it again for a pending notice", async () => {
+  const w = setup();
+  await opened(w);
+  w.advance(10000);
+  w.flow.run();
+  noticeAt(w, { seq: 1, min_interval_ms: 5000 });
+  w.held.run[1].reject(new ApiFail(404, "not_found"));
+  await flush();
+  assert.equal(w.timers.size, 0);
+  assert.equal(w.held.run.length, 2);
+});
+
+test("widgets whose ids are properties of every object (constructor, __proto__) get their results and can be saved", async () => {
+  const H = panel("hhhhhhhhhhhh", "Hostile ids", [widget("constructor"), widget("__proto__"), widget("toString")]);
+  const w = makeWorld({ panels: [H] });
+  const flow = createPanelsFlow({ ...w.options, onState: () => {} });
+  w.flow = flow;
+  flow.setShown(true);
+  w.answerList();
+  await flush();
+  w.held.run[0].resolve(runAnswer(H));
+  await flush();
+  const results = flow.state.run.results;
+  assert.equal(Object.keys(results).length, 3);
+  for (const id of ["constructor", "__proto__", "toString"]) {
+    assert.equal(results[id].status, "ok", id);
+  }
+  assert.equal(results.hasOwnProperty, undefined, "no inherited members");
+  flow.edit();
+  assert.equal(flow.state.formErrors.get("constructor"), undefined);
+  const saving = flow.saveEdit();
+  assert.equal(flow.state.busy, "save", "an id that is a property name is not a form error");
+  w.held.update[0].resolve(panel(H.id, H.name, H.widgets, 2));
+  assert.equal(await saving, true);
+});
+
+test("a notice swallowed by a run whose panel is gone does not come back as an extra run after the next one", async () => {
+  const w = setup();
+  await opened(w);
+  w.advance(10000);
+  w.flow.run();
+  noticeAt(w, { seq: 1, min_interval_ms: 5000 });
+  w.held.run[1].reject(new ApiFail(404, "not_found"));
+  await flush();
+  w.answerList(); // the panel is still there (a stale answer): nothing changes
+  await flush();
+  w.advance(10000);
+  const again = w.flow.run();
+  w.held.run.at(-1).resolve(runAnswer(A));
+  await again;
+  assert.equal(w.timers.size, 0, "no leftover request for the old notice");
+});
+
+test("while a draft is written, the widget being edited cannot be changed", async () => {
+  const w = setup();
+  await opened(w);
+  w.flow.edit();
+  w.flow.addWidget();
+  const before = w.flow.state.editingWidget;
+  const saving = w.flow.saveEdit();
+  assert.equal(w.flow.state.busy, "save");
+  assert.equal(w.flow.setEditingWidget(null), false);
+  assert.equal(w.flow.state.editingWidget, before);
+  w.held.update[0].reject(new ApiFail(500, "boom"));
+  await saving;
+  assert.equal(w.flow.setEditingWidget(null), true);
 });

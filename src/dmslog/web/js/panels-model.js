@@ -44,7 +44,7 @@ export function errorMessage(err, limits = DEFAULT_LIMITS) {
     return S.pnErrNetwork;
   }
   const template = Object.prototype.hasOwnProperty.call(S.pnErrors, code) ? S.pnErrors[code] : S.pnErrGeneric;
-  const key = LIMIT_OF[code];
+  const key = Object.prototype.hasOwnProperty.call(LIMIT_OF, code) ? LIMIT_OF[code] : "";
   const limit = key ? (limits && Number.isFinite(limits[key]) ? limits[key] : DEFAULT_LIMITS[key]) : 0;
   return format(template, { limit });
 }
@@ -85,15 +85,28 @@ function validWidget(raw) {
   return isObject(raw) && typeof raw.id === "string" && isObject(raw.query) && CHARTS.includes(raw.chart);
 }
 
+// A revision is a 64-bit integer on the server. api.js hands one that a JS number cannot hold exactly over as its
+// digits (a string); anything else must be a safe integer. Equal revisions compare equal with ===.
+export function cleanRev(raw) {
+  if (typeof raw === "number") {
+    return Number.isSafeInteger(raw) && raw >= 0 ? raw : null;
+  }
+  if (typeof raw !== "string" || !/^[0-9]{1,19}$/.test(raw)) {
+    return null;
+  }
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : raw.replace(/^0+(?=[0-9])/, "");
+}
+
 // A panel as the server sent it, or null when it does not have the shape the panel relies on.
 export function cleanPanel(raw) {
-  if (!isObject(raw) || typeof raw.id !== "string" || !Number.isInteger(raw.rev) || typeof raw.name !== "string"
+  if (!isObject(raw) || typeof raw.id !== "string" || cleanRev(raw.rev) === null || typeof raw.name !== "string"
     || !Array.isArray(raw.widgets) || !raw.widgets.every(validWidget)) {
     return null;
   }
   return {
     id: raw.id,
-    rev: raw.rev,
+    rev: cleanRev(raw.rev),
     name: raw.name,
     widgets: raw.widgets.map((w) => ({
       id: w.id, title: typeof w.title === "string" ? w.title : "", query: w.query, chart: w.chart,
@@ -119,12 +132,47 @@ export function cleanList(data) {
   return { panels, problems, invalidFile: raw.invalid === true, limits };
 }
 
+// store/views.py sanitize_name in JavaScript: NFC, control and format characters dropped, every kind of white space
+// (the set of Python's str.isspace) becomes one space, runs of spaces collapse, the ends are trimmed.
+const PY_SPACE = /[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u;
+const CONTROL = /^\p{C}$/u;
+
+export function sanitizeName(raw) {
+  if (typeof raw !== "string") {
+    return "";
+  }
+  let out = "";
+  for (const ch of raw.normalize("NFC")) {
+    if (PY_SPACE.test(ch)) {
+      out += " ";
+    } else if (!CONTROL.test(ch)) {
+      out += ch;
+    }
+  }
+  return out.replace(/ {2,}/g, " ").replace(/^ | $/g, "");
+}
+
+// Characters as the server counts them (code points, not UTF-16 units).
+export const charCount = (text) => Array.from(text).length;
+
+const isBlank = (text) => Array.from(text).every((ch) => PY_SPACE.test(ch));
+
 export function nameProblem(raw, limits = DEFAULT_LIMITS) {
-  const name = String(raw === undefined || raw === null ? "" : raw).trim();
-  if (name === "" || name.length > limits.name_chars) {
+  const name = sanitizeName(raw === undefined || raw === null ? "" : String(raw));
+  if (name === "" || charCount(name) > limits.name_chars) {
     return format(S.pnErrors.bad_name, { limit: limits.name_chars });
   }
   return null;
+}
+
+// True when the server would refuse the title of a widget (an empty title is fine; one made only of invisible
+// characters is not).
+export function titleProblem(title, limits = DEFAULT_LIMITS) {
+  if (typeof title !== "string" || isBlank(title)) {
+    return false;
+  }
+  const clean = sanitizeName(title);
+  return clean === "" || charCount(clean) > limits.title_chars || charCount(clean) > limits.name_chars;
 }
 
 // ---- widgets: query <-> form ------------------------------------------------------------------------------
@@ -296,10 +344,10 @@ export function deriveOptions(chart, query, previous = {}) {
 }
 
 // First thing that stops a draft from being saved, as {widgetId, text}, or null.
-export function draftProblem(draft, limits, formErrors = {}) {
+export function draftProblem(draft, limits, formErrors = new Map()) {
   for (const widget of draft.widgets) {
-    if (formErrors[widget.id]) {
-      return { widgetId: widget.id, text: formErrors[widget.id] };
+    if (formErrors.get(widget.id)) {
+      return { widgetId: widget.id, text: formErrors.get(widget.id) };
     }
   }
   if (draft.widgets.length > limits.widgets) {
@@ -310,7 +358,7 @@ export function draftProblem(draft, limits, formErrors = {}) {
     if (reason !== null) {
       return { widgetId: widget.id, text: reason };
     }
-    if (widget.title.length > limits.title_chars) {
+    if (titleProblem(widget.title, limits)) {
       return { widgetId: widget.id, text: format(S.pnErrors.bad_title, { limit: limits.title_chars }) };
     }
   }
@@ -327,6 +375,8 @@ function columnIndex(columns, role, id) {
   return columns.findIndex((c) => c.role === role && c.id === id);
 }
 
+// Comparator for "largest first" that stays an order when totals reach Infinity (Infinity - Infinity is NaN).
+const descending = (a, b) => (a < b ? 1 : a > b ? -1 : 0);
 const numberOrNull = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 // The big number of a "stat" widget, or null without a row.
@@ -341,6 +391,64 @@ export function statValue(widget, result) {
   return { label: measureLabel(columns[at].id), text: value === null ? S.aggEmptyValue : formatNumber(value), value };
 }
 
+// Bars share one scale. Values are handled in units of 1/SCALE so that neither a sum of several 1e308 parcels nor the
+// width of the whole scale (hi - lo) can overflow to Infinity. Parcels that stack have a sign: positive ones grow to
+// the right of zero, negative ones to the left. {lo, hi} (scaled, lo <= 0 <= hi) is the domain; `max` is the largest
+// positive end in the real unit (Infinity-free: it is only the largest single value or the stack of the positives
+// clamped to the largest finite number).
+const SCALE = 16;
+function barDomain(series, count, stacked) {
+  let lo = 0;
+  let hi = 0;
+  for (let i = 0; i < count; i += 1) {
+    let up = 0;
+    let down = 0;
+    for (const item of series) {
+      const v = (item.values[i] || 0) / SCALE;
+      if (stacked) {
+        if (v >= 0) {
+          up += v;
+        } else {
+          down += v;
+        }
+      } else {
+        up = Math.max(up, v);
+        down = Math.min(down, v);
+      }
+    }
+    hi = Math.max(hi, up);
+    lo = Math.min(lo, down);
+  }
+  return { lo, hi, max: Math.min(Number.MAX_VALUE, hi * SCALE) };
+}
+
+// Where the parcels of category `i` sit on the scale, in percent of its width: {zero, parts: [{from, to, value}]}
+// (one part per series; a missing value is an empty part at zero).
+export function barLayout(spec, i) {
+  const extent = spec.hi - spec.lo;
+  const at = (scaled) => (extent > 0 ? Math.min(100, Math.max(0, ((scaled - spec.lo) / extent) * 100)) : 0);
+  const zero = at(0);
+  let up = 0;
+  let down = 0;
+  const parts = spec.series.map((item) => {
+    const value = item.values[i];
+    const v = (typeof value === "number" ? value : 0) / SCALE;
+    let from = 0;
+    if (spec.stacked) {
+      from = v >= 0 ? up : down;
+      if (v >= 0) {
+        up += v;
+      } else {
+        down += v;
+      }
+    }
+    const a = from;
+    const b = from + v;
+    return { from: at(Math.min(a, b)), to: at(Math.max(a, b)), value: typeof value === "number" ? value : null };
+  });
+  return { zero, parts };
+}
+
 // Data of a "bar" or "line" widget: {kind, measure, categories|xs, series: [{label, values}], stacked, max, truncated}
 // or null when there is nothing to draw. Bars: one bar per combination of the group values that are not the series;
 // lines: x is the time bucket, one line per combination of the other groups. Combinations are compared by their
@@ -349,12 +457,14 @@ export function chartSpec(widget, result) {
   const columns = Array.isArray(result && result.columns) ? result.columns : [];
   const rows = Array.isArray(result && result.rows) ? result.rows : [];
   const o = widget.options;
+  const isLine = widget.chart === "line";
+  const dims = widget.query.group_by || [];
   const yAt = columnIndex(columns, "measure", o.y !== undefined ? o.y : (widget.query.measures || [])[0]);
-  const xAt = columnIndex(columns, "group", o.x);
+  // The server's defaults for a missing x: the first dimension (bar) or the first time bucket (line).
+  const xAt = columnIndex(columns, "group", o.x !== undefined ? o.x : (isLine ? dims.find(isBucket) : dims[0]));
   if (yAt < 0 || xAt < 0 || rows.length === 0) {
     return null;
   }
-  const isLine = widget.chart === "line";
   const groups = columns.map((c, i) => (c.role === "group" ? i : -1)).filter((i) => i >= 0);
   const sAt = o.series !== undefined ? columnIndex(columns, "group", o.series) : -1;
   const across = isLine ? [xAt] : groups.filter((i) => i !== sAt); // what a position on the x axis is made of
@@ -392,27 +502,18 @@ export function chartSpec(widget, result) {
     const cap = Number.isInteger(o.top) ? Math.min(o.top, MAX_BARS) : MAX_BARS;
     if (order.length > cap) {
       truncatedCategories = true;
-      const ranked = order.map((entry, index) => ({ entry, index })).sort((a, b) => b.entry[1].total - a.entry[1].total || a.index - b.index);
+      const ranked = order.map((entry, index) => ({ entry, index })).sort((a, b) => descending(a.entry[1].total, b.entry[1].total) || a.index - b.index);
       const keep = new Set(ranked.slice(0, cap).map((item) => item.entry[0]));
       order = order.filter(([key]) => keep.has(key));
     }
   }
-  const ranked = Array.from(lines.values()).sort((a, b) => b.total - a.total);
+  const ranked = Array.from(lines.values()).sort((a, b) => descending(a.total, b.total));
   const shown = ranked.slice(0, MAX_SERIES);
   const series = shown.map((line) => ({ label: line.label, values: order.map(([key]) => (line.cells.has(key) ? line.cells.get(key) : null)) }));
   const stacked = !isLine && o.stacked === true && series.length > 1;
-  let max = 0;
-  order.forEach((_entry, i) => {
-    if (stacked) {
-      max = Math.max(max, series.reduce((sum, item) => sum + Math.max(0, item.values[i] || 0), 0));
-    } else {
-      for (const item of series) {
-        max = Math.max(max, item.values[i] || 0);
-      }
-    }
-  });
+  const domain = barDomain(series, order.length, stacked);
   const spec = {
-    kind: isLine ? "lines" : "bars", measure, series, stacked, max,
+    kind: isLine ? "lines" : "bars", measure, series, stacked, max: domain.max, lo: domain.lo, hi: domain.hi,
     truncated: { categories: truncatedCategories, series: ranked.length > shown.length },
   };
   if (isLine) {
@@ -521,8 +622,11 @@ export function connectPanelStream({ EventSourceImpl, url, onNotice, onOpen, onS
 
 const isAbort = (err) => Boolean(err) && err.name === "AbortError";
 
+// Widget ids are keys: an object without a prototype, so that an id such as "constructor" or "__proto__" is just an id.
+const newResults = () => Object.create(null);
+
 function emptyRun() {
-  return { status: "idle", panelId: null, caseId: null, results: {}, complete: true, elapsedMs: 0, finishedAt: null, error: "", auto: false, version: 0, rv: 0 };
+  return { status: "idle", panelId: null, caseId: null, results: newResults(), complete: true, elapsedMs: 0, finishedAt: null, error: "", auto: false, version: 0, rv: 0 };
 }
 
 function parseRun(data, panel) {
@@ -530,7 +634,7 @@ function parseRun(data, panel) {
     return null;
   }
   const known = new Set(panel.widgets.map((w) => w.id));
-  const results = {};
+  const results = newResults();
   for (const item of data.results) {
     if (isObject(item) && known.has(item.id) && ["ok", "error", "skipped"].includes(item.status)) {
       results[item.id] = {
@@ -541,7 +645,7 @@ function parseRun(data, panel) {
     }
   }
   return {
-    rev: data.rev,
+    rev: cleanRev(data.rev),
     results,
     complete: data.complete !== false,
     elapsedMs: Number.isFinite(data.elapsed_ms) ? data.elapsed_ms : 0,
@@ -561,7 +665,7 @@ export function createPanelsFlow({
     mode: "view", // "view" | "edit"
     draft: null, // {name, widgets, baseRev, recreate}
     editingWidget: null,
-    formErrors: {},
+    formErrors: new Map(), // widget id -> text of the error of its form
     naming: null, // {kind: "create" | "rename", id} while the name field is open
     confirming: false, // the delete confirmation is open
     busy: null, // "create" | "rename" | "save" | "delete" while a change is being written
@@ -585,9 +689,31 @@ export function createPanelsFlow({
   let streamKey = null;
   let streamSeq = 0;
   let lastAutoError = "";
+  let confirmFor = null; // {id, rev}: the panel the open delete confirmation is about
+
+  // The delete confirmation belongs to the panel and revision it was opened for. When another panel is open, or the
+  // revision moved, it closes (a late answer must never turn "Delete A" into "Delete B"). While the delete itself is
+  // being written the confirmation is the delete's own business.
+  function reconcileConfirm() {
+    if (!state.confirming || state.busy === "delete") {
+      return;
+    }
+    const panel = selectedPanel();
+    if (confirmFor !== null && panel !== null && panel.id === confirmFor.id && panel.rev === confirmFor.rev) {
+      return;
+    }
+    const changed = confirmFor !== null && panel !== null && panel.id === confirmFor.id;
+    state.confirming = false;
+    confirmFor = null;
+    if (changed) {
+      say("error", S.pnErrors.changed_before_delete);
+    }
+    focusOn(panel === null ? "select" : "delete");
+  }
 
   const emit = () => {
     if (!destroyed) {
+      reconcileConfirm();
       onState(state);
     }
   };
@@ -651,7 +777,6 @@ export function createPanelsFlow({
     }
     streamSeq += 1;
     const token = streamSeq;
-    let opened = false;
     streamKey = caseId;
     stream = connect({
       url: api.progressUrl(caseId),
@@ -669,10 +794,10 @@ export function createPanelsFlow({
         if (token !== streamSeq || destroyed) {
           return;
         }
-        if (opened) {
-          requestRefresh({ retryAfterMs: null }); // reconnected: whatever was missed is covered by running again
-        }
-        opened = true;
+        // A change between the snapshot of a run and the subscription to the stream is announced to nobody (the run
+        // that starts with the tab is usually under way before the stream opens). So every connection, the first one
+        // too, runs the panel again, no sooner than the minimum interval; a panel without widgets has nothing to run.
+        requestRefresh({ retryAfterMs: null });
       },
       onStopped: () => {
         if (token !== streamSeq || destroyed) {
@@ -703,11 +828,11 @@ export function createPanelsFlow({
       return;
     }
     const due = now() + delay;
-    if (pending !== null && pending.due <= due) {
-      return; // an earlier run is already scheduled and will cover this notice
+    if (pending !== null && pending.due === due) {
+      return; // already scheduled for exactly this moment
     }
     if (pending !== null) {
-      clearTimer(pending.timer);
+      clearTimer(pending.timer); // the newest notice has the last word on when (an earlier timer must not outrun its retry_after_ms)
     }
     const token = runEpoch;
     pending = {
@@ -772,15 +897,21 @@ export function createPanelsFlow({
       if (parsed !== null && !retried) {
         // The panel was changed by someone else: read the list again and run the new revision, once.
         const loaded = await loadList({ run: false, keepRun: true });
-        if (loaded && live() && canAuto()) {
-          await startRun({ auto, retried: true });
+        if (!live()) {
+          return;
         }
+        if (loaded && canAuto()) {
+          await startRun({ auto, retried: true });
+          return;
+        }
+        // The list could not be read (or the panel is no longer shown): the run must not stay "running" with no
+        // request behind it. It ends as an error; the next notice, or a manual run, tries again.
+        runController = null;
+        finishRunWithError(loaded ? S.pnErrors.stale_panel : state.list.error || S.pnErrGeneric, auto);
         return;
       }
-      const text = parsed === null ? S.pnErrGeneric : S.pnErrors.stale_panel;
-      state.run = { ...state.run, status: "error", error: text, version: state.run.version + 1 };
-      say("error", text);
-      emit();
+      runController = null;
+      finishRunWithError(parsed === null ? S.pnErrGeneric : S.pnErrors.stale_panel, auto);
       return;
     }
     state.run = {
@@ -795,6 +926,13 @@ export function createPanelsFlow({
         : S.pnRanPartial);
     }
     emit();
+    flushDirty();
+  }
+
+  // A notice that arrived while a run was in flight asks for one more run, under the usual minimum interval. It is
+  // answered after a failed run too, otherwise the change it announced would wait for the next notice. It cannot loop:
+  // only a new notice from the server sets it, and the interval and retry_after_ms hold every run back.
+  function flushDirty() {
     if (dirty !== null) {
       const next = dirty;
       dirty = null;
@@ -802,18 +940,27 @@ export function createPanelsFlow({
     }
   }
 
-  async function runFailed(err, auto) {
-    runController = null;
-    const text = errorMessage(err, limits());
+  function finishRunWithError(text, auto, flush = true) {
     state.run = { ...state.run, status: "error", error: text, version: state.run.version + 1 };
     if (!auto || text !== lastAutoError) {
       say("error", text);
     }
     lastAutoError = auto ? text : "";
     emit();
-    if (err && err.code === "not_found") {
-      await loadList({ run: false });
+    if (flush) {
+      flushDirty();
     }
+  }
+
+  async function runFailed(err, auto) {
+    runController = null;
+    if (err && err.code === "not_found") {
+      // The panel may be gone: the list is read again and nothing is run meanwhile (a pending notice is not answered).
+      finishRunWithError(errorMessage(err, limits()), auto, false);
+      await loadList({ run: false });
+      return;
+    }
+    finishRunWithError(errorMessage(err, limits()), auto);
   }
 
   // ---- the list
@@ -1075,8 +1222,10 @@ export function createPanelsFlow({
       if (state.busy !== null || state.mode !== "view" || selectedPanel() === null) {
         return false;
       }
+      const open = selectedPanel();
       state.naming = null;
       state.confirming = true;
+      confirmFor = { id: open.id, rev: open.rev };
       focusOn("confirm");
       emit();
       return true;
@@ -1087,6 +1236,7 @@ export function createPanelsFlow({
         return;
       }
       state.confirming = false;
+      confirmFor = null;
       focusOn("delete");
       emit();
     },
@@ -1096,6 +1246,11 @@ export function createPanelsFlow({
     async confirmDelete() {
       const panel = selectedPanel();
       if (!state.confirming || state.busy !== null || state.mode !== "view" || panel === null) {
+        return false;
+      }
+      if (confirmFor === null || confirmFor.id !== panel.id || confirmFor.rev !== panel.rev) {
+        reconcileConfirm(); // not the panel the confirmation was opened for
+        emit();
         return false;
       }
       state.busy = "delete";
@@ -1173,7 +1328,7 @@ export function createPanelsFlow({
       state.mode = "edit";
       state.draft = { name: panel.name, widgets: clone(panel.widgets), baseRev: panel.rev, recreate: false };
       state.editingWidget = null;
-      state.formErrors = {};
+      state.formErrors = new Map();
       focusOn("editor");
       emit();
       return true;
@@ -1219,7 +1374,7 @@ export function createPanelsFlow({
         return false;
       }
       draft.widgets.splice(at, 1);
-      delete state.formErrors[id];
+      state.formErrors.delete(id);
       if (state.editingWidget === id) {
         state.editingWidget = null;
       }
@@ -1247,7 +1402,7 @@ export function createPanelsFlow({
     },
 
     setEditingWidget(id) {
-      if (state.mode !== "edit" || state.draft === null) {
+      if (state.mode !== "edit" || state.draft === null || state.busy !== null) {
         return false;
       }
       setEditing(id);
@@ -1286,10 +1441,13 @@ export function createPanelsFlow({
     },
 
     setFormError(id, text) {
+      if (state.busy !== null) {
+        return; // while the draft is being written nothing about it changes
+      }
       if (text) {
-        state.formErrors[id] = String(text);
+        state.formErrors.set(id, String(text));
       } else {
-        delete state.formErrors[id];
+        state.formErrors.delete(id);
       }
       emit();
     },
@@ -1339,6 +1497,7 @@ export function createPanelsFlow({
           return false;
         }
         state.busy = null;
+        focusOn(state.editingWidget !== null ? "widget-title" : "editor"); // the fields were disabled while writing
         if (err && err.code === "rev_conflict") {
           // Someone else saved first. The edit stays; the revision to write over is the one that is there now.
           say("error", S.pnErrors.rev_conflict);
@@ -1382,7 +1541,7 @@ export function createPanelsFlow({
   function setEditing(id) {
     const next = id !== null && state.draft !== null && state.draft.widgets.some((w) => w.id === id) ? id : null;
     if (state.editingWidget !== null && state.editingWidget !== next) {
-      delete state.formErrors[state.editingWidget];
+      state.formErrors.delete(state.editingWidget);
     }
     state.editingWidget = next;
   }
@@ -1391,7 +1550,7 @@ export function createPanelsFlow({
     state.mode = "view";
     state.draft = null;
     state.editingWidget = null;
-    state.formErrors = {};
+    state.formErrors = new Map();
     focusOn("heading");
   }
 

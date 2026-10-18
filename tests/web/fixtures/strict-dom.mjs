@@ -21,9 +21,30 @@ class Collection {
   }
 }
 
+const optionsOf = (node) => node.kids.flatMap((c) => (c.tagName === "OPTION" ? [c] : c.tagName === "OPTGROUP" ? c.kids.filter((o) => o.tagName === "OPTION") : []));
+
 export class StrictEl extends El {
   constructor(doc, tag) {
     super(doc, tag);
+    if (this.tagName === "SELECT") {
+      // A select only holds the value of one of its options: setting any other value selects nothing (value ""), and a
+      // select that was never set shows its first option, as in a browser. Rebuilding the options forgets the choice.
+      let chosen;
+      Object.defineProperty(this, "value", {
+        configurable: true,
+        get() {
+          const all = optionsOf(this);
+          if (chosen === undefined) {
+            return all.length > 0 ? all[0].value : "";
+          }
+          return all.some((o) => o.value === chosen) ? chosen : "";
+        },
+        set(v) {
+          chosen = String(v);
+        },
+      });
+      Object.defineProperty(this, "forgetChoice", { value() { chosen = undefined; } });
+    }
     Object.defineProperty(this, "kids", { value: [], writable: true, configurable: true, enumerable: false });
     Object.defineProperty(this, "children", {
       configurable: true,
@@ -33,7 +54,7 @@ export class StrictEl extends El {
   }
 
   get textContent() { return this._text + this.kids.map((c) => c.textContent).join(""); }
-  set textContent(v) { this.kids = []; this._text = String(v); }
+  set textContent(v) { this.kids = []; this._text = String(v); if (this.forgetChoice) this.forgetChoice(); }
   appendChild(c) { c.remove(); c.parent = this; this.kids.push(c); return c; }
   insertBefore(c, ref) {
     c.remove();
@@ -52,7 +73,7 @@ export class StrictEl extends El {
   replaceChildren(...cs) { this.kids = []; this._text = ""; for (const c of cs) this.appendChild(c); }
   get nextSibling() { const i = this.parent ? this.parent.kids.indexOf(this) : -1; return i >= 0 ? this.parent.kids[i + 1] ?? null : null; }
   get previousElementSibling() { const i = this.parent ? this.parent.kids.indexOf(this) : -1; return i > 0 ? this.parent.kids[i - 1] : null; }
-  get options() { return this.kids.filter((c) => c.tagName === "OPTION"); }
+  get options() { return optionsOf(this); }
 }
 
 // installGlobalDom() whose elements are all StrictEl, and whose innerHTML (and friends) throw.

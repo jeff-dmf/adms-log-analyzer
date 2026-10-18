@@ -194,7 +194,7 @@
 }
 
 .pn-bar-track {
-  display: flex;
+  position: relative;
   flex: 1;
   min-width: 0;
   height: 10px;
@@ -202,9 +202,17 @@
 }
 
 .pn-bar-fill {
-  display: block;
+  position: absolute;
+  top: 0;
   height: 100%;
-  min-width: 0;
+}
+
+.pn-bar-zero {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--muted);
 }
 
 .pn-bar-value {
@@ -310,6 +318,11 @@
   .pn-bar-track {
     background: Canvas;
     border: 1px solid CanvasText;
+  }
+
+  .pn-bar-zero {
+    background: CanvasText;
+    forced-color-adjust: none;
   }
 
   .pn-bar-fill,

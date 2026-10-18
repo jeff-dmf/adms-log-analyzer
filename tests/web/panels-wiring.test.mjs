@@ -15,7 +15,7 @@ const { S } = await import("../../src/dmslog/web/js/strings.js");
 
 let held = [];
 globalThis.fetch = (url, options = {}) => new Promise((resolve, reject) => {
-  const request = { url: String(url), method: options.method, body: options.body ? JSON.parse(options.body) : undefined, resolve, reject, aborted: false };
+  const request = { url: String(url), method: options.method, raw: options.body, body: options.body ? JSON.parse(options.body) : undefined, resolve, reject, aborted: false };
   held.push(request);
   options.signal?.addEventListener?.("abort", () => {
     request.aborted = true;
@@ -206,4 +206,27 @@ test("a panel that fails to load shows the dock's message, and the next open tri
   void w.dock.open("panels");
   await until(() => w.find("/api/panels", "GET").length === 2, "a second list request");
   w.dock.close("panels");
+});
+
+test("a 64-bit revision survives the trip: read as digits, written back as the same number", async () => {
+  held = [];
+  const text = '{"panels":[{"id":"aaaaaaaaaaaa","rev":9223372036854775807,"name":"A","widgets":[]}],"problems":[],"invalid":false}';
+  const listing = api.panels.list();
+  held[0].resolve({ ok: true, status: 200, json: async () => JSON.parse(text), text: async () => text, headers: { get: () => null } });
+  const data = await listing;
+  assert.equal(data.panels[0].rev, "9223372036854775807", "not 9223372036854776000");
+  const { cleanPanel } = await import("../../src/dmslog/web/js/panels-model.js");
+  const rev = cleanPanel(data.panels[0]).rev;
+  const saving = api.panels.update("aaaaaaaaaaaa", { name: "A", widgets: [] }, rev);
+  assert.equal(held[1].raw, '{"id":"aaaaaaaaaaaa","panel":{"name":"A","widgets":[]},"if_rev":9223372036854775807}');
+  held[1].resolve({ ok: true, status: 200, json: async () => ({}), text: async () => "{}", headers: { get: () => null } });
+  await saving;
+  const small = api.panels.update("aaaaaaaaaaaa", { name: "A", widgets: [] }, 3);
+  assert.match(held[2].raw, /"if_rev":3\}$/);
+  held[2].resolve({ ok: true, status: 200, json: async () => ({}), text: async () => "{}", headers: { get: () => null } });
+  await small;
+  const hostile = '{"panels":[{"id":"aaaaaaaaaaaa","rev":5,"name":"\\"rev\\":1234567890123456789","widgets":[]}]}';
+  const again = api.panels.list();
+  held[3].resolve({ ok: true, status: 200, json: async () => JSON.parse(hostile), text: async () => hostile, headers: { get: () => null } });
+  assert.equal((await again).panels[0].name, '"rev":1234567890123456789', "text inside a string is never rewritten");
 });
