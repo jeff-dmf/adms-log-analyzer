@@ -999,8 +999,6 @@ class Api:
         self._knowledge_lock = threading.Lock()
         self._pack_knowledge: Knowledge | None = None
         self._case_knowledge: dict[str, tuple[Any, Knowledge]] = {}
-        # bumped by delete_case: a load that started before the delete never publishes into the cache
-        self._knowledge_gen: dict[str, int] = {}
         self.picker = filepick.Picker()
         self._routes: list[tuple[str, re.Pattern[str], Callable[[Request], Response | Stream | Download]]] = [
             ("GET", re.compile(r"/api/cases\Z"), self.list_cases),
@@ -1173,7 +1171,6 @@ class Api:
         self.jobs.forget_case(cid)
         with self._knowledge_lock:  # ERS paths and Registry parameters of the deleted case (review 8.2 M9)
             self._case_knowledge.pop(cid, None)
-            self._knowledge_gen[cid] = self._knowledge_gen.get(cid, 0) + 1
         return Response(204)
 
     def add_collection(self, request: Request) -> Response:
@@ -1379,7 +1376,6 @@ class Api:
             cached = self._case_knowledge.get(cid)
             if cached is not None and cached[0] == key:
                 return cached[1]
-            generation = self._knowledge_gen.get(cid, 0)
         installations: dict[int, Any] = {}
         for path in paths:
             try:
@@ -1390,7 +1386,9 @@ class Api:
                 installations[len(installations)] = installation
         knowledge = Knowledge(installations=installations)
         with self._knowledge_lock:
-            if self._knowledge_gen.get(cid, 0) == generation:  # the case was not deleted meanwhile
+            # delete_case removes the folder before it drops the entry under this lock: a load that finishes
+            # after the DELETE (begun before it, or on a connection opened before it) finds no folder
+            if (self.store.root / cid).is_dir():
                 self._case_knowledge[cid] = (key, knowledge)
         return knowledge
 

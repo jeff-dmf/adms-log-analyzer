@@ -1,6 +1,7 @@
 """Regression tests for the 8.2 review of the M9 delta (docs/notas/revisao-seguranca-8-2-m9.md)."""
 
 import os
+import threading
 
 import pytest
 from test_api import client, server  # noqa: F401  (fixtures)
@@ -102,53 +103,77 @@ def test_deleting_a_case_forgets_its_installation_knowledge(client, server, demo
         assert demo not in api._case_knowledge
 
 
-def test_a_knowledge_load_racing_the_delete_does_not_republish_the_case(client, server, demo, monkeypatch):  # noqa: F811
-    """The load passes the cache check, the DELETE lands while it reads the ERS, then the load finishes."""
-    import threading
+class _FakeConn:
+    """Stands for the request's read connection (no SQLite handle: the DELETE must succeed on Windows too).
 
+    ``pause`` names the read to stop at: ``paths`` (first read of the case) or ``meta`` (last read)."""
+
+    def __init__(self, pause=None):
+        self.pause = pause
+        self.reached, self.go = threading.Event(), threading.Event()
+
+    def execute(self, sql, *args):
+        if (self.pause == "paths" and "FROM collection" in sql) or (
+            self.pause == "meta" and "FROM meta" in sql
+        ):
+            self.reached.set()
+            assert self.go.wait(10)
+        rows = (
+            [("/synthetic/ERS_CL_00000000-0000-4000-8000-000000000001.zip",)] if "collection" in sql else []
+        )
+        return _Rows(rows)
+
+
+class _Rows(list):
+    def fetchone(self):
+        return self[0] if self else None
+
+
+def _load(api, cid, conn, results):
+    results.append(api._knowledge(conn, cid, with_ers=True))
+
+
+@pytest.mark.parametrize("pause", ["paths", "meta", "build"])
+def test_a_load_racing_the_delete_does_not_republish(client, server, demo, monkeypatch, pause):  # noqa: F811
+    """The load starts, the DELETE lands at ``pause`` (before the reads, after them, or while the knowledge is
+    built), then the load finishes: the deleted case is not in the cache."""
     from dmslog.server import api as api_module
 
     api = server.api
-    started, go = threading.Event(), threading.Event()
-    real = api_module.Knowledge
+    conn = _FakeConn(None if pause == "build" else pause)
+    if pause == "build":
+        real = api_module.Knowledge
 
-    def slow_knowledge(*args, **kwargs):
-        started.set()
-        assert go.wait(10)
-        return real(*args, **kwargs)
+        def slow_knowledge(*args, **kwargs):
+            conn.reached.set()
+            assert conn.go.wait(10)
+            return real(*args, **kwargs)
 
-    monkeypatch.setattr(api_module, "Knowledge", slow_knowledge)
+        monkeypatch.setattr(api_module, "Knowledge", slow_knowledge)
     results = []
-
-    def load():
-        conn = api_module.db.connect(api.store.db_path(demo))
-        try:
-            results.append(api._knowledge(conn, demo, with_ers=True))
-        finally:
-            conn.close()
-
-    worker = threading.Thread(target=load)
+    worker = threading.Thread(target=_load, args=(api, demo, conn, results))
     worker.start()
-    assert started.wait(10)
+    assert conn.reached.wait(10)
     assert client.request("DELETE", f"/api/cases/{demo}")[0] == 204
-    go.set()
+    conn.go.set()
     worker.join(10)
     assert results and not worker.is_alive()
     with api._knowledge_lock:
         assert demo not in api._case_knowledge
 
 
-def test_a_load_after_the_delete_is_cached_again(server, demo):  # noqa: F811
-    from dmslog.server import api as api_module
-
+def test_a_load_that_starts_after_the_delete_does_not_cache_the_case(client, server, demo):  # noqa: F811
+    """The request's connection was opened before the DELETE (POSIX keeps reading the removed file)."""
     api = server.api
+    assert client.request("DELETE", f"/api/cases/{demo}")[0] == 204
+    api._knowledge(_FakeConn(), demo, with_ers=True)
     with api._knowledge_lock:
-        api._knowledge_gen[demo] = 3  # deleted three times before: later loads still publish
-    conn = api_module.db.connect(api.store.db_path(demo))
-    try:
-        api._knowledge(conn, demo, with_ers=True)
-    finally:
-        conn.close()
+        assert demo not in api._case_knowledge
+
+
+def test_a_load_of_a_live_case_is_cached(server, demo):  # noqa: F811
+    api = server.api
+    api._knowledge(_FakeConn(), demo, with_ers=True)
     with api._knowledge_lock:
         assert demo in api._case_knowledge
 
