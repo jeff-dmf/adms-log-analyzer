@@ -119,6 +119,8 @@ EXPECTED_MODULES = {
     "alerts-panel.js",
     "aggregate-model.js",
     "aggregate-panel.js",
+    "panels-model.js",
+    "panels-panel.js",
     "actions.js",
     "app-actions.js",
     "dock-model.js",
