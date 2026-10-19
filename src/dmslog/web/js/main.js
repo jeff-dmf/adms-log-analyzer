@@ -1225,6 +1225,7 @@ function start() {
     showError(err);
     throw err;
   }));
+  retryable(() => import("./panel-resize.js").then((module) => module.createPanelResize({})))().catch(showError);
   // The controls work even while the module is not in (or failed to load): the first use loads it, then does its job.
   for (const [id, which] of [["side-rail", "side"], ["detail-toggle", "detail"]]) {
     byId(id).addEventListener("click", () => {

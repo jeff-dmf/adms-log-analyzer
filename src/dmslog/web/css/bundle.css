@@ -2088,6 +2088,13 @@ mark {
   vertical-align: top;
 }
 
+/* The field name keeps its own width (it used to shrink to one character per line beside a long value). */
+.fields-table th {
+  overflow-wrap: normal;
+  white-space: nowrap;
+  width: 1%;
+}
+
 .menu-heading {
   margin: 6px 0 2px;
   font-weight: 600;
@@ -7521,6 +7528,7 @@ body.no-case #grid-panel > :not(.case-empty):not(h2) {
   --rail-w: 44px;
   --drawer-side-w: 280px;
   --drawer-detail-w: 420px;
+  --detail-w-rail: 340px;
 }
 
 #panels {
@@ -7562,7 +7570,7 @@ body.no-case #grid-panel > :not(.case-empty):not(h2) {
     --side-shadow: var(--shadow-overlay);
     --side-bg: var(--surface-overlay);
     --rail-display: flex;
-    --detail-col: 340px;
+    --detail-col: var(--detail-w-rail);
   }
 }
 
@@ -7739,4 +7747,40 @@ body.no-case #grid-panel > :not(.case-empty):not(h2) {
     border-right: 1px solid CanvasText;
     color: ButtonText;
   }
+}
+
+/* The dividers between the columns: on the edge of the side and the detail column, shown only where that column is one
+   (the display variables are none for a drawer or a collapsed panel; an open drawer hides them below). */
+.panel-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+  box-sizing: border-box;
+}
+
+.panel-resize.is-side {
+  left: calc(var(--side-col) - 4px);
+  display: var(--side-display);
+}
+
+.panel-resize.is-detail {
+  right: calc(var(--detail-col) - 4px);
+  display: var(--detail-display);
+}
+
+#panels.is-side-open > .panel-resize.is-side,
+#panels.is-detail-open > .panel-resize.is-detail {
+  display: none;
+}
+
+.panel-resize:hover,
+.panel-resize.dragging,
+.panel-resize:focus-visible {
+  background: var(--selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  outline: none;
 }

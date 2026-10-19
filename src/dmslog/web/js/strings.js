@@ -8,6 +8,8 @@ export const S = {
   panelSources: "Sources",
   panelGrid: "Records",
   panelDetail: "Record detail",
+  resizeSources: "Resize the sources panel",
+  resizeDetail: "Resize the record detail panel",
   railTitle: "Sources: open the sources panel",
   railCountTitle: "Sources: {selected} of {total} selected. Open the sources panel",
   railDetail: "Detail",

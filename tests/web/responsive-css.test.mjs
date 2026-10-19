@@ -57,7 +57,8 @@ test("the three layouts use the widths of the proposal and of the column model",
   assert.match(tokens, new RegExp(`--detail-w: ${LAYOUT_BY_MODE.wide.detail}px`));
   assert.match(css, new RegExp(`--rail-w: ${LAYOUT_BY_MODE.rail.side}px`));
   const rail = block("@media " + SIDE_RAIL_QUERY);
-  assert.match(rail, new RegExp(`--detail-col: ${LAYOUT_BY_MODE.rail.detail}px`));
+  assert.match(rail, /--detail-col: var\(--detail-w-rail\)/);
+  assert.match(css, new RegExp(`--detail-w-rail: ${LAYOUT_BY_MODE.rail.detail}px`), "the rail width is a variable the divider can override");
   assert.equal(LAYOUT_BY_MODE.rail.detail, 340, "20 px less than the proposal: Message must reach 50 characters at 1280 with the Collection column");
   assert.match(css, /--drawer-side-w: 280px/);
   assert.match(css, /--drawer-detail-w: 420px/);
