@@ -129,6 +129,8 @@ EXPECTED_MODULES = {
     "dock.js",
     "drawers-model.js",
     "drawers.js",
+    "panel-resize-model.js",
+    "panel-resize.js",
     "field-error.js",
     "status-bar-model.js",
     "status-bar.js",

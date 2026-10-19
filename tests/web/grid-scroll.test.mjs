@@ -697,3 +697,28 @@ test("a pending vertical frame moves from the top it finds: rows are a delta on 
   runFrames();
   assert.equal(grid.window.top, 60);
 });
+
+test("a jump the scrollbar asked for leaves the thumb where the user put it; the next wheel move syncs it again", async () => {
+  const { grid, vp } = setup();
+  const landed = [{ id: 900, ts: 1000 + 5000, sev: 1, level: 3, msg: "m" }];
+  api.page = async () => ({ rows: landed, prev: null, next: null });
+  grid.window.top = 0;
+  grid.syncScroll();
+  vp.el.dispatch("scroll"); // the echo of syncScroll()
+  const dragged = Math.round(SCROLL_SPAN * 0.3);
+  vp.values.scrollTop = dragged; // the user drags the thumb: the rows will land on the next row after that time
+  vp.el.dispatch("scroll");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(grid.window.topRow().id, 900, "the rows went to the dragged time");
+  assert.equal(vp.values.scrollTop, dragged, "the thumb was not moved back to the time of the row that landed");
+  grid.scrollRows(1);
+  assert.notEqual(vp.values.scrollTop, dragged, "a wheel move puts the thumb where the rows are");
+});
+
+test("Home and End are not the scrollbar's: they sync the thumb to the rows", async () => {
+  const { grid, vp } = setup();
+  api.page = async () => ({ rows: [{ id: 1, ts: 1000, sev: 1, level: 3, msg: "m" }], prev: null, next: null });
+  vp.values.scrollTop = 4000;
+  await grid.goHome();
+  assert.equal(vp.values.scrollTop, 0);
+});

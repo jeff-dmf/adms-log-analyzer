@@ -97,6 +97,13 @@
   vertical-align: top;
 }
 
+/* The field name keeps its own width (it used to shrink to one character per line beside a long value). */
+.fields-table th {
+  overflow-wrap: normal;
+  white-space: nowrap;
+  width: 1%;
+}
+
 .menu-heading {
   margin: 6px 0 2px;
   font-weight: 600;

@@ -127,6 +127,8 @@ export class Grid {
     this.caseId = null;
     this.filter = null;
     this.range = null;
+    this.thumbHold = false;  // the next jump comes from the scrollbar the user is dragging
+    this.thumbOwned = false; // the last jump did: the thumb stays where the user left it, not where the landed row's time puts it
     this.generation = 0;
     this.loading = false;
     this.controller = null;
@@ -837,6 +839,8 @@ export class Grid {
       return "superseded";
     }
     this.cancelWheel(); // Home, End, a time and the scrollbar land here: older wheel travel must not move the new rows
+    this.thumbOwned = this.thumbHold;
+    this.thumbHold = false;
     if (view === null) {
       if (!this.tailJump) {
         this.navEpoch += 1; // a move by the user (Follow tail's own jump is not one)
@@ -910,7 +914,11 @@ export class Grid {
       }
     }
     this.render();
-    this.syncScroll();
+    // Rows are placed by time, so with sparse matches the row that lands is not at the time the thumb was dragged to:
+    // moving the thumb back would fight the drag and undo it on release.
+    if (!this.thumbOwned) {
+      this.syncScroll();
+    }
     this.pump();
     return outcome;
   }
@@ -1061,6 +1069,7 @@ export class Grid {
       return;
     }
     this.userMoved();
+    this.thumbOwned = false;
     this.window.moveTop(delta, this.visible);
     // The scrollbar first: writing scrollTop after the rows were rewritten makes the browser lay the page out on the
     // spot (a forced layout per wheel frame); with the layout still clean from the last frame the write is cheap.
@@ -1096,6 +1105,7 @@ export class Grid {
     }
     this.pendingJump = setTimeout(() => {
       this.pendingJump = null;
+      this.thumbHold = true;
       const fraction = position / SCROLL_SPAN;
       if (fraction >= 0.995) {
         this.goEnd();
@@ -1114,6 +1124,7 @@ export class Grid {
       event.preventDefault();
       this.cancelWheel(); // the selection moved the rows: older wheel travel is stale
       this.userMoved();
+      this.thumbOwned = false;
       this.window.moveSelection(moves[event.key], this.visible);
       this.render();
       this.syncScroll();
