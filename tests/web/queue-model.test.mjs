@@ -437,3 +437,17 @@ test("flow: a removal that was running when the case changed does not leave the 
   w.of("remove")[1].d.reject(new Error("x"));
   await next;
 });
+
+test("flow: a refresh that cancels a pending filter change and then fails restores the list on screen", async () => {
+  const w = world();
+  await loaded(w, [item(1), item(2)], "2:2");
+  const shown = { ...w.flow.state.filters };
+  const change = w.flow.setFilters({ state: "sent" }); // B in flight
+  const again = w.flow.refresh(); // Refresh cancels B
+  w.of("summary").at(-1).d.reject(new Error("down"));
+  w.of("items").at(-1).d.reject(new Error("down"));
+  await Promise.allSettled([change, again]);
+  assert.deepEqual(w.flow.state.filters, shown); // the selectors show A again
+  assert.equal(w.flow.state.next, "2:2"); // and Load more still works on A
+  assert.equal(w.flow.state.items.length, 2);
+});

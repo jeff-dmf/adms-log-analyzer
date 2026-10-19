@@ -423,7 +423,9 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
       if (token !== generation || isAbort(error)) {
         return;
       }
-      if (filterChange) {
+      if (state.filters !== committed.filters) {
+        // Whatever load failed (a filter change, or a refresh that cancelled one), the selectors go back to the list that
+        // is really on screen and its cursor comes back.
         state.filters = committed.filters;
         state.next = committed.next;
       }
