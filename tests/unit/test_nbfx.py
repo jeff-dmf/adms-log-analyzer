@@ -587,7 +587,7 @@ def test_list_and_base64_respect_max_text_on_the_resulting_text():
 
 
 def test_a_long_valid_list_is_not_counted_twice():
-    # 5,000 one-digit integers: 9,999 characters joined, far below the default limits. Each character counts once.
+    # 5,000 one-digit integers: 9,999 characters joined, far below the default limits; each counts once.
     items = [w.Val("int8", 7)] * 5000
     tree = decode(body(w.text_record(w.Val("list", items))))
     assert len(tree.children[0].value) == 9999
