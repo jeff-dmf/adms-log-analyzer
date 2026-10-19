@@ -119,9 +119,27 @@ export function matchedIds(tree, query, sources) {
   return ids;
 }
 
+// A folder is open when it is in the set or when a folder inside it is (that one was reached by opening this one). So a
+// folder merged into a chain ("A/B") that later splits ("A" and "A/B") keeps both open.
+export function impliedOpen(open) {
+  const all = new Set(open);
+  for (const key of open) {
+    for (let at = key.indexOf("/"); at >= 0 && at < key.length - 1; at = key.indexOf("/", at + 1)) {
+      all.add(key.slice(0, at + 1));
+    }
+  }
+  return all;
+}
+
+// The set after a folder is closed: it and everything inside it go (a folder inside a closed one is not open).
+export function closed(open, key) {
+  return new Set([...open].filter((k) => !k.startsWith(key)));
+}
+
 // Rows on screen: [{node, level, open, setSize, posInSet, matched}]. With a filter only the paths to a match are listed,
 // all open. `open`: Set of folder keys.
-export function visibleRows(tree, open, matched) {
+export function visibleRows(tree, openKeys, matched) {
+  const open = impliedOpen(openKeys);
   const rows = [];
   const keep = (node) => matched === null || node.ids.some((id) => matched.has(id));
   const walk = (nodes, level) => {

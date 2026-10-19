@@ -34,6 +34,8 @@ export class SourcesPanel {
     this.emptyNode = null; // the "no sources" / "no match" line, when shown
     this.tabStop = null; // id of the row whose checkbox is the list's one tab stop (roving tabindex)
     this.treeHook = null; // set by source-tree.js: called after every change of the sources, the selection or the filter
+    this.tree = null; // the SourceTree (source-tree.js) once it exists
+    this.treeActive = false; // the tree is the view on screen: the filter box keys and the count belong to it
     this.settled = false; // the first selectCase() ran: until then the empty state is not shown, so the page does not flash
     this.recentCases = []; // [{id, name, sources, records}] of the last /cases answer, for the empty state
     this.dialogs = null; // the New case / Add files dialogs (case-dialogs.js), after their first use
@@ -607,6 +609,10 @@ export class SourcesPanel {
 
   // Keyboard: from the filter box into the list (the list has one tab stop), and Enter in the box toggles the first match.
   focusList() {
+    if (this.treeActive && this.tree) {
+      this.tree.focusFirst();
+      return;
+    }
     const row = this.rows.get(this.stopId());
     if (row) {
       row.box.focus();
@@ -614,6 +620,10 @@ export class SourcesPanel {
   }
 
   toggleFirst() {
+    if (this.treeActive && this.tree) {
+      this.tree.toggleFirst();
+      return;
+    }
     const row = this.rows.get(this.order[0]);
     if (row) {
       row.box.click();

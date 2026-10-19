@@ -760,6 +760,7 @@ function start() {
       const asTree = mode === "tree";
       buttons.list.setAttribute("aria-pressed", String(!asTree));
       buttons.tree.setAttribute("aria-pressed", String(asTree));
+      panel.treeActive = asTree;
       byId("source-list").hidden = asTree;
       byId("source-tree").hidden = !asTree;
       if (remember) {
@@ -771,14 +772,17 @@ function start() {
       }
       if (asTree && tree === null) {
         tree = import("./source-tree.js")
-          .then((module) => new module.SourceTree({ host: byId("source-tree"), panel }))
+          .then((module) => {
+            panel.tree = new module.SourceTree({ host: byId("source-tree"), panel });
+            return panel.tree;
+          })
           .catch((err) => {
             tree = null;
             showError(err);
             showView("list", false);
           });
       } else {
-        panel.notifyTree();
+        panel.renderSources(); // the count under the filter box is the active view's
       }
     };
     buttons.list.addEventListener("click", () => showView("list", true));

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  buildTree, checkState, defaultOpen, idsOf, matchedIds, parseOpen, pathParts, serializeOpen, toggled, treeKeyTarget, visibleRows,
+  buildTree, checkState, closed, defaultOpen, impliedOpen, idsOf, matchedIds, parseOpen, pathParts, serializeOpen, toggled, treeKeyTarget, visibleRows,
 } from "../../src/dmslog/web/js/source-tree-model.js";
 
 const src = (id, member, extra = {}) => ({ id, name: member.split("/").pop(), member, records: 10, status: "done", sensitive: false, collection: 1, ...extra });
@@ -90,4 +90,17 @@ test("the open folders are remembered as a list of keys and bad text is ignored"
   assert.equal(parseOpen("{nope"), null);
   assert.equal(parseOpen('{"a":1}'), null);
   assert.deepEqual([...parseOpen('["a", 3]')], ["a"]);
+});
+
+test("a folder with an open folder inside is open, and closing it closes what is inside", () => {
+  assert.deepEqual([...impliedOpen(new Set(["A/B/C/"]))].sort(), ["A/", "A/B/", "A/B/C/"]);
+  assert.deepEqual([...impliedOpen(new Set(["C1|A/B/"]))].sort(), ["C1|A/", "C1|A/B/"]);
+  assert.deepEqual([...closed(new Set(["A/", "A/B/", "X/"]), "A/")], ["X/"]);
+  // A chain A/B that later splits into A and A/B keeps both open.
+  const before = buildTree([src(1, "A/B/x.log")]);
+  assert.equal(before.roots[0].name, "A/B");
+  const open = defaultOpen(before);
+  const after = buildTree([src(1, "A/B/x.log"), src(2, "A/y.log")]);
+  const rows = visibleRows(after, open, null);
+  assert.deepEqual(rows.map((r) => [r.node.name, r.open]), [["A", true], ["B", true], ["x.log", false], ["y.log", false]]);
 });

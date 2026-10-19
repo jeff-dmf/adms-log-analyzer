@@ -14,11 +14,13 @@ const SOURCES = [
   src(5, "Deployment/Logs/install.log"),
 ];
 
-function setup(query = "") {
+function setup(query = "", sources = SOURCES) {
   const host = doc.createElement("div");
   doc.body.appendChild(host);
   const panel = {
-    sources: SOURCES, selected: new Set(), query, caseId: "c1", refs: { filterInput: doc.createElement("input") }, treeHook: null,
+    sources, selected: new Set(), query, caseId: "c1", refs: { filterInput: doc.createElement("input") }, treeHook: null,
+    treeActive: true, counts: [],
+    notifyRendered(visible, total) { this.counts.push([visible, total]); },
     applySelection(ids) { this.selected = new Set(ids); this.treeHook(); },
   };
   const store = new Map();
@@ -97,4 +99,33 @@ test("no match and no sources say so", () => {
   const t = setup("zzz");
   assert.equal(t.rows().length, 0);
   assert.match(t.host.textContent, /No/);
+});
+
+test("the filter box talks to the tree: its count, ArrowDown and Enter", () => {
+  const t = setup("oasys");
+  assert.deepEqual(t.panel.counts.at(-1), [1, 4], "the sources whose path matches, of all");
+  t.tree.focusFirst();
+  assert.equal(doc.activeElement, t.rows()[0]);
+  t.tree.toggleFirst();
+  assert.deepEqual([...t.panel.selected], [3], "Enter toggles the first row of the tree, filtered");
+  const none = setup("zzz");
+  assert.deepEqual(none.panel.counts.at(-1), [0, 4]);
+  none.tree.toggleFirst();
+  assert.equal(none.panel.selected.size, 0);
+});
+
+test("a folder chain that splits keeps its folders open and the focus on a surviving row", () => {
+  const t = setup("", [src(1, "A/B/x.log")]);
+  assert.deepEqual(names(t), ["A/B", "x.log"]);
+  t.byName("A/B").focus();
+  t.panel.sources = [src(1, "A/B/x.log"), src(2, "A/y.log")];
+  t.panel.treeHook();
+  assert.deepEqual(names(t), ["A", "B", "x.log", "y.log"], "both folders are still open");
+  assert.equal(doc.activeElement, t.byName("B"), "the folder keeps its row and its focus");
+  assert.equal(t.byName("B").attrs.tabindex, "0");
+  // A row that leaves hands the focus to the folder that held it.
+  t.byName("x.log").focus();
+  t.panel.sources = [src(2, "A/y.log")];
+  t.panel.treeHook();
+  assert.equal(doc.activeElement, t.byName("A"));
 });

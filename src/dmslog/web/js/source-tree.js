@@ -5,7 +5,7 @@ import { S, format } from "./strings.js";
 import { highlightParts, isFiltering, matchRange } from "./source-filter-model.js";
 import { isUnreadable, sourceMeta, unreadableTitle } from "./sources.js";
 import {
-  STORAGE_PREFIX, buildTree, checkState, defaultOpen, idsOf, matchedIds, parseOpen, serializeOpen, toggled, treeKeyTarget,
+  STORAGE_PREFIX, buildTree, checkState, closed, defaultOpen, idsOf, matchedIds, parseOpen, serializeOpen, toggled, treeKeyTarget,
   visibleRows,
 } from "./source-tree-model.js";
 
@@ -99,11 +99,30 @@ export class SourceTree {
     this.matched = matchedIds(this.tree, this.panel.query, sources);
     this.list = visibleRows(this.tree, this.open, this.matched);
     this.render();
+    if (this.panel.treeActive) {
+      // The count under the filter box is the tree's: the sources whose path matches, not the flat list's name matches.
+      this.panel.notifyRendered(this.matched === null ? sources.length : this.matched.size, sources.length);
+    }
+  }
+
+  // The filter box: ArrowDown goes to the tree, Enter in the box toggles the first row.
+  focusFirst() {
+    const entry = this.rows.get(this.stopKey) || (this.list[0] ? this.rows.get(this.list[0].node.key) : null);
+    if (entry) {
+      entry.el.focus();
+    }
+  }
+
+  toggleFirst() {
+    if (this.list[0]) {
+      this.toggleCheck(this.list[0].node.key);
+    }
   }
 
   render() {
     const selected = this.panel.selected;
     const keep = new Set();
+    const focused = this.keyOf(document.activeElement); // before any row leaves: a row that goes takes the focus with it
     const query = isFiltering(this.panel.query) ? this.panel.query : "";
     for (const row of this.list) {
       keep.add(row.node.key);
@@ -114,7 +133,6 @@ export class SourceTree {
         this.rows.delete(key);
       }
     }
-    const focused = this.keyOf(document.activeElement);
     if (this.empty.parentNode === this.host) {
       this.empty.remove();
     }
@@ -140,8 +158,18 @@ export class SourceTree {
       this.stopKey = this.list.length > 0 ? this.list[0].node.key : null;
     }
     this.syncTabStops();
-    if (focused !== null && this.rows.has(focused) && document.activeElement !== this.rows.get(focused).el) {
-      this.rows.get(focused).el.focus();
+    if (focused !== null) {
+      // The row that had the focus, or the one that took its place (the folder it was merged into), or the first.
+      const row = this.rows.has(focused) ? focused : (this.list.find((r) => focused.startsWith(r.node.key)) || this.list[0] || { node: { key: null } }).node.key;
+      if (row !== null && this.rows.has(row)) {
+        this.stopKey = row;
+        this.syncTabStops();
+        if (document.activeElement !== this.rows.get(row).el) {
+          this.rows.get(row).el.focus();
+        }
+      } else if (this.panel.refs.filterInput) {
+        this.panel.refs.filterInput.focus();
+      }
     }
   }
 
@@ -236,7 +264,7 @@ export class SourceTree {
     if (isOpen) {
       this.open.add(key);
     } else {
-      this.open.delete(key);
+      this.open = closed(this.open, key);
     }
     this.saveOpen();
     this.update();
