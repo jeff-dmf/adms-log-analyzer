@@ -135,8 +135,9 @@ O original nunca é aberto pelo SQLite: só por `zipfile` ou leitura de bytes. N
 `msgqueue/lps.py: read_bank(tmp_db: Path, limits) -> BankRead`, numa conexão **própria** (nunca `store/db.connect`, que registra funções SQL do app):
 
 ```python
-conn = sqlite3.connect(tmp_db.as_uri() + "?mode=rw", uri=True, isolation_level=None,
-                       check_same_thread=True, cached_statements=0)
+conn = sqlite3.connect(
+    tmp_db.as_uri() + "?mode=rw", uri=True, isolation_level=None, check_same_thread=True, cached_statements=0
+)
 ```
 
 - **Modo `rw` na cópia privada**, não `ro`: é o único jeito portátil de o SQLite rodar a recuperação do WAL e criar o `-shm` na primeira conexão (com `ro` e sem `-shm` a abertura falha). A cópia é do app e é apagada em seguida; nada volta ao ERS.
@@ -183,9 +184,10 @@ Códigos de erro (estáveis, `messages.py` traduz): `encrypted_member`, `too_lar
 ### 2.8 Limpeza do temporário (sempre)
 
 ```python
-tmp = make_tmp_dir(case_dir)          # .queue-tmp-<hex>, 0700
+tmp = make_tmp_dir(case_dir)  # .queue-tmp-<hex>, 0700
 try:
-    copy_files(...); result = read_bank(...)   # read_bank fecha a conexão no seu próprio finally
+    copy_files(...)
+    result = read_bank(...)  # read_bank fecha a conexão no seu próprio finally
 finally:
     remove_tmp_dir(tmp)
 ```

@@ -598,3 +598,13 @@ def test_a_long_valid_list_is_not_counted_twice():
         error_of(body(w.text_record(w.Val("list", items))), Limits(max_total_text=9_998)).code
         == "text_too_large"
     )
+
+
+def test_constant_texts_count_in_the_total_and_in_lists():
+    # A list of "false" constants: each one is text and counts once, like any other item.
+    items = [w.Val("false")] * 3
+    assert decode(body(w.text_record(w.Val("list", items)))).children[0].value == "false false false"
+    assert (
+        error_of(body(w.text_record(w.Val("list", items))), Limits(max_total_text=1)).code == "text_too_large"
+    )
+    assert error_of(body(w.text_record(w.Val("true"))), Limits(max_total_text=3)).code == "text_too_large"

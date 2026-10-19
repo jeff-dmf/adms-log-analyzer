@@ -352,7 +352,9 @@ class _Decoder:
     def scalar_text(self, rec: int, start: int) -> tuple[str, str]:
         """Decode the payload of the text record ``rec`` (even code, already consumed)."""
         if rec in _CONSTANT_TEXT:
-            return _CONSTANT_TEXT[rec]
+            constant = _CONSTANT_TEXT[rec]
+            self.count_text(len(constant[0]), start)
+            return constant
         if rec in _FIXED:
             size, convert, kind = _FIXED[rec]
             value = convert(self.take(size))
