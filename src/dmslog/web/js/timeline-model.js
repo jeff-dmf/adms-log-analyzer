@@ -206,6 +206,36 @@ export function stripHeight(expanded, collapsedPx = 40, expandedPx = 120) {
   return expanded ? expandedPx : collapsedPx;
 }
 
+// The strip height the user dragged to: whole pixels, never below the collapsed strip and never taller than about half
+// of the window (the grid keeps its room). viewportPx is the window height.
+export const STRIP_MIN_PX = 40;
+export const STRIP_MAX_PX = 480;
+export const STRIP_KEY_STEP_PX = 16;
+
+export function clampStripHeight(px, viewportPx) {
+  const half = Number.isFinite(viewportPx) ? Math.floor(viewportPx * 0.5) : STRIP_MAX_PX;
+  const max = Math.max(STRIP_MIN_PX, Math.min(STRIP_MAX_PX, half));
+  return Number.isFinite(px) || px === Infinity ? Math.round(Math.min(Math.max(px, STRIP_MIN_PX), max)) : STRIP_MIN_PX;
+}
+
+// ArrowDown makes the strip taller (its edge moves down), ArrowUp shorter, Home goes back to the default (null);
+// other keys are not the divider's (undefined).
+export function stripKeyHeight(current, key, viewportPx) {
+  if (key === "Home") {
+    return null;
+  }
+  if (key !== "ArrowDown" && key !== "ArrowUp") {
+    return undefined;
+  }
+  return clampStripHeight(current + (key === "ArrowDown" ? STRIP_KEY_STEP_PX : -STRIP_KEY_STEP_PX), viewportPx);
+}
+
+// A remembered height: a whole number the strip can have, else null (the default).
+export function parseStoredStrip(text) {
+  const value = Number(text);
+  return Number.isInteger(value) && value >= STRIP_MIN_PX && value <= STRIP_MAX_PX ? value : null;
+}
+
 // "40px" / "120" -> number, or the fallback.
 export function parsePx(text, fallback) {
   const value = Number.parseFloat(String(text || ""));

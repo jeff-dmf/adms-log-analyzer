@@ -27,12 +27,16 @@ import {
   selectionToRange,
   splitTimeFilter,
   stackSeries,
+  clampStripHeight,
+  parseStoredStrip,
   stripHeight,
+  stripKeyHeight,
   toChartData,
   widthParts,
 } from "./timeline-model.js";
 
 const EXPANDED_KEY = "dmslog.timelineExpanded";
+const HEIGHT_KEY = "dmslog.timelineHeight";
 const AXIS_SIZE = 14;
 const LINE_WIDTH = 1.5;
 const REFRESH_DELAY_MS = 120;
@@ -55,6 +59,26 @@ function writeExpanded(value) {
     window.localStorage.setItem(EXPANDED_KEY, value ? "1" : "0");
   } catch (err) {
     // Storage may be blocked: the choice then lasts for this page only.
+  }
+}
+
+function readHeight() {
+  try {
+    return parseStoredStrip(window.localStorage.getItem(HEIGHT_KEY));
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeHeight(value) {
+  try {
+    if (value === null) {
+      window.localStorage.removeItem(HEIGHT_KEY);
+    } else {
+      window.localStorage.setItem(HEIGHT_KEY, String(value));
+    }
+  } catch (err) {
+    // Storage may be blocked: the height then lasts for this page only.
   }
 }
 
@@ -104,7 +128,13 @@ export function initTimeline(container, {
   head.append(splitLabel, splitSelect, status, undatedNote, legend, errorsOnly, expandButton);
   const plot = element("div", "tl-plot");
   plot.title = S.timelineHint;
-  root.append(head, plot);
+  const resizer = element("div", "tl-resize");
+  resizer.setAttribute("role", "separator");
+  resizer.setAttribute("aria-orientation", "horizontal");
+  resizer.setAttribute("aria-label", S.timelineResize);
+  resizer.title = S.timelineResize;
+  resizer.tabIndex = 0;
+  root.append(head, plot, resizer);
   container.textContent = "";
   container.appendChild(root);
 
@@ -117,6 +147,7 @@ export function initTimeline(container, {
   let timer = null;
   let destroyed = false;
   let expanded = readExpanded();
+  let userHeight = readHeight(); // the height the user dragged to (px), or null: the collapsed or expanded one
   let statusText = ""; // the base status; a hovered bucket replaces it until the pointer leaves
   let forcedBucketMs = null; // set after a resize that calls for a clearly different bar width
 
@@ -148,11 +179,34 @@ export function initTimeline(container, {
   }
 
   function plotHeight() {
+    if (userHeight !== null) {
+      return clampStripHeight(userHeight, window.innerHeight);
+    }
     return stripHeight(
       expanded,
       parsePx(cssColor("--timeline-h", ""), 40),
       parsePx(cssColor("--timeline-h-expanded", ""), 120),
     );
+  }
+
+  // The host reserves the height from the first paint (css); a dragged height reserves its own.
+  function applyHeight() {
+    container.style.minHeight = userHeight === null ? "" : plotHeight() + 30 + "px";
+    resizer.setAttribute("aria-valuenow", String(plotHeight()));
+    resizer.setAttribute("aria-valuemin", String(clampStripHeight(0, window.innerHeight)));
+    resizer.setAttribute("aria-valuemax", String(clampStripHeight(Infinity, window.innerHeight)));
+    if (chart) {
+      chart.setSize({ width: Math.max(100, plot.clientWidth), height: plotHeight() });
+      applyRange();
+    }
+  }
+
+  function setUserHeight(px, persist) {
+    userHeight = px === null ? null : clampStripHeight(px, window.innerHeight);
+    applyHeight();
+    if (persist) {
+      writeHeight(userHeight);
+    }
   }
 
   function defaultReadout() {
@@ -526,12 +580,43 @@ export function initTimeline(container, {
     expanded = !expanded;
     writeExpanded(expanded);
     renderExpand();
-    if (chart) {
-      chart.setSize({ width: Math.max(100, plot.clientWidth), height: plotHeight() });
-      applyRange();
-    }
+    userHeight = null; // the button goes back to the two preset heights
+    writeHeight(null);
+    applyHeight();
   });
   renderExpand();
+  resizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== undefined && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = plotHeight();
+    const move = (e) => setUserHeight(startHeight + e.clientY - startY, false);
+    const stop = () => {
+      resizer.classList.remove("dragging");
+      resizer.removeEventListener("pointermove", move);
+      resizer.removeEventListener("pointerup", stop);
+      resizer.removeEventListener("pointercancel", stop);
+      writeHeight(userHeight);
+    };
+    resizer.classList.add("dragging");
+    if (typeof resizer.setPointerCapture === "function") {
+      resizer.setPointerCapture(event.pointerId);
+    }
+    resizer.addEventListener("pointermove", move);
+    resizer.addEventListener("pointerup", stop);
+    resizer.addEventListener("pointercancel", stop);
+  });
+  resizer.addEventListener("keydown", (event) => {
+    const next = stripKeyHeight(plotHeight(), event.key, window.innerHeight);
+    if (next !== undefined) {
+      event.preventDefault();
+      setUserHeight(next, true);
+    }
+  });
+  resizer.addEventListener("dblclick", () => setUserHeight(null, true));
+  applyHeight();
 
   const resizeObserver =
     typeof ResizeObserver === "undefined"
