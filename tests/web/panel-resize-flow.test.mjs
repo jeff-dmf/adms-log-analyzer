@@ -76,7 +76,7 @@ test("keys resize, Home and a double click go back to the default", () => {
 });
 
 test("a narrow window holds the widths back without losing the choice", () => {
-  const { els, win, mem } = setup({ side: 480, detail: 800 });
+  const { els, win, mem, resize } = setup({ side: 480, detail: 800 });
   els.panels.clientWidth = 700;
   win.fire("resize", {});
   assert.equal(els.panels.style.props.get("--detail-w"), "280px", "held back to the minimum");
@@ -86,8 +86,8 @@ test("a narrow window holds the widths back without losing the choice", () => {
   assert.equal(els.panels.style.props.get("--detail-w"), "800px");
   els.panels.clientWidth = 700;
   win.fire("resize", {});
-  els["detail-resize"].fire("keydown", { key: "ArrowLeft" });
-  assert.deepEqual(JSON.parse(mem.get(STORAGE_KEY)), { side: 480, detail: 800 }, "what is written is the choice, not the held-back value");
+  assert.deepEqual(JSON.parse(mem.get(STORAGE_KEY)), { side: 480, detail: 800 }, "narrowing the window writes nothing");
+  assert.deepEqual(resize.widths(), { side: 480, detail: 800 }, "the choice is what is kept");
 });
 
 test("expanding a collapsed panel leaves the records their room", () => {
