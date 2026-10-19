@@ -752,6 +752,45 @@ function start() {
     onMessage: showMessage,
   });
   new SourceFilter({ host: byId("source-filter-host"), panel });
+  // The sources as a flat list or as a tree of the ERS folders (the tree module loads when it is first shown).
+  {
+    const buttons = { list: byId("source-view-list"), tree: byId("source-view-tree") };
+    let tree = null;
+    const showView = (mode, remember) => {
+      const asTree = mode === "tree";
+      buttons.list.setAttribute("aria-pressed", String(!asTree));
+      buttons.tree.setAttribute("aria-pressed", String(asTree));
+      byId("source-list").hidden = asTree;
+      byId("source-tree").hidden = !asTree;
+      if (remember) {
+        try {
+          localStorage.setItem("dmslog.sourcesView", mode);
+        } catch (err) {
+          // Not remembered: the choice lasts for this page.
+        }
+      }
+      if (asTree && tree === null) {
+        tree = import("./source-tree.js")
+          .then((module) => new module.SourceTree({ host: byId("source-tree"), panel }))
+          .catch((err) => {
+            tree = null;
+            showError(err);
+            showView("list", false);
+          });
+      } else {
+        panel.notifyTree();
+      }
+    };
+    buttons.list.addEventListener("click", () => showView("list", true));
+    buttons.tree.addEventListener("click", () => showView("tree", true));
+    try {
+      if (localStorage.getItem("dmslog.sourcesView") === "tree") {
+        showView("tree", false);
+      }
+    } catch (err) {
+      // Storage blocked: the list stays.
+    }
+  }
   const syncCollectionColumn = () =>
     grid.setCollectionColumn(columnShown(collections, collectionColumnPref), !applyPending).catch(showError);
   // The first GET /collections of the opening was started by boot.js together with /sources (prefetch.js).

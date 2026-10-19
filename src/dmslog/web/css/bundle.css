@@ -2660,6 +2660,113 @@ mark {
   overflow-wrap: anywhere;
 }
 
+/* The view switch and the tree of folders (js/source-tree.js). Same row height as the flat list. */
+.source-view {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-1);
+}
+
+.source-view .ui-button[aria-pressed="true"] {
+  background: var(--selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+#sources-panel > #source-tree {
+  flex: 1 0 240px;
+  min-height: 240px;
+  overflow: auto;
+}
+
+.st-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--source-row);
+  padding-inline-start: 2px; /* the level adds its indent inline */
+  cursor: default;
+  white-space: nowrap;
+}
+
+.st-row:hover {
+  background: var(--selected);
+}
+
+.st-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.st-twisty {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.st-row.is-folder[aria-expanded="false"] .st-twisty::before {
+  content: "\25B8"; /* ▸ */
+}
+
+.st-row.is-folder[aria-expanded="true"] .st-twisty::before {
+  content: "\25BE"; /* ▾ */
+}
+
+.st-box {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--ink-muted);
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+
+.st-row[data-state="all"] .st-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.st-row[data-state="some"] .st-box {
+  background: linear-gradient(var(--accent), var(--accent)) center / 6px 2px no-repeat;
+  border-color: var(--accent);
+}
+
+.st-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.st-row.is-folder .st-name {
+  font-weight: var(--weight-strong);
+}
+
+.st-count {
+  flex: none;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.st-empty {
+  padding: var(--space-2);
+  color: var(--ink-muted);
+}
+
+@media (forced-colors: active) {
+  .st-box {
+    border-color: CanvasText;
+  }
+
+  .st-row[data-state="all"] .st-box {
+    background: Highlight;
+  }
+
+  .st-row[data-state="some"] .st-box {
+    background: linear-gradient(Highlight, Highlight) center / 6px 2px no-repeat;
+  }
+}
+
 /* ---- filter-tree.css ---- */
 /* Filter tree editor and saved filters. Uses the theme tokens of app.css (light and dark). */
 .filter-tree {
