@@ -308,13 +308,13 @@ def _attribute_records(xmlns, attrs) -> bytes:
 
 
 def _array_bytes(arr: ArrayOf) -> bytes:
-    code = _ARRAY_CODES[arr.type]
+    code = _ARRAY_CODES[arr.type] | 1  # the value type is the WithEndElement record
     out = bytearray(b"\x03")
     out += _element_record(arr.prefix, arr.name, False) + _attribute_records(arr.xmlns, arr.attrs)
     out += END_ELEMENT + bytes([code]) + mbi31(len(arr.values))
     for v in arr.values:
         item_code, payload = _payload(Val(arr.type, v))
-        assert item_code == code
+        assert item_code | 1 == code
         out += payload
     return bytes(out)
 

@@ -407,3 +407,97 @@ def test_bundled_catalog_has_the_initial_entries_and_only_names():
     } <= types
     assert CATALOG.header_order[0] == "Verb" and "Property" in CATALOG.flat_arrays
     assert all(m.namespace.startswith("http://iec.ch/TC57/2011/") for m in CATALOG.messages)
+
+
+# -- review fixes ---------------------------------------------------------------------------------------
+
+
+def test_packaged_catalog_loads_from_a_zip(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+    import zipfile
+    from pathlib import Path
+
+    src = Path(tr.__file__).resolve().parents[1]
+    archive = tmp_path / "app.pyz"
+    with zipfile.ZipFile(archive, "w") as z:
+        for f in src.rglob("*"):
+            if f.is_file() and "__pycache__" not in f.parts:
+                z.write(f, Path("dmslog") / f.relative_to(src))
+    code = (
+        "import sys; sys.path.insert(0, sys.argv[1]); "
+        "from dmslog.msgqueue import translate as t; "
+        "assert t.__file__.startswith(sys.argv[1]); "
+        "print(len(t.load_catalog().messages))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(archive)], capture_output=True, text=True, cwd=tmp_path
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == str(len(CATALOG.messages))
+    del shutil
+
+
+@pytest.mark.parametrize(
+    "noun",
+    ["Works><Injected/>", "A B", 'W"x', "W&amp;", "x" * 500, "W\u00e9", "W:x"],
+)
+def test_hostile_header_values_cannot_inject_markup(noun):
+    rec = run(message(noun=noun))
+    assert tr.safe_name(rec.root.name)
+    assert "invalid_name" in rec.notes
+    result = tr.format_reconstruction(rec)
+    assert result.ok and "<Injected" not in result.text
+
+
+def test_hostile_member_and_any_names_are_dropped():
+    bad = el("x y", leaf("z", "1"))
+    rec = run(work(leaf("aField", "1"), leaf("b>c", "2"), el("anyField", bad, leaf("Fine", "ok"))))
+    w = child(child(rec.root, "Payload"), "Work")
+    assert sorted(names(w)) == ["Fine", "a"]
+    assert "invalid_name" in rec.notes
+    assert tr.format_reconstruction(rec).ok
+
+
+def test_hostile_any_attribute_and_prefix_names_are_dropped():
+    a = Node("ok", "", (), (("", "bad name", "v"),), ())
+    b = Node("ok", "p q", (), (), ())
+    rec = run(work(el("anyField", a, b)))
+    assert "ok" not in names(child(child(rec.root, "Payload"), "Work"))
+    assert tr.format_reconstruction(rec).ok
+
+
+def test_serialize_has_an_output_budget():
+    items = [el("Item", leaf("nameField", "v" * 50)) for _ in range(200)]
+    rec = run(work(el("stepsField", *items)))
+    with pytest.raises(tr.OutputTooLarge):
+        tr.serialize(rec.root, 1000)
+    result = tr.format_reconstruction(rec, 1000)
+    assert not result.ok and result.reason == "too_large" and result.text == ""
+    assert tr.format_reconstruction(rec).ok
+
+
+def test_wrapped_item_takes_its_own_learned_namespace():
+    xml = (
+        '<R><Payload><Work xmlns="urn:container"><steps>'
+        '<Step xmlns="urn:item"><name/></Step></steps></Work></Payload></R>'
+    )
+    steps = el("stepsField", el("Step", leaf("nameField", "n-1")))
+    rec = run(message(el("payloadField", el("WorkField", steps))), learn_shape([xml]))
+    work_node = child(child(rec.root, "Payload"), "Work")
+    assert work_node.xmlns == (("", "urn:container"),)
+    wrapper = child(work_node, "steps")
+    assert wrapper.xmlns == ()
+    assert wrapper.children[0].xmlns == (("", "urn:item"),)
+
+
+def test_nil_array_items_are_omitted():
+    steps = el("stepsField", nil("Step"), el("Step", leaf("nameField", "n-1")), nil("Step"))
+    rec = run(work(steps))
+    wrapper = child(child(child(rec.root, "Payload"), "Work"), "steps")
+    assert len(wrapper.children) == 1
+    flat = el("tagsField", nil("Tag"), el("Tag", leaf("nameField", "n-2")))
+    rec = run(work(el("propertyField", nil("Property"), el("Property", leaf("nameField", "k")))), None)
+    del flat
+    assert "<Property/>" not in tr.serialize(rec.root)

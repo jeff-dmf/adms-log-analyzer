@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import tomllib
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 
 from ..payload.pretty import PrettyResult, format_payload
@@ -26,7 +27,10 @@ SCHEMA_NS = "http://iec.ch/TC57/2011/schema/message"
 FIELD = "Field"
 SPECIFIED = "FieldSpecified"
 MAX_DEPTH = 200
-CATALOG_PATH = Path(__file__).with_name("catalog.toml")
+CATALOG_RESOURCE = "catalog.toml"
+MAX_NAME = 128  # longest element/attribute/prefix name accepted from data
+MAX_OUTPUT_CHARS = 2_000_000  # budget of the serialized text, checked while serializing
+_SAFE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]*")
 RECONSTRUCTION_LABEL = "Reconstruction, may differ from the bytes sent."
 
 NOTE_CODES = (
@@ -38,6 +42,7 @@ NOTE_CODES = (
     "datetime_local",
     "enum_as_stored",
     "invalid_chars",
+    "invalid_name",
     "names_guessed",
     "order_alphabetical",
     "order_partial",
@@ -47,7 +52,7 @@ NOTE_CODES = (
 )
 
 _ITEM_ENUM = re.compile(r"Item\d+")
-_BAD_XML_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
+_BAD_XML_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 _ENVELOPE_TYPES = ("Header", "Request", "Reply")
 
 
@@ -80,7 +85,11 @@ class Catalog:
 
 def load_catalog(path: Path | None = None) -> Catalog:
     """Read ``catalog.toml`` (the bundled one by default)."""
-    data = tomllib.loads((path or CATALOG_PATH).read_text(encoding="utf-8"))
+    if path is None:  # packaged resource: also readable inside dmslog.pyz (zipimport)
+        raw = resources.files("dmslog.msgqueue").joinpath(CATALOG_RESOURCE).read_text(encoding="utf-8")
+    else:
+        raw = path.read_text(encoding="utf-8")
+    data = tomllib.loads(raw)
     if data.get("schema") != 1:
         raise ValueError("unsupported catalog schema")
     header = data.get("header", {})
@@ -112,6 +121,11 @@ class Reconstruction:
     basis: str  # exemplar | catalog | none
     exemplars: int  # payloads of the case used as exemplar
     notes: tuple[str, ...]  # stable codes, sorted
+
+
+def safe_name(name: str) -> bool:
+    """True for a plain XML name (ASCII NCName, bounded): safe as an element/attribute/prefix name."""
+    return len(name) <= MAX_NAME and _SAFE_NAME.fullmatch(name) is not None
 
 
 def _fold(name: str) -> str:
@@ -241,7 +255,7 @@ class _Builder:
         value = "".join(t.value for t in texts)
         kind = texts[0].kind
         if _BAD_XML_CHARS.search(value):
-            value = _BAD_XML_CHARS.sub("�", value)
+            value = _BAD_XML_CHARS.sub("\ufffd", value)
             self.notes.add("invalid_chars")
         if kind == "datetime":
             if not value.endswith("Z"):
@@ -269,7 +283,14 @@ class _Builder:
 
     def _any_content(self, node: Node) -> list[Node]:
         self.notes.add("any_content")
-        return [c for c in node.children if isinstance(c, Node)]
+        out = []
+        for c in node.children:
+            if isinstance(c, Node):
+                if _tree_is_safe(c):
+                    out.append(c)
+                else:
+                    self.notes.add("invalid_name")
+        return out
 
     def _children(
         self, src: Node, scope: dict[str, str], path: tuple[str, ...], ns: str, depth: int
@@ -293,6 +314,9 @@ class _Builder:
                 out.extend(self._any_content(c))
                 continue
             name = self._resolve_name(base, path) if is_member else base
+            if not safe_name(name):
+                self.notes.add("invalid_name")
+                continue
             out.extend(self._member(c, cscope, name, base, path, ns, depth))
         return self._split_attrs(self._order(out, path), path)
 
@@ -313,9 +337,10 @@ class _Builder:
         if array is None:
             return [self.build(c, cscope, name, cpath, ns, parent_ns, base, depth + 1)]
         items, primitive = array
+        item_name = items[0].name
+        items = [i for i in items if not self._is_nil(i, self._scope(cscope, i))]
         parent_info = self.info(path)
         own_info = self.info(cpath)
-        item_name = items[0].name
         if parent_info is not None and name in parent_info.flat:
             flat = True
         elif own_info is not None and own_info.item:
@@ -330,9 +355,13 @@ class _Builder:
                 self.build(i, self._scope(cscope, i), name, cpath, ns, parent_ns, base, depth + 1)
                 for i in items
             ]
+        if not safe_name(item_name):
+            self.notes.add("invalid_name")
+            return []
         ipath = (*cpath, item_name)
+        ins = self._namespace(ipath, ns, "inherit")
         built = [
-            self.build(i, self._scope(cscope, i), item_name, ipath, ns, ns, base, depth + 2) for i in items
+            self.build(i, self._scope(cscope, i), item_name, ipath, ins, ns, base, depth + 2) for i in items
         ]
         xmlns = (("", ns),) if ns != parent_ns else ()
         return [Node(name, "", xmlns, (), tuple(built))]
@@ -378,6 +407,25 @@ class _Builder:
         return rest, tuple(attrs)
 
 
+def _fallback_root(decoded: Node) -> str:
+    name = decoded.name.removesuffix("Type")
+    return name if safe_name(name) else "Message"
+
+
+def _tree_is_safe(node: Node) -> bool:
+    stack: list[Node] = [node]
+    while stack:
+        n = stack.pop()
+        if not safe_name(n.name) or (n.prefix and not safe_name(n.prefix)):
+            return False
+        if any(p and not safe_name(p) for p, _ in n.xmlns):
+            return False
+        if any(not safe_name(a) or (p and not safe_name(p)) for p, a, _ in n.attrs):
+            return False
+        stack.extend(c for c in n.children if isinstance(c, Node))
+    return True
+
+
 def _root_name(decoded: Node, notes: set[str]) -> tuple[str, str | None]:
     header = _find(decoded, "headerField")
     verb = noun = ""
@@ -386,10 +434,16 @@ def _root_name(decoded: Node, notes: set[str]) -> tuple[str, str | None]:
         verb = _text_of(v).strip() if v is not None else ""
         noun = _text_of(n).strip() if n is not None else ""
     if verb and noun:
-        return verb[:1].upper() + verb[1:] + noun, noun
+        name = verb[:1].upper() + verb[1:] + noun
+        if safe_name(name):
+            return name, noun
+        notes.add("invalid_name")
+        notes.add("root_guessed")
+        return _fallback_root(decoded), None
     notes.add("root_guessed")
-    name = decoded.name.removesuffix("Type")
-    return name, noun or None
+    if noun and not safe_name(noun):
+        noun = ""
+    return _fallback_root(decoded), noun or None
 
 
 def reconstruct(decoded: Node, catalog: Catalog, shape: Shape | None) -> Reconstruction:
@@ -426,20 +480,28 @@ def reconstruct(decoded: Node, catalog: Catalog, shape: Shape | None) -> Reconst
 
 
 def _escape(text: str, quote: bool = False) -> str:
-    text = _BAD_XML_CHARS.sub("�", text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = _BAD_XML_CHARS.sub("\ufffd", text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return text.replace('"', "&quot;") if quote else text
 
 
-def serialize(root: Node) -> str:
-    """XML 1.0 text of a tree, escaped, without an XML declaration (iterative, linear)."""
+class OutputTooLarge(ValueError):
+    """The serialized reconstruction would exceed the output budget."""
+
+
+def serialize(root: Node, max_chars: int = MAX_OUTPUT_CHARS) -> str:
+    """XML 1.0 text of a tree, escaped, without an XML declaration (iterative, linear).
+
+    The size is counted while writing; ``OutputTooLarge`` is raised as soon as it passes ``max_chars``.
+    """
     out: list[str] = []
+    size = 0
     stack: list[object] = [root]
     while stack:
         item = stack.pop()
         if isinstance(item, str):
-            out.append(item)
+            piece = item
         elif isinstance(item, Text):
-            out.append(_escape(item.value))
+            piece = _escape(item.value)
         else:
             assert isinstance(item, Node)
             qname = f"{item.prefix}:{item.name}" if item.prefix else item.name
@@ -451,14 +513,25 @@ def serialize(root: Node) -> str:
             for prefix, name, value in item.attrs:
                 parts.append(f'{prefix + ":" if prefix else ""}{name}="{_escape(value, True)}"')
             if not item.children:
-                out.append("<" + " ".join(parts) + "/>")
+                piece = "<" + " ".join(parts) + "/>"
             else:
-                out.append("<" + " ".join(parts) + ">")
+                piece = "<" + " ".join(parts) + ">"
                 stack.append(f"</{qname}>")
                 stack.extend(reversed(item.children))
+        size += len(piece)
+        if size > max_chars:
+            raise OutputTooLarge
+        out.append(piece)
     return "".join(out)
 
 
-def format_reconstruction(rec: Reconstruction) -> PrettyResult:
-    """Indented, well-formedness checked XML of the reconstruction (always through ``format_payload``)."""
-    return format_payload(serialize(rec.root), "xml")
+def format_reconstruction(rec: Reconstruction, max_chars: int = MAX_OUTPUT_CHARS) -> PrettyResult:
+    """Indented, well-formedness checked XML of the reconstruction (always through ``format_payload``).
+
+    Over the output budget the result is not ok (``reason = "too_large"``) and carries no text.
+    """
+    try:
+        text = serialize(rec.root, max_chars)
+    except OutputTooLarge:
+        return PrettyResult("", False, "xml", "too_large", True)
+    return format_payload(text, "xml")

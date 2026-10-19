@@ -208,7 +208,7 @@ def test_float32_uses_shortest_text():
 
 
 def test_utf8_text_keeps_other_scripts_and_controls():
-    assert value_of(w.Val("chars", "あ\x01")).value == "あ\x01"
+    assert value_of(w.Val("chars", "\u3042\x01")).value == "\u3042\x01"
 
 
 # --- arrays ---------------------------------------------------------------------------------------------
@@ -335,9 +335,9 @@ def test_bad_length():
     scale29 = struct.pack("<HBBIQ", 0, 29, 0, 0, 1)
     assert error_of(body(b"\x94" + scale29)).code == "bad_length"
     assert error_of(body(b"\x96" + struct.pack("<Q", 3_155_378_975_999_999_999 + 1))).code == "bad_length"
-    arr = b"\x03" + b"\x40" + w.string("v") + b"\x01\x96" + w.mbi31(1) + struct.pack("<Q", 2**62 - 1)
+    arr = b"\x03" + b"\x40" + w.string("v") + b"\x01\x97" + w.mbi31(1) + struct.pack("<Q", 2**62 - 1)
     assert error_of(body(arr)).code == "bad_length"
-    arr_dec = b"\x03" + b"\x40" + w.string("v") + b"\x01\x94" + w.mbi31(1) + scale29
+    arr_dec = b"\x03" + b"\x40" + w.string("v") + b"\x01\x95" + w.mbi31(1) + scale29
     assert error_of(body(arr_dec)).code == "bad_length"
 
 
@@ -474,7 +474,7 @@ def test_attribute_count_limits():
 
 
 def test_array_count_is_checked_before_allocation():
-    huge = b"\x03\x40" + w.string("v") + b"\x01\x8a" + w.mbi31(2**31 - 1)
+    huge = b"\x03\x40" + w.string("v") + b"\x01\x8b" + w.mbi31(2**31 - 1)
     err = error_of(body(huge))
     assert err.code == "truncated"  # more values announced than bytes available
     many = w.encode(w.E("a", children=(w.ArrayOf("v", "bool", (True,) * 50),)))
@@ -528,8 +528,8 @@ def test_to_xml_escapes_text_and_attributes():
 
 
 def test_to_xml_replaces_forbidden_characters():
-    node = Node("r", "", (), (("", "a", "x\x00y"),), (Text("a\x01b￾\x0bc\ud800", "chars"),))
-    assert to_xml(node) == '<r a="x�y">a�b��c�</r>'
+    node = Node("r", "", (), (("", "a", "x\x00y"),), (Text("a\x01b\ufffe\x0bc\ud800", "chars"),))
+    assert to_xml(node) == '<r a="x\ufffdy">a\ufffdb\ufffd\ufffdc\ufffd</r>'
 
 
 def test_to_xml_output_is_well_formed():
@@ -554,3 +554,33 @@ def test_to_xml_limit_and_deep_tree():
 def test_text_kinds_are_declared():
     for val in (w.Val("float", 1.0), w.Val("uniqueid", w.guid(1)), w.Val("empty")):
         assert value_of(val).kind in nbfx.TEXT_KINDS
+
+
+def test_array_hand_written_vector():
+    # <a><v>1</v><v>-2</v></a>: Array, ShortElement "v", EndElement, Int16TextWithEndElement (0x8B),
+    # count 2, then two little-endian int16 values.
+    blob = bytes.fromhex("000400000106000100000000") + bytes.fromhex(
+        "40 01 61 03 40 01 76 01 8b 02 0100 feff 01".replace(" ", "")
+    )
+    tree = decode(blob)
+    assert tree.children == (
+        Node("v", "", (), (), (Text("1", "int"),)),
+        Node("v", "", (), (), (Text("-2", "int"),)),
+    )
+
+
+def test_array_even_value_type_is_rejected():
+    blob = w.doc(START_A, b"\x03\x40" + w.string("v") + b"\x01\x8a" + w.mbi31(0), END)
+    assert error_of(blob).code == "unknown_record"
+
+
+def test_list_and_base64_respect_max_text_on_the_resulting_text():
+    limits = Limits(max_text=8)
+    items = [w.Val("chars", "abcd")] * 3  # each item fits, the joined text is 14 characters
+    assert error_of(body(w.text_record(w.Val("list", items))), limits).code == "text_too_large"
+    ok = [w.Val("chars", "abcd")] * 2  # 9 characters with the separator: still above 8
+    assert error_of(body(w.text_record(w.Val("list", ok))), limits).code == "text_too_large"
+    assert decode(body(w.text_record(w.Val("list", [w.Val("chars", "abcd")]))), limits).name == "a"
+    raw = w.Val("bytes", b"123456")  # 6 bytes -> 8 characters of base64: fits
+    assert decode(body(w.text_record(raw)), limits).children == (Text("MTIzNDU2", "bytes"),)
+    assert error_of(body(w.text_record(w.Val("bytes", b"1234567"))), limits).code == "text_too_large"

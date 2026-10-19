@@ -27,7 +27,7 @@ _MAX_DATETIME_TICKS = 3_155_378_975_999_999_999
 _TICKS_PER_SECOND = 10_000_000
 _TICKS_PER_DAY = 864_000_000_000
 _NAME_RE = re.compile(r"[^\W\d][\w.\-]*")
-_XML_FORBIDDEN_RE = re.compile("[^\t\n\r -퟿-�\U00010000-\U0010ffff]")
+_XML_FORBIDDEN_RE = re.compile("[^\t\n\r -\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 _ATTR_ESCAPES = {
     "&": "&amp;",
     "<": "&lt;",
@@ -220,7 +220,8 @@ _VARIABLE = {
     0xB8: (2, "utf-16-le"),
     0xBA: (4, "utf-16-le"),
 }
-_ARRAY_TYPES = frozenset({0x8A, 0x8C, 0x8E, 0x90, 0x92, 0x94, 0x96, 0xAE, 0xB0, 0xB4})
+# The array value type is the text record WITH EndElement ([MS-NBFX] 2.2.3.3): the odd code.
+_ARRAY_TYPES = frozenset({0x8B, 0x8D, 0x8F, 0x91, 0x93, 0x95, 0x97, 0xAF, 0xB1, 0xB5})
 
 _START_LIST, _END_LIST = 0xA4, 0xA6
 _DICTIONARY_RECORDS = frozenset(
@@ -358,7 +359,8 @@ class _Decoder:
         if rec in _VARIABLE:
             width, encoding = _VARIABLE[rec]
             size = self.length(width)
-            self.count_text(size, start)
+            # Count the resulting text (base64 is 4/3 larger) before building it.
+            self.count_text(4 * ((size + 2) // 3) if encoding is None else size, start)
             raw = self.take(size)
             if encoding is None:
                 return base64.b64encode(raw).decode("ascii"), "bytes"
@@ -377,6 +379,7 @@ class _Decoder:
         if rec != _START_LIST:
             return self.scalar_text(rec, start)
         items: list[str] = []
+        joined = 0  # length of the final text, separators included
         while True:
             item_start = self.pos
             item = self.byte()
@@ -386,7 +389,10 @@ class _Decoder:
                 self.fail("dictionary_record", item_start)
             if item & 1 or not _is_text_record(item) or item == _START_LIST:
                 self.fail("unknown_record", item_start)
-            items.append(self.scalar_text(item, item_start)[0])
+            piece = self.scalar_text(item, item_start)[0]
+            joined += len(piece) + (1 if items else 0)
+            self.count_text(joined, item_start)
+            items.append(piece)
             self.count_node()
 
     # -- attributes and elements
@@ -450,7 +456,7 @@ class _Decoder:
             self.fail("unknown_record", type_pos)
         count_pos = self.pos
         count = self.int31()
-        size, convert, kind = _FIXED[type_rec]
+        size, convert, kind = _FIXED[type_rec - 1]
         if count * size > self.n - self.pos:
             self.fail("truncated", self.n)
         if depth + 1 > self.limits.max_depth:
@@ -549,7 +555,7 @@ def decode(blob: bytes, limits: Limits = Limits()) -> Node:  # noqa: B008 (Limit
 
 
 def _escape(text: str, table: dict[str, str]) -> str:
-    text = _XML_FORBIDDEN_RE.sub("�", text)
+    text = _XML_FORBIDDEN_RE.sub("\ufffd", text)
     return "".join(table.get(ch, ch) for ch in text)
 
 

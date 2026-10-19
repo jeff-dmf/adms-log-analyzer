@@ -163,3 +163,20 @@ def test_load_shape_uses_the_generation_in_the_key(monkeypatch):
     s1 = ex.load_shape(None, "case", "R", 1)
     assert ex.load_shape(None, "case", "R", 1) is s1
     assert ex.load_shape(None, "case", "R", 2) is not s1
+
+
+def test_deep_nesting_is_bounded_and_the_rest_still_learned():
+    depth = 5000
+    text = "<R><ok/>" + "<a>" * depth + "</a>" * depth + "<after/></R>"
+    shape = ex.learn_shape([text])
+    assert shape.get(()).children == ("ok", "a", "after")
+    assert max(len(p) for p in shape.elements) <= ex.MAX_DEPTH
+    assert len(shape.elements) <= ex.MAX_PATHS
+
+
+def test_paths_and_children_are_capped():
+    wide = "<R>" + "".join(f"<c{i}/>" for i in range(ex.MAX_CHILDREN + 50)) + "</R>"
+    shape = ex.learn_shape([wide])
+    assert len(shape.get(()).children) == ex.MAX_CHILDREN
+    many = "<R>" + "".join(f"<p{i}><x/></p{i}>" for i in range(ex.MAX_PATHS)) + "</R>"
+    assert len(ex.learn_shape([many]).elements) <= ex.MAX_PATHS

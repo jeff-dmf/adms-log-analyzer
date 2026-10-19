@@ -25,6 +25,9 @@ if TYPE_CHECKING:
 EXEMPLARS = 5  # payloads used per reconstruction
 EXEMPLAR_TEXT_CAP = 512 * 1024  # characters read per exemplar
 CACHE_SIZE = 64
+MAX_DEPTH = 64  # deeper elements are ignored (bounds the path copies)
+MAX_PATHS = 5000  # distinct element paths kept
+MAX_CHILDREN = 500  # distinct child names kept per element
 _MAX_PAGES = 50  # pages of 1000 payloads scanned looking for exemplars
 
 _ATTR = re.compile(r"""([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
@@ -112,6 +115,8 @@ def _open_frame(raw_tag: str, raw_name: str, parent: _Frame | None) -> _Frame:
 
 
 def _close_frame(f: _Frame, acc: dict[tuple[str, ...], _Acc]) -> None:
+    if f.path not in acc and len(acc) >= MAX_PATHS:
+        return
     a = acc.setdefault(f.path, _Acc())
     _merge_order(a.children, f.order)
     if a.namespace is None:
@@ -138,24 +143,34 @@ def _learn_one(text: str, acc: dict[tuple[str, ...], _Acc]) -> bool:
     tokens, _status, _pos = tokenize(text)
     stack: list[_Frame] = []
     seen_root = False
+    skipped = 0  # open elements below MAX_DEPTH, ignored
     for kind, raw, name, _start in tokens:
+        if skipped and kind != "c" and kind != "o":
+            continue
         if kind in ("o", "s"):
             if not stack and seen_root:
                 break
+            if skipped or len(stack) >= MAX_DEPTH:
+                skipped += kind == "o"
+                continue
             parent = stack[-1] if stack else None
             frame = _open_frame(raw, name, parent)
             seen_root = True
             if parent is not None:
                 local = frame.path[-1]
-                if local not in parent.counts:
+                if local not in parent.counts and len(parent.order) < MAX_CHILDREN:
                     parent.order.append(local)
                     parent.counts[local] = 0
-                parent.counts[local] += 1
+                if local in parent.counts:
+                    parent.counts[local] += 1
             if kind == "s":
                 _close_frame(frame, acc)
             else:
                 stack.append(frame)
         elif kind == "c":
+            if skipped:
+                skipped -= 1
+                continue
             if not stack or stack[-1].raw != name:
                 break
             _close_frame(stack.pop(), acc)
