@@ -129,6 +129,15 @@ def _tokenize(s: str) -> tuple[list[_Token], str, int]:
     return tokens, "ok", n
 
 
+def tokenize(s: str) -> tuple[list[_Token], str, int]:
+    """Public wrapper of the tolerant tokenizer: ``(tokens, status, pos)``, see :func:`_tokenize`.
+
+    Token kinds: o open, s self-closing, c close, t text, d cdata, m comment, p processing
+    instruction, q declaration. Nothing is parsed or resolved: entities stay literal.
+    """
+    return _tokenize(s)
+
+
 def _indent(depth: int) -> str:
     return "  " * depth
 
