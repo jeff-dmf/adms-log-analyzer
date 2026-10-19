@@ -4283,6 +4283,25 @@ body.no-case #grid-panel > :not(.case-empty):not(h2) {
   border-color: var(--muted);
 }
 
+/* The divider under the strip: drag (or the arrow keys) to make the chart taller. */
+.tl-resize {
+  flex: none;
+  height: 6px;
+  margin: 0 -8px -2px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.tl-resize:hover,
+.tl-resize.dragging {
+  background: var(--accent);
+}
+
+.tl-resize:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 /* ---- events.css ---- */
 /* Operations panel, adapter dashboard and clock-jump banner. Colours come from the tokens of
    app.css (light and dark); status is always written as text, colour only reinforces it. */

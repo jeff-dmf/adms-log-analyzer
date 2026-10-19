@@ -121,6 +121,63 @@ test("Expand toggles aria-expanded, the chart height and the remembered choice",
   open.timeline.destroy();
 });
 
+test("the divider under the strip drags the chart to a taller height, remembers it and Expand goes back to the presets", async () => {
+  window.innerHeight = 1000;
+  const store = {};
+  const storage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } };
+  const t = setup({ resp: SEV, storage });
+  await until(() => live(), "the chart");
+  const divider = t.find("tl-resize");
+  assert.equal(divider.attrs.role, "separator");
+  assert.equal(divider.attrs["aria-orientation"], "horizontal");
+  assert.equal(divider.attrs["aria-valuenow"], "40");
+  divider.dispatch("pointerdown", { button: 0, clientY: 100, pointerId: 1 });
+  divider.dispatch("pointermove", { clientY: 260 });
+  assert.equal(live().sizes.at(-1).height, 200);
+  assert.equal(t.host.style.minHeight, "230px", "the host reserves the dragged height");
+  assert.equal(store["dmslog.timelineHeight"], undefined, "not written while dragging");
+  divider.dispatch("pointerup", {});
+  assert.equal(store["dmslog.timelineHeight"], "200");
+  divider.dispatch("keydown", { key: "ArrowDown" });
+  assert.equal(live().sizes.at(-1).height, 216);
+  divider.dispatch("keydown", { key: "Home" });
+  assert.equal(live().sizes.at(-1).height, 40);
+  assert.equal(store["dmslog.timelineHeight"], undefined);
+  divider.dispatch("keydown", { key: "ArrowDown" });
+  const expand = t.buttons("tl-toggle").find((b) => b.attrs["aria-expanded"] !== undefined);
+  expand.click();
+  assert.equal(live().sizes.at(-1).height, 120, "Expand drops the dragged height");
+  assert.equal(t.host.style.minHeight, "");
+  t.timeline.destroy();
+  store["dmslog.timelineHeight"] = "300";
+  const again = setup({ resp: SEV, storage });
+  await until(() => live(), "the chart");
+  assert.equal(live().options.height, 300, "a remembered height opens the strip at it");
+  again.timeline.destroy();
+});
+
+test("a shorter window caps the dragged height again: chart, host reservation and aria", async () => {
+  window.innerHeight = 1000;
+  const store = { "dmslog.timelineHeight": "480" };
+  const storage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } };
+  const listeners = [];
+  const saved = [window.addEventListener, window.removeEventListener];
+  window.addEventListener = (type, fn) => listeners.push([type, fn]);
+  window.removeEventListener = (type, fn) => { const i = listeners.findIndex((l) => l[0] === type && l[1] === fn); if (i >= 0) listeners.splice(i, 1); };
+  const t = setup({ resp: SEV, storage });
+  await until(() => live(), "the chart");
+  assert.equal(live().options.height, 480);
+  window.innerHeight = 600;
+  listeners.filter(([type]) => type === "resize").forEach(([, fn]) => fn());
+  assert.equal(live().sizes.at(-1).height, 300);
+  assert.equal(t.host.style.minHeight, "330px");
+  assert.equal(t.find("tl-resize").attrs["aria-valuenow"], "300");
+  assert.equal(t.find("tl-resize").attrs["aria-valuemax"], "300");
+  t.timeline.destroy();
+  assert.equal(listeners.filter(([type]) => type === "resize").length, 0, "destroy() removes the listener");
+  [window.addEventListener, window.removeEventListener] = saved;
+});
+
 test("a blocked localStorage is swallowed (read and write)", async () => {
   const blocked = {
     getItem() { throw new Error("blocked"); },

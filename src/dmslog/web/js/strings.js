@@ -343,6 +343,7 @@ export const S = {
   timelineErrorsOnly: "Errors only",
   timelineExpand: "Expand",
   timelineCollapse: "Collapse",
+  timelineResize: "Resize the timeline",
   timelineUndatedOne: "{count} undated record",
   timelineUndatedOther: "{count} undated records",
   timelineError: "Could not load the timeline: {error}",
