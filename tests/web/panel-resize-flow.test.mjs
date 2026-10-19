@@ -13,15 +13,19 @@ class Target {
   setPointerCapture() {}
 }
 
-function setup(stored) {
+function setup(stored, { observers = false } = {}) {
   const mem = new Map(stored ? [[STORAGE_KEY, JSON.stringify(stored)]] : []);
   const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) };
   const panels = Object.assign(new Target(), { clientWidth: 2000, getBoundingClientRect: () => ({ left: 0, right: 2000 }) });
   const els = { panels, "side-resize": new Target(), "detail-resize": new Target(), "sources-panel": Object.assign(new Target(), { offsetWidth: 248 }), "detail-panel": Object.assign(new Target(), { offsetWidth: 380 }) };
   const doc = { getElementById: (id) => els[id] || null };
   const win = new Target();
+  const observed = [];
+  if (observers) {
+    win.ResizeObserver = class { constructor(callback) { observed.push(callback); } observe() {} disconnect() {} };
+  }
   const resize = createPanelResize({ doc, win, storage });
-  return { els, mem, win, resize };
+  return { els, mem, win, resize, observed };
 }
 
 test("the dividers are separators with a name and the limits", () => {
@@ -69,6 +73,33 @@ test("keys resize, Home and a double click go back to the default", () => {
   handle.fire("dblclick", {});
   assert.equal(els.panels.style.props.has("--detail-w"), false);
   assert.deepEqual(JSON.parse(mem.get(STORAGE_KEY)), {});
+});
+
+test("a narrow window holds the widths back without losing the choice", () => {
+  const { els, win, mem } = setup({ side: 480, detail: 800 });
+  els.panels.clientWidth = 700;
+  win.fire("resize", {});
+  assert.equal(els.panels.style.props.get("--detail-w"), "280px", "held back to the minimum");
+  els.panels.clientWidth = 2400;
+  win.fire("resize", {});
+  assert.equal(els.panels.style.props.get("--side-w"), "480px", "maximized: the choice is back");
+  assert.equal(els.panels.style.props.get("--detail-w"), "800px");
+  els.panels.clientWidth = 700;
+  win.fire("resize", {});
+  els["detail-resize"].fire("keydown", { key: "ArrowLeft" });
+  assert.deepEqual(JSON.parse(mem.get(STORAGE_KEY)), { side: 480, detail: 800 }, "what is written is the choice, not the held-back value");
+});
+
+test("expanding a collapsed panel leaves the records their room", () => {
+  const { els, observed } = setup({ side: 480, detail: 800 }, { observers: true });
+  els.panels.clientWidth = 1600;
+  els["sources-panel"].offsetWidth = 0; // collapsed
+  els["detail-panel"].offsetWidth = 800;
+  observed.forEach((callback) => callback());
+  assert.equal(els.panels.style.props.get("--detail-w"), "800px");
+  els["sources-panel"].offsetWidth = 480; // expanded again: the detail gives way
+  observed.forEach((callback) => callback());
+  assert.equal(els.panels.style.props.get("--detail-w"), String(1600 - 480 - 360) + "px");
 });
 
 test("remembered widths are applied at start and held back when the window gets narrow", () => {

@@ -17,7 +17,7 @@ function storageOf(win) {
 export function createPanelResize({ doc = document, win = window, storage } = {}) {
   const panels = doc.getElementById("panels");
   const store = storage === undefined ? storageOf(win) : storage;
-  const widths = loadWidths(store);
+  const widths = loadWidths(store); // what the user chose; the CSS gets it held back to what fits now (relayout)
   const cleanups = [];
   const kinds = {
     side: { handle: doc.getElementById("side-resize"), panel: doc.getElementById("sources-panel"), label: S.resizeSources, other: "detail" },
@@ -41,20 +41,32 @@ export function createPanelResize({ doc = document, win = window, storage } = {}
     handle.setAttribute("aria-valuenow", String(widths[kind] !== undefined ? widths[kind] : LIMITS[kind].initial));
   }
 
-  // px = null: back to the default (the CSS value).
-  function apply(kind, px, { persist }) {
+  // Writes what the user chose into the CSS, held back to what fits now: the records keep their room whatever is
+  // chosen or expanded, and the choice itself is not lost when the window gets narrow (it comes back with the room).
+  function relayout() {
     if (!panels) {
       return;
     }
-    const names = kind === "side" ? ["--side-w"] : ["--detail-w", "--detail-w-rail"];
+    for (const kind of Object.keys(kinds)) {
+      const names = kind === "side" ? ["--side-w"] : ["--detail-w", "--detail-w-rail"];
+      if (widths[kind] === undefined) {
+        names.forEach((name) => panels.style.removeProperty(name));
+      } else {
+        const px = clampWidth(kind, widths[kind], roomFor(kind)) + "px";
+        names.forEach((name) => panels.style.setProperty(name, px));
+      }
+      paint(kind);
+    }
+  }
+
+  // px = null: back to the default (the CSS value).
+  function apply(kind, px, { persist }) {
     if (px === null) {
       delete widths[kind];
-      names.forEach((name) => panels.style.removeProperty(name));
     } else {
       widths[kind] = px;
-      names.forEach((name) => panels.style.setProperty(name, px + "px"));
     }
-    paint(kind);
+    relayout();
     if (persist) {
       saveWidths(store, widths);
     }
@@ -77,11 +89,6 @@ export function createPanelResize({ doc = document, win = window, storage } = {}
     handle.setAttribute("aria-label", label);
     handle.title = label;
     handle.tabIndex = 0;
-    if (widths[kind] !== undefined) {
-      apply(kind, clampWidth(kind, widths[kind], roomFor(kind)), { persist: false });
-    }
-    paint(kind);
-
     on(handle, "pointerdown", (event) => {
       if (event.button !== undefined && event.button !== 0) {
         return;
@@ -116,14 +123,15 @@ export function createPanelResize({ doc = document, win = window, storage } = {}
     on(handle, "dblclick", () => apply(kind, null, { persist: true }));
   }
 
-  // A narrower window: a width that no longer leaves the records their room is held back (the remembered one stays).
-  on(win, "resize", () => {
-    for (const kind of Object.keys(kinds)) {
-      if (widths[kind] !== undefined) {
-        apply(kind, clampWidth(kind, widths[kind], roomFor(kind)), { persist: false });
-      }
-    }
-  });
+  // A narrower window, or a panel collapsed or expanded: the widths are fitted again (the chosen ones stay).
+  relayout();
+  on(win, "resize", relayout);
+  const Observer = win.ResizeObserver || globalThis.ResizeObserver;
+  if (typeof Observer === "function") {
+    const observer = new Observer(relayout);
+    [panels, kinds.side.panel, kinds.detail.panel].forEach((el) => el && observer.observe(el));
+    cleanups.push(() => observer.disconnect());
+  }
 
   return { destroy: () => cleanups.forEach((fn) => fn()), widths: () => ({ ...widths }) };
 }
