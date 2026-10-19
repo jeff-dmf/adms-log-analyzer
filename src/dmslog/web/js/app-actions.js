@@ -142,6 +142,43 @@ export function registerAppPanels(dock, deps) {
   });
 
   dock.register({
+    id: "messageQueue",
+    titleKey: "mqTitle",
+    listens: ["case", "derived"],
+    mount: async (host, ctx) => {
+      const module = await import("./queue-panel.js");
+      let panel = null;
+      // The reading job: the panel shows "reading" while it runs and loads the list when it ends.
+      const readQueue = async (group) => {
+        panel.setReading(true);
+        try {
+          await deps.readQueue(ctx.caseId(), group);
+        } catch (err) {
+          deps.onError(err);
+        } finally {
+          panel.setReading(false);
+          panel.refresh();
+        }
+      };
+      panel = module.initQueuePanel(host, {
+        api,
+        getCase: ctx.caseId,
+        getCollections: deps.getCollections,
+        onShowInLog: (messageId) => deps.showSameKey({ type: "msgid", value: messageId }),
+        onShowCacheRecords: (itemId) => deps.showSameKey({ type: "im_id", value: itemId }),
+        onOpenPayload: (payloadId) => deps.openPayload(payloadId),
+        onReadQueue: readQueue,
+        onRequestClose: () => ctx.dock.close("messageQueue"),
+      });
+      return {
+        refresh: () => panel.refresh(),
+        reset: () => panel.reset(),
+        show: ({ read } = {}) => (read === undefined ? undefined : readQueue(read)),
+      };
+    },
+  });
+
+  dock.register({
     id: "dashboard",
     titleKey: "actDashboard",
     listens: ["derived"],
@@ -425,6 +462,7 @@ export function registerAppActions(actions, deps) {
   analyze("analyze.payloads", "actPayloads", "payloads", "./payload-list.js");
   analyze("analyze.unknownTypes", "actUnknownTypes", "unknownTypes", "./unknown-panel.js");
   analyze("analyze.config", "actConfig", "config", "./config-panel.js");
+  analyze("analyze.messageQueue", "actMessageQueue", "messageQueue", "./queue-panel.js");
 
   // ---- Export
   // "Export report..." is a modal dialog (UI-23), not a dock tab: export-dialogs.js loads on the first use. main.js

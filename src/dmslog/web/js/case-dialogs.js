@@ -190,6 +190,52 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
   };
 }
 
+// The sensitive option of a case: "Read the message-queue databases", off by default (issue #74). A checkbox with its help
+// text always in view (aria-describedby) and, in Add files, a line that says what unchecking a case that has it on means.
+// Returns { node, checked(), set(on), baseline(on) }: baseline(on) = the state the case has now (the box follows it).
+function createQueueOption(doc) {
+  slotUid += 1;
+  const node = doc.createElement("div");
+  node.className = "cd-mq";
+  const row = doc.createElement("label");
+  row.className = "cd-mq-toggle";
+  const box = doc.createElement("input");
+  box.type = "checkbox";
+  box.className = "cd-mq-box";
+  box.checked = false;
+  const label = doc.createElement("span");
+  label.textContent = S.mqOptionLabel;
+  row.append(box, label);
+  const help = doc.createElement("p");
+  help.className = "cd-mq-help";
+  help.id = "cd-mq-help-" + String(slotUid);
+  help.textContent = S.mqOptionHelp;
+  box.setAttribute("aria-describedby", help.id);
+  const off = doc.createElement("p");
+  off.className = "cd-mq-off";
+  off.textContent = S.mqOptionOffNote;
+  off.hidden = true;
+  node.append(row, help, off);
+  let was = false;
+  const sync = () => {
+    off.hidden = !(was && !box.checked);
+  };
+  box.addEventListener("change", sync);
+  return {
+    node,
+    checked: () => box.checked,
+    set(on) {
+      box.checked = Boolean(on);
+      sync();
+    },
+    baseline(on) {
+      was = Boolean(on);
+      box.checked = was;
+      sync();
+    },
+  };
+}
+
 // The one live region of a dialog (role=status, visually hidden): the list, the section and every message of the dialog
 // are spoken through it, so a screen reader never hears two regions at once.
 function addLiveRegion(doc, shell) {
@@ -225,6 +271,8 @@ export function mountCaseDialogs({
   showLabels(newForm);
   newForm.hidden = false;
   newShell.body.appendChild(newForm);
+  const newQueue = createQueueOption(doc);
+  newShell.body.appendChild(newQueue.node); // below the form, which holds the scope choice
   caseFiles.announce = addLiveRegion(doc, newShell);
   newShell.foot.appendChild(button(doc, S.cfCancel, "ui-button case-dialog-cancel", () => newShell.close()));
   caseFiles.placeAction(newShell.foot, newForm.id || null);
@@ -255,6 +303,8 @@ export function mountCaseDialogs({
     announce: announceAdd,
   });
   addForm.appendChild(partial.node);
+  const addQueue = createQueueOption(doc);
+  addForm.appendChild(addQueue.node);
   // The files of the dialog change (list edited, a path typed): the section marks previews of files that left.
   for (const input of [addFiles.pathInput, refs.pathInput]) {
     input.addEventListener("input", () => partial.refresh());
@@ -297,9 +347,18 @@ export function mountCaseDialogs({
     return true;
   }
 
+  const queueOptions = { new: newQueue, add: addQueue };
+
   return {
     open,
     partial,
+    // The message-queue option of a dialog ("new" | "add"): the caller sends `message_queue: wanted(kind)` with the opening;
+    // set(kind, on) puts the box where the case is now (Add files: the `enabled` of the queue summary).
+    messageQueue: {
+      wanted: (kind) => Boolean(queueOptions[kind]) && queueOptions[kind].checked(),
+      set: (kind, on) => queueOptions[kind] && queueOptions[kind].baseline(on),
+      reset: (kind) => queueOptions[kind] && queueOptions[kind].set(false),
+    },
     close(kind) {
       if (shells[kind]) {
         shells[kind].close();

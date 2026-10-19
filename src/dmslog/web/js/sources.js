@@ -242,9 +242,32 @@ export class SourcesPanel {
       }
       if (kind === "add") {
         this.addSession += 1; // a new session of the dialog: answers to an older one are dropped
+        this.syncQueueOption(dialogs);
       }
       dialogs.open(kind, request.opener, { focusPath: request.focusPath });
     });
+  }
+
+  // The message-queue box of "Add files" follows the option the case has now (best effort: without an answer it stays off).
+  syncQueueOption(dialogs) {
+    const caseId = this.caseId;
+    if (!dialogs.messageQueue || caseId === null || typeof api.queueSummary !== "function") {
+      return;
+    }
+    api.queueSummary(caseId).then(
+      (summary) => {
+        if (this.caseId === caseId && summary) {
+          dialogs.messageQueue.set("add", summary.enabled === true);
+        }
+      },
+      () => {},
+    );
+  }
+
+  // The message-queue box of a dialog ("new" | "add"): true or false (ticked or not) is sent as `message_queue` with the
+  // opening, so unticking a case that had it on turns it off; undefined (no dialog) leaves the case option alone.
+  queueWanted(kind) {
+    return this.dialogs && this.dialogs.messageQueue ? this.dialogs.messageQueue.wanted(kind) : undefined;
   }
 
   closeDialog(kind) {
@@ -409,7 +432,7 @@ export class SourcesPanel {
             await this.loadCases(id);
             boundCase = id;
           },
-          openPath: (path) => this.runCollection(path, scope, boundCase),
+          openPath: (path) => this.runCollection(path, scope, boundCase, null, null, "new"),
         });
       } finally {
         this.setQueueBusy(false);
@@ -920,8 +943,9 @@ export class SourcesPanel {
   // expectedCaseId (optional) ties the run to the case it was created for. `first` (optional): open only part first
   // ({from, to, sources}, see partial-open-model.js); hooks: onFirstReady(data) when its first part is ready,
   // onStarted() when the server accepted the job (only if this operation is still the current one).
-  runCollection(path, scope, expectedCaseId, first = null, hooks = null) {
-    return this.runJob((caseId) => api.addCollection(caseId, path, scope, first), expectedCaseId, { first, hooks });
+  runCollection(path, scope, expectedCaseId, first = null, hooks = null, queueKind = "add") {
+    const queue = this.queueWanted(queueKind); // read now: the dialog may change before the job starts
+    return this.runJob((caseId) => api.addCollection(caseId, path, scope, first, queue), expectedCaseId, { first, hooks });
   }
 
   // One operation of the open case (an opening or a resume), from its start request to its done event. It owns this.waiter

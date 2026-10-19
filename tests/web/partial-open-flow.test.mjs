@@ -224,7 +224,7 @@ test("a window goes to POST collections as log-clock ms; the typed path opens, t
   fill(dlg, "2026-10-09 10:00:00", "2026-10-09 10:30:00.500");
   ctx.refs.openForm.dispatch("submit");
   await settle();
-  assert.deepEqual(args, ["A", "/data/x.zip", "default", { from: T("2026-10-09T10:00:00"), to: T("2026-10-09T10:30:00.500") }]);
+  assert.deepEqual(args, ["A", "/data/x.zip", "default", { from: T("2026-10-09T10:00:00"), to: T("2026-10-09T10:30:00.500") }, false]);
   assert.equal(isOpen(dlg), false);
   assert.equal(toggle.checked, false, "the option is off again for the next opening");
   assert.equal(field(dlg, "from").value, "");

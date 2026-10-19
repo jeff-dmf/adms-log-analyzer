@@ -227,9 +227,15 @@ export const api = {
   cases: () => request("GET", "/api/cases"),
   createCase: (name) => request("POST", "/api/cases", { name }),
   // `first` (optional): open only part first, {from, to, sources} (ARQUITETURA 9.3b); omitted when there is none.
-  addCollection: (caseId, path, scope, first) =>
-    request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections",
-      first ? { path, scope, first } : { path, scope }),
+  // `messageQueue`: true reads the message-queue databases of the collection (sensitive); false turns the case option off
+  // for this and later additions; undefined leaves the case option as it is (nothing is sent).
+  addCollection: (caseId, path, scope, first, messageQueue) =>
+    request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections", {
+      path,
+      scope,
+      ...(first ? { first } : {}),
+      ...(typeof messageQueue === "boolean" ? { message_queue: messageQueue } : {}),
+    }),
   // Partial opening: the sources of a path before indexing, the work an earlier partial opening left, and resuming it.
   partial: {
     plan: (caseId, path, scope, signal) =>
@@ -389,6 +395,28 @@ export const api = {
     request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/collections", undefined, signal),
   removeCollection: (caseId, group) =>
     request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/collections/" + encodeURIComponent(group)),
+  // Message queue (issue #74, docs/notas/fila-mensagens-desenho.md 4.1). `group` null = every collection.
+  queueSummary: (caseId, signal) =>
+    request("GET", "/api/queue/summary?case=" + encodeURIComponent(caseId), undefined, signal),
+  queueItems: (caseId, params, signal) => {
+    const query = new URLSearchParams({ case: caseId });
+    for (const [key, value] of Object.entries(params || {})) {
+      if (value !== undefined && value !== null && value !== "") {
+        query.set(key, String(value));
+      }
+    }
+    return request("GET", "/api/queue/items?" + query.toString(), undefined, signal);
+  },
+  queuePreview: (caseId, id, form, signal) =>
+    request(
+      "GET",
+      "/api/queue/items/" + segment(id) + "/preview?case=" + encodeURIComponent(caseId) + "&form=" + (form === "stored" ? "stored" : "wire"),
+      undefined,
+      signal,
+    ),
+  queueRead: (caseId, group) => request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/queue/read", { group }),
+  queueRemove: (caseId, group) =>
+    request("DELETE", "/api/cases/" + encodeURIComponent(caseId) + "/queue" + (group === null || group === undefined ? "" : "?group=" + encodeURIComponent(group))),
   // Clock offset of a collection (9.15, ARQUITETURA 10.13): set from {anchor, target} (entry ids; dry_run: true computes only)
   // or from {offset_ms}; reset puts the offset back to 0. `group` is the collection group id.
   clock: {

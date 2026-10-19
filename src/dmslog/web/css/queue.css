@@ -1,0 +1,265 @@
+/* "Message queue" panel (issue #74): counters, databases with warnings, filters, list with a preview of the message XML. */
+.mq-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+}
+
+.mq-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mq-field[hidden] {
+  display: none;
+}
+
+.mq-search-input {
+  min-width: 18ch;
+  font-family: ui-monospace, monospace;
+}
+
+.mq-notice,
+.mq-confirm,
+.mq-empty,
+.mq-banks {
+  margin: var(--space-3) var(--space-4);
+}
+
+.mq-notice {
+  padding: var(--space-3);
+  border-left: 3px solid var(--accent);
+  background: var(--status-info-bg);
+  color: var(--status-info-ink);
+  font-size: var(--text-sm);
+}
+
+.mq-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.mq-confirm[hidden],
+.mq-empty[hidden],
+.mq-banks[hidden],
+.mq-others[hidden] {
+  display: none;
+}
+
+.mq-confirm-text {
+  flex: 1 1 24em;
+  margin: 0;
+}
+
+.mq-empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+}
+
+.mq-empty-text {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.mq-banks h3,
+.mq-preview-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+}
+
+.mq-bank-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.mq-bank {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+/* A warning is a word first ("Warning:" / "Error:"), colour only reinforces it. */
+.mq-bank-flag {
+  color: var(--sev-warning);
+  font-weight: var(--weight-strong);
+}
+
+.mq-bank-flag.is-error {
+  color: var(--status-error-ink);
+}
+
+.mq-main {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-4);
+  align-items: start;
+  margin: 0 var(--space-4);
+}
+
+.mq-main:has(.mq-preview[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 900px) {
+  .mq-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.mq-list {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.mq-table {
+  table-layout: auto;
+}
+
+.mq-mono {
+  font-family: ui-monospace, monospace;
+}
+
+.mq-row {
+  cursor: pointer;
+}
+
+.mq-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Selected: the accent bar and a fill, never colour alone. */
+.mq-row.is-selected td {
+  background: var(--row-selected);
+}
+
+.mq-row.is-selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.mq-state-pending {
+  font-weight: var(--weight-strong);
+}
+
+.mq-preview {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+}
+
+.mq-preview-head,
+.mq-actions,
+.mq-forms {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.mq-preview-title {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.mq-badge {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--sev-warning);
+  border-radius: var(--radius-sm);
+  color: var(--sev-warning);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+}
+
+.mq-form[aria-checked="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The fixed label of the reconstruction: always on screen with the wire form. */
+.mq-banner {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border-left: 3px solid var(--sev-warning);
+  background: var(--surface-raised);
+  font-size: var(--text-sm);
+}
+
+.mq-banner[hidden],
+.mq-banner p[hidden],
+.mq-banner ul[hidden] {
+  display: none;
+}
+
+.mq-banner p {
+  margin: 0;
+}
+
+.mq-banner-label {
+  font-weight: var(--weight-strong);
+}
+
+.mq-banner-notes {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+}
+
+.mq-preview-message {
+  margin: 0 0 var(--space-3);
+}
+
+.mq-xml {
+  max-height: 60vh;
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: var(--surface-field);
+  font-family: ui-monospace, monospace;
+  font-size: var(--text-sm);
+  white-space: pre;
+}
+
+.mq-xml:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* The New case / Add files option. */
+.cd-mq {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--sev-warning);
+  border-radius: var(--radius-md);
+}
+
+.cd-mq-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-weight: var(--weight-strong);
+}
+
+.cd-mq-help,
+.cd-mq-off {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.cd-mq-off[hidden] {
+  display: none;
+}

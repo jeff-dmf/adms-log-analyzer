@@ -60,6 +60,8 @@ EXPECTED_MODULES = {
     "unknown-panel.js",
     "key-panel-model.js",
     "key-panel.js",
+    "queue-model.js",
+    "queue-panel.js",
     "links-model.js",
     "links.js",
     "side-by-side.js",

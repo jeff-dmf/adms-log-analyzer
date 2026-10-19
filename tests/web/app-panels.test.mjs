@@ -14,7 +14,7 @@ function catalogue() {
 
 test("the panels are registered in the visual order of the old hosts, then the four that sat before the filter bar", () => {
   assert.deepEqual(catalogue().map((d) => d.id), [
-    "filterTree", "unknownTypes", "config", "operations", "payloads", "dashboard", "missingSteps", "sideBySide", "sameKey",
+    "filterTree", "unknownTypes", "config", "operations", "payloads", "messageQueue", "dashboard", "missingSteps", "sideBySide", "sameKey",
     "bookmarks", "compare", "alerts", "highlights", "distinct", "groupByType", "aggregate", "panels", "extract", "compareViews",
   ]);
 });

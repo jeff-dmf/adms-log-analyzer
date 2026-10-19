@@ -18,7 +18,7 @@ Isso substitui, na ARQUITETURA, a U12 ("depois da 1.0"), a frase da seção 12 (
 
 ### 1.1 Semântica: o que a fila representa
 
-O banco mostra o **estado da fila no instante em que o ERS copiou os arquivos**. O adapter usa o SQLite em modo WAL: as transações recentes (inclusive os `DELETE` dos itens já enviados) ficam no `-wal` até o próximo checkpoint. Ler só o arquivo principal (`immutable=1`) mostra o estado do **último checkpoint**, que pode ser bem anterior; na amostra isso deu 14 itens "pendentes" que, com o WAL aplicado, já tinham saído da fila (0 linhas). O que o adapter via é o estado **com o WAL aplicado**. Decisão:
+O banco mostra o **estado da fila no instante em que o ERS copiou os arquivos**. O adapter usa o SQLite em modo WAL: as transações recentes (inclusive os `DELETE` dos itens já enviados) ficam no `-wal` até o próximo checkpoint. Ler só o arquivo principal (`immutable=1`) mostra o estado do **último checkpoint**, que pode ser bem anterior; numa amostra isso mostrou itens "pendentes" que, com o WAL aplicado, já tinham saído da fila. O que o adapter via é o estado **com o WAL aplicado**. Decisão:
 
 - **Semântica oficial = WAL aplicado.** É o único estado que corresponde ao processo.
 - `-shm` **não é copiado**: é só um índice em memória compartilhada do WAL, reconstruído pelo SQLite na primeira conexão (quando nenhuma outra conexão tem o arquivo, o SQLite trunca o `-shm` e refaz o índice a partir do `-wal`). Copiá-lo só gasta disco e traz um índice de outra máquina.
@@ -82,7 +82,7 @@ Opções avaliadas:
 |---|---|---|
 | (a) recriar o temporário a cada prévia (extrair de novo o `.db3` + `-wal`) | 340 MB de disco e segundos por clique no Ont (mais o antivírus do PC corporativo varrendo o arquivo); exige o ERS ainda no mesmo caminho | lento, frágil (ERS movido ou apagado = prévia some), e repete a operação mais cara e mais arriscada (extração) a cada clique |
 | (b) cifrar o BLOB no banco do caso | sem AES na stdlib; a chave ficaria ao lado do dado | segurança só aparente |
-| (c) **guardar o BLOB cru em `queue_body`**, fora de qualquer índice | ~1,3 MB no Ont da amostra (404 × 3,3 KB); limitado por item e por banco | o corpo passa a existir na pasta do caso |
+| (c) **guardar o BLOB cru em `queue_body`**, fora de qualquer índice | da ordem de 1 MB num banco grande (alguns KB por mensagem); limitado por item e por banco | o corpo passa a existir na pasta do caso |
 
 **Decisão: (c).** Justificativa:
 - A pasta do caso já guarda, em texto claro, os logs sensitive inteiros, inclusive o XML que o adapter registrou dessas mesmas mensagens (GEN-PLD-01). O BLOB não cria uma classe nova de dado sensível no disco; fica sob as mesmas proteções (pasta do usuário, `private_mkdir` 0700 no POSIX, ACL privada do `%LOCALAPPDATA%`, `--data-dir` cifrado se o usuário quiser; ARQUITETURA 12).
