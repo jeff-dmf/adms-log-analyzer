@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from dmslog.store import SCHEMA_VERSION, SchemaVersionError, connect, create_case_db, migrate
-from dmslog.store.db import MigrationError
+from dmslog.store.db import MIGRATIONS, MigrationError
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 
@@ -86,7 +86,7 @@ def test_schema_objects_exist(conn):
     assert names(conn, "table") >= TABLES
     assert INDEXES <= names(conn, "index")
     assert names(conn, "view") == {"entry_text"}
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 7
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 8
 
 
 def test_pragmas(conn):
@@ -485,3 +485,71 @@ def test_migration_5_is_a_no_op_on_a_schema_that_already_has_the_origin(tmp_path
     conn.execute("COMMIT")
     assert conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall() == before
     conn.close()
+
+
+def make_v7(path):
+    """A version-7 case: migrations 1-7 only, holding a record and a meta key."""
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    for v in range(1, 8):
+        conn.execute("BEGIN IMMEDIATE")
+        MIGRATIONS[v](conn)
+        conn.execute(f"PRAGMA user_version={v}")
+        conn.execute("COMMIT")
+    add_entry(conn, "kept record", entry_id=4)
+    conn.execute("INSERT INTO meta(key, value) VALUES ('k', 'v')")
+    conn.commit()
+    return conn
+
+
+def test_migration_8_adds_the_queue_tables_to_a_version_7_case_with_data(tmp_path):
+    conn = make_v7(tmp_path / "v7.sqlite")
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name LIKE '%queue%'").fetchall()
+    tables = ("entry", "meta", "collection", "source")
+    before = {t: conn.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall() for t in tables}
+    other = "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE '%queue%' ORDER BY name"
+    schema_before = conn.execute(other).fetchall()
+    assert migrate(conn) == SCHEMA_VERSION == 8
+    created = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE name GLOB '*queue*'")}
+    created -= {"sqlite_autoindex_queue_db_1", "sqlite_autoindex_queue_item_1"}
+    assert created == {"queue_db", "queue_item", "queue_body"} | {
+        f"ix_queue_item_{n}" for n in ("order", "state", "msg")
+    }
+    assert {t: conn.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall() for t in tables} == before
+    assert conn.execute(other).fetchall() == schema_before  # nothing else changed
+    assert conn.execute("SELECT count(*) FROM queue_db").fetchone()[0] == 0
+    assert migrate(conn) == 8  # idempotent
+    conn.close()
+
+
+def test_migration_8_is_transactional_and_the_step_can_run_again(tmp_path, monkeypatch):
+    from dmslog.store import db as dbmod
+
+    conn = make_v7(tmp_path / "v7.sqlite")
+
+    def broken(c):
+        c.execute(dbmod._QUEUE_DDL[0])
+        c.execute(dbmod._QUEUE_DDL[1])
+        raise RuntimeError("boom")
+
+    monkeypatch.setitem(dbmod.MIGRATIONS, 8, broken)
+    with pytest.raises(RuntimeError):
+        migrate(conn)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7  # rolled back, DDL included
+    assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name LIKE '%queue%'").fetchall()
+    monkeypatch.undo()
+    assert migrate(conn) == 8
+    for ddl in dbmod._QUEUE_DDL:  # re-running the step on a migrated case changes nothing
+        conn.execute(ddl)
+    conn.close()
+
+
+def test_a_version_7_case_opens_read_only_without_migrating(tmp_path):
+    from dmslog.store import queue
+
+    make_v7(tmp_path / "v7.sqlite").close()
+    ro = connect(tmp_path / "v7.sqlite", readonly=True)
+    assert ro.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert not queue.has_queue(ro) and queue.summary(ro)["dbs"] == []
+    ro.close()

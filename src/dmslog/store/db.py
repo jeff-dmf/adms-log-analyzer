@@ -188,6 +188,53 @@ def _migrate_to_7(conn: sqlite3.Connection) -> None:
     )
 
 
+_QUEUE_DDL = (
+    """CREATE TABLE IF NOT EXISTS queue_db(
+  id INTEGER PRIMARY KEY,
+  collection_id INTEGER NOT NULL,
+  member TEXT NOT NULL,
+  cache TEXT NOT NULL,
+  adapter TEXT,
+  db_size INTEGER NOT NULL, wal_size INTEGER,
+  fingerprint TEXT NOT NULL,
+  snapshot TEXT,
+  status TEXT NOT NULL,
+  error TEXT,
+  items INTEGER NOT NULL DEFAULT 0,
+  read_at TEXT NOT NULL,
+  UNIQUE(collection_id, member))""",
+    """CREATE TABLE IF NOT EXISTS queue_item(
+  id INTEGER PRIMARY KEY,
+  db_id INTEGER NOT NULL REFERENCES queue_db(id),
+  item_id INTEGER NOT NULL,
+  message_id TEXT,
+  msg_type TEXT,
+  status TEXT,
+  state TEXT NOT NULL,
+  file_location TEXT,
+  ts INTEGER,
+  size INTEGER NOT NULL,
+  body_stored INTEGER NOT NULL,
+  UNIQUE(db_id, item_id))""",
+    "CREATE INDEX IF NOT EXISTS ix_queue_item_order ON queue_item(db_id, ts, id)",
+    "CREATE INDEX IF NOT EXISTS ix_queue_item_state ON queue_item(state, ts, id)",
+    "CREATE INDEX IF NOT EXISTS ix_queue_item_msg ON queue_item(message_id) WHERE message_id IS NOT NULL",
+    """CREATE TABLE IF NOT EXISTS queue_body(
+  item_id INTEGER PRIMARY KEY REFERENCES queue_item(id),
+  body BLOB NOT NULL)""",
+)
+
+
+def _migrate_to_8(conn: sqlite3.Connection) -> None:
+    """Add the message-queue tables (``queue_db``, ``queue_item``, ``queue_body``; store/queue.py, issue #74).
+
+    Additive: only ``CREATE ... IF NOT EXISTS``, no existing row is touched. The queue is a parallel
+    source, never joined into ``entry``/``entry_fts``/``entry_key``/``payload``/``event``/``link``.
+    """
+    for ddl in _QUEUE_DDL:
+        conn.execute(ddl)
+
+
 # Ordered migration steps: version -> function that upgrades from version-1 to version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_1,
@@ -197,6 +244,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _migrate_to_5,
     6: _migrate_to_6,
     7: _migrate_to_7,
+    8: _migrate_to_8,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
