@@ -1,0 +1,49 @@
+# Static catalog for the wire-form reconstruction (translate.py). Only public names and namespaces of
+# IEC 61968-100 / CIM; no customer data, no values. Everything here is a fallback: names, order and
+# namespaces learned from the case's own payloads (exemplar.py) win.
+schema = 1
+
+[envelope]                                 # children of the message root
+order = ["Header", "Request", "Reply", "Payload"]
+
+[header]                                   # IEC 61968-100 (2011), namespace http://iec.ch/TC57/2011/schema/message
+order = ["Verb", "Noun", "Revision", "ReplayDetection", "Context", "Timestamp", "Source", "AsyncReplyFlag",
+         "ReplyAddress", "AckRequired", "User", "MessageID", "CorrelationID", "Comment", "Property"]
+flat_arrays = ["Property"]
+
+[payload]
+order = ["OperationSet", "Compressed", "Format"]   # the business content comes before these (position 0)
+content_first = true
+
+[cim]                                      # public names whose first letter is upper case on the wire
+names = ["Asset", "Crew", "CrewMember", "Customer", "Document", "Incident", "IncidentTroubleTicket",
+         "Location", "Names", "SwitchingAction", "SwitchingPlan", "SwitchingSchedule", "SwitchingStep",
+         "TroubleTicket", "Work", "WorkTask", "mRID"]
+
+[enums]
+fields = []                                # members known to be enumerations (value kept as stored)
+
+[[message]]
+type = "WorksEventMessageType"
+noun = "Works"
+namespace = "http://iec.ch/TC57/2011/WorksMessage"
+
+[[message]]
+type = "SwitchingStepsEventMessageType"
+noun = "SwitchingSteps"
+namespace = "http://iec.ch/TC57/2011/SwitchingStepsMessage"
+
+[[message]]
+type = "SwitchingPlansEventMessageType"
+noun = "SwitchingPlans"
+namespace = "http://iec.ch/TC57/2011/SwitchingPlansMessage"
+
+[[message]]
+type = "IncidentsEventMessageType"
+noun = "Incidents"
+namespace = "http://iec.ch/TC57/2011/IncidentsMessage"
+
+[[message]]
+type = "IncidentTroubleTicketsEventMessageType"
+noun = "IncidentTroubleTickets"
+namespace = "http://iec.ch/TC57/2011/IncidentTroubleTicketsMessage"
