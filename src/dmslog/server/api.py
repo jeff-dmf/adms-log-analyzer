@@ -42,6 +42,8 @@ from ..ingest.watch import MAX_BACKOFF_S, CycleReport, Watcher, backoff_delay
 from ..knowledge.installation import read_installation
 from ..knowledge.registry import RegistryError
 from ..knowledge.resolve import Knowledge
+from ..msgqueue import ingest as queue_ingest
+from ..msgqueue import service as queue_service
 from ..report import export as report_export
 from ..report import redact, viewexport
 from ..store import (
@@ -65,6 +67,7 @@ from ..store import (
 from ..store import clock as clock_store
 from ..store import collections as collections_store
 from ..store import config as config_store
+from ..store import queue as queue_store
 from ..store.filters import INT64_MAX, QueryInputError, compile_filter
 from ..store.writer import CollectionRow, IndexWriter
 from . import filepick
@@ -400,7 +403,12 @@ class IngestJobs:
         return hub is not None and hub.running
 
     def start(
-        self, case_id: str, path: Path | None, scope: str, first: pipeline.FirstPass | None = None
+        self,
+        case_id: str,
+        path: Path | None,
+        scope: str,
+        first: pipeline.FirstPass | None = None,
+        queue: bool = False,
     ) -> str:
         """Start an ingestion of ``path``; ``path=None`` completes what partial opens left (``resume``)."""
         case_id = self._store.canonical_case_id(case_id)
@@ -410,7 +418,7 @@ class IngestJobs:
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=case_id))
         thread = threading.Thread(
             target=self._run,
-            args=(case_id, job_id, path, scope, hub, first),
+            args=(case_id, job_id, path, scope, hub, first, queue),
             name=f"ingest-{case_id}",
             daemon=True,
         )
@@ -438,6 +446,7 @@ class IngestJobs:
         scope: str,
         hub: ProgressHub,
         first: pipeline.FirstPass | None = None,
+        queue: bool = False,
     ) -> None:
         conn: sqlite3.Connection | None = None
         done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
@@ -474,6 +483,8 @@ class IngestJobs:
                 )
             else:
                 result = pipeline.run_ingest(conn, path, options, progress)
+                if queue and result.collection_id:  # after the indexing: the queue never delays first_ready
+                    self._read_queue(conn, case_id, [(result.collection_id, path)], hub, job_id, done)
             done["partial_left"] = result.partial_left
             done["first_unmatched"] = result.first_unmatched
             done["records"] = result.records
@@ -495,6 +506,116 @@ class IngestJobs:
             done.update(code="unsafe_archive", message=messages.JOB_UNSAFE.format(error=self._describe(exc)))
         except (SourceNotFoundError, ReadLimitError, OSError, ValueError, sqlite3.Error) as exc:
             done.update(code="ingest_failed", message=messages.JOB_FAILED.format(error=self._describe(exc)))
+        except Exception as exc:  # the thread must always publish a final event
+            done.update(code="internal_error", message=messages.JOB_FAILED.format(error=type(exc).__name__))
+        finally:
+            if conn is not None:
+                conn.close()
+            hub.finish(done)
+            with self._lock:
+                self._threads.discard(threading.current_thread())
+
+    def _read_queue(
+        self,
+        conn: sqlite3.Connection,
+        case_id: str,
+        collections: list[tuple[int, Path]],
+        hub: ProgressHub,
+        job_id: str,
+        done: dict[str, Any],
+    ) -> None:
+        """Read the queue databases of ``collections`` into the case; the result goes to ``done['queue']``.
+
+        A failure of the queue does not fail the indexing before it: ``done['queue_error']`` says why.
+        A cancellation (the server stops) is passed on.
+        """
+
+        def queue_progress(event: queue_ingest.QueueProgress) -> None:
+            if self.stopping.is_set():
+                raise JobCancelledError
+            hub.publish(
+                "progress",
+                {
+                    "job_id": job_id,
+                    "source": event.source,
+                    "bytes_done": event.bytes_done,
+                    "bytes_total": event.bytes_total,
+                    "records": 0,
+                    "status": event.status,
+                    "stage": event.stage,
+                },
+                coalesce=event.status == "queue_progress",
+            )
+
+        total = queue_ingest.QueueSummary()
+        try:
+            for collection_id, path in collections:
+                one = queue_ingest.read_collection(
+                    conn,
+                    self._store.case_dir(case_id),
+                    path,
+                    collection_id,
+                    progress=queue_progress,
+                    cancelled=self.stopping.is_set,
+                )
+                total = queue_ingest.QueueSummary(
+                    dbs=total.dbs + one.dbs,
+                    items=total.items + one.items,
+                    pending=total.pending + one.pending,
+                    errors=total.errors + one.errors,
+                    unchanged=total.unchanged + one.unchanged,
+                )
+        except queue_ingest.ReadCancelled as exc:
+            raise JobCancelledError from exc
+        except (
+            SourceNotFoundError,
+            ReadLimitError,
+            UnsafeArchiveError,
+            OSError,
+            ValueError,
+            sqlite3.Error,
+        ) as exc:
+            done["queue"] = None
+            done["queue_error"] = messages.JOB_FAILED.format(error=self._describe(exc))
+            return
+        done["queue"] = total.as_dict()
+
+    def start_queue(self, case_id: str, collections: list[tuple[int, Path]]) -> str:
+        """Start a job that reads the queue databases of ``collections`` and turns the case option on."""
+        case_id = self._store.canonical_case_id(case_id)
+        hub = self.hub(case_id)
+        job_id = uuid.uuid4().hex[:12]
+        if self.stopping.is_set() or not hub.try_begin(job_id):
+            raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=case_id))
+        thread = threading.Thread(
+            target=self._run_queue,
+            args=(case_id, job_id, collections, hub),
+            name=f"queue-{case_id}",
+            daemon=True,
+        )
+        with self._lock:
+            self._threads.add(thread)
+        thread.start()
+        return job_id
+
+    def _run_queue(
+        self, case_id: str, job_id: str, collections: list[tuple[int, Path]], hub: ProgressHub
+    ) -> None:
+        conn: sqlite3.Connection | None = None
+        done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
+        try:
+            conn = db.create_case_db(self._store.db_path(case_id))
+            queue_store.set_enabled(conn, True)
+            conn.commit()
+            self._read_queue(conn, case_id, collections, hub, job_id, done)
+            summary = done.get("queue")
+            if summary is None:
+                done.update(code="queue_failed", message=done.get("queue_error") or "")
+            else:
+                done["status"] = "ok"
+                done["message"] = messages.JOB_QUEUE_DONE.format(**summary)
+        except JobCancelledError:
+            done.update(code="cancelled", message=messages.JOB_CANCELLED)
         except Exception as exc:  # the thread must always publish a final event
             done.update(code="internal_error", message=messages.JOB_FAILED.format(error=type(exc).__name__))
         finally:
@@ -1047,6 +1168,11 @@ class Api:
             ("GET", re.compile(r"/api/entries/(?P<id>[^/]+)/payloads\Z"), self.entry_payloads),
             ("GET", re.compile(r"/api/payloads/page\Z"), self.payloads_page),
             ("GET", re.compile(r"/api/payloads/(?P<id>[^/]+)\Z"), self.get_payload),
+            ("GET", re.compile(r"/api/queue/summary\Z"), self.queue_summary),
+            ("GET", re.compile(r"/api/queue/items\Z"), self.queue_items),
+            ("GET", re.compile(r"/api/queue/items/(?P<id>[^/]+)/preview\Z"), self.queue_preview),
+            ("POST", re.compile(r"/api/cases/(?P<case>[^/]+)/queue/read\Z"), self.queue_read),
+            ("DELETE", re.compile(r"/api/cases/(?P<case>[^/]+)/queue\Z"), self.queue_delete),
             ("GET", re.compile(r"/api/keys/types\Z"), self.key_types),
             ("GET", re.compile(r"/api/keys/(?P<type>[^/]+)/(?P<value>[^/]+)\Z"), self.key_records),
             ("GET", re.compile(r"/api/redaction\Z"), self.get_redaction),
@@ -1206,8 +1332,24 @@ class Api:
             raise ApiError(
                 400, "path_unreadable", messages.JOB_FAILED.format(error=self._shown(exc))
             ) from exc
-        job_id = self.jobs.start(cid, path, scope, first)
+        queue = self._queue_option(cid, body.get("message_queue"))
+        job_id = self.jobs.start(cid, path, scope, first, queue)
         return Response(202, {"job_id": job_id})
+
+    def _queue_option(self, cid: str, raw: Any) -> bool:
+        """The message-queue option of an addition: absent = the case's option; true or false sets it.
+
+        ``false`` only turns the option off for future additions; what was read stays (``DELETE .../queue``).
+        """
+        if raw is None:
+            with self.store.reader(cid) as conn:
+                return queue_store.has_queue(conn) and queue_store.is_enabled(conn)
+        if not isinstance(raw, bool):
+            raise ApiError(400, "bad_option", messages.API_BAD_QUEUE_OPTION)
+        with closing(db.create_case_db(self.store.db_path(cid))) as conn:
+            queue_store.set_enabled(conn, raw)
+            conn.commit()
+        return raw
 
     def plan_collection(self, request: Request) -> Response:
         """``POST /api/cases/{case}/collections/plan`` ``{path, scope}``: the sources of a ZIP, folder or file
@@ -1800,6 +1942,77 @@ class Api:
             fmt_name = result["payload"]["fmt"]
             result["formatted"] = _pretty(result["text"], fmt_name, result["truncated_display"])
         return Response(200, result)
+
+    # -- message queue (LocalPersistenceStore databases, msgqueue/, docs/notas/fila-mensagens-desenho.md)
+
+    @staticmethod
+    def _queue_error(exc: queue_service.QueueParamError) -> ApiError:
+        return ApiError(exc.http_status, exc.code, exc.message)
+
+    def queue_summary(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        with self.store.reader(cid) as conn:
+            return Response(200, queue_service.summary(conn))
+
+    def queue_items(self, request: Request) -> Response:
+        cid = _case_from_query(self.store, request)
+        try:
+            with self.store.reader(cid) as conn:
+                return Response(200, queue_service.items(conn, request.query))
+        except queue_service.QueueParamError as exc:
+            raise self._queue_error(exc) from exc
+
+    def queue_preview(self, request: Request) -> Response:
+        """The XML a queue item would send: a reconstruction from the stored BLOB, never written anywhere."""
+        cid = _case_from_query(self.store, request)
+        try:
+            with self.store.reader(cid) as conn:
+                row = conn.execute("SELECT coalesce(max(id), 0) FROM payload").fetchone()
+                generation = int(row[0]) if row else 0  # a new logged payload may teach a better exemplar
+                body = queue_service.preview(
+                    conn, request.match["id"], request.query, case=cid, generation=generation
+                )
+        except queue_service.QueueParamError as exc:
+            raise self._queue_error(exc) from exc
+        return Response(200, body)
+
+    def queue_read(self, request: Request) -> Response:
+        """``POST /api/cases/{case}/queue/read`` ``{group}``: read the queue databases of one collection."""
+        cid = self.store.require(request.match["case"])
+        group = request.read_body().get("group")
+        if isinstance(group, bool) or not isinstance(group, int) or group < 1:
+            raise ApiError(400, "invalid_field", messages.API_BAD_INT.format(field="group"))
+        with self.store.reader(cid) as conn:
+            rows = conn.execute(
+                "SELECT id, path FROM collection WHERE ers_group = ? ORDER BY id", (group,)
+            ).fetchall()
+        if not rows:
+            raise ApiError(404, "collection_not_found", messages.API_COLLECTION_NOT_FOUND.format(group=group))
+        collections = [(int(row[0]), Path(row[1])) for row in rows]
+        if any(not path.exists() for _, path in collections):
+            raise ApiError(409, "collection_path_missing", messages.API_QUEUE_PATH_MISSING)
+        return Response(202, {"job_id": self.jobs.start_queue(cid, collections)})
+
+    def queue_delete(self, request: Request) -> Response:
+        """``DELETE /api/cases/{case}/queue?group=``: forget what was read (the case option is unchanged)."""
+        cid = self.store.require(request.match["case"])
+        raw = request.query.get("group")
+        group: int | None = None
+        if raw is not None:
+            if not _ENTRY_ID.match(raw):
+                raise ApiError(400, "invalid_field", messages.API_BAD_INT.format(field="group"))
+            group = int(raw)
+            with self.store.reader(cid) as conn:
+                found = conn.execute("SELECT 1 FROM collection WHERE ers_group = ?", (group,)).fetchone()
+            if found is None:
+                raise ApiError(
+                    404, "collection_not_found", messages.API_COLLECTION_NOT_FOUND.format(group=group)
+                )
+        if self.jobs.is_running(cid):
+            raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
+        with closing(db.create_case_db(self.store.db_path(cid))) as conn:
+            banks, items = queue_store.delete_queue(conn, group)
+        return Response(200, {"dbs": banks, "items": items})
 
     # -- redaction profile and the .txt export (report/redact.py, report/export.py)
 

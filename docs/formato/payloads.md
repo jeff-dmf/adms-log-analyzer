@@ -354,7 +354,7 @@ O ERS traz, em `ADMS/data/save_cases/LocalPersistenceStore/0000000000000000/`, o
 | `_INTEGRATION_MESSAGE_USERNAME` | TEXT | conta do processo (sensível) |
 | `_IMPORT_CMD`, `_RESET_PROGRESS_BAR`, `_IS_REPAIR_MODE_ACTIVE` | INTEGER | flags, todas 0 |
 
-Não há coluna de contagem de tentativas nem de erro. `CURRENT_METADATA` guarda nome/versão do modelo e um `INITIAL_XML` vazio. `CURRENT_CHANGE_REQUEST` (Smn Created) tem 30 colunas `_SM_CHANGE_REQUEST_*`/`_SM_COMMANDING_MODEL_*`: uma linha por entidade criada no ADMS a partir do Smn (`WORK_ENTRY_GID` único; 439 dos GIDs aparecem no log em SMN-113), comentário curto e BLOBs de 12 bytes (listas vazias).
+**Atenção ao WAL:** cada `.db3` vem no ERS com `-wal` e `-shm` ao lado; a contagem acima foi feita só no arquivo principal (`immutable=1`, que ignora o WAL). O estado que o adapter via é o do banco com o WAL aplicado, e pode diferir bastante (numa amostra, 14 itens no principal e 0 com o WAL). Não há coluna de contagem de tentativas nem de erro. `CURRENT_METADATA` guarda nome/versão do modelo e um `INITIAL_XML` vazio. `CURRENT_CHANGE_REQUEST` (Smn Created) tem 30 colunas `_SM_CHANGE_REQUEST_*`/`_SM_COMMANDING_MODEL_*`: uma linha por entidade criada no ADMS a partir do Smn (`WORK_ENTRY_GID` único; 439 dos GIDs aparecem no log em SMN-113), comentário curto e BLOBs de 12 bytes (listas vazias).
 
 Dimensionamento: os 340 MB do Ont são páginas livres de um pico anterior (o SQLite não devolve espaço sem `VACUUM`); o conteúdo vivo é ~1,3 MB. Ler o banco custa pouco (o SQLite só lê as páginas usadas), mas ele precisa ser extraído do zip para um arquivo temporário (SQLite não lê de stream), o que leva os 340 MB ao disco.
 
@@ -381,5 +381,5 @@ Leitura para o desenho: os bancos não são histórico nem log; mostram o **esta
 ## 12. Em aberto
 
 1. Rotação: confirmar se o adapter verifica tamanho em hh:30 (limite em torno de 50–60 MB) e se o sensitive nunca rota (cobre desde 2026-08-28). Afeta o pior caso de volume.
-2. Codificação do `_INTEGRATION_MESSAGE_CONTENT` (binário proprietário): só vale investigar se a proposta P3 for aceita.
+2. ~~Codificação do `_INTEGRATION_MESSAGE_CONTENT`~~: **descoberta (2026-10-19, issue #74)**: XML binário do .NET/WCF ([MS-NBFX]) produzido por `DataContractSerializer`, 12 bytes de cabeçalho + registros com strings inline; a árvore é o objeto .NET (campos `…Field`, pares `…FieldSpecified`, `i:nil`), não o XML de rede. Decodificador em `src/dmslog/msgqueue/nbfx.py`; tradução para o XML de rede em `msgqueue/translate.py`.
 3. Prefixo do `msg` do sensitive do Wfm em DebugLog (`… content:` + resumo) não mudou, mas o resumo convive com o payload completo nas janelas: confirmar com o Jefferson se o resumo deve ser exibido junto do payload ou escondido quando houver payload.

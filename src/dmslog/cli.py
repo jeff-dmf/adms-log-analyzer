@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import platform
+import sqlite3
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from . import __version__, messages
 from .aliases import describe as describe_aliases
@@ -81,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("path", metavar="PATH", help=messages.HELP_INGEST_PATH)
     ingest.add_argument("--case", metavar="NAME", default=None, help=messages.HELP_INGEST_CASE)
     ingest.add_argument("--all-logs", action="store_true", help=messages.HELP_INGEST_ALL)
+    ingest.add_argument("--message-queue", action="store_true", help=messages.HELP_INGEST_QUEUE)
 
     watch = sub.add_parser(
         "watch", help=messages.HELP_WATCH, description=messages.HELP_WATCH, parents=[data_dir_parent]
@@ -274,6 +277,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     try:
         options = IngestOptions(scope=scope, case_name=case, limits=limits, aliases=plan_aliases)
         result = run_ingest(conn, args.path, options, progress)
+        queue_line = _read_queue_cli(conn, args, result, db_path, data_dir)
     except CollectionConflictError as exc:
         print(messages.INGEST_CONFLICT.format(case=case, error=_shown(exc, data_dir)), file=sys.stderr)
         return EXIT_CONFLICT
@@ -312,8 +316,34 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     )
     for warning in result.warnings:
         print(messages.INGEST_WARNING.format(message=warning))
+    if queue_line is not None:
+        print(queue_line)
     print(messages.INGEST_CASE_DB.format(path=db_path))
     return EXIT_FAILED if result.sources_failed else 0
+
+
+def _read_queue_cli(
+    conn: Any, args: argparse.Namespace, result: Any, db_path: Path, data_dir: Path
+) -> str | None:
+    """``--message-queue``: read the queue databases of the collection just indexed; the line to print.
+
+    The CLI is explicit per run: without the flag it never reads them, whatever the case option says.
+    """
+    if not getattr(args, "message_queue", False) or not result.collection_id:
+        return None
+    from .ingest.discover import SourceNotFoundError, UnsafeArchiveError
+    from .msgqueue import ingest as queue_ingest
+    from .store import queue as queue_store
+
+    queue_store.set_enabled(conn, True)
+    conn.commit()
+    try:
+        summary = queue_ingest.read_collection(conn, db_path.parent, args.path, result.collection_id)
+    except (SourceNotFoundError, UnsafeArchiveError, OSError, ValueError, sqlite3.Error) as exc:
+        return messages.INGEST_QUEUE_FAILED.format(error=_shown(exc, data_dir))
+    return messages.INGEST_QUEUE.format(
+        dbs=summary.dbs, items=summary.items, pending=summary.pending, errors=summary.errors
+    )
 
 
 def _id_list_option(raw: str | None, option: str) -> list[int] | None:
