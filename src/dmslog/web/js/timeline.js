@@ -616,6 +616,9 @@ export function initTimeline(container, {
     }
   });
   resizer.addEventListener("dblclick", () => setUserHeight(null, true));
+  // A shorter window caps a dragged height again; the plot may keep its size, so the observer alone would not notice.
+  const onWindowResize = () => applyHeight();
+  window.addEventListener("resize", onWindowResize);
   applyHeight();
 
   const resizeObserver =
@@ -653,6 +656,7 @@ export function initTimeline(container, {
       resizeObserver.disconnect();
     }
     themeObserver.disconnect();
+    window.removeEventListener("resize", onWindowResize);
     if (media && media.removeEventListener) {
       media.removeEventListener("change", onMedia);
     }
