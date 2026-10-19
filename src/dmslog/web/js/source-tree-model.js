@@ -124,6 +124,10 @@ export function matchedIds(tree, query, sources) {
 export function impliedOpen(open) {
   const all = new Set(open);
   for (const key of open) {
+    const bar = key.indexOf("|"); // "C1|A/B/": the collection's own folder is an ancestor too
+    if (bar >= 0 && bar < key.length - 1) {
+      all.add(key.slice(0, bar + 1));
+    }
     for (let at = key.indexOf("/"); at >= 0 && at < key.length - 1; at = key.indexOf("/", at + 1)) {
       all.add(key.slice(0, at + 1));
     }

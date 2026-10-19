@@ -94,7 +94,7 @@ test("the open folders are remembered as a list of keys and bad text is ignored"
 
 test("a folder with an open folder inside is open, and closing it closes what is inside", () => {
   assert.deepEqual([...impliedOpen(new Set(["A/B/C/"]))].sort(), ["A/", "A/B/", "A/B/C/"]);
-  assert.deepEqual([...impliedOpen(new Set(["C1|A/B/"]))].sort(), ["C1|A/", "C1|A/B/"]);
+  assert.deepEqual([...impliedOpen(new Set(["C1|A/B/"]))].sort(), ["C1|", "C1|A/", "C1|A/B/"]);
   assert.deepEqual([...closed(new Set(["A/", "A/B/", "X/"]), "A/")], ["X/"]);
   // A chain A/B that later splits into A and A/B keeps both open.
   const before = buildTree([src(1, "A/B/x.log")]);
@@ -103,4 +103,15 @@ test("a folder with an open folder inside is open, and closing it closes what is
   const after = buildTree([src(1, "A/B/x.log"), src(2, "A/y.log")]);
   const rows = visibleRows(after, open, null);
   assert.deepEqual(rows.map((r) => [r.node.name, r.open]), [["A", true], ["B", true], ["x.log", false], ["y.log", false]]);
+});
+
+test("a chain inside a collection that splits keeps the collection folder open too", () => {
+  const two = (extra) => [src(1, "A/B/x.log", { collection: 1 }), src(2, "Z/q.log", { collection: 2 }), ...extra];
+  const before = buildTree(two([]));
+  assert.equal(before.roots[0].name, "C1/A/B");
+  const open = defaultOpen(before);
+  const after = buildTree(two([src(3, "Other/y.log", { collection: 1 })]));
+  const names = visibleRows(after, open, null).map((r) => r.node.name);
+  assert.deepEqual(names.slice(0, 4), ["C1", "A/B", "x.log", "Other"]);
+  assert.deepEqual([...impliedOpen(new Set(["C1|A/B/"]))].sort(), ["C1|", "C1|A/", "C1|A/B/"]);
 });
