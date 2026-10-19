@@ -293,6 +293,10 @@ class _Decoder:
     def count_text(self, size: int, offset: int) -> None:
         if size > self.limits.max_text:
             self.fail("text_too_large", offset)
+        self.add_total_text(size, offset)
+
+    def add_total_text(self, size: int, offset: int) -> None:
+        """Every character of decoded text enters the running total exactly once."""
         self.total_text += size
         if self.total_text > self.limits.max_total_text:
             self.fail("text_too_large", offset)
@@ -390,8 +394,12 @@ class _Decoder:
             if item & 1 or not _is_text_record(item) or item == _START_LIST:
                 self.fail("unknown_record", item_start)
             piece = self.scalar_text(item, item_start)[0]
+            # The piece was counted by scalar_text(); only the separator is new, and the joined text has its own limit.
             joined += len(piece) + (1 if items else 0)
-            self.count_text(joined, item_start)
+            if joined > self.limits.max_text:
+                self.fail("text_too_large", item_start)
+            if items:
+                self.add_total_text(1, item_start)
             items.append(piece)
             self.count_node()
 

@@ -584,3 +584,17 @@ def test_list_and_base64_respect_max_text_on_the_resulting_text():
     raw = w.Val("bytes", b"123456")  # 6 bytes -> 8 characters of base64: fits
     assert decode(body(w.text_record(raw)), limits).children == (Text("MTIzNDU2", "bytes"),)
     assert error_of(body(w.text_record(w.Val("bytes", b"1234567"))), limits).code == "text_too_large"
+
+
+def test_a_long_valid_list_is_not_counted_twice():
+    # 5,000 one-digit integers: 9,999 characters joined, far below the default limits. Each character counts once.
+    items = [w.Val("int8", 7)] * 5000
+    tree = decode(body(w.text_record(w.Val("list", items))))
+    assert len(tree.children[0].value) == 9999
+    # The running total grows by the text plus one separator per item, not by the joined length every time.
+    limits = Limits(max_total_text=10_000)
+    assert decode(body(w.text_record(w.Val("list", items))), limits).children[0].value.count(" ") == 4999
+    assert (
+        error_of(body(w.text_record(w.Val("list", items))), Limits(max_total_text=9_998)).code
+        == "text_too_large"
+    )
