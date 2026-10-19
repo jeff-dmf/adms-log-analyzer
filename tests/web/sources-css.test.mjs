@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const read = (name) => fs.readFileSync(new URL("../../src/dmslog/web/" + name, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("css/sources.css").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -48,8 +49,8 @@ test("collections: the list scrolls after about six rows, the remove item has th
   assert.match(collections, /\.col-fold\[aria-expanded="true"\]::before/);
 });
 
-test("index.html loads sources.css after app.css and carries the case header the panel is given", () => {
-  assert.ok(html.indexOf("/css/sources.css") > html.indexOf("/css/app.css"));
+test("the bundle has sources.css after app.css and carries the case header the panel is given", () => {
+  assert.ok(sheetIndex("sources.css") > sheetIndex("app.css"));
   for (const id of ["case-header", "case-header-name", "case-row", "case-add-files", "case-header-menu", "add-files-host"]) {
     assert.match(html, new RegExp('id="' + id + '"'), id);
     assert.match(main, new RegExp('byId\\("' + id + '"\\)'), id + " reaches the panel");

@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const read = (rel) => fs.readFileSync(new URL("../../src/dmslog/web/" + rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const css = read("css/compare-views.css");
@@ -37,6 +38,6 @@ test("[hidden] wins over the display of the groups and the row tools", () => {
   assert.match(css, /\.cv-group\[hidden\][\s\S]*display: none !important/);
 });
 
-test("the sheet is linked from index.html", () => {
-  assert.match(read("index.html"), /<link rel="stylesheet" href="\/css\/compare-views\.css">/);
+test("the sheet is part of the page bundle", () => {
+  assert.ok(pageLinksBundle(read("index.html")) && inBundle("compare-views.css"));
 });

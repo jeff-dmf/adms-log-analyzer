@@ -316,7 +316,7 @@ function initPanel(host, { api, getCase, getFilter, getFieldNames, onDrill, onRe
     }
     let uPlot;
     try {
-      uPlot = (await import("../vendor/uplot/uPlot.esm.js")).default;
+      uPlot = (await import("../vendor/uplot/uPlot.esm.min.js")).default;
     } catch (err) {
       return; // no chart: the table is still there
     }

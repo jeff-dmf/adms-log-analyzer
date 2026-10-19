@@ -1,0 +1,47 @@
+# The stylesheets of the page, in cascade order. tools/build_web_css.py concatenates them into bundle.css,
+# which index.html links alone (one request instead of 44). Edit this list or any sheet, then run
+# `python tools/build_web_css.py`; test_web_assets fails when bundle.css is stale.
+tokens.css
+components.css
+app.css
+topbar.css
+status-bar.css
+grid-extras.css
+dock.css
+column-resize.css
+source-filter.css
+sources.css
+filter-tree.css
+bookmarks.css
+case-files.css
+case-dialogs.css
+collections.css
+clock.css
+alerts.css
+../vendor/uplot/uPlot.min.css
+timeline.css
+events.css
+dashboard.css
+aggregate.css
+panels.css
+extract.css
+unknown-panel.css
+config-panel.css
+links.css
+key-panel.css
+payload.css
+payload-list.css
+highlight.css
+distinct.css
+filter-strip.css
+views-stack.css
+export.css
+preferences.css
+copy-export.css
+presets.css
+knowledge.css
+repeats.css
+compare-views.css
+shortcuts.css
+commands.css
+responsive.css

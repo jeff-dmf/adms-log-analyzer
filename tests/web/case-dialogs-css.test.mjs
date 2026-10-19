@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const read = (name) => fs.readFileSync(new URL("../../src/dmslog/web/" + name, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const strip = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -68,8 +69,7 @@ function matches(parts, chain, end = chain.length - 1, idx = parts.length - 1) {
   return false;
 }
 
-const html = read("index.html");
-const order = [...html.matchAll(/href="\/css\/([\w-]+\.css)"/g)].map((m) => m[1]);
+const order = SHEET_ORDER.filter((name) => !name.startsWith(".."));
 const rules = order.flatMap((name) => blocks(strip(read("css/" + name)))).map((r, i) => ({ ...r, order: i, parts: complex(r.sel) }))
   .map((r) => ({ ...r, spec: spec(r.parts) }));
 

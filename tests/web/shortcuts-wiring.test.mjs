@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createActionRegistry, isSingleKey } from "../../src/dmslog/web/js/actions.js";
 import { registerAppActions } from "../../src/dmslog/web/js/app-actions.js";
 import { S } from "../../src/dmslog/web/js/strings.js";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/dmslog/web");
 const read = (file) => fs.readFileSync(path.join(WEB, file), "utf8").replace(/\r\n/g, "\n");
@@ -40,7 +41,7 @@ test("the skip link shows only while focused; the sheet is linked before the res
   assert.match(css, /\.skip-link\s*\{[^}]*transform:\s*translateY\(-300%\)/);
   assert.match(css, /\.skip-link:focus[^{]*\{[^}]*transform:\s*none/);
   assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(css), "tokens only");
-  assert.ok(html.indexOf("/css/shortcuts.css") > 0 && html.indexOf("/css/shortcuts.css") < html.indexOf("/css/responsive.css"));
+  assert.ok(sheetIndex("shortcuts.css") > 0 && sheetIndex("shortcuts.css") < sheetIndex("responsive.css"));
 });
 
 test("main.js no longer listens for letters; the layer loads after the first view and is tried again after a failure", () => {

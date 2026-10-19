@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 import { literalColors } from "./fixtures/css-named-colors.mjs";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const WEB = new URL("../../src/dmslog/web/", import.meta.url);
 const read = (file) => fs.readFileSync(new URL(file, WEB), "utf8").replace(/\r\n/g, "\n");
@@ -72,7 +73,7 @@ test("Shift+F10 goes through the same request (generation, shown record, selecti
 });
 
 test("commands.css is linked, uses tokens only and has a forced-colors block", () => {
-  assert.match(read("index.html"), /<link rel="stylesheet" href="\/css\/commands\.css">/);
+  assert.ok(pageLinksBundle(read("index.html")) && inBundle("commands.css"));
   const css = stripComments(read("css/commands.css"));
   assert.deepEqual(literalColors(css.replace(/@media \(forced-colors: active\)[\s\S]*$/, "")), []);
   assert.match(css, /@media \(forced-colors: active\)/);

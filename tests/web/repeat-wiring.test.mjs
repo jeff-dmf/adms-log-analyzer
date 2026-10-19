@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { SHEET_ORDER, inBundle, sheetIndex, pageLinksBundle } from "./fixtures/sheets.mjs";
 
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/dmslog/web");
 const read = (file) => fs.readFileSync(path.join(WEB, file), "utf8").replace(/\r\n/g, "\n");
@@ -29,7 +30,7 @@ test("index.html has the detail section right after the text (reading order) and
   assert.ok(html.indexOf('id="detail-text"') < html.indexOf('id="detail-repeat"'));
   assert.ok(html.indexOf('id="detail-repeat"') < html.indexOf('id="detail-knowledge"'));
   assert.match(html, /<section id="detail-repeat"[^>]* hidden>/);
-  assert.match(html, /href="\/css\/repeats\.css"/);
+  assert.ok(pageLinksBundle(html) && inBundle("repeats.css"));
   assert.doesNotMatch(html, /modulepreload" href="\/js\/(repeat|missing)/, "late modules are not preloaded");
 });
 
