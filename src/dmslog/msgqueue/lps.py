@@ -45,6 +45,7 @@ import time
 import unicodedata
 import uuid
 import zipfile
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -62,6 +63,9 @@ MAX_BANK_BODY_BYTES = 256 * 1024 * 1024
 MAX_ITEMS = 200_000
 MAX_DB_BYTES = 2 * 1024**3
 MAX_WAL_BYTES = 1024**3
+MAX_RUN_BYTES = (
+    8 * 1024**3
+)  # every byte copied by one reading of a collection (retries and fallbacks included)
 READ_TIMEOUT_S = 60.0
 COPY_BLOCK = 1024 * 1024
 COPY_ATTEMPTS = 3
@@ -115,6 +119,18 @@ class _BankError(Exception):
         self.code = code
 
 
+class CopyBudget:
+    """The bytes one reading may still copy, shared by all its banks (many valid databases are no bomb)."""
+
+    def __init__(self, total: int) -> None:
+        self.remaining = int(total)
+
+    def take(self, size: int) -> None:
+        self.remaining -= size
+        if self.remaining < 0:
+            raise _BankError("run_budget_exceeded")
+
+
 @dataclass(frozen=True)
 class Limits:
     max_body_bytes: int = MAX_BODY_BYTES
@@ -122,6 +138,7 @@ class Limits:
     max_items: int = MAX_ITEMS
     max_db_bytes: int = MAX_DB_BYTES
     max_wal_bytes: int = MAX_WAL_BYTES
+    max_run_bytes: int = MAX_RUN_BYTES
     read_timeout_s: float = READ_TIMEOUT_S
     copy_attempts: int = COPY_ATTEMPTS
 
@@ -319,8 +336,13 @@ def _copy_one(
     max_bytes: int,
     progress: Callable[[str, int, int], None] | None,
     cancelled: Callable[[], bool] | None,
+    budget: CopyBudget | None = None,
 ) -> int:
-    """Copy one member to ``dest`` (fixed private name, ``O_EXCL``), counting the bytes really read."""
+    """Copy one member to ``dest`` (fixed private name, ``O_EXCL``), counting the bytes really read.
+
+    Every block also counts against the shared ``budget`` of the run. A damaged stream (bad deflate data, CRC)
+    is ``extract_failed`` for this bank only.
+    """
     if src.size > max_bytes:
         raise _BankError("too_large")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
@@ -337,9 +359,13 @@ def _copy_one(
                 done += len(block)
                 if done > max_bytes:
                     raise _BankError("too_large")
+                if budget is not None:
+                    budget.take(len(block))
                 out.write(block)
                 if progress is not None:
                     progress(src.file_name, done, src.size)
+    except (zlib.error, zipfile.BadZipFile, EOFError) as exc:
+        raise _BankError("extract_failed") from exc
     finally:
         os.close(fd)
     return done
@@ -354,6 +380,7 @@ def _copy_bank(
     limits: Limits,
     progress: Callable[[str, int, int], None] | None,
     cancelled: Callable[[], bool] | None,
+    budget: CopyBudget | None = None,
 ) -> tuple[bool, list[str]]:
     """Copy ``q.db3`` (and ``q.db3-wal``) into ``folder``. Returns (wal_copied, warnings).
 
@@ -372,11 +399,11 @@ def _copy_bank(
         )
         for leftover in (db_dest, wal_dest):
             leftover.unlink(missing_ok=True)
-        _copy_one(source, files.db, db_dest, limits.max_db_bytes, progress, cancelled)
+        _copy_one(source, files.db, db_dest, limits.max_db_bytes, progress, cancelled, budget)
         wal_copied = False
         if wal_src is not None:
             try:
-                _copy_one(source, wal_src, wal_dest, limits.max_wal_bytes, progress, cancelled)
+                _copy_one(source, wal_src, wal_dest, limits.max_wal_bytes, progress, cancelled, budget)
                 wal_copied = wal_dest.stat().st_size > 0
             except FileNotFoundError:
                 wal_copied = False  # a checkpoint removed it between the listing and the copy
@@ -595,8 +622,12 @@ def read_bank(
     limits: Limits = Limits(),  # noqa: B008 (frozen)
     progress: Callable[[str, int, int], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
+    budget: CopyBudget | None = None,
 ) -> BankResult:
-    """Copy one database (and its WAL) to a private temporary folder, read it, delete the folder."""
+    """Copy one database (and its WAL) to a private temporary folder, read it, delete the folder.
+
+    ``budget`` (shared by the banks of one reading) caps every byte copied, repeats and the fallback included.
+    """
     base = {
         "member": files.member,
         "cache": files.cache,
@@ -638,6 +669,7 @@ def read_bank(
                     limits=limits,
                     progress=progress,
                     cancelled=cancelled,
+                    budget=budget,
                 )
                 warnings.extend(copy_warnings)
                 if not _has_sqlite_header(first / "q.db3"):
@@ -659,6 +691,7 @@ def read_bank(
                         limits=limits,
                         progress=progress,
                         cancelled=cancelled,
+                        budget=budget,
                     )
                     snapshot = "wal_failed"
                     try:
@@ -694,6 +727,7 @@ __all__ = [
     "COLUMNS",
     "BankFiles",
     "BankResult",
+    "CopyBudget",
     "DbRead",
     "Limits",
     "QueueRow",

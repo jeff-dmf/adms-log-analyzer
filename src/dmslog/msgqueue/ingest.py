@@ -100,6 +100,8 @@ def _to_bank_in(result: lps.BankResult, read_at: str) -> store.BankIn:
             )
             for r in result.items
         ],
+        warnings=tuple(result.warnings),
+        skipped_rows=result.skipped_rows,
     )
 
 
@@ -166,6 +168,7 @@ def read_collection(
     if conn.in_transaction:
         conn.commit()
     unchanged = 0
+    budget = lps.CopyBudget(limits.max_run_bytes)  # one cap for every byte this reading copies
 
     def emit(status: str, name: str, done: int, total: int, outcome: str | None = None) -> None:
         if progress is not None:
@@ -186,7 +189,9 @@ def read_collection(
         def copy_progress(file_name: str, done: int, size: int, _name: str = name) -> None:
             emit("queue_progress", file_name, done, size)
 
-        result = lps.read_bank(files, case_dir, limits=limits, progress=copy_progress, cancelled=cancelled)
+        result = lps.read_bank(
+            files, case_dir, limits=limits, progress=copy_progress, cancelled=cancelled, budget=budget
+        )
         read_at = datetime.now().isoformat(timespec="seconds")
         outcome = _store_bank(conn, collection_id, result, read_at)
         emit("queue_done", name, total, total, outcome)

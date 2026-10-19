@@ -190,7 +190,7 @@ def _migrate_to_7(conn: sqlite3.Connection) -> None:
 
 _QUEUE_DDL = (
     """CREATE TABLE IF NOT EXISTS queue_db(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   collection_id INTEGER NOT NULL,
   member TEXT NOT NULL,
   cache TEXT NOT NULL,
@@ -201,10 +201,12 @@ _QUEUE_DDL = (
   status TEXT NOT NULL,
   error TEXT,
   items INTEGER NOT NULL DEFAULT 0,
+  warnings TEXT NOT NULL DEFAULT '',
+  skipped_rows INTEGER NOT NULL DEFAULT 0,
   read_at TEXT NOT NULL,
   UNIQUE(collection_id, member))""",
     """CREATE TABLE IF NOT EXISTS queue_item(
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,  -- never reused: a preview must not mix an old row with a new body
   db_id INTEGER NOT NULL REFERENCES queue_db(id),
   item_id INTEGER NOT NULL,
   message_id TEXT,

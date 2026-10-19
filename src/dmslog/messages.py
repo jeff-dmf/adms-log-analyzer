@@ -185,6 +185,7 @@ JOB_DONE_WITH_FAILURES = "Indexed {records} records; {failed} of {sources} sourc
 JOB_CANCELLED = "Indexing was cancelled because the server is stopping"
 JOB_FAILED = "Indexing failed: {error}"
 JOB_QUEUE_DONE = "Message queue: {dbs} databases, {items} items ({pending} pending)"
+JOB_QUEUE_REMOVED = "Message queue data removed: {dbs} databases, {items} items"
 JOB_UNSAFE = "Unsafe or invalid archive: {error}"
 
 API_BAD_KEY_TYPE = "key type must be 1 to 64 letters, digits, '.', '_' or '-'"

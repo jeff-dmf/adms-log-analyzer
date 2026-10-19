@@ -605,6 +605,21 @@ class IngestJobs:
         done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
         try:
             conn = db.create_case_db(self._store.db_path(case_id))
+            # The job slot is held, so no removal can run now: read only collections that still exist.
+            marks = ",".join("?" * len(collections))
+            alive = {
+                int(row[0])
+                for row in conn.execute(
+                    f"SELECT id FROM collection WHERE id IN ({marks})", [c[0] for c in collections]
+                )  # noqa: S608
+            }
+            collections = [item for item in collections if item[0] in alive]
+            if not collections:
+                done.update(
+                    code="collection_not_found",
+                    message=messages.JOB_FAILED.format(error="collection removed"),
+                )
+                return
             queue_store.set_enabled(conn, True)
             conn.commit()
             self._read_queue(conn, case_id, collections, hub, job_id, done)
@@ -1994,7 +2009,10 @@ class Api:
         return Response(202, {"job_id": self.jobs.start_queue(cid, collections)})
 
     def queue_delete(self, request: Request) -> Response:
-        """``DELETE /api/cases/{case}/queue?group=``: forget what was read (the case option is unchanged)."""
+        """``DELETE /api/cases/{case}/queue?group=``: forget what was read (the case option is unchanged).
+
+        It takes the case's job slot like a collection removal does, so it cannot run beside a reading.
+        """
         cid = self.store.require(request.match["case"])
         raw = request.query.get("group")
         group: int | None = None
@@ -2002,16 +2020,30 @@ class Api:
             if not _ENTRY_ID.match(raw):
                 raise ApiError(400, "invalid_field", messages.API_BAD_INT.format(field="group"))
             group = int(raw)
-            with self.store.reader(cid) as conn:
-                found = conn.execute("SELECT 1 FROM collection WHERE ers_group = ?", (group,)).fetchone()
-            if found is None:
-                raise ApiError(
-                    404, "collection_not_found", messages.API_COLLECTION_NOT_FOUND.format(group=group)
-                )
-        if self.jobs.is_running(cid):
+        hub = self.jobs.hub(cid)
+        job_id = uuid.uuid4().hex[:12]
+        if self.jobs.stopping.is_set() or not hub.try_begin(job_id):
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=cid))
-        with closing(db.create_case_db(self.store.db_path(cid))) as conn:
-            banks, items = queue_store.delete_queue(conn, group)
+        done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
+        try:
+            with closing(db.create_case_db(self.store.db_path(cid))) as conn:
+                if group is not None:
+                    found = conn.execute("SELECT 1 FROM collection WHERE ers_group = ?", (group,)).fetchone()
+                    if found is None:
+                        raise ApiError(
+                            404, "collection_not_found", messages.API_COLLECTION_NOT_FOUND.format(group=group)
+                        )
+                banks, items = queue_store.delete_queue(conn, group)
+            done.update(status="ok", queue_removed={"dbs": banks, "items": items})
+            done["message"] = messages.JOB_QUEUE_REMOVED.format(dbs=banks, items=items)
+        except ApiError as exc:
+            done.update(code=exc.code, message=exc.message)
+            raise
+        except Exception as exc:
+            done.update(code="internal_error", message=messages.JOB_FAILED.format(error=type(exc).__name__))
+            raise
+        finally:
+            hub.finish(done)
         return Response(200, {"dbs": banks, "items": items})
 
     # -- redaction profile and the .txt export (report/redact.py, report/export.py)

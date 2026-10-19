@@ -158,7 +158,9 @@ def parse_items_query(query: Mapping[str, str]) -> ItemsParams:
 
 def _warnings(db: Mapping[str, Any]) -> list[str]:
     """Warnings that can be derived from what the store keeps (the reader's own warnings are not stored)."""
-    out: list[str] = []
+    out: list[str] = list(db.get("warnings") or [])
+    if db.get("skipped_rows"):
+        out.append("rows_skipped")
     if db["status"] == "ready":
         if db["snapshot"] == "no_wal":
             out.append("no_wal")
@@ -168,7 +170,7 @@ def _warnings(db: Mapping[str, Any]) -> list[str]:
             out.append("items_truncated")
         if db["bodies_missing"]:
             out.append("bodies_missing")
-    return out
+    return list(dict.fromkeys(out))
 
 
 def summary(conn: Any) -> dict[str, Any]:
@@ -294,9 +296,10 @@ def preview(
     form = query.get("form") or "wire"
     if form not in FORMS:
         raise QueueParamError("bad_form")
-    row = queue.get_item(conn, row_id)
-    if row is None:
+    found = queue.get_item_body(conn, row_id)
+    if found is None:
         raise QueueNotFound("queue_item_not_found", item=row_id)
+    row, stored_body = found
     item = _decorate(conn, [row])[0]
     out: dict[str, Any] = {
         "item": item,
@@ -307,7 +310,7 @@ def preview(
         "reconstruction": None,
         "formatted": None,
     }
-    body = queue.get_body(conn, row_id) if row["preview"] == "available" else None
+    body = stored_body if row["preview"] == "available" else None
     if body is None:
         out["reason"] = "too_large" if row["preview"] == "too_large" else "no_body"
         return out

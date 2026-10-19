@@ -508,7 +508,11 @@ def test_migration_8_adds_the_queue_tables_to_a_version_7_case_with_data(tmp_pat
     assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name LIKE '%queue%'").fetchall()
     tables = ("entry", "meta", "collection", "source")
     before = {t: conn.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall() for t in tables}
-    other = "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE '%queue%' ORDER BY name"
+    # AUTOINCREMENT adds sqlite_sequence (SQLite's own bookkeeping table): not a change of the app's schema.
+    other = (
+        "SELECT name, sql FROM sqlite_master"
+        " WHERE name NOT LIKE '%queue%' AND name <> 'sqlite_sequence' ORDER BY name"
+    )
     schema_before = conn.execute(other).fetchall()
     assert migrate(conn) == SCHEMA_VERSION == 8
     created = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE name GLOB '*queue*'")}

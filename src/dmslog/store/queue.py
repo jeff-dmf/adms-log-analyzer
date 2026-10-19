@@ -95,6 +95,8 @@ class BankIn:
     snapshot: str | None = None
     error: str | None = None
     items: Iterable[ItemIn] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = ()  # codes the reader reported (live_copy_unstable, ...), kept with the bank
+    skipped_rows: int = 0  # rows the reader could not use
 
 
 @dataclass(slots=True)
@@ -184,18 +186,21 @@ def replace_bank(conn: sqlite3.Connection, collection_id: int, member: str, bank
             bank.status,
             bank.error if bank.status == "error" else None,
             bank.read_at,
+            ",".join(w for w in bank.warnings if re.fullmatch(r"[a-z_]{1,40}", w))[:400],
+            max(0, int(bank.skipped_rows)),
         )
         if row is None:
             bank_id = conn.execute(
                 "INSERT INTO queue_db(collection_id, member, cache, adapter, db_size, wal_size,"
-                " fingerprint, snapshot, status, error, items, read_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                " fingerprint, snapshot, status, error, items, read_at, warnings, skipped_rows)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
                 (collection_id, member, *values),
             ).lastrowid
         else:
             conn.execute(
                 "UPDATE queue_db SET cache = ?, adapter = ?, db_size = ?, wal_size = ?, fingerprint = ?,"
-                " snapshot = ?, status = ?, error = ?, items = 0, read_at = ? WHERE id = ?",
+                " snapshot = ?, status = ?, error = ?, items = 0, read_at = ?, warnings = ?, skipped_rows = ?"
+                " WHERE id = ?",
                 (*values, bank_id),
             )
         stored = _write_items(conn, bank_id, bank.items) if ready else 0
@@ -344,7 +349,7 @@ def summary(conn: sqlite3.Connection, *, timeout_s: float | None = PAGE_TIMEOUT_
         }
         for r in conn.execute(
             f"SELECT d.id, d.collection_id, {_GROUP}, d.member, d.cache, d.adapter, d.snapshot, d.status,"
-            " d.error, d.items, d.db_size, d.wal_size, d.read_at"
+            " d.error, d.items, d.db_size, d.wal_size, d.read_at, d.warnings, d.skipped_rows"
             " FROM queue_db d LEFT JOIN collection c ON c.id = d.collection_id"
             " ORDER BY coalesce(" + _GROUP + ", d.collection_id), d.member, d.id"
         ):
@@ -369,6 +374,8 @@ def summary(conn: sqlite3.Connection, *, timeout_s: float | None = PAGE_TIMEOUT_
                     "db_size": r[10],
                     "wal_size": r[11],
                     "read_at": r[12],
+                    "warnings": [w for w in r[13].split(",") if w],
+                    "skipped_rows": r[14],
                 }
             )
     totals = {
@@ -405,6 +412,24 @@ def _item(row: tuple[Any, ...]) -> dict[str, Any]:
         "size": row[11],
         "preview": _preview(row[12], row[11]),
     }
+
+
+def get_item_body(conn: sqlite3.Connection, row_id: int) -> tuple[dict[str, Any], bytes | None] | None:
+    """One item and its raw BLOB from ONE statement (one consistent snapshot), or None.
+
+    The body is None when none is stored. Reading them with two statements could pair the metadata of one
+    item with the body of another if the bank was read again in between.
+    """
+    if not has_queue(conn):
+        return None
+    row = conn.execute(  # noqa: S608
+        f"SELECT {_ITEM_COLUMNS}, b.body{_ITEM_FROM}"
+        " LEFT JOIN queue_body b ON b.item_id = i.id WHERE i.id = ?",
+        (row_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _item(row[:-1]), (None if row[-1] is None else bytes(row[-1]))
 
 
 def get_item(conn: sqlite3.Connection, row_id: int) -> dict[str, Any] | None:
