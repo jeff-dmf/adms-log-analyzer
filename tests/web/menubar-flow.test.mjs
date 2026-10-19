@@ -13,7 +13,7 @@ import { S } from "../../src/dmslog/web/js/strings.js";
 import { makeDoc, menuEls, menuItems, tick, until } from "./fixtures/fake-dom.mjs";
 
 const PANELS = ["filterTree", "highlights", "bookmarks", "alerts", "distinct", "groupByType", "aggregate", "panels", "extract", "compareViews", "operations",
-  "dashboard", "missingSteps", "payloads", "unknownTypes", "config", "export"];
+  "dashboard", "missingSteps", "payloads", "unknownTypes", "config", "messageQueue", "export"];
 
 function setup({ caseId = 1, ready = {}, theme = "system" } = {}) {
   const doc = makeDoc();
@@ -120,15 +120,15 @@ test("without a case only the case menu, the View menu and Keyboard shortcuts wo
   assert.ok(toggles.every((t) => !t.disabled && t.title === ""));
 });
 
-test("the Analyze menu lists the twelve analyses in order and each one opens its panel (a second click closes it)", async () => {
+test("the Analyze menu lists the thirteen analyses in order and each one opens its panel (a second click closes it)", async () => {
   const { doc, refs, dock, calls } = setup();
   const menu = open(doc, refs.menus.analyze);
   assert.deepEqual(labels(menu), [
     S.actDistinct, S.actGroupByType, S.actAggregate, S.actPanels, S.actExtract, S.actCompareViews, S.actOperations, S.actDashboard, S.actMissingSteps, S.actPayloads, S.actUnknownTypes,
-    S.actConfig,
+    S.actConfig, S.actMessageQueue,
   ]);
   assert.equal(refs.menus.analyze.attrs["aria-expanded"], "true");
-  const ids = ["distinct", "groupByType", "aggregate", "panels", "extract", "compareViews", "operations", "dashboard", "missingSteps", "payloads", "unknownTypes", "config"];
+  const ids = ["distinct", "groupByType", "aggregate", "panels", "extract", "compareViews", "operations", "dashboard", "missingSteps", "payloads", "unknownTypes", "config", "messageQueue"];
   for (let i = 0; i < ids.length; i += 1) {
     const m = open(doc, refs.menus.analyze);
     assert.equal(menuItems(m)[i].attrs["aria-checked"], "false");

@@ -35,7 +35,8 @@ export class CollectionsPanel {
   // loadMenu() -> Promise of the ui-menu.js module (loaded on the first click of a row's menu; tests replace it).
   // clock (optional, 9.15): { align(group, opener) -> Promise, reset(group) -> Promise, busy() -> boolean }; without it the row
   // menu has no clock items. onList(collections, ordering, clocks): `clocks` is "raw" or "adjusted".
-  constructor({ host, note, api, getCase, onSelection, onList, onRemoved, onMessage, loadMenu, clock }) {
+  // onReadQueue(group) (issue #74): the row menu's "Read message queue…" item; without it the menu has no such item.
+  constructor({ host, note, api, getCase, onSelection, onList, onRemoved, onMessage, loadMenu, clock, onReadQueue }) {
     this.host = host;
     this.note = note;
     this.api = api;
@@ -45,6 +46,7 @@ export class CollectionsPanel {
     this.onRemoved = onRemoved || (() => Promise.resolve());
     this.onMessage = onMessage || (() => {});
     this.clock = clock || null;
+    this.onReadQueue = typeof onReadQueue === "function" ? onReadQueue : null;
     this.clocks = "raw"; // GET /collections `clocks`: "adjusted" while some collection has a clock offset
     this.collections = [];
     this.ordering = "exact";
@@ -540,6 +542,19 @@ export class CollectionsPanel {
     return items;
   }
 
+  // "Read message queue…" (issue #74) of a row's menu; none without the callback. Disabled while a removal runs.
+  queueItems(item, tag) {
+    if (this.onReadQueue === null) {
+      return [];
+    }
+    return [{
+      id: "col-read-queue",
+      label: format(S.mqReadItem, { tag }),
+      disabled: this.removing !== null,
+      run: () => this.onReadQueue(item.group),
+    }];
+  }
+
   // The dialog gives the focus back to this object, which finds the row's menu button again (the rows are drawn anew when the
   // offset changes, so the button that opened the dialog may be gone).
   alignClock(group) {
@@ -580,7 +595,7 @@ export class CollectionsPanel {
         label: format(S.colRowMenuLabel, { tag }),
         getItems: () => {
           this.claimMenu(menu, item.group); // asked at every opening: first, built, keyboard or pointer
-          return [...this.clockItems(item, tag), {
+          return [...this.clockItems(item, tag), ...this.queueItems(item, tag), {
             id: "col-remove",
             label: format(S.colRemoveItem, { tag }),
             disabled: this.removing !== null,

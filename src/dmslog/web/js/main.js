@@ -814,6 +814,8 @@ function start() {
       refreshDerived(); // Operations, Dashboard and the clock banner follow the chosen collection
       return removingChip ? undefined : applyView();
     },
+    // "Read message queue…" of a collection (issue #74): opens the tab, which runs the job and shows what it finds.
+    onReadQueue: (group) => dock.open("messageQueue", { read: group }),
     // Align / reset the clock of a collection (9.15): the dialog and the applied offset live in app-actions.js.
     clock: {
       align: (group, opener) => appActions.clock.align(group, opener),
@@ -1045,6 +1047,45 @@ function start() {
 
   // Correlation: select a linked record in the grid (falls back to the detail pane when the
   // record is filtered out), then the Links section (its side-by-side and "same key" panels are dock panels).
+  // Reads the message-queue databases of a collection (null: the host's choice) and resolves when the job ends; rejects
+  // with the job's message when it did not end well. The job's own events come on the case's progress stream.
+  const readQueueJob = async (forCase, group) => {
+    const target = group === null || group === undefined ? (collections[0] ? collections[0].group : null) : group;
+    if (target === null) {
+      throw new Error(S.mqNoCollection);
+    }
+    const started = await api.queueRead(forCase, target);
+    await new Promise((resolve, reject) => {
+      if (typeof EventSource !== "function") {
+        resolve();
+        return;
+      }
+      const events = new EventSource(api.progressUrl(forCase));
+      events.addEventListener("done", (event) => {
+        let data = {};
+        try {
+          data = JSON.parse(event.data);
+        } catch (err) {
+          data = {};
+        }
+        if (data.job_id !== started.job_id) {
+          return; // the replay of an earlier job
+        }
+        events.close();
+        if (data.status === "ok") {
+          resolve();
+        } else {
+          reject(new Error(data.message || S.mqReadFailed));
+        }
+      });
+      events.addEventListener("error", () => {
+        if (events.readyState === 2) {
+          reject(new Error(S.cfStreamClosed));
+        }
+      });
+    });
+  };
+
   const revealEntry = async ({ id, ts }) => {
     const forCase = caseId;
     try {
@@ -1463,6 +1504,16 @@ function start() {
     onError: showError,
     fieldNames: () => Array.from(seenFields),
     hasCollections: () => isMulti(collections),
+    // Message queue (issue #74): the collections for its picker, the reading job and the logged payload of an item.
+    getCollections: () => collections.map((item) => ({ group: item.group, tag: item.tag })),
+    readQueue: (forCase, group) => readQueueJob(forCase, group),
+    openPayload: async (payloadId) => {
+      const forCase = caseId;
+      const found = await api.payload(forCase, payloadId, "raw");
+      if (forCase === caseId && found && found.entry) {
+        await revealEntry({ id: found.entry.id, ts: found.entry.ts });
+      }
+    },
     clockContext,
     clockOptions: () => ({
       api,

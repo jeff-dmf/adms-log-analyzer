@@ -29,6 +29,7 @@ unknown-panel.css
 config-panel.css
 links.css
 key-panel.css
+queue.css
 payload.css
 payload-list.css
 highlight.css
