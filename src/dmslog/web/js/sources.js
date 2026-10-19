@@ -242,6 +242,9 @@ export class SourcesPanel {
       }
       if (kind === "add") {
         this.addSession += 1; // a new session of the dialog: answers to an older one are dropped
+        if (dialogs.messageQueue) {
+          dialogs.messageQueue.reset("add"); // a fresh box for this session; the case's option comes in below
+        }
         this.syncQueueOption(dialogs);
       }
       dialogs.open(kind, request.opener, { focusPath: request.focusPath });
@@ -251,12 +254,13 @@ export class SourcesPanel {
   // The message-queue box of "Add files" follows the option the case has now (best effort: without an answer it stays off).
   syncQueueOption(dialogs) {
     const caseId = this.caseId;
+    const session = this.addSession;
     if (!dialogs.messageQueue || caseId === null || typeof api.queueSummary !== "function") {
       return;
     }
     api.queueSummary(caseId).then(
       (summary) => {
-        if (this.caseId === caseId && summary) {
+        if (this.caseId === caseId && session === this.addSession && summary) {
           dialogs.messageQueue.set("add", summary.enabled === true);
         }
       },

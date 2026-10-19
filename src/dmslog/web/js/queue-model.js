@@ -363,10 +363,18 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
     return { rows, next };
   }
 
-  // Reads the summary and the first page. `applied` are the filters that produced the list on screen; a failure of a
-  // filter change puts them back (the selectors must not claim a list that is not there).
-  async function load({ applied = null, keepSelection = false } = {}) {
+  // What is really on screen: the filters of the last list that loaded and the cursor after it. A failed change puts
+  // them back (the selectors must not claim a list that is not there) and "Load more" never mixes a new filter with an
+  // old cursor: the cursor is dropped while a new first page is on its way.
+  let committed = { filters: state.filters, next: null };
+  let removeGeneration = 0; // one per case change: an older removal's answer must not touch the new case
+
+  // Reads the summary and the first page. `filterChange`: the filters in `state.filters` were just changed.
+  async function load({ filterChange = false, keepSelection = false } = {}) {
     stop();
+    if (filterChange) {
+      state.next = null; // the old cursor belongs to the old filters
+    }
     const token = generation;
     controller = new AbortController();
     const signal = controller.signal;
@@ -404,6 +412,7 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
       seen = new Set();
       take(page.rows);
       state.next = page.next;
+      committed = { filters: state.filters, next: page.next };
       state.version += 1;
       state.status = "ready";
       if (!keepSelection || (state.selectedId !== null && !seen.has(state.selectedId))) {
@@ -414,8 +423,9 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
       if (token !== generation || isAbort(error)) {
         return;
       }
-      if (applied !== null) {
-        state.filters = applied;
+      if (filterChange) {
+        state.filters = committed.filters;
+        state.next = committed.next;
       }
       if (state.summary === null) {
         state.status = "error";
@@ -438,7 +448,10 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
   }
 
   function reset() {
+    removeGeneration += 1;
+    state.removing = false;
     state.filters = defaultFilters();
+    committed = { filters: state.filters, next: null };
     state.types = [];
     state.summary = null;
     state.removed = null;
@@ -465,6 +478,7 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
       const page = pageOf(data);
       take(page.rows);
       state.next = page.next;
+      committed = { filters: committed.filters, next: page.next };
       state.loadingMore = false;
       emit();
     } catch (error) {
@@ -494,7 +508,7 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
     }
     state.filters = next;
     closePreviewState();
-    return load({ applied });
+    return load({ filterChange: true });
   }
 
   async function select(id, form = state.preview.form) {
@@ -541,14 +555,15 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
       return false;
     }
     const caseId = state.caseId;
+    const token = removeGeneration;
     state.removing = true;
     state.removeError = null;
     state.removed = null;
     emit();
     try {
       const result = await api.queueRemove(caseId, groupId === undefined ? null : groupId);
-      if (caseId !== state.caseId) {
-        return false;
+      if (token !== removeGeneration) {
+        return false; // the case changed meanwhile: reset() already cleared the state of this operation
       }
       state.removing = false;
       state.removed = { dbs: asCount(result && result.dbs), items: asCount(result && result.items) };
@@ -556,7 +571,7 @@ export function createQueueFlow({ api, getCase, onState, limit = PAGE_LIMIT }) {
       await load();
       return true;
     } catch (error) {
-      if (caseId === state.caseId) {
+      if (token === removeGeneration) {
         state.removing = false;
         state.removeError = errorText(error) || S.mqRemoveError;
         emit();

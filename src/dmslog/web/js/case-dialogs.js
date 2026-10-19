@@ -193,7 +193,7 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
 // The sensitive option of a case: "Read the message-queue databases", off by default (issue #74). A checkbox with its help
 // text always in view (aria-describedby) and, in Add files, a line that says what unchecking a case that has it on means.
 // Returns { node, checked(), set(on), baseline(on) }: baseline(on) = the state the case has now (the box follows it).
-function createQueueOption(doc) {
+export function createQueueOption(doc) {
   slotUid += 1;
   const node = doc.createElement("div");
   node.className = "cd-mq";
@@ -217,10 +217,14 @@ function createQueueOption(doc) {
   off.hidden = true;
   node.append(row, help, off);
   let was = false;
+  let touched = false; // the user changed the box in this dialog session: a late answer must not overwrite that
   const sync = () => {
     off.hidden = !(was && !box.checked);
   };
-  box.addEventListener("change", sync);
+  box.addEventListener("change", () => {
+    touched = true;
+    sync();
+  });
   return {
     node,
     checked: () => box.checked,
@@ -229,8 +233,17 @@ function createQueueOption(doc) {
       sync();
     },
     baseline(on) {
+      if (touched) {
+        return;
+      }
       was = Boolean(on);
       box.checked = was;
+      sync();
+    },
+    fresh() {
+      touched = false;
+      was = false;
+      box.checked = false;
       sync();
     },
   };
@@ -357,7 +370,7 @@ export function mountCaseDialogs({
     messageQueue: {
       wanted: (kind) => Boolean(queueOptions[kind]) && queueOptions[kind].checked(),
       set: (kind, on) => queueOptions[kind] && queueOptions[kind].baseline(on),
-      reset: (kind) => queueOptions[kind] && queueOptions[kind].set(false),
+      reset: (kind) => queueOptions[kind] && queueOptions[kind].fresh(),
     },
     close(kind) {
       if (shells[kind]) {

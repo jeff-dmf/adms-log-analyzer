@@ -390,3 +390,50 @@ test("flow: reset forgets the filters, the types and the preview of the old case
   await resetting;
   assert.equal(w.flow.state.status, "ready");
 });
+
+test("flow: Load more is blocked while a new filter's first page is on its way (no old cursor with a new filter)", async () => {
+  const w = world();
+  await loaded(w, [item(1), item(2)], "2:2");
+  assert.equal(w.flow.state.next, "2:2");
+  const change = w.flow.setFilters({ state: "sent" });
+  assert.equal(w.flow.state.next, null); // the old cursor belongs to the old filters
+  await w.flow.loadMore();
+  assert.equal(w.of("items").length, 2); // no second request: nothing was asked with the old cursor
+  w.of("summary").at(-1).d.resolve(summary());
+  w.of("items").at(-1).d.resolve({ items: [item(3)], next: "3:3" });
+  await change;
+  assert.equal(w.flow.state.next, "3:3");
+});
+
+test("flow: a failed filter change goes back to what is really on screen, not to the last request", async () => {
+  const w = world();
+  await loaded(w, [item(1), item(2)], "2:2");
+  const shown = { ...w.flow.state.filters };
+  const b = w.flow.setFilters({ state: "sent" });
+  const c = w.flow.setFilters({ type: "T9" }); // requested before B finished
+  w.of("summary").at(-1).d.reject(new Error("down"));
+  w.of("items").at(-1).d.reject(new Error("down"));
+  await Promise.allSettled([b, c]);
+  assert.deepEqual(w.flow.state.filters, shown); // the list on screen is still the first one
+  assert.equal(w.flow.state.next, "2:2");
+  assert.equal(w.flow.state.items.length, 2);
+});
+
+test("flow: a removal that was running when the case changed does not leave the new case stuck", async () => {
+  const w = world();
+  await loaded(w);
+  const stale = w.flow.removeData();
+  assert.equal(w.flow.state.removing, true);
+  w.current.caseId = "B";
+  const resetting = w.flow.reset();
+  assert.equal(w.flow.state.removing, false);
+  w.of("remove")[0].d.resolve({ dbs: 1, items: 1 }); // the answer of case A arrives late
+  assert.equal(await stale, false);
+  w.of("summary").at(-1).d.resolve(summary());
+  w.of("items").at(-1).d.resolve({ items: [], next: null });
+  await resetting;
+  const next = w.flow.removeData();
+  assert.equal(w.of("remove").length, 2); // the new case can remove again
+  w.of("remove")[1].d.reject(new Error("x"));
+  await next;
+});
