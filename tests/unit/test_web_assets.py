@@ -93,6 +93,8 @@ EXPECTED_MODULES = {
     "column-resize.js",
     "source-filter-model.js",
     "source-filter.js",
+    "source-tree-model.js",
+    "source-tree.js",
     "distinct-model.js",
     "distinct-panel.js",
     "extract-model.js",

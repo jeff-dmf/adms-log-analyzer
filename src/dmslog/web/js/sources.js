@@ -33,6 +33,9 @@ export class SourcesPanel {
     this.order = []; // source ids in the order of the rows on screen
     this.emptyNode = null; // the "no sources" / "no match" line, when shown
     this.tabStop = null; // id of the row whose checkbox is the list's one tab stop (roving tabindex)
+    this.treeHook = null; // set by source-tree.js: called after every change of the sources, the selection or the filter
+    this.tree = null; // the SourceTree (source-tree.js) once it exists
+    this.treeActive = false; // the tree is the view on screen: the filter box keys and the count belong to it
     this.settled = false; // the first selectCase() ran: until then the empty state is not shown, so the page does not flash
     this.recentCases = []; // [{id, name, sources, records}] of the last /cases answer, for the empty state
     this.dialogs = null; // the New case / Add files dialogs (case-dialogs.js), after their first use
@@ -606,6 +609,10 @@ export class SourcesPanel {
 
   // Keyboard: from the filter box into the list (the list has one tab stop), and Enter in the box toggles the first match.
   focusList() {
+    if (this.treeActive && this.tree) {
+      this.tree.focusFirst();
+      return;
+    }
     const row = this.rows.get(this.stopId());
     if (row) {
       row.box.focus();
@@ -613,6 +620,10 @@ export class SourcesPanel {
   }
 
   toggleFirst() {
+    if (this.treeActive && this.tree) {
+      this.tree.toggleFirst();
+      return;
+    }
     const row = this.rows.get(this.order[0]);
     if (row) {
       row.box.click();
@@ -644,6 +655,7 @@ export class SourcesPanel {
         this.selected.delete(id);
       }
       this.handlers.onSelection(this.selectedIds());
+      this.notifyTree();
     });
     list.addEventListener("keydown", (event) => {
       const id = this.idOf(event.target);
@@ -824,6 +836,7 @@ export class SourcesPanel {
     }
     const nextIds = entries.map((entry) => entry.source.id);
     this.notifyRendered(shown.length, this.sources.length);
+    this.notifyTree();
 
     const active = typeof document !== "undefined" ? document.activeElement : null;
     const focusedId = this.idOf(active);
@@ -876,6 +889,19 @@ export class SourcesPanel {
       } else if (this.refs.filterInput) {
         this.refs.filterInput.focus();
       }
+    }
+  }
+
+  // The tree view (source-tree.js) asks for a whole new selection (a folder checked or unchecked).
+  applySelection(ids) {
+    this.selected = new Set([...ids].filter((id) => this.sources.some((s) => s.id === id)));
+    this.renderSources();
+    this.handlers.onSelection(this.selectedIds());
+  }
+
+  notifyTree() {
+    if (this.treeHook) {
+      this.treeHook();
     }
   }
 
