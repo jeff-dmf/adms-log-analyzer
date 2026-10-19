@@ -142,11 +142,11 @@ def test_a_case_from_schema_6_lists_the_same_lines_and_is_filled_once_without_re
     conn = store_db.connect(case_path)
     before = untouched_rows(conn)
     assert store_db.get_user_version(conn) == 6
-    assert store_db.migrate(conn) == store_db.SCHEMA_VERSION == 7  # what opening the case for a write does
+    assert store_db.migrate(conn) == store_db.SCHEMA_VERSION == 8  # what opening the case for a write does
     assert untouched_rows(conn) == before  # no record nor source rewritten: nothing was reindexed
     assert stored(conn) == {sid: line or None for sid, line in expected.items()}
     schema = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'source'").fetchone()
-    assert store_db.migrate(conn) == 7  # idempotent
+    assert store_db.migrate(conn) == 8  # idempotent
     store_db.MIGRATIONS[7](conn)  # the step itself too (the column exists, no NULL left to fill)
     conn.commit()
     assert conn.execute("SELECT sql FROM sqlite_master WHERE name = 'source'").fetchone() == schema

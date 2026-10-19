@@ -16,6 +16,10 @@ HELP_INGEST = "Index the logs of an ERS zip, folder or file into a case (safe to
 HELP_INGEST_PATH = "ERS zip, Log folder or log file to index."
 HELP_INGEST_CASE = "Case name (default: derived from the ERS GUID and capture time, or from the folder name)."
 HELP_INGEST_ALL = "Index every text log of the collection, not only the default scope."
+HELP_INGEST_QUEUE = (
+    "Also read the message-queue databases of the collection (LocalPersistenceStore). Off by default: "
+    "they hold message bodies."
+)
 HELP_TEMPLATES = "List message templates and their counts (not implemented yet)."
 HELP_KB = "Build or inspect the knowledge pack (not implemented yet)."
 HELP_STUB_ARGS = "Arguments (ignored until the command is implemented)."
@@ -63,6 +67,8 @@ INGEST_SUMMARY = (
 INGEST_SUMMARY_DATA = "Records: {records}  Lines: {lines}  Data: {size_mb:.1f} MB"
 INGEST_SUMMARY_TIME = "Time: {seconds:.1f} s ({rate:.1f} MB/s)"
 INGEST_CASE_DB = "Case database: {path}"
+INGEST_QUEUE = "Message queue: {dbs} databases, {items} items ({pending} pending), {errors} with errors"
+INGEST_QUEUE_FAILED = "Message queue not read: {error}"
 INGEST_NOT_FOUND = "cannot ingest: {error}"
 INGEST_UNSAFE = "cannot ingest: unsafe or invalid archive: {error}"
 INGEST_CONFLICT = "cannot add this collection to case {case}: {error}"
@@ -178,6 +184,8 @@ JOB_DONE_OK = "Indexed {records} records from {sources} sources"
 JOB_DONE_WITH_FAILURES = "Indexed {records} records; {failed} of {sources} sources failed"
 JOB_CANCELLED = "Indexing was cancelled because the server is stopping"
 JOB_FAILED = "Indexing failed: {error}"
+JOB_QUEUE_DONE = "Message queue: {dbs} databases, {items} items ({pending} pending)"
+JOB_QUEUE_REMOVED = "Message queue data removed: {dbs} databases, {items} items"
 JOB_UNSAFE = "Unsafe or invalid archive: {error}"
 
 API_BAD_KEY_TYPE = "key type must be 1 to 64 letters, digits, '.', '_' or '-'"
@@ -400,6 +408,8 @@ COLLECTION_DUPLICATE = (
 )
 API_COLLECTION_NOT_FOUND = "Collection {group} does not exist in this case"
 API_COLLECTION_FOLLOWED = "This folder is being followed (serve --watch); stop following it first"
+API_BAD_QUEUE_OPTION = "message_queue must be true or false"
+API_QUEUE_PATH_MISSING = "The collection's file or folder is no longer at its registered path"
 API_COLLECTION_REMOVED = "Removed the collection: {records} records from {sources} sources"
 EXPORT_SOURCE_MULTI = "Sources: {count} collections"
 EXPORT_COLLECTION_ERS = "  {tag}: ERS {ers_ts} ({machine}) - {variant} - GUID {guid}"

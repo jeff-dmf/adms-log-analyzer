@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 from dmslog.parse.payload import extract_payload, payload_keys
 from dmslog.parse.records import Record
 from dmslog.parse.signature import signature
-from dmslog.store import bookmarks
+from dmslog.store import bookmarks, queue
 from dmslog.store.db import LAST_LINE_SQL
 
 if TYPE_CHECKING:
@@ -819,7 +819,8 @@ class IndexWriter:
 
         Gone: records (with bodies, FTS rows, keys, payloads, buckets, unknown signatures and every link that
         touches them), events, statistics samples, observed and Registry configuration, streams, sources,
-        collections, the group's bookmarks and its ``meta`` keys (derivation checkpoints, correlation
+        collections, the group's message-queue banks, items and bodies (``queue_*``, store/queue.py), the
+        group's bookmarks and its ``meta`` keys (derivation checkpoints, correlation
         signatures, epoch, payload extraction marks, clock offset record). The other groups are not touched:
         their signatures do not change, so nothing of theirs is derived again. Removed ids are never reused
         (``id_floor``).
@@ -867,6 +868,7 @@ class IndexWriter:
         conn.execute("DELETE FROM stream WHERE collection_group = ?", (group,))
         conn.execute("DELETE FROM config_param WHERE collection_group = ?", (group,))
         conn.execute("DELETE FROM error_config WHERE collection_group = ?", (group,))
+        queue.delete_collections(conn, cids)  # before the collections they hang from; same transaction
         conn.execute("DELETE FROM collection WHERE ers_group = ?", (group,))
         prefixes = ("correlate.", "correlate.links.", "payloads.", f"{EPOCH_KEY}.", CLOCK_PREFIX)
         keys = [f"{p}{group}" for p in prefixes]
