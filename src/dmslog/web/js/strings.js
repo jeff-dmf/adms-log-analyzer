@@ -2424,7 +2424,6 @@ export const S = {
   mqSearchLabel: "Message ID or item ID",
   mqSearchPlaceholder: "Exact message ID or item ID",
   mqSearchButton: "Search",
-  mqTimeNotice: "Times come from the queue database and may be in UTC, while the log shows local time. Compare them with care.",
   mqRemoveButton: "Remove queue data…",
   mqRemoveLabel: "Remove the queue data",
   mqRemoveConfirm: "Remove everything read from the message queue databases of this case? The databases of the ERS are not changed, and the option stays on.",

@@ -123,9 +123,6 @@ test("loading, then the counters in the head, the databases with their warnings 
   assert.equal(second.children[2].textContent, S.mqStateNames.sent);
   assert.equal(first.children[3].title, "00000000-0000-0000-0000-000000000001");
   assert.equal(w.ui.status(), "2 items shown");
-  // the fixed warning about the time zone is on screen with the list
-  assert.equal(w.ui.one("mq-notice").hidden, false);
-  assert.equal(w.ui.one("mq-notice").textContent, S.mqTimeNotice);
 });
 
 test("the table has a hidden caption, column headers and a roving tab stop on the rows", async () => {
@@ -257,7 +254,6 @@ test("empty states: option off (with the Read button), no databases, empty queue
   assert.equal(w.ui.one("mq-empty-text").textContent, S.mqDisabled);
   assert.equal(w.ui.status(), S.mqDisabled);
   assert.equal(w.ui.one("mq-table").hidden, true);
-  assert.equal(w.ui.one("mq-notice").hidden, true);
   assert.equal(w.ui.one("mq-remove").hidden, false);
   w.ui.one("mq-read").click();
   assert.deepEqual(w.events.read, [null]);

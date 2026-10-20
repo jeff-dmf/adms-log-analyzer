@@ -21,19 +21,10 @@
   font-family: ui-monospace, monospace;
 }
 
-.mq-notice,
 .mq-confirm,
 .mq-empty,
 .mq-banks {
   margin: var(--space-3) var(--space-4);
-}
-
-.mq-notice {
-  padding: var(--space-3);
-  border-left: 3px solid var(--accent);
-  background: var(--status-info-bg);
-  color: var(--status-info-ink);
-  font-size: var(--text-sm);
 }
 
 .mq-confirm {
