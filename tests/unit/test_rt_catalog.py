@@ -185,3 +185,12 @@ def test_failures_are_not_hidden_as_noise(catalog, family, msg, sev):
         else tm.sev_hint
     )
     assert got == sev
+
+
+def test_plugin_not_found_without_default_is_not_noise(catalog):
+    tset = catalog.for_family("DMSRT", sensitive=False)
+    miss = tset.classify_text(
+        "Plugin not found for Example.Service.Missing and no default implementation supplied."
+    )
+    assert (miss.code, miss.sev_hint) == ("RTL-085", 3)
+    assert tset.classify_text("Plugin not found for Example.Service.ModelConverter.").code == "RTL-076"

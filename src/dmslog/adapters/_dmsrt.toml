@@ -1036,15 +1036,18 @@ class = "startup"
 title = "Plugin lookup and component initialization"
 sev = 5
 fts = false
-regex = '''^(?:Plugin not found for (?P<missing>[\w.]+?)(?: and no default implementation supplied)?\.|Loaded plugin (?P<plugin>[\w.]+) for (?P<target>[\w.]+)\.|Initializing (?P<component>[\w.]+)\.)$'''
+regex = '''^(?:Plugin not found for (?P<missing>[\w.]+?)\.|Loaded plugin (?P<plugin>[\w.]+) for (?P<target>[\w.]+)\.|Initializing (?P<component>[\w.]+)\.)$'''
 examples = [
     { msg = "Plugin not found for Example.Service.ModelConverter.", fields = { missing = "Example.Service.ModelConverter" } },
-    "Plugin not found for Example.Service.Missing and no default implementation supplied.",
     { msg = "Loaded plugin Example.Plugins.Custom_Example for Example.Service.Base.", fields = { plugin = "Example.Plugins.Custom_Example", target = "Example.Service.Base" } },
     { msg = "Initializing Example.Service.CacheProvider.", fields = { component = "Example.Service.CacheProvider" } },
     "Initializing GMS.",
 ]
-counter_examples = ["Initializing connection pool started.", "Plugin found for Example.Service."]
+counter_examples = [
+    "Initializing connection pool started.",
+    "Plugin found for Example.Service.",
+    "Plugin not found for Example.Service.Missing and no default implementation supplied.",
+]
 
 [[template]]
 code = "RTL-077"
@@ -1145,3 +1148,12 @@ examples = [
     "Creating Context with Id = 1000123 for model version 1000.2.",
 ]
 counter_examples = ["Creating Context with Id = x for model version 1."]
+
+[[template]]
+code = "RTL-085"
+class = "error"
+title = "Plugin not found and no default implementation supplied"
+sev = 3  # the component is left without an implementation; no failure marker in the text
+regex = '''^Plugin not found for (?P<missing>[\w.]+) and no default implementation supplied\.$'''
+examples = [{ msg = "Plugin not found for Example.Service.Missing and no default implementation supplied.", fields = { missing = "Example.Service.Missing" } }]
+counter_examples = ["Plugin not found for Example.Service.ModelConverter."]
