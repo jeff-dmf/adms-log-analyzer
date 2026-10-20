@@ -55,6 +55,8 @@ MIN_RECORDS = 10
 STEP_MS = 50
 GITATTRIBUTES = b"* -text\n"
 COMMON = "_common"
+RT_LIBRARY = "_dmsrt"
+LIBRARY_FAMILY = {COMMON: "PROCESS", RT_LIBRARY: "DMSRT"}  # the stream family a library is exercised through
 DEFAULT_TID = 0x1A2B
 SCENARIO_T0 = 60_000  # ms after BASE: after the template examples of every stream
 
@@ -79,9 +81,13 @@ PROCESSES: dict[str, tuple[str, str]] = {
     COMMON: ("adapter", "GenericProc"),  # family PROCESS: only the generic library applies
     # Last, so that the pids of the earlier fixtures do not change.
     "AEDP": ("adapter", "CustomAdapterChangeIncidentDevice"),
+    # Real-time (RT) servers: one fixture per family with templates; the library is exercised as DMSRT.
+    RT_LIBRARY: ("rt", "DMS_ExampleService"),
+    "DMSFH": ("rtfh", "DMS_FunctionHost_1"),
+    "DMSJOB": ("rt", "DMS_JobLauncher"),
 }
 # Family the discovery rules give to each file (for the tests).
-EXPECTED_FAMILY = {fam: ("PROCESS" if fam == COMMON else fam) for fam in PROCESSES}
+EXPECTED_FAMILY = {fam: LIBRARY_FAMILY.get(fam, fam) for fam in PROCESSES}
 
 UNKNOWN_MARKERS = ("Zzz unmatched synthetic record", "Qqq synthetic noise without template")
 UNKNOWN_TEXTS = (
@@ -150,7 +156,7 @@ def _clean_cont(cont: str | None) -> str | None:
 
 def stream_records(catalog: Catalog, family: str, sensitive: bool) -> list[Rec]:
     """Records of one stream: template examples, unknown lines and false-positive-looking lines."""
-    tset = catalog.for_family("PROCESS" if family == COMMON else family, sensitive=sensitive)
+    tset = catalog.for_family(LIBRARY_FAMILY.get(family, family), sensitive=sensitive)
     own = [t for t in catalog.templates() if t.family == family]
     if sensitive:
         wanted = [t for t in own if t.stream == "sensitive"]

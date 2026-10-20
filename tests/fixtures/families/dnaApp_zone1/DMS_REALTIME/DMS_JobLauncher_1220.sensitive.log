@@ -1,0 +1,10 @@
+﻿2030-01-15 10:00:00.000 [PID=1220][TID=0x1a2b] INFO - Start async job(ExampleBrowserJob) called for job with guid 00000000-0000-4000-8000-0000a0000013 Jobs count: 4 Client session id: 00000000-0000-4000-8000-0000a0000014. Hostname: HOST01 Endpoint: 192.0.2.10
+2030-01-15 10:00:00.050 [PID=1220][TID=0x1a2b] INFO - New job request identifier is generated. JobID: x
+2030-01-15 10:00:00.100 [PID=1220][TID=0x1a2b] INFO - [ConcurrentJobExecutionManager:ExampleSummaryJob] Started new job for  principal: EXAMPLE\user01 , concurrent jobs for principal: 1, total jobs running: 3.
+2030-01-15 10:00:00.150 [PID=1220][TID=0x1a2b] INFO - Sending JobID: 1000123 Function: LoadFlow to Job Launcher ID: none. Channel index: 2
+2030-01-15 10:00:00.200 [PID=1220][TID=0x1a2b] INFO - [ConcurrentJobExecutionManager:ExampleSummaryJob] Job completed for principal: EXAMPLE\user01, concurrent jobs for principal: 0, total jobs running: 2.
+2030-01-15 10:00:00.250 [PID=1220][TID=0x1a2b] INFO - JobID: 1000123 Function: LoadFlow is queued for Job Launcher ID: 00000000-0000-4000-8000-0000a0000001.
+2030-01-15 10:00:00.300 [PID=1220][TID=0x1a2b] INFO - [ConcurrentJobExecutionManager:ExampleSummaryJob] Started new job for principal, concurrent jobs for prinicipal: 2, total jobs running: 4.
+2030-01-15 10:00:00.350 [PID=1220][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1220][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1220][TID=0x1a2b] INFO - Qqq synthetic noise without template

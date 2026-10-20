@@ -1,0 +1,864 @@
+# RT library (task T1 of docs/notas/rt-templates-desenho.md): lines of the product infrastructure
+# and every line whose text is identical in two or more RT families (DMSFH, DMSJOB, DMSCORE,
+# DMSMODEL, DMSOMS). Library: only reachable through `extends = ["_dmsrt", "_common"]`.
+#
+# Rules kept here:
+#  - nothing that `_common` already matches is redefined (the Cache[...] catch-all, the Communication
+#    statistics, the ClientConnectionRouter lines and the like stay there);
+#  - the RT library is tried before `_common`, so the lines below must not capture what the generic
+#    templates describe better (see the lookahead of RTL-024);
+#  - no template of this library carries `keys`: the correlation keys of the RT services belong to
+#    the family files;
+#  - every example is synthetic (HOST01, EXAMPLE\user01, GUIDs of the synthetic form of the design note).
+#
+# Codes RTL-001..RTL-099. Layout: 001-007 transactions, 008-010 shared-memory and replication
+# counters, 011-017 topology, 018-024 replication, 025-029 publish/subscribe, 030-033 version
+# switch, 034-037 configuration manager, 038-043 block fetch, caches and queues, 044-054 other,
+# 055-059 MTS tag, progress and anomaly lines, 060-062 other shared lines.
+
+schema = 1
+family = "_dmsrt"
+description = "RT library: infrastructure lines and lines shared by two or more RT families"
+
+# ============================================================================================
+# Transactions: [TransactionResourceManager] and [TransactionMonitor]
+# ============================================================================================
+
+[[template]]
+code = "RTL-001"
+class = "other"
+title = "Transaction resource manager step"
+sev = 5
+fts = false
+regex = '''^\[TransactionResourceManager\] (?=[RTW])(?P<step>Waiting for transaction resources\.\.\.|Resource manager initialization started\.|Resource manager is initialized successfully\.|Resource manager commands (?:parallel )?execution (?:started|finished)\.|Transaction (?:enters|has initialized) (?:prepare|commit|rollback) phase\.|Transaction is (?:successfully )?(?:prepared|committed|rolled back|finished)\.|TransactionalWorker is finished\.)$'''
+examples = [
+    { msg = "[TransactionResourceManager] Transaction enters commit phase.", fields = { step = "Transaction enters commit phase." } },
+    "[TransactionResourceManager] Resource manager commands parallel execution finished.",
+    "[TransactionResourceManager] Transaction is successfully rolled back.",
+]
+counter_examples = ["[TransactionResourceManager] Transaction enters abort phase."]
+
+[[template]]
+code = "RTL-002"
+class = "other"
+title = "Transaction GUID"
+sev = 5
+regex = '''^\[TransactionResourceManager\] Transaction GUID = (?P<txn_guid>[0-9a-fA-F-]{36})\.$'''
+fields = { txn_guid = "guid" }
+examples = [
+    { msg = "[TransactionResourceManager] Transaction GUID = 00000000-0000-4000-8000-000000000001.", fields = { txn_guid = "00000000-0000-4000-8000-000000000001" } },
+]
+counter_examples = ["[TransactionResourceManager] Transaction GUID = not-a-guid."]
+
+[[template]]
+code = "RTL-003"
+class = "other"
+title = "Transaction command phase"
+sev = 5
+fts = false
+regex = '''^\[TransactionResourceManager\] Command: (?P<command>\w+(?: \(\w+\))?) (?:enters (?P<phase>execute|prepare|commit|rollback) phase|is successfully (?P<result>executed|prepared|committed|rolled back))\.$'''
+examples = [
+    { msg = "[TransactionResourceManager] Command: ExampleCacheCommand enters prepare phase.", fields = { command = "ExampleCacheCommand", phase = "prepare" } },
+    { msg = "[TransactionResourceManager] Command: ExampleCacheCommand is successfully executed.", fields = { result = "executed" } },
+    "[TransactionResourceManager] Command: ExampleCommand (ExampleCache) enters execute phase.",
+]
+counter_examples = ["[TransactionResourceManager] Command: ExampleCacheCommand enters abort phase."]
+
+[[template]]
+code = "RTL-004"
+class = "other"
+title = "Transaction monitor prepare notification"
+sev = 5
+regex = '''^\[TransactionMonitor\] Prepare (?P<kind>completed|finished) notification (?P<edge>start|end)\.*$'''
+examples = [
+    { msg = "[TransactionMonitor] Prepare completed notification start.", fields = { kind = "completed", edge = "start" } },
+    "[TransactionMonitor] Prepare finished notification end",
+    "[TransactionMonitor] Prepare finished notification start..",
+]
+counter_examples = ["[TransactionMonitor] Prepare aborted notification start."]
+
+[[template]]
+code = "RTL-005"
+class = "other"
+title = "Transaction monitor operation"
+sev = 5
+regex = '''^\[TransactionMonitor\] (?:Replication operation|Operation): (?P<operation>\w+)$'''
+examples = [
+    { msg = "[TransactionMonitor] Operation: ModelUpdate", fields = { operation = "ModelUpdate" } },
+    "[TransactionMonitor] Replication operation: SwitchVersion",
+]
+counter_examples = ["[TransactionMonitor] Replication step: SwitchVersion"]
+
+[[template]]
+code = "RTL-006"
+class = "other"
+title = "Transaction monitor service progress"
+sev = 5
+fts = false
+regex = '''^\[TransactionMonitor\] (?:\[RE\] | )?(?P<stage>PrepareCompleted|TransactionCompleted) \((?P<service>\w+)\) \((?P<done>\d+)/(?P<total>\d+)\)(?: Services left: \[(?P<left>[\w|]*)\])?$'''
+fields = { done = "int", total = "int" }
+examples = [
+    { msg = "[TransactionMonitor] PrepareCompleted (EXA) (2/5) Services left: [EXB|EXC|EXD]", fields = { stage = "PrepareCompleted", service = "EXA", done = 2, total = 5, left = "EXB|EXC|EXD" } },
+    "[TransactionMonitor] [RE] TransactionCompleted (EXB) (5/5)",
+    "[TransactionMonitor]  TransactionCompleted (EXB) (5/5)",
+]
+counter_examples = ["[TransactionMonitor] PrepareCompleted (EXA) (x/5)"]
+
+[[template]]
+code = "RTL-007"
+class = "other"
+title = "Transaction monitor participants"
+sev = 5
+regex = '''^\[TransactionMonitor\] (?:\[RE\] | )?(?P<operation>\w+) \((?P<count>\d+)\) Services participating in transaction : \[(?P<services>[\w|]*)\]$'''
+fields = { count = "int" }
+examples = [
+    { msg = "[TransactionMonitor] [RE] ModelUpdate (3) Services participating in transaction : [EXA|EXB|EXC]", fields = { operation = "ModelUpdate", count = 3, services = "EXA|EXB|EXC" } },
+    "[TransactionMonitor]  TEUpdate (3) Services participating in transaction : [EXA|EXB|EXC]",
+]
+counter_examples = ["[TransactionMonitor] ModelUpdate (x) Services participating in transaction : [EXA]"]
+
+# ============================================================================================
+# Counters of the replication and of the shared memory
+# ============================================================================================
+
+[[template]]
+code = "RTL-008"
+class = "other"
+title = "Object written into the shared memory"
+sev = 5
+fts = false
+regex = '''^Size of the object \[(?P<object>[^\]]+)\] written into the shared memory is: (?P<size_mb>[\d.]+) MB\.$'''
+fields = { size_mb = "float" }
+examples = [
+    { msg = "Size of the object [1000123_res_20001] written into the shared memory is: 12.5 MB.", fields = { object = "1000123_res_20001", size_mb = 12.5 } },
+    "Size of the object [1000123_job_20002] written into the shared memory is: 0.004 MB.",
+]
+counter_examples = ["Size of the object [1000123_res_20001] written into the shared memory is: big MB."]
+
+[[template]]
+code = "RTL-009"
+class = "statistics"
+title = "Unprocessed replication messages of a client"
+sev = 5
+fts = false
+regex = '''^ClientMessageDelivery \[ClientID = (?P<client_id>\d+)\]: Number of unprocessed replication messages is (?P<count>\d+)\.$'''
+fields = { client_id = "int", count = "int" }
+examples = [
+    { msg = "ClientMessageDelivery [ClientID = 52]: Number of unprocessed replication messages is 100.", fields = { client_id = 52, count = 100 } },
+]
+counter_examples = ["ClientMessageDelivery [ClientID = x]: Number of unprocessed replication messages is 100."]
+
+[[template]]
+code = "RTL-010"
+class = "validation"
+title = "Indexed message not found for a signal"
+sev = 4  # per-element
+fts = false
+regex = '''^Indexed message hasn't been found for signalGid= (?P<gid>\d+), value = (?P<value>-?\d+)$'''
+fields = { gid = "int", value = "int" }
+examples = [
+    { msg = "Indexed message hasn't been found for signalGid= 1306888, value = -224084", fields = { gid = 1306888, value = -224084 } },
+    "Indexed message hasn't been found for signalGid= 1306889, value = 17",
+]
+counter_examples = ["Indexed message has been found for signalGid= 1306888, value = 17"]
+
+# ============================================================================================
+# Topology (CoreFunctions and FunctionHost) and the MTS lines
+# ============================================================================================
+
+[[template]]
+code = "RTL-011"
+class = "other"
+title = "DMS root processed as the source of an island"
+sev = 5
+fts = false
+regex = '''^DMS root (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) will be processed as a source of Island, contains flag (?P<flag>\d+)$'''
+fields = { root = "hex", flag = "int" }
+examples = [
+    { msg = "DMS root 4A00B00C will be processed as a source of Island, contains flag 320", fields = { root = 0x4A00B00C, flag = 320 } },
+    "DMS root 4A00B00C00D00E01 will be processed as a source of Island, contains flag 7",
+]
+counter_examples = ["DMS root 4A00B00C will not be processed as a source of Island, contains flag 320"]
+
+[[template]]
+code = "RTL-012"
+class = "other"
+title = "Root topology update"
+sev = 5
+regex = '''^UpdateRootTopology (?:firstRoot Id :|started again for meshed roots - startRoot Id :)(?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) has flag (?P<flag>\d+)$'''
+fields = { root = "hex", flag = "int" }
+examples = [
+    { msg = "UpdateRootTopology firstRoot Id :4A00B00C has flag 387", fields = { root = 0x4A00B00C, flag = 387 } },
+    "UpdateRootTopology started again for meshed roots - startRoot Id :4A00B00C00D00E02 has flag 9",
+]
+counter_examples = ["UpdateRootTopology firstRoot Id :zz has flag 387"]
+
+[[template]]
+code = "RTL-013"
+class = "other"
+title = "Topology skipped"
+sev = 5
+regex = '''^Topology is skipped because roots is empty = (?P<roots_empty>Yes|No) or processRoots = (?P<process_roots>Yes|No)$'''
+examples = [
+    { msg = "Topology is skipped because roots is empty = Yes or processRoots = No", fields = { roots_empty = "Yes", process_roots = "No" } },
+]
+counter_examples = ["Topology is processed because roots is empty = Yes or processRoots = No"]
+
+[[template]]
+code = "RTL-014"
+class = "other"
+title = "Topology processing phase"
+sev = 5
+fts = false
+regex = '''^MTS: (?P<edge>Begin|Start|End) (?P<what>update topology|update quick topology|process topology|update island topology|process Energization-DeEnergization SDP)(?: for (?P<model>EMS|DMS) model)?\.?(?: Topology performed for (?P<seconds>[\d.]+) sec\.)?$'''
+fields = { seconds = "float" }
+examples = [
+    { msg = "MTS: End process topology for DMS model. Topology performed for 0.125 sec.", fields = { edge = "End", what = "process topology", model = "DMS", seconds = 0.125 } },
+    "MTS: Begin update topology.",
+    "MTS: Begin update quick topology",
+    "MTS: Start update island topology for EMS model.",
+]
+counter_examples = ["MTS: Pause update topology."]
+
+[[template]]
+code = "RTL-015"
+class = "other"
+title = "Root relation found by the topology"
+sev = 5
+regex = '''^MTS: (?:Root (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) is (?P<relation>meshed|parallelized) with master root (?P<master_root>(?:0x)?[0-9A-Fa-f]{1,16})|UpdateRootTopology started again for meshed root (?P<mesh_root>(?:0x)?[0-9A-Fa-f]{1,16})|Passive Root (?P<passive_root>(?:0x)?[0-9A-Fa-f]{1,16}) found as meshed with Active\.|Meshed substation (?P<substation>(?:0x)?[0-9A-Fa-f]{1,16}))$'''
+fields = { root = "hex", master_root = "hex", mesh_root = "hex", passive_root = "hex", substation = "hex" }
+examples = [
+    { msg = "MTS: Root 4A00B00C is meshed with master root 4A00B00D", fields = { root = 0x4A00B00C, relation = "meshed", master_root = 0x4A00B00D } },
+    "MTS: UpdateRootTopology started again for meshed root 4A00B00C",
+    "MTS: Passive Root 4A00B00C found as meshed with Active.",
+    "MTS: Meshed substation 4A00B00C",
+]
+counter_examples = ["MTS: Root 4A00B00C is isolated with master root 4A00B00D"]
+
+[[template]]
+code = "RTL-016"
+class = "other"
+title = "MTS publishing and model processor"
+sev = 5
+fts = false
+regex = '''^MTS: (?:Publishing changes\.|Finished publishing changes\. Number of blocks: (?P<blocks>\d+), EMS blocks: (?P<ems_blocks>\d+), publishing performed for DMS: (?P<dms_sec>[\d.]+) sec, EMS: (?P<ems_sec>[\d.]+) sec, all: (?P<all_sec>[\d.]+) sec\.|signal\(s\) change, columns <LID, GID, Device LID, Device GID, New value, Value of flags, TimeStamp>|ModelProcessor: Delete old model (?P<phase>started|completed)\.)$'''
+fields = { blocks = "int", ems_blocks = "int", dms_sec = "float", ems_sec = "float", all_sec = "float" }
+examples = [
+    { msg = "MTS: Finished publishing changes. Number of blocks: 12, EMS blocks: 3, publishing performed for DMS: 0.5 sec, EMS: 0.25 sec, all: 0.75 sec.", fields = { blocks = 12, ems_blocks = 3, dms_sec = 0.5, ems_sec = 0.25, all_sec = 0.75 } },
+    "MTS: Publishing changes.",
+    "MTS: signal(s) change, columns <LID, GID, Device LID, Device GID, New value, Value of flags, TimeStamp>",
+    { msg = "MTS: ModelProcessor: Delete old model completed.", fields = { phase = "completed" } },
+]
+counter_examples = ["MTS: Finished publishing changes. Number of blocks: x"]
+
+[[template]]
+code = "RTL-017"
+class = "other"
+title = "Time window of the state model"
+sev = 5
+regex = '''^(?P<edge>Start|End) Time in State Model is (?P<time>[\d/: ]+ [AP]M):$'''
+examples = [
+    { msg = "Start Time in State Model is 1/2/2000 4:00:00 AM:", fields = { edge = "Start", time = "1/2/2000 4:00:00 AM" } },
+    "End Time in State Model is 1/2/2000 4:30:00 PM:",
+]
+counter_examples = ["Middle Time in State Model is 1/2/2000 4:00:00 AM:"]
+
+# ============================================================================================
+# Replication: proxy callback, queue status, IU requests, (REPLICATION_INFO)
+# ============================================================================================
+
+[[template]]
+code = "RTL-018"
+class = "other"
+title = "Replication proxy callback event"
+sev = 5
+regex = '''^ReplicationProxyCallback: (?=[SPA])(?P<event>SyncStateControlReplicationMessage received\. All staleDataCallbacks triggered\.|PartnerDrainedControlReplicationMessage received\. Triggering invokePartnerDrainedEventDelegate\.|All clients finished IUStateCallback\. Acknowledging reception of IUStateControlReplicationMessage\.)$'''
+examples = [
+    { msg = "ReplicationProxyCallback: SyncStateControlReplicationMessage received. All staleDataCallbacks triggered.", fields = { event = "SyncStateControlReplicationMessage received. All staleDataCallbacks triggered." } },
+    "ReplicationProxyCallback: All clients finished IUStateCallback. Acknowledging reception of IUStateControlReplicationMessage.",
+]
+counter_examples = ["ReplicationProxyCallback: SyncStateControlReplicationMessage dropped."]
+
+[[template]]
+code = "RTL-019"
+class = "other"
+title = "Replication proxy callback processing of an IU state message"
+sev = 5
+regex = '''^ReplicationProxyCallback: \[ClientID = (?P<client_id>\d+)\] IUStateControlReplicationMessage processing (?P<phase>started|completed)\..*$'''
+fields = { client_id = "int" }
+examples = [
+    { msg = "ReplicationProxyCallback: [ClientID = 7] IUStateControlReplicationMessage processing started. Datasets 1 2 3. MessageIdentifier: clientId: 7, serviceId: 1", fields = { client_id = 7, phase = "started" } },
+    "ReplicationProxyCallback: [ClientID = 7] IUStateControlReplicationMessage processing completed.",
+]
+counter_examples = ["ReplicationProxyCallback: [ClientID = 7] IUStateControlReplicationMessage processing failed."]
+
+[[template]]
+code = "RTL-020"
+class = "other"
+title = "Replication queue status"
+sev = 5
+regex = '''^(?:SMDCs Replication queue status:(?: Queue is empty\.)?|Queue for tracing is empty\.)$'''
+examples = [
+    "SMDCs Replication queue status: Queue is empty.",
+    "SMDCs Replication queue status:",
+    "Queue for tracing is empty.",
+]
+counter_examples = ["SMDCs Replication queue status: Queue is full."]
+
+[[template]]
+code = "RTL-021"
+class = "other"
+title = "Integrity update request step"
+sev = 5
+regex = '''^\[RouteID:(?P<route_id>\d+), Dataset:(?P<dataset>\d+), Dataflow:(?P<dataflow>\d+)\] RequestIU: (?P<step>Requesting IU\.|invocation of IU callbacks initiated\. Waiting for them to finish\.|invocation of IU callbacks finished\.)$'''
+fields = { route_id = "int", dataset = "int", dataflow = "int" }
+examples = [
+    { msg = "[RouteID:0, Dataset:1, Dataflow:6] RequestIU: Requesting IU.", fields = { route_id = 0, dataset = 1, dataflow = 6, step = "Requesting IU." } },
+    "[RouteID:0, Dataset:1, Dataflow:6] RequestIU: invocation of IU callbacks finished.",
+]
+counter_examples = ["[RouteID:0, Dataset:1, Dataflow:6] RequestIU: invocation of IU callbacks cancelled."]
+
+[[template]]
+code = "RTL-022"
+class = "other"
+title = "Integrity update sent by a cache"
+sev = 5
+regex = '''^\[RouteID:(?P<route_id>\d+), Dataset:(?P<dataset>\d+), Dataflow:(?P<dataflow>\d+)\] (?P<cache>\w+) \((?P<cache_id>\d+)\) (?:requested to send IU data\.|finished sending IU\. Bytes sent: (?P<bytes>\d+)\.(?: Remaining clients: .*)?)$'''
+fields = { route_id = "int", dataset = "int", dataflow = "int", cache_id = "int", bytes = "int" }
+examples = [
+    { msg = "[RouteID:0, Dataset:1, Dataflow:6] ExampleCache (2) finished sending IU. Bytes sent: 314. Remaining clients: OtherCache (0), ThirdCache (1).", fields = { cache = "ExampleCache", cache_id = 2, bytes = 314 } },
+    "[RouteID:0, Dataset:1, Dataflow:6] ExampleCache (2) requested to send IU data.",
+]
+counter_examples = ["[RouteID:0, Dataset:1, Dataflow:6] ExampleCache (2) refused to send IU data."]
+
+[[template]]
+code = "RTL-023"
+class = "other"
+title = "Integrity update message of a replicated cache"
+sev = 5
+fts = false
+regex = '''^\(REPLICATION_INFO\) Cache\[(?P<cache>[^\]]+)\] IU message for Dataset: (?P<dataset>\d+), Dataflow: (?P<dataflow>\d+), RouteID: (?P<route_id>\d+), ProcessID: (?P<process_id>\d+), SystemID: (?P<system_id>\d+), Message order number: (?P<order>\d+)$'''
+fields = { dataset = "int", dataflow = "int", route_id = "int", process_id = "int", system_id = "int", order = "int" }
+examples = [
+    { msg = "(REPLICATION_INFO) Cache[ExampleCache] IU message for Dataset: 1, Dataflow: 6, RouteID: 0, ProcessID: 4242, SystemID: 2, Message order number: 15", fields = { cache = "ExampleCache", dataset = 1, order = 15 } },
+]
+counter_examples = ["(REPLICATION_INFO) Cache[ExampleCache] IU message for Dataset: x, Dataflow: 6"]
+
+[[template]]
+code = "RTL-024"
+class = "other"
+title = "Replication info of a cache"
+sev = 5
+regex = '''^\(REPLICATION_INFO\) Cache\[(?P<cache>[^\]]+)\] (?! ?(?:IU message for Dataset: |Apply delta in ElementCache\.|Replicate change\.|Applying delta finished|Replicate elements finished))(?P<text>.*)$'''
+examples = [
+    { msg = "(REPLICATION_INFO) Cache[ExampleCache] Replication queue size: 12.", fields = { cache = "ExampleCache", text = "Replication queue size: 12." } },
+    "(REPLICATION_INFO) Cache[ExampleCache] Sent 1024 bytes (compressed size) during IU.",
+]
+counter_examples = ["(REPLICATION_INFO) Cache[ExampleCache] IU message for Dataset: 1, Dataflow: 6"]
+
+# ============================================================================================
+# Publish and subscribe
+# ============================================================================================
+
+[[template]]
+code = "RTL-025"
+class = "lifecycle"
+title = "Publisher client connected"
+sev = 4
+regex = '''^PubSub\((?P<pubsub>\w+)\) client connected: +(?:Name: '(?P<client>[^']*)', Host: '(?P<host>[^']*)', )?Session id is (?P<session>[0-9a-fA-F-]{36})\.$'''
+fields = { session = "guid" }
+examples = [
+    { msg = "PubSub(ExamplePubSub) client connected: Session id is 00000000-0000-4000-8000-000000000001.", fields = { pubsub = "ExamplePubSub", session = "00000000-0000-4000-8000-000000000001" } },
+    { msg = "PubSub(ExamplePubSub) client connected:  Name: 'EXAMPLE\\user01', Host: 'PID = 1234', Session id is 00000000-0000-4000-8000-000000000002.", fields = { client = "EXAMPLE\\user01", host = "PID = 1234" } },
+]
+counter_examples = ["PubSub(ExamplePubSub) client connected: Session id is not-a-guid."]
+
+[[template]]
+code = "RTL-026"
+class = "lifecycle"
+title = "Publisher client disconnected or session cleaned up"
+sev = 4
+regex = '''^PubSub\((?P<pubsub>\w+)\) (?:client (?P<event>connection terminated|disconnected)[:.] Session id is (?P<session>[0-9a-fA-F-]{36})\.|Async Session (?P<async_session>[0-9a-fA-F-]{36}) cleanup (?P<phase>started|finished)\.)$'''
+fields = { session = "guid", async_session = "guid" }
+examples = [
+    { msg = "PubSub(ExamplePubSub) client connection terminated: Session id is 00000000-0000-4000-8000-000000000001.", fields = { event = "connection terminated", session = "00000000-0000-4000-8000-000000000001" } },
+    "PubSub(ExamplePubSub) client disconnected. Session id is 00000000-0000-4000-8000-000000000001.",
+    { msg = "PubSub(ExamplePubSub) Async Session 00000000-0000-4000-8000-000000000001 cleanup finished.", fields = { phase = "finished" } },
+]
+counter_examples = ["PubSub(ExamplePubSub) client reconnected. Session id is 00000000-0000-4000-8000-000000000001."]
+
+[[template]]
+code = "RTL-027"
+class = "error"
+title = "Publisher failed to publish to a client"
+sev = 2
+regex = '''^PubSub\((?P<pubsub>\w+)\) failed to publish messages to a client with an id (?P<session>[0-9a-fA-F-]{36}), exception was$'''
+fields = { session = "guid" }
+examples = [
+    { msg = "PubSub(ExamplePubSub) failed to publish messages to a client with an id 00000000-0000-4000-8000-000000000001, exception was", fields = { pubsub = "ExamplePubSub", session = "00000000-0000-4000-8000-000000000001" } },
+]
+counter_examples = ["PubSub(ExamplePubSub) published messages to a client with an id 00000000-0000-4000-8000-000000000001"]
+
+[[template]]
+code = "RTL-028"
+class = "startup"
+title = "Publisher initialized"
+sev = 4
+regex = '''^PubSub\((?P<pubsub>\w+)\) initialized\. IU enabled : (?P<iu_enabled>True|False); DelayedPublishInterval: (?P<delayed_ms>\d+); CheckIn interval: (?P<checkin_ms>\d+); Check dead or slow clients interval:(?P<check_ms>\d+); Trend queue capacity: (?P<trend_capacity>\d+); Trend ratio: (?P<trend_ratio>\d+)$'''
+fields = { delayed_ms = "int", checkin_ms = "int", check_ms = "int", trend_capacity = "int", trend_ratio = "int" }
+examples = [
+    { msg = "PubSub(ExamplePubSub) initialized. IU enabled : True; DelayedPublishInterval: 0; CheckIn interval: 1800000; Check dead or slow clients interval:60000; Trend queue capacity: 5; Trend ratio: 20", fields = { pubsub = "ExamplePubSub", iu_enabled = "True", checkin_ms = 1800000, trend_ratio = 20 } },
+]
+counter_examples = ["PubSub(ExamplePubSub) initialized. IU enabled : Maybe; DelayedPublishInterval: 0"]
+
+[[template]]
+code = "RTL-029"
+class = "startup"
+title = "Subscriber manager connected to the service"
+sev = 4
+regex = '''^Subscriber manager \((?P<pubsub>\w+)\) is connected to the service\.$'''
+examples = [
+    { msg = "Subscriber manager (ExamplePubSub) is connected to the service.", fields = { pubsub = "ExamplePubSub" } },
+]
+counter_examples = ["Subscriber manager (ExamplePubSub) is disconnected from the service."]
+
+# ============================================================================================
+# Model version switch
+# ============================================================================================
+
+[[template]]
+code = "RTL-030"
+class = "other"
+title = "Model version switch"
+sev = 4
+regex = '''^Switching version from ID = (?P<from_id>\d+(?:\.\d+)?) to ID = (?P<to_id>\d+(?:\.\d+)?)(?: (?P<outcome>succeeded))?\.(?: Model delta counter = (?P<delta_counter>\d+(?:\.\d+)?)\.)?$'''
+examples = [
+    { msg = "Switching version from ID = 10.200 to ID = 11.300 succeeded.", fields = { from_id = "10.200", to_id = "11.300", outcome = "succeeded" } },
+    { msg = "Switching version from ID = 10.200 to ID = 11.300. Model delta counter = 10.100.", fields = { delta_counter = "10.100" } },
+    "Switching version from ID = 10.200 to ID = 11.300.",
+]
+counter_examples = ["Switching version from ID = x to ID = 11.300."]
+
+[[template]]
+code = "RTL-031"
+class = "other"
+title = "Model version switch on a service"
+sev = 4
+regex = '''^Switching version on (?P<service>\w+) from ID = (?P<from_id>\d+(?:\.\d+)?) to ID = (?P<to_id>\d+(?:\.\d+)?) (?P<outcome>started|succeeded)\.(?: Context ID = (?P<context_id>\d+)\.)?(?: Address = \S+)?$'''
+examples = [
+    { msg = "Switching version on EXA from ID = 10.200 to ID = 11.300 started. Address = net.tcp://HOST01:8000/Example", fields = { service = "EXA", outcome = "started" } },
+    { msg = "Switching version on EXB from ID = 10.200 to ID = 11.300 succeeded. Context ID = 3. Address = net.tcp://HOST01:8000/Example", fields = { service = "EXB", context_id = "3" } },
+]
+counter_examples = ["Switching version on EXA from ID = 10.200 to ID = 11.300 failed."]
+
+[[template]]
+code = "RTL-032"
+class = "other"
+title = "Model version switch of a context or its commit"
+sev = 4
+regex = '''^Switching version (?:transaction commited\.|on (?P<context>\w+), from Version ID = (?P<from_id>\d+(?:\.\d+)?), to Version ID = (?P<to_id>\d+(?:\.\d+)?))$'''
+examples = [
+    { msg = "Switching version on ExampleContext, from Version ID = 10.200, to Version ID = 10.201", fields = { context = "ExampleContext", from_id = "10.200", to_id = "10.201" } },
+    "Switching version transaction commited.",
+]
+counter_examples = ["Switching version transaction aborted."]
+
+[[template]]
+code = "RTL-033"
+class = "other"
+title = "Model update enlist phase"
+sev = 5
+regex = '''^Model update enlist phase (?P<phase>started|completed)\.$'''
+examples = [
+    { msg = "Model update enlist phase started.", fields = { phase = "started" } },
+    "Model update enlist phase completed.",
+]
+counter_examples = ["Model update enlist phase skipped."]
+
+# ============================================================================================
+# Configuration manager (the model configuration seen from the RT services)
+# ============================================================================================
+
+[[template]]
+code = "RTL-034"
+class = "other"
+title = "Configuration manager fetches data of the network management system"
+sev = 5
+regex = '''^\[Configuration\] \[ConfigurationManager\] Fetching (?:(?P<age>old|new) )?NMS [Dd]ata for (?:(?P<scope>inserted|updated) (?P<entity>\w+)|affected) entities (?P<phase>started|finished)\.(?: Entities count: (?P<count>\d+))?$'''
+fields = { count = "int" }
+examples = [
+    { msg = "[Configuration] [ConfigurationManager] Fetching NMS Data for inserted EXAMPLEKIND1 entities finished. Entities count: 7", fields = { scope = "inserted", entity = "EXAMPLEKIND1", phase = "finished", count = 7 } },
+    "[Configuration] [ConfigurationManager] Fetching old NMS Data for updated EXAMPLEKIND2 entities started.",
+    "[Configuration] [ConfigurationManager] Fetching NMS data for affected entities started.",
+]
+counter_examples = ["[Configuration] [ConfigurationManager] Fetching NMS Data for inserted EXAMPLEKIND1 entities paused."]
+
+[[template]]
+code = "RTL-035"
+class = "other"
+title = "Configuration processor phase"
+sev = 5
+regex = '''^\[Configuration\] \[ConfigurationManager\] ?(?P<processor>\w+) (?P<phase>Started|Finished) (?:process type: (?P<entity>\w+)|(?P<stage>execute phase|prepare phase|commit phase|execute finished phase))$'''
+examples = [
+    { msg = "[Configuration] [ConfigurationManager]ExampleConfigurationProcessor Started process type: EXAMPLEKIND1", fields = { processor = "ExampleConfigurationProcessor", phase = "Started", entity = "EXAMPLEKIND1" } },
+    { msg = "[Configuration] [ConfigurationManager]ExampleConfigurationProcessor Finished execute phase", fields = { stage = "execute phase" } },
+]
+counter_examples = ["[Configuration] [ConfigurationManager]ExampleConfigurationProcessor Paused execute phase"]
+
+[[template]]
+code = "RTL-036"
+class = "other"
+title = "Configuration manager transaction step"
+sev = 5
+regex = '''^\[Configuration\] \[ConfigurationManager\] (?=[\[SEPCA])(?:\[(?P<processor>\w+)\] Add additional entities (?P<phase>started|finished)\.|SetData method finished successfully\.|(?P<method>Execute|Prepare|Commit) method called\.\.\.|Applying changes to reference graph builder (?P<graph_phase>started|finished)\.|SetData - from version ID: (?P<from_id>\d+), to version ID: (?P<to_id>\d+), MDC: (?P<mdc>\d+), SMDC: (?P<smdc>\d+)\.)$'''
+fields = { from_id = "int", to_id = "int", mdc = "int", smdc = "int" }
+examples = [
+    { msg = "[Configuration] [ConfigurationManager] SetData - from version ID: 1000001, to version ID: 1000002, MDC: 1000003, SMDC: 0.", fields = { from_id = 1000001, to_id = 1000002, mdc = 1000003, smdc = 0 } },
+    { msg = "[Configuration] [ConfigurationManager] Prepare method called...", fields = { method = "Prepare" } },
+    { msg = "[Configuration] [ConfigurationManager] [ExampleProcessor] Add additional entities started.", fields = { processor = "ExampleProcessor", phase = "started" } },
+    "[Configuration] [ConfigurationManager] Applying changes to reference graph builder finished.",
+]
+counter_examples = ["[Configuration] [ConfigurationManager] Rollback method called..."]
+
+[[template]]
+code = "RTL-037"
+class = "other"
+title = "Reference graph builder changes"
+sev = 5
+regex = '''^\[Configuration\] \[ReferenceGraphBuilder\] (?:Applying changes for class: (?P<class_name>\w+), inserted nodes: (?P<inserted>\d+), updated nodes: (?P<updated>\d+), deleted nodes: (?P<deleted>\d+)|Finished Applying changes for class: (?P<done_class>\w+)\.)$'''
+fields = { inserted = "int", updated = "int", deleted = "int" }
+examples = [
+    { msg = "[Configuration] [ReferenceGraphBuilder] Applying changes for class: EXAMPLEKIND1, inserted nodes: 11, updated nodes: 0, deleted nodes: 6", fields = { class_name = "EXAMPLEKIND1", inserted = 11, updated = 0, deleted = 6 } },
+    "[Configuration] [ReferenceGraphBuilder] Finished Applying changes for class: EXAMPLEKIND1.",
+]
+counter_examples = ["[Configuration] [ReferenceGraphBuilder] Applying changes for class: EXAMPLEKIND1, inserted nodes: x"]
+
+# ============================================================================================
+# Block fetch, caches, queues and pools
+# ============================================================================================
+
+[[template]]
+code = "RTL-038"
+class = "other"
+title = "Block fetcher step"
+sev = 5
+regex = '''^\[BlockFetcher\] (?=[BFIRS])(?:Fetching specific blocks count: (?P<blocks>\d+), tasks: (?P<tasks>\d+), blocks per task: (?P<per_task>\d+)\.|Blocks splited, segment size: (?P<segment_size>\d+), number of segments: (?P<segments>\d+)|Releasing block ID list|Initializing block list for model update|Block ID list (?:released|initialized|fetched)|Fetching block list from NMS|Splitting block list, (?P<kind>delta|initial) segment size \((?P<all_marker>\d+) = all blocks in one segment\): (?P<split_size>\d+), block count (?P<block_count>\d+))$'''
+fields = { blocks = "int", tasks = "int", per_task = "int", segment_size = "int", segments = "int", split_size = "int", block_count = "int" }
+examples = [
+    { msg = "[BlockFetcher] Fetching specific blocks count: 20, tasks: 4, blocks per task: 5.", fields = { blocks = 20, tasks = 4, per_task = 5 } },
+    { msg = "[BlockFetcher] Splitting block list, delta segment size (0 = all blocks in one segment): 200, block count 267", fields = { kind = "delta", split_size = 200, block_count = 267 } },
+    "[BlockFetcher] Block ID list released",
+    "[BlockFetcher] Initializing block list for model update",
+]
+counter_examples = ["[BlockFetcher] Block ID list lost"]
+
+[[template]]
+code = "RTL-039"
+class = "other"
+title = "Smart cache configurator step"
+sev = 5
+regex = '''^\[SmartCacheConfigurator\] (?:Purge timer triggered\.|Purging data finished\.|Cache\[(?P<cache>[^\]]+)\] (?P<phase>Configuring|Configured))$'''
+examples = [
+    "[SmartCacheConfigurator] Purge timer triggered.",
+    { msg = "[SmartCacheConfigurator] Cache[ExampleCache] Configured", fields = { cache = "ExampleCache", phase = "Configured" } },
+]
+counter_examples = ["[SmartCacheConfigurator] Purge timer cancelled."]
+
+[[template]]
+code = "RTL-040"
+class = "other"
+title = "Publisher integrity update request merged"
+sev = 5
+regex = '''^\[PublisherIntegrityUpdateHandler\] New integrity update request merged with (?P<target>executing|pending) request\. New request: originator: (?P<originator>[0-9a-fA-F-]{36}) topics count: (?P<topics>\d+) clients \((?P<clients>\d+)\): .*$'''
+fields = { originator = "guid", topics = "int", clients = "int" }
+examples = [
+    { msg = "[PublisherIntegrityUpdateHandler] New integrity update request merged with executing request. New request: originator: 00000000-0000-4000-8000-000000000001 topics count: 1 clients (1): 00000000-0000-4000-8000-000000000002(0), executing request originator: 00000000-0000-4000-8000-000000000003", fields = { target = "executing", topics = 1, clients = 1 } },
+]
+counter_examples = ["[PublisherIntegrityUpdateHandler] New integrity update request dropped."]
+
+[[template]]
+code = "RTL-041"
+class = "other"
+title = "Circular queue replicator data"
+sev = 5
+regex = '''^\[CircularQueueReplicator\] ?(?=[DSQ])(?:Destination Head: (?P<head>\d+), Tail: (?P<tail>\d+), Queue: (?P<queue>\d+)|Sending BulkEnqueue message\. Uncompressed message size: (?P<size>\d+), Number of elements: (?P<elements>\d+)\.|Queue with type: (?P<queue_type>\d+) applied BulkEnqueue command\. Number of elements: (?P<applied_elements>\d+)\.|Destination and source queue of type (?P<same_queue_type>\d+) are same\.)$'''
+fields = { head = "int", tail = "int", queue = "int", size = "int", elements = "int", queue_type = "int", applied_elements = "int", same_queue_type = "int" }
+examples = [
+    { msg = "[CircularQueueReplicator] Destination Head: 68, Tail: 70, Queue: 2", fields = { head = 68, tail = 70, queue = 2 } },
+    { msg = "[CircularQueueReplicator] Sending BulkEnqueue message. Uncompressed message size: 2048, Number of elements: 9.", fields = { size = 2048, elements = 9 } },
+    "[CircularQueueReplicator] Queue with type: 3 applied BulkEnqueue command. Number of elements: 9.",
+    "[CircularQueueReplicator] Destination and source queue of type 1 are same.",
+]
+counter_examples = ["[CircularQueueReplicator] Destination Head: x, Tail: 70, Queue: 2"]
+
+[[template]]
+code = "RTL-042"
+class = "lifecycle"
+title = "Circular queue replicator state"
+sev = 4
+regex = '''^\[CircularQueueReplicator\] ?(?=[SQPRFBUR])(?P<event>Starting QueueReplicator\.|QueueReplicator successfully started\.|Partner machine exists \(service: \w+\) and its state is \w+\.|(?:Raising|Finished raising of) IUSource(?:Started|Finished) event\.|Block threads to prevent changing queues until IU is finished\.|Unblocked threads that want to change queues\. Queue replication in IU is finished\.|System in hot state\. Waiting replication queue drain to finish\.|Queue draining finished\.|Replication queue draining finished\.)$'''
+examples = [
+    { msg = "[CircularQueueReplicator] Starting QueueReplicator.", fields = { event = "Starting QueueReplicator." } },
+    "[CircularQueueReplicator]Raising IUSourceStarted event.",
+    "[CircularQueueReplicator] Partner machine exists (service: DMS_EXAMPLE) and its state is HOT.",
+]
+counter_examples = ["[CircularQueueReplicator] Stopping QueueReplicator."]
+
+[[template]]
+code = "RTL-043"
+class = "startup"
+title = "Message queue created or limited"
+sev = 4
+regex = '''^Queue "(?P<queue>[^"]*)" (?:capacity limit is (?P<limit_bytes>\d+) bytes\.|is successfully created\. Number of pages: (?P<pages>\d+)\. Page size \[byte\]: (?P<page_size>\d+)\. Time to live \[ms\]: (?P<ttl_ms>\d+)\. Number of rewind pages: (?P<rewind_pages>\d+))$'''
+fields = { limit_bytes = "int", pages = "int", page_size = "int", ttl_ms = "int", rewind_pages = "int" }
+examples = [
+    { msg = 'Queue "exampleQueue" capacity limit is 1048576 bytes.', fields = { queue = "exampleQueue", limit_bytes = 1048576 } },
+    { msg = 'Queue "exampleQueue" is successfully created. Number of pages: 4. Page size [byte]: 65536. Time to live [ms]: 600000. Number of rewind pages: 2', fields = { pages = 4, page_size = 65536, ttl_ms = 600000, rewind_pages = 2 } },
+]
+counter_examples = ['Queue "exampleQueue" capacity limit is unlimited.']
+
+[[template]]
+code = "RTL-044"
+class = "other"
+title = "Proxy pool acquire and release"
+sev = 5
+fts = false
+regex = '''^\[ProxyPool\] (?:Acquiring (?P<proxy>\w+)\.|(?P<used_proxy>\w+) (?P<action>acquired|released)\.)$'''
+examples = [
+    { msg = "[ProxyPool] Acquiring ExampleServiceProxy.", fields = { proxy = "ExampleServiceProxy" } },
+    { msg = "[ProxyPool] ExampleServiceProxy released.", fields = { used_proxy = "ExampleServiceProxy", action = "released" } },
+]
+counter_examples = ["[ProxyPool] ExampleServiceProxy leaked."]
+
+# ============================================================================================
+# Loading, errors and services shared by the RT services
+# ============================================================================================
+
+[[template]]
+code = "RTL-045"
+class = "startup"
+title = "Assembly added to the catalog"
+sev = 5
+text = "Assembly successfully added to catalog"
+examples = ["Assembly successfully added to catalog"]
+counter_examples = ["Assembly successfully removed from catalog"]
+
+[[template]]
+code = "RTL-046"
+class = "error"
+title = "Service operation call failed"
+sev = 2
+regex = '''^(?:\(ERROR\) \[Communication|\[Communication)(?P<chan>\d+)\] - An error occurred while calling service operation\.$'''
+examples = [
+    { msg = "[Communication2] - An error occurred while calling service operation.", fields = { chan = "2" } },
+    "(ERROR) [Communication3] - An error occurred while calling service operation.",
+]
+counter_examples = ["[Communication2] - Service operation call completed."]
+
+[[template]]
+code = "RTL-047"
+class = "error"
+title = "Communication exception with stack trace"
+sev = 2
+regex = '''^(?:\(ERROR\) \[Communication|\[Communication)(?P<chan>\d+)\] - (?P<exc_type>[\w.`+]*Exception):$'''
+cont = "dotnet_stack"
+examples = [
+    { msg = "[Communication2] - System.ObjectDisposedException:", cont = "   at Example.Service.Call() in F:\\PD\\1234567\\1\\Example\\Service.cs:line 10\n", fields = { exc_type = "System.ObjectDisposedException" } },
+    "(ERROR) [Communication2] - Example.Platform.ServiceModel.ServiceOperationException:",
+]
+counter_examples = ["[Communication2] - System.ObjectDisposedException: details follow"]
+
+[[template]]
+code = "RTL-048"
+class = "other"
+title = "UI configuration provider call"
+sev = 5
+regex = '''^\[UI Config Provider\] - (?P<action>Getting|Update of) .*$'''
+examples = [
+    { msg = '[UI Config Provider] - Getting all private UI config objects of type "ExampleOptions" for principal "EXAMPLE\\user01" started...', fields = { action = "Getting" } },
+    '[UI Config Provider] - Update of UI config object named "ExampleName" for principal "EXAMPLE\\user01" on "HOST01" computer completed.',
+]
+counter_examples = ["[UI Config Provider] - Deleting all UI config objects"]
+
+[[template]]
+code = "RTL-049"
+class = "startup"
+title = "License state of a product function"
+sev = 4
+regex = '''^\[GlobalLicenseProvider\] (?:Loading licensing information\.|All functions are not allowed\.|(?P<feature>\w+) is (?P<state>licensed|not licensed)\.)$'''
+examples = [
+    { msg = "[GlobalLicenseProvider] ExampleFunction is not licensed.", fields = { feature = "ExampleFunction", state = "not licensed" } },
+    "[GlobalLicenseProvider] ExampleFunction is licensed.",
+    "[GlobalLicenseProvider] Loading licensing information.",
+]
+counter_examples = ["[GlobalLicenseProvider] ExampleFunction is expired."]
+
+[[template]]
+code = "RTL-050"
+class = "startup"
+title = "Persistent store and historical data library setup"
+sev = 5
+regex = '''^(?:Uninitialized HDL Creating ElementHistoricalDataLibrary\.|HDL Connection string read from DALUtilities|HDL Max number of files is set to: (?P<max_files>\w+)|HDL ConnectionString: .*|HDL Connection Monitor: Starting connection monitor \(interval (?P<interval_ms>\d+) ms\) with connection string .*|PersistentStoreLibrary created with connection string: .*)$'''
+examples = [
+    { msg = "HDL Max number of files is set to: Unlimited", fields = { max_files = "Unlimited" } },
+    "HDL ConnectionString: Data Source=HOST01;Initial Catalog=Example;Integrated Security=True",
+    { msg = "HDL Connection Monitor: Starting connection monitor (interval 5000 ms) with connection string Data Source=HOST01;Initial Catalog=Example", fields = { interval_ms = "5000" } },
+    "PersistentStoreLibrary created with connection string: Data Source=HOST01;Initial Catalog=Example;Integrated Security=True",
+]
+counter_examples = ["HDL Connection refused"]
+
+[[template]]
+code = "RTL-051"
+class = "other"
+title = "Save case and playback service"
+sev = 4
+regex = '''^\(SavecaseAndPlaybackService\): (?=[SDO])(?:Started\.|(?P<action>Deleting|Saving) case with name: (?P<case_name>\w+)(?:\.\.\.| succeeded\.)|Operation (?P<operation>SaveCase|DeleteCase) completed\.)$'''
+examples = [
+    { msg = "(SavecaseAndPlaybackService): Saving case with name: 12345...", fields = { action = "Saving", case_name = "12345" } },
+    "(SavecaseAndPlaybackService): Saving case with name: 12345 succeeded.",
+    "(SavecaseAndPlaybackService): Started.",
+    { msg = "(SavecaseAndPlaybackService): Operation DeleteCase completed.", fields = { operation = "DeleteCase" } },
+]
+counter_examples = ["(SavecaseAndPlaybackService): Operation LoadCase completed."]
+
+[[template]]
+code = "RTL-052"
+class = "startup"
+title = "Replication client enabled"
+sev = 4
+regex = '''^Starting Replication client: (?P<enabled>True|False)$'''
+examples = [
+    { msg = "Starting Replication client: True", fields = { enabled = "True" } },
+]
+counter_examples = ["Starting Replication client: Maybe"]
+
+[[template]]
+code = "RTL-053"
+class = "startup"
+title = "Service model buffer pool size"
+sev = 4
+regex = '''^\[SM\] MaxBufferPoolSize is (?P<size>\d+)$'''
+fields = { size = "int" }
+examples = [
+    { msg = "[SM] MaxBufferPoolSize is 4194304", fields = { size = 4194304 } },
+]
+counter_examples = ["[SM] MaxBufferPoolSize is unlimited"]
+
+[[template]]
+code = "RTL-054"
+class = "startup"
+title = "Publisher dead client checker started"
+sev = 4
+text = "Publisher check dead or slow clients worker started."
+examples = ["Publisher check dead or slow clients worker started."]
+counter_examples = ["Publisher check dead or slow clients worker stopped."]
+
+# ============================================================================================
+# MTS: model topology and tag lines shared by CoreFunctions and the FunctionHosts
+# ============================================================================================
+
+[[template]]
+code = "RTL-055"
+class = "other"
+title = "Tag removed from an element"
+sev = 5
+regex = '''^MTS: Removed tag: (?P<removed>Yes|No), tag GID: (?P<tag_gid>\d+) from element with LID: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}), GID: (?P<gid>\d+)\. Flag: (?P<flag>\w+)\.$'''
+fields = { tag_gid = "int", lid = "hex", gid = "int" }
+examples = [
+    { msg = "MTS: Removed tag: Yes, tag GID: 1000001 from element with LID: 0x4A00B00C, GID: 1000002. Flag: TF_NONE.", fields = { removed = "Yes", tag_gid = 1000001, gid = 1000002, flag = "TF_NONE" } },
+]
+counter_examples = ["MTS: Removed tag: Maybe, tag GID: 1000001 from element with LID: 0x4A00B00C, GID: 1000002. Flag: TF_NONE."]
+
+[[template]]
+code = "RTL-056"
+class = "other"
+title = "Tag set on an element"
+sev = 5
+regex = '''^MTS: Seting tag GID: (?P<tag_gid>\d+), to element with lid: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}), gid: (?P<gid>\d+)\. Flag: (?P<flag>\w+)\.$'''
+fields = { tag_gid = "int", lid = "hex", gid = "int" }
+examples = [
+    { msg = "MTS: Seting tag GID: 1000001, to element with lid: 0x4A00B00C, gid: 1000002. Flag: TF_SPG.", fields = { tag_gid = 1000001, gid = 1000002, flag = "TF_SPG" } },
+]
+counter_examples = ["MTS: Setting tag GID: 1000001, to element with lid: 0x4A00B00C, gid: 1000002. Flag: TF_SPG."]
+
+[[template]]
+code = "RTL-057"
+class = "other"
+title = "MTS transaction and cache progress"
+sev = 5
+regex = '''^MTS: (?:The publication timestamp is: (?P<published>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)? [+-]\d\d:\d\d)|(?P<signals>\d+) signal changes was written into transactional model|Filter Update Blocks for optimized transaction (?P<filter_phase>started|stopped)\.?|Cache commit compact started\.?|Cache commit compact finished\. Execution took (?P<took>[\d:.]+)\.|ModelProcessor: Starting topology analysys on transactional model|ModelProcessor: Topology analysys on transactional model finished succesfully|Cache (?P<cache_phase>prepare|commit) phase (?P<phase>started|finished)|Creating a transaction model has (?P<creation>started|finished)\.|Internal model size: (?P<model_bytes>\d+) bytes)$'''
+fields = { signals = "int", model_bytes = "int" }
+examples = [
+    { msg = "MTS: The publication timestamp is: 2000-01-02 03:04:05.678 -03:00", fields = { published = "2000-01-02 03:04:05.678 -03:00" } },
+    { msg = "MTS: 21 signal changes was written into transactional model", fields = { signals = 21 } },
+    { msg = "MTS: Cache commit compact finished. Execution took 00:00.0261.", fields = { took = "00:00.0261" } },
+    "MTS: Cache prepare phase started",
+    "MTS: Cache commit compact started.",
+    { msg = "MTS: Filter Update Blocks for optimized transaction stopped.", fields = { filter_phase = "stopped" } },
+    { msg = "MTS: Internal model size: 6103901 bytes", fields = { model_bytes = 6103901 } },
+    "MTS: Creating a transaction model has finished.",
+]
+counter_examples = ["MTS: Cache abort phase started"]
+
+[[template]]
+code = "RTL-058"
+class = "other"
+title = "MTS affected blocks"
+sev = 5
+regex = '''^MTS: Block type: (?P<block_type>\d+), affected blocks \(size: (?P<size>\d+)\): .*$'''
+fields = { block_type = "int", size = "int" }
+examples = [
+    { msg = "MTS: Block type: 5, affected blocks (size: 3): 1893, 1837, 1865", fields = { block_type = 5, size = 3 } },
+]
+counter_examples = ["MTS: Block type: x, affected blocks (size: 3): 1"]
+
+[[template]]
+code = "RTL-059"
+class = "validation"
+title = "MTS element or root missing in the internal model"
+sev = 4  # per-element
+regex = '''^MTS: (?:Not existing root (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) in rootIsland map \.|Requested element doesn't exist in InternalModel, element id: (?P<element>(?:0x)?[0-9A-Fa-f]{1,16})|Root for given element could not be retrieved, element id: (?P<no_root_element>(?:0x)?[0-9A-Fa-f]{1,16})|Cut already exists in internalModel)$'''
+fields = { root = "hex", element = "hex", no_root_element = "hex" }
+examples = [
+    { msg = "MTS: Not existing root 4A00B00C in rootIsland map .", fields = { root = 0x4A00B00C } },
+    { msg = "MTS: Requested element doesn't exist in InternalModel, element id: 0x4A00B00D", fields = { element = 0x4A00B00D } },
+    "MTS: Root for given element could not be retrieved, element id: 4A00B00E",
+    "MTS: Cut already exists in internalModel",
+]
+counter_examples = ["MTS: Requested element exists in InternalModel, element id: 0x4A00B00D"]
+
+# ============================================================================================
+# Other lines shared by two or more RT families
+# ============================================================================================
+
+[[template]]
+code = "RTL-060"
+class = "startup"
+title = "Configuration behavior value"
+sev = 5
+regex = '''^\[Configuration\] \[(?P<name>\w+)\]: \[(?P<value>[^\]]*)\]\. Type: \[ConfigurationBehavior\]$'''
+examples = [
+    { msg = "[Configuration] [ExampleFlag]: [True]. Type: [ConfigurationBehavior]", fields = { name = "ExampleFlag", value = "True" } },
+]
+counter_examples = ["[Configuration] [ExampleFlag]: [True]. Type: [ConfigurationUnknown]"]
+
+[[template]]
+code = "RTL-061"
+class = "other"
+title = "Model update application started"
+sev = 5
+text = "Apply model update started."
+examples = ["Apply model update started."]
+counter_examples = ["Apply model update finished."]
+
+[[template]]
+code = "RTL-062"
+class = "statistics"
+title = "Block attributes processing time"
+sev = 5
+regex = '''^Utils ProcessBlockAttributes method \(blockIDS count: (?P<blocks>\d+), number of parallel: (?P<parallel>\d+), property count: (?P<properties>\d+), class count: (?P<classes>\d+)\) Total time: (?P<total_s>[\d.E+-]+)s, on the NMS : (?P<nms_s>[\d.E+-]+)s, on local: (?P<local_s>[\d.E+-]+)s\.$'''
+fields = { blocks = "int", parallel = "int", properties = "int", classes = "int", total_s = "float", nms_s = "float", local_s = "float" }
+examples = [
+    { msg = "Utils ProcessBlockAttributes method (blockIDS count: 1, number of parallel: 2, property count: 3, class count: 4) Total time: 0.0002733s, on the NMS : 0.0002373s, on local: 1.07E-05s.", fields = { blocks = 1, parallel = 2, properties = 3, classes = 4, total_s = 0.0002733 } },
+]
+counter_examples = ["Utils ProcessBlockAttributes method (blockIDS count: x, number of parallel: 2)"]

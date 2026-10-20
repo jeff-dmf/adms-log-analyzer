@@ -1,0 +1,170 @@
+﻿2030-01-15 10:00:00.000 [PID=1209][TID=0x1a2b] INFO - New job received for execution. JobID: 1000123. Size of the real-time sequence: 3
+2030-01-15 10:00:00.050 [PID=1209][TID=0x1a2b] DEBUGLOG - [FunctionHostPublisher][ExecutionThreadMethod] Function execution started for JobID: 1000123.
+2030-01-15 10:00:00.100 [PID=1209][TID=0x1a2b] DEBUGLOG - [FunctionHostPublisher][ExecutionThreadMethod] Function StateEstimation is executed. JobID: 1000123. Index in real-time sequence: 2
+2030-01-15 10:00:00.150 [PID=1209][TID=0x1a2b] DEBUGLOG - Input builder preparation started...
+2030-01-15 10:00:00.200 [PID=1209][TID=0x1a2b] INFO - Job execution finished successfully. Callback result sent. JobID: 1000123. Status: DoneWithWarning.
+2030-01-15 10:00:00.250 [PID=1209][TID=0x1a2b] DEBUGLOG - Loading library Example.Common.StateEstimationBuilder.dll started ...
+2030-01-15 10:00:00.300 [PID=1209][TID=0x1a2b] DEBUGLOG - Context timestamp is 1/2/2030 3:04:05 PM
+2030-01-15 10:00:00.350 [PID=1209][TID=0x1a2b] DEBUGLOG - Error codes successfully handled.
+2030-01-15 10:00:00.400 [PID=1209][TID=0x1a2b] DEBUGLOG - 2 results successfully handled.
+2030-01-15 10:00:00.450 [PID=1209][TID=0x1a2b] WARNING - Function returned errors. Number of errors: 2
+2030-01-15 10:00:00.500 [PID=1209][TID=0x1a2b] WARNING - Error occured in function IsCommandExample.
+2030-01-15 10:00:00.550 [PID=1209][TID=0x1a2b] WARNING - (WARNING) Cannot load extension results builder assembly, expected: Example.ResultsBuilderXX_PROJECT.dll, Reason: File not found.
+2030-01-15 10:00:00.600 [PID=1209][TID=0x1a2b] DEBUGLOG - Trace Function started...
+2030-01-15 10:00:00.650 [PID=1209][TID=0x1a2b] DEBUGLOG - Trace Options:
+2030-01-15 10:00:00.700 [PID=1209][TID=0x1a2b] DEBUGLOG - Trace Function is called for element with LID 4A00B00C00D00E02.
+2030-01-15 10:00:00.750 [PID=1209][TID=0x1a2b] DEBUGLOG - 4A00B00C00D00E01
+2030-01-15 10:00:00.800 [PID=1209][TID=0x1a2b] WARNING - DH: TapChanger: 4A00B00C00D00E01 has hunted from position: -3 to position: 4.
+2030-01-15 10:00:00.850 [PID=1209][TID=0x1a2b] DEBUGLOG - Switch have been added to predicted devices list, GID: 4A00B00C00D00E01, as 2nd device
+2030-01-15 10:00:00.900 [PID=1209][TID=0x1a2b] DEBUGLOG - UseLowVoltage is false.
+2030-01-15 10:00:00.950 [PID=1209][TID=0x1a2b] DEBUGLOG - Trace results successfully handled.
+2030-01-15 10:00:01.000 [PID=1209][TID=0x1a2b] DEBUGLOG - PF results successfully handled!
+2030-01-15 10:00:01.050 [PID=1209][TID=0x1a2b] DEBUGLOG - SSV results successfully handled.
+2030-01-15 10:00:01.100 [PID=1209][TID=0x1a2b] DEBUGLOG - [FunctionHostPublisher][ExecutionThreadMethod] Function execution finished for JobID: 1000124.
+2030-01-15 10:00:01.150 [PID=1209][TID=0x1a2b] INFO - New job received for execution. JobID: x. Size of the real-time sequence: 3
+2030-01-15 10:00:01.200 [PID=1209][TID=0x1a2b] INFO - [EMSBUILD]: Node: LID: 4A00B00C00D00E01 in Root: LID: 4A00B00C00D00E02 is isolated.
+2030-01-15 10:00:01.250 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBUILD]: Started EMSModelBuilder:Build() function!
+2030-01-15 10:00:01.300 [PID=1209][TID=0x1a2b] INFO - [EMSBUILD]: Detected at least one transmission network that has disabled calculations.
+2030-01-15 10:00:01.350 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBUILD]: Processing root ID: 4A00B00C00D00E01. Root source GID: 1000123
+2030-01-15 10:00:01.400 [PID=1209][TID=0x1a2b] INFO - [EMSBUILD]: Number of branches in island is lower than minimum number. Unresolved Island!
+2030-01-15 10:00:01.450 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBUILD]: Postprocessing of merged sections is started.
+2030-01-15 10:00:01.500 [PID=1209][TID=0x1a2b] INFO - [EMSBUILD]: EMS root LID: 4A00B00C00D00E01 is in disabled part of network! Root source GID: 1000123
+2030-01-15 10:00:01.550 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBUILD]: Clean up of custom data started!
+2030-01-15 10:00:01.600 [PID=1209][TID=0x1a2b] INFO - [EMSBUILD]: EMSModelBuilder:EMS part of network is not selected...
+2030-01-15 10:00:01.650 [PID=1209][TID=0x1a2b] INFO - [EMSCH]: Container is not valid for element LID: 4A00B00C00D00E01, GID: 0x4A00B00C00D00E02 (FindSubstationTransmissionOrRegion).
+2030-01-15 10:00:01.700 [PID=1209][TID=0x1a2b] INFO - [EMSSE]: Can not remove isolated nodes form cache of root( LID: 4A00B00C00D00E01 )
+2030-01-15 10:00:01.750 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Started Topology Estimation for root ( LID: 4A00B00C00D00E01 ) ( GID: 4A00B00C00D00E02 )
+2030-01-15 10:00:01.800 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Started Function
+2030-01-15 10:00:01.850 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Gain function for transmission network ( LID: 4A00B00C00D00E01 ) is: ( 0.5   )
+2030-01-15 10:00:01.900 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Gain function for entire network is: ( 0.25 )
+2030-01-15 10:00:01.950 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSPI]: Calculated Circuit Line Efficiency of Circuit LID: 4A00B00C00D00E01, GID: 1000123 is set to 98.5.
+2030-01-15 10:00:02.000 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSPI]: Input active power of substation LID: 4A00B00C00D00E01, GID: 1000123 is 12.5 [kW]. Relative active power losses is set to 0.5 [%]
+2030-01-15 10:00:02.050 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSPI]: EMS Performance Indices calculation started.
+2030-01-15 10:00:02.100 [PID=1209][TID=0x1a2b] INFO - [EMSPI]: There are no nodes in circuit LID: 4A00B00C00D00E01, GID: 1000123.
+2030-01-15 10:00:02.150 [PID=1209][TID=0x1a2b] INFO - [EMSPI]: Diagrams are not allocated for parent LID: 4A00B00C00D00E01, GID: 1000123 or child circuit LID: 4A00B00C00D00E02, GID: 1000124.
+2030-01-15 10:00:02.200 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSRRM]: Allocation and setting Custom Data started...
+2030-01-15 10:00:02.250 [PID=1209][TID=0x1a2b] ERROR - [EMSFC]: Calculation failed
+2030-01-15 10:00:02.300 [PID=1209][TID=0x1a2b] ERROR - [EMSFC]:Create EMS cache for FC execution failed.
+2030-01-15 10:00:02.350 [PID=1209][TID=0x1a2b] INFO - [FunctionHostPublisher][ExecutionThreadMethod] Function execution thread is started.
+2030-01-15 10:00:02.400 [PID=1209][TID=0x1a2b] WARNING - [EMSFC]: Model builder found unresolved network island
+2030-01-15 10:00:02.450 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSFC]: Allocate model started.
+2030-01-15 10:00:02.500 [PID=1209][TID=0x1a2b] INFO - [EMSBC]: Function completed with 1 errors, 2, warnings, 3 info's !
+2030-01-15 10:00:02.550 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMS LFW] Find input DMS root GID 1000123.
+2030-01-15 10:00:02.600 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBUILD]: Ended EMSModelBuilder:Build() function!
+2030-01-15 10:00:02.650 [PID=1209][TID=0x1a2b] INFO - [EMSBUILD]: Number of nodes in island is lower than minimum number. Unresolved Island!
+2030-01-15 10:00:02.700 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBUILD]: Postprocessing of merged sections is finished.
+2030-01-15 10:00:02.750 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBUILD]: Clean up of custom data finished!
+2030-01-15 10:00:02.800 [PID=1209][TID=0x1a2b] INFO - Ems part of network has not been selected...
+2030-01-15 10:00:02.850 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Started CleanUp
+2030-01-15 10:00:02.900 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Finished CleanUp successfully
+2030-01-15 10:00:02.950 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Export switches data started.
+2030-01-15 10:00:03.000 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Export switches data finished.
+2030-01-15 10:00:03.050 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSPI]: EMS Performance Indices calculation successfully ended.
+2030-01-15 10:00:03.100 [PID=1209][TID=0x1a2b] INFO - [EMSPI]: There are no transformers in model!
+2030-01-15 10:00:03.150 [PID=1209][TID=0x1a2b] ERROR - [EMSBC]: Calculation failed
+2030-01-15 10:00:03.200 [PID=1209][TID=0x1a2b] ERROR - [EMSBC]:Create EMS cache for BC execution failed.
+2030-01-15 10:00:03.250 [PID=1209][TID=0x1a2b] WARNING - [EMSBC]: Model builder found unresolved network island
+2030-01-15 10:00:03.300 [PID=1209][TID=0x1a2b] DEBUGLOG - [SE] Load calibration started...
+2030-01-15 10:00:03.350 [PID=1209][TID=0x1a2b] INFO - Load calculation unsuccessful for 9 SDPs in block with ID 1866.
+2030-01-15 10:00:03.400 [PID=1209][TID=0x1a2b] INFO - [LF] (WARNING) Set point 1.05   is wrong for reg=4A00B00C00D00E01.
+2030-01-15 10:00:03.450 [PID=1209][TID=0x1a2b] INFO - [LF] Low voltage 0.91 is detected at node 4A00B00C00D00E01 in iteration 3...
+2030-01-15 10:00:03.500 [PID=1209][TID=0x1a2b] INFO - [LF] In this root there are parts of network with unknown topology. Lid the of device is 4A00B00C00D00E01 ...
+2030-01-15 10:00:03.550 [PID=1209][TID=0x1a2b] INFO - [FunctionHostPublisher][ExecutionThreadMethod] Function StateEstimation is executed. JobID: x. Index in real-time sequence: 2
+2030-01-15 10:00:03.600 [PID=1209][TID=0x1a2b] WARNING - [LF] All elements in the root 4A00B00C00D00E01 have invalid values of results ...
+2030-01-15 10:00:03.650 [PID=1209][TID=0x1a2b] DEBUGLOG - [LF] Load Flow function started for root 4A00B00C00D00E01...
+2030-01-15 10:00:03.700 [PID=1209][TID=0x1a2b] DEBUGLOG - [MR] Model Readiness prepare started...
+2030-01-15 10:00:03.750 [PID=1209][TID=0x1a2b] DEBUGLOG - [PU]: Pattern Updater execute started.
+2030-01-15 10:00:03.800 [PID=1209][TID=0x1a2b] INFO - [SF] Applying Switching command (1 of 3) for element LID 4A00B00C00D00E01 done successfully. Next Action...
+2030-01-15 10:00:03.850 [PID=1209][TID=0x1a2b] DEBUGLOG - [SF]: State Forecast calculation finished.
+2030-01-15 10:00:03.900 [PID=1209][TID=0x1a2b] DEBUGLOG - [SSV] SSV_Execute started.
+2030-01-15 10:00:03.950 [PID=1209][TID=0x1a2b] INFO - [SSV] Issued Message: Fuse should not be replaced under a load.
+2030-01-15 10:00:04.000 [PID=1209][TID=0x1a2b] WARNING - [SSV] ExampleValidations: ERROR - Some validation is skipped!
+2030-01-15 10:00:04.050 [PID=1209][TID=0x1a2b] WARNING - [SSV] Loop is not broken. Aborting...
+2030-01-15 10:00:04.100 [PID=1209][TID=0x1a2b] WARNING - [SSV] InterlockingItem that signal belongs to is not valid or is not in operational model.
+2030-01-15 10:00:04.150 [PID=1209][TID=0x1a2b] DEBUGLOG - [OT] Outage Trace cleanUp started...
+2030-01-15 10:00:04.200 [PID=1209][TID=0x1a2b] DEBUGLOG - [OS] Outage Statistics Function started...
+2030-01-15 10:00:04.250 [PID=1209][TID=0x1a2b] DEBUGLOG - [PV-LLP] PV_Calculate has started.
+2030-01-15 10:00:04.300 [PID=1209][TID=0x1a2b] DEBUGLOG - [PF INFO] PF_Calculate started...
+2030-01-15 10:00:04.350 [PID=1209][TID=0x1a2b] DEBUGLOG - [SRSB] Analog 4A00B00C00D00E01 last quality was: 5.
+2030-01-15 10:00:04.400 [PID=1209][TID=0x1a2b] DEBUGLOG - [PI] Root size: 2
+2030-01-15 10:00:04.450 [PID=1209][TID=0x1a2b] INFO - There are no temperature range schedules for specified temperature and time for load group with lid 1000123
+2030-01-15 10:00:04.500 [PID=1209][TID=0x1a2b] DEBUGLOG - [SFBuilder] Feeder 1000123 has active consumption 1.5, reactive consumption 0.5, total active 0 and reactive 0 generation
+2030-01-15 10:00:04.550 [PID=1209][TID=0x1a2b] INFO - [SFBuilder] Feeder 1000123 has active consumption: NaN | NaN | and generation NaN | NaN |
+2030-01-15 10:00:04.600 [PID=1209][TID=0x1a2b] ERROR - [LF] Error: Load Flow calculation has failed.
+2030-01-15 10:00:04.650 [PID=1209][TID=0x1a2b] WARNING - [SE] Warning: State Estimation quality of root 4A00B00C00D00E01 is questionable.
+2030-01-15 10:00:04.700 [PID=1209][TID=0x1a2b] DEBUGLOG - [SE] State Estimation function finished with success.
+2030-01-15 10:00:04.750 [PID=1209][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:04.800 [PID=1209][TID=0x1a2b] WARNING - [SF] Current command is not valid for calculation.
+2030-01-15 10:00:04.850 [PID=1209][TID=0x1a2b] INFO - Measurement indicating energization, analog GID 4A00B00C00D00E01, abort prediction trace.
+2030-01-15 10:00:04.900 [PID=1209][TID=0x1a2b] DEBUGLOG - Input builder preparation completed
+2030-01-15 10:00:04.950 [PID=1209][TID=0x1a2b] INFO - Job execution finished successfully. Callback result sent. JobID: 1000124. Status: DoneWithError.
+2030-01-15 10:00:05.000 [PID=1209][TID=0x1a2b] DEBUGLOG - Loading library Example.Common.StateEstimationBuilder.dll successfully completed.
+2030-01-15 10:00:05.050 [PID=1209][TID=0x1a2b] DEBUGLOG - [MR] Error codes successfully handled.
+2030-01-15 10:00:05.100 [PID=1209][TID=0x1a2b] DEBUGLOG - [MR] Model Readiness function returned error codes.
+2030-01-15 10:00:05.150 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBC]: Function returned error codes.
+2030-01-15 10:00:05.200 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBC]: Error codes successfully handled.
+2030-01-15 10:00:05.250 [PID=1209][TID=0x1a2b] DEBUGLOG - 2 function returned error codes.
+2030-01-15 10:00:05.300 [PID=1209][TID=0x1a2b] WARNING - Prediction Function returned errors. Number of errors: 1
+2030-01-15 10:00:05.350 [PID=1209][TID=0x1a2b] WARNING - PF ResultBuilderLog: Error code: 7
+2030-01-15 10:00:05.400 [PID=1209][TID=0x1a2b] DEBUGLOG - Trace Function finished successfully...
+2030-01-15 10:00:05.450 [PID=1209][TID=0x1a2b] DEBUGLOG - No associated extern custom Trace function was found.
+2030-01-15 10:00:05.500 [PID=1209][TID=0x1a2b] DEBUGLOG - Input phases : PHASE_ABC
+2030-01-15 10:00:05.550 [PID=1209][TID=0x1a2b] DEBUGLOG - Type of Trace is TRACE_DOWN.
+2030-01-15 10:00:05.600 [PID=1209][TID=0x1a2b] DEBUGLOG - Type of trace : TRACE_UP
+2030-01-15 10:00:05.650 [PID=1209][TID=0x1a2b] DEBUGLOG - Trace Function is called for element with LID 12345678
+2030-01-15 10:00:05.700 [PID=1209][TID=0x1a2b] DEBUGLOG - TRACE_FOLLOW_LOOP
+2030-01-15 10:00:05.750 [PID=1209][TID=0x1a2b] DEBUGLOG - BREAKER
+2030-01-15 10:00:05.800 [PID=1209][TID=0x1a2b] DEBUGLOG - Predicted devices, 1st, 2nd and topo respectively, GID 4A00B00C00D00E01; 4A00B00C00D00E02; 4A00B00C00D00E03
+2030-01-15 10:00:05.850 [PID=1209][TID=0x1a2b] DEBUGLOG - PF_AutoRollUp parent device GID 4A00B00C00D00E01, affected phases PHASE_ABC, for auto roll up index 1.
+2030-01-15 10:00:05.900 [PID=1209][TID=0x1a2b] DEBUGLOG - BayEnd GID 4A00B00C00D00E01 TA status is TA_ENERGIZED.
+2030-01-15 10:00:05.950 [PID=1209][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:06.000 [PID=1209][TID=0x1a2b] DEBUGLOG - Start trace BayEnd for input LID 4A00B00C00D00E01 (GID 4A00B00C00D00E02) is LID 4A00B00C00D00E03 (GID 4A00B00C00D00E04).
+2030-01-15 10:00:06.050 [PID=1209][TID=0x1a2b] DEBUGLOG - Load Flow Update shouldn't be performed.
+2030-01-15 10:00:06.100 [PID=1209][TID=0x1a2b] DEBUGLOG - Recloser lock out signal: 4A00B00C00D00E01
+2030-01-15 10:00:06.150 [PID=1209][TID=0x1a2b] DEBUGLOG - NodeLID: 4A00B00C00D00E01
+2030-01-15 10:00:06.200 [PID=1209][TID=0x1a2b] DEBUGLOG - Work Order Validation started...
+2030-01-15 10:00:06.250 [PID=1209][TID=0x1a2b] INFO - [EMSBUILD]: NOS Node: LID: 12345678 in Root: LID: 0x4A00B00C00D00E03 is isolated.
+2030-01-15 10:00:06.300 [PID=1209][TID=0x1a2b] INFO - [EMSCH]: Container is not valid for element LID: 12345678, GID: 4A00B00C00D00E02 (FindExample).
+2030-01-15 10:00:06.350 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Finished Topology Estimation for root ( LID: 12345678 ) ( GID: 0x4A00B00C00D00E03 )
+2030-01-15 10:00:06.400 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSSE]: Gain function for transmission network ( LID: 4A00B00C00D00E02 ) is not calculated because transmission network is DISABLED
+2030-01-15 10:00:06.450 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSPI]: Service Efficiency of circuit LID: 12345678, GID: 1000124 is set to 100 [%].
+2030-01-15 10:00:06.500 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSPI]: Input reactive power of substation LID: 12345678, GID: 1000124 is 3 [kW]. Relative active power losses is set to 0 [%]
+2030-01-15 10:00:06.550 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSRRM] RRM calculation started ...
+2030-01-15 10:00:06.600 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSRRM] RRM calculation ended ...
+2030-01-15 10:00:06.650 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSRRM] Results successfully handled.
+2030-01-15 10:00:06.700 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSRRM]: RRM Cleanup started.
+2030-01-15 10:00:06.750 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSRRM]: RRM Cleanup finished ...
+2030-01-15 10:00:06.800 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBC]: Calculate started!
+2030-01-15 10:00:06.850 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSFC]: Postprocess ended!
+2030-01-15 10:00:06.900 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSFC]: Deallocate of model started!
+2030-01-15 10:00:06.950 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBC]: Deallocation of model successfully ended!
+2030-01-15 10:00:07.000 [PID=1209][TID=0x1a2b] DEBUGLOG - [EMSBC]: Results have been successfully handled.
+2030-01-15 10:00:07.050 [PID=1209][TID=0x1a2b] DEBUGLOG - [SE] Percent of good SCADA quality IPQV measurements in root 4A00B00C00D00E01 is 98.5.
+2030-01-15 10:00:07.100 [PID=1209][TID=0x1a2b] INFO - [LF] High voltage 1.12 is detected at the end of branch 12345678 in iteration 2...
+2030-01-15 10:00:07.150 [PID=1209][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:07.200 [PID=1209][TID=0x1a2b] INFO - [LF] Overloaded 1.3 is detected at branch 4A00B00C00D00E02...
+2030-01-15 10:00:07.250 [PID=1209][TID=0x1a2b] WARNING - [LF] Invalid values of results are detected. Lid of the first branch is 4A00B00C00D00E02 ...
+2030-01-15 10:00:07.300 [PID=1209][TID=0x1a2b] DEBUGLOG - [LF] Moved tap changer 4A00B00C00D00E02 to position 3 from position -1
+2030-01-15 10:00:07.350 [PID=1209][TID=0x1a2b] DEBUGLOG - [MR] Model Readiness calculation started for root 4A00B00C00D00E01 in substation 4A00B00C00D00E02...
+2030-01-15 10:00:07.400 [PID=1209][TID=0x1a2b] DEBUGLOG - [PU]: There are 12 Interval Schedules for proccesing.
+2030-01-15 10:00:07.450 [PID=1209][TID=0x1a2b] INFO - [SF] Applying Switching command (2 of 3) for element LID 12345678 failed. Next Action...
+2030-01-15 10:00:07.500 [PID=1209][TID=0x1a2b] DEBUGLOG - [SF]: Time-stamp 12 3:04 - state 1
+2030-01-15 10:00:07.550 [PID=1209][TID=0x1a2b] DEBUGLOG - [SSV]: Function EMS_SSVInitialize finished.
+2030-01-15 10:00:07.600 [PID=1209][TID=0x1a2b] INFO - [SSV] Possible Issued Message: Example condition may apply.
+2030-01-15 10:00:07.650 [PID=1209][TID=0x1a2b] WARNING - [SSV]: ExampleValidation - ERROR: Invalid bayEnds!
+2030-01-15 10:00:07.700 [PID=1209][TID=0x1a2b] WARNING - [SSV] Error: startBayEnd is not associated in subroutine Example
+2030-01-15 10:00:07.750 [PID=1209][TID=0x1a2b] WARNING - [SSV]: Function ExampleValidation finished with error 5
+2030-01-15 10:00:07.800 [PID=1209][TID=0x1a2b] WARNING - [SSV] LoadFlow_Execute returned error code 3.
+2030-01-15 10:00:07.850 [PID=1209][TID=0x1a2b] WARNING - [SSV] Pointer on extension options isn't set. Aborting...
+2030-01-15 10:00:07.900 [PID=1209][TID=0x1a2b] WARNING - [SSV] Substation extracted from the root LID: 4A00B00C00D00E01 is not valid.
+2030-01-15 10:00:07.950 [PID=1209][TID=0x1a2b] WARNING - [SSV] Switch is not closing, therefore it cannot ground energized element.
+2030-01-15 10:00:08.000 [PID=1209][TID=0x1a2b] DEBUGLOG - [OT] In outage area exist 3 switches.
+2030-01-15 10:00:08.050 [PID=1209][TID=0x1a2b] DEBUGLOG - [OS] 1. instruction: command type 5
+2030-01-15 10:00:08.100 [PID=1209][TID=0x1a2b] DEBUGLOG - [PV-LLP] Added device LID 4A00B00C00D00E01 to results structure.
+2030-01-15 10:00:08.150 [PID=1209][TID=0x1a2b] DEBUGLOG - [PF Options] IncType NO_POWER | PredType STORM | NumInput 1
+2030-01-15 10:00:08.200 [PID=1209][TID=0x1a2b] ERROR - [SE] Error: Root 4A00B00C00D00E01 is not up to date.
+2030-01-15 10:00:08.250 [PID=1209][TID=0x1a2b] ERROR - [SF]: Error in Load Flow calculation for root 4A00B00C00D00E01 , state 1 ...
+2030-01-15 10:00:08.300 [PID=1209][TID=0x1a2b] WARNING - [MR] Warning: Start section not found for feeder 4A00B00C00D00E02. Number of feeders with this issue: 4.
+2030-01-15 10:00:08.350 [PID=1209][TID=0x1a2b] DEBUGLOG - [SE] State Estimation function finished with warning.
+2030-01-15 10:00:08.400 [PID=1209][TID=0x1a2b] DEBUGLOG - [MR] Model Readiness function finished with error.
+2030-01-15 10:00:08.450 [PID=1209][TID=0x1a2b] WARNING - [OS] Command is not valid for further calculation.
