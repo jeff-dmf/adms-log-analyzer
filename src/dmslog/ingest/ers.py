@@ -153,14 +153,13 @@ def held_identity(
     """The ERS identity stored in a ``collection`` row (None for folders, files and non-ERS zips)."""
     if kind != KIND_ERS_ZIP or not guid or not stamp:
         return None
-    named = parse_ers_name(
-        Path(path).name
-    )  # the server prefix is not stored: it comes back from the file name
-    prefix = (
-        named.prefix if named is not None and (named.guid, named.timestamp) == (guid.upper(), stamp) else "CL"
-    )
+    # The recorded path may be a Windows path read on another system: split it on both separators.
+    file_name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+    named = parse_ers_name(file_name)  # the server prefix is not stored: it comes back from the file name
+    same_capture_name = named is not None and (named.guid, named.timestamp) == (guid.upper(), stamp)
+    prefix = named.prefix if named is not None and same_capture_name else "CL"
     return ErsIdentity(
-        guid, stamp, variant or VARIANT_ENTERPRISE, "Enterprise", label or "", Path(path).name, prefix
+        guid, stamp, variant or VARIANT_ENTERPRISE, "Enterprise", label or "", file_name, prefix
     )
 
 

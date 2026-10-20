@@ -130,3 +130,15 @@ def test_the_integration_service_folder_keeps_its_processes_optional(tmp_path):
 )
 def test_other_names_are_still_not_ers_names(name):
     assert parse_ers_name(name) is None
+
+
+def test_a_windows_path_recorded_in_the_case_keeps_the_server_prefix_on_any_system():
+    name = rt_name("Primary")
+    win = "C:\\data\\ers\\" + name
+    ident = held_identity("ers_zip", GUID, "20261008124051", "enterprise", "x", win)
+    assert ident.prefix == "site_RT_Primary" and ident.file_name == name
+    primary = HeldCollection(1, "ers_zip", win, ident, 1)
+    half = parse_ers_name(rt_name("Primary", sensitive=True))
+    assert classify_add([primary], "ers_zip", f"/data/{half.file_name}", half).action == ADD_PAIR
+    copy = parse_ers_name(name)
+    assert classify_add([primary], "ers_zip", f"/other/{name}", copy).action == "same"
