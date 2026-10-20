@@ -49,6 +49,7 @@ _spec.loader.exec_module(_mf)  # type: ignore[union-attr]
 
 DEFAULT_OUT = ROOT / "tests" / "fixtures" / "families"
 FOLDER = "dnaApp_zone1/SVC"
+RT_FOLDER = "dnaApp_zone1/DMS_REALTIME"  # service folder of the RT servers (any DMS_* but DMS_INTEGRATION)
 MAX_RECORDS = 200
 MIN_RECORDS = 10
 STEP_MS = 50
@@ -887,6 +888,10 @@ def _file_name(family: str, pid: int, sensitive: bool) -> str:
         return f"{FOLDER}/{proc}_{pid}{sens}.log"
     if layout == "single":
         return f"{FOLDER}/{proc}{sens}.log"
+    if layout == "rt":  # <Process>_<pid>[.sensitive].log in a real-time service folder
+        return f"{RT_FOLDER}/{proc}_{pid}{sens}.log"
+    if layout == "rtfh":  # DMS_FunctionHost_<n>: the number is the pool instance, there is no pid in the name
+        return f"{RT_FOLDER}/{proc}{sens}.log"
     return f"{FOLDER}/{proc}.SVC{sens}.log"
 
 

@@ -502,6 +502,21 @@ def test_field_types():
     assert ts.classify_text("i= h=0x1 g=A f=1 l=; big=1 bad=x").fields["i"] == ""  # empty capture stays ""
 
 
+def test_hex_fields_take_up_to_16_digits_and_never_stay_hexadecimal_text():
+    ts = tiny(tpl(r"^gid=(?P<g>0x[0-9a-fA-F]+)$", extra='fields = { g = "hex" }\n')).for_family(
+        "X", sensitive=False
+    )
+
+    def gid(text):
+        return ts.classify_text("gid=" + text).fields["g"]
+
+    assert gid("0x1a8") == 0x1A8
+    assert gid("0x0045013c00000000") == 0x0045013C00000000  # 16 digits that fit a signed 64-bit integer
+    assert gid("0x7fffffffffffffff") == 2**63 - 1
+    assert gid("0xffffffffffffffff") == "18446744073709551615"  # above 2**63 - 1: the decimal text
+    assert gid("0x10000000000000000") == "0x10000000000000000"  # 17 digits: left as the text it was
+
+
 def test_dispatch_tries_few_candidates(real):
     ts = real.for_family("AWFM", sensitive=False)
     assert len(ts) > 12

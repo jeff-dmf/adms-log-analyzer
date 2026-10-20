@@ -270,12 +270,15 @@ def _to_hex(v: str) -> Any:
     s = v.strip()
     if s[:2] in ("0x", "0X"):
         s = s[2:]
-    if not s or len(s) > 15:
+    if not s or len(s) > 16:
         return v
     try:
-        return int(s, 16)
+        n = int(s, 16)
     except ValueError:
         return v
+    # A 16-digit GID may not fit SQLite's signed 64-bit integer: it becomes its decimal text (the form every
+    # other source of the same GID uses: payloads and the integration logs), never a hexadecimal text.
+    return n if n <= 0x7FFFFFFFFFFFFFFF else str(n)
 
 
 def _to_float(v: str) -> Any:
