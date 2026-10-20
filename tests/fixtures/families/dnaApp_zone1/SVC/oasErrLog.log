@@ -1,11 +1,38 @@
 ﻿2030-01-15 10:00:00.000 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) [Communication2] - Service operation ExampleContractResults threw unexpected exception.
-2030-01-15 10:00:00.050 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Executing nothing
-2030-01-15 10:00:00.100 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) [Communication2] - Example.Platform.ServiceModel.ServiceOperationException:
+2030-01-15 10:00:00.050 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) [Communication2] - Example.Platform.ServiceModel.ServiceOperationException:
    at Example.Service.Call() in F:\PD\1234567\1\Example\Service.cs:line 10
-2030-01-15 10:00:00.150 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) The 'Example' application is connecting
-2030-01-15 10:00:00.200 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Executing command: C:\Example\tool.exe 'x' --PerformanceCountersData --Logs -o 'y'
-2030-01-15 10:00:00.250 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Zzz unmatched synthetic record alpha
-2030-01-15 10:00:00.300 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) DAL The 'Example' application is connecting using SSO credentials 'x' with a TokenImpersonationLevel of 'Impersonation'. If the application is NOT running on the hot RCS server, then you have configured delegation incorrectly.
-2030-01-15 10:00:00.350 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Zzz unmatched synthetic record beta
-2030-01-15 10:00:00.400 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Removing old logs from location: C:\Example\Logs
-2030-01-15 10:00:00.450 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Qqq synthetic noise without template
+2030-01-15 10:00:00.100 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Executing command: C:\Example\tool.exe 'x' --PerformanceCountersData --Logs -o 'y'
+2030-01-15 10:00:00.150 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) DAL The 'Example' application is connecting using SSO credentials 'x' with a TokenImpersonationLevel of 'Impersonation'. If the application is NOT running on the hot RCS server, then you have configured delegation incorrectly.
+2030-01-15 10:00:00.200 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Executing nothing
+2030-01-15 10:00:00.250 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) HDL DynamicsCache Changeset operation and timestamp not found. Using Update as default operation for trend.
+2030-01-15 10:00:00.300 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) Unknown job result for entity 1000123 received from WMS.
+2030-01-15 10:00:00.350 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Example Plan Validation job terminated successfully guid=1000123.
+2030-01-15 10:00:00.400 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) ExampleArchiveCommand: Invoke pre-concurrent phase failed. Exception: Query execution failed!
+2030-01-15 10:00:00.450 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) The 'Example' application is connecting
+2030-01-15 10:00:00.500 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) Field Complete must be after the first trouble call event time.
+2030-01-15 10:00:00.550 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) User 1001 logged on machine -2002, login method lasts 00:00:03.5000000 seconds.
+2030-01-15 10:00:00.600 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) Trace for 1000123 function failed. TraceExample function
+2030-01-15 10:00:00.650 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Function Host service Process ID: 4242 is started on slot ID: 3.
+2030-01-15 10:00:00.700 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) HDL DynamicsCache Changeset operation found.
+2030-01-15 10:00:00.750 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) [Launcher][ExampleCheck] FunctionHost process is restarted because memory leak is occurred. Old FH ProcessID: 4242, new FH ProcessID: 4343.
+2030-01-15 10:00:00.800 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) [CommandLineConfig] - Start up script provided following parameters: [C:\Example\bin\ExampleHost.exe 1 2 -slotid 3 -s EXAMPLE_SVC -serviceName EXAMPLE_SVC].
+2030-01-15 10:00:00.850 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Synchronization with QA started
+2030-01-15 10:00:00.900 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) Manual merge failed. Error codes: ErrorCode: EXAMPLE_MERGE_FAIL
+2030-01-15 10:00:00.950 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Zzz unmatched synthetic record alpha
+2030-01-15 10:00:01.000 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) Error occurred while executing Async job(ExampleSummaryJob). Job with guid = 00000000-0000-4000-8000-0000a0000001 will be removed!
+2030-01-15 10:00:01.050 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) Async job modify error! Job ExampleJobParam with guid = 00000000-0000-4000-8000-0000a0000001 does not exist!
+2030-01-15 10:00:01.100 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) An exception occurred in ArchiveDispatcher: Exception of type 'Example.Common.ExampleException' was thrown.. (HRESULT:0x80131500).
+2030-01-15 10:00:01.150 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) (NDS) ExampleConfigurator - Failed to configure alarming for discrete signal with gid 1000123. Reason: Failed to add event.
+2030-01-15 10:00:01.200 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Zzz unmatched synthetic record beta
+2030-01-15 10:00:01.250 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) Failed to get tags for specific signals.. Exception: Tag actions are not allowed on servers that are not in HOT status.
+2030-01-15 10:00:01.300 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) [IncidentProcessor_Example] Client delta validation: Uneditable property EXAMPLE_PROPERTY removed from (GID: 1000123).
+2030-01-15 10:00:01.350 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Removing old logs from location: C:\Example\Logs
+2030-01-15 10:00:01.400 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (ERROR) ExampleChangeCommand: Invoke synchronized phase failed. Exception: Exception of type 'Example.Common.ExampleException' was thrown.
+2030-01-15 10:00:01.450 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Qqq synthetic noise without template
+2030-01-15 10:00:01.500 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) Field Complete must be later than the earliest crew arrival time.
+2030-01-15 10:00:01.550 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) [Launcher][ExampleMonitorEvent] FunctionHost process is restarted because ExampleCrashAlarm is occurred. Old FH ProcessID: 4242, new FH ProcessID: 4343.
+2030-01-15 10:00:01.600 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Staging synchronized to Production.
+2030-01-15 10:00:01.650 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Model promotion process ended
+2030-01-15 10:00:01.700 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (INFO) Scheduled synchronization triggered
+2030-01-15 10:00:01.750 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) (TAS) Apply updates failed. Example reason.
+2030-01-15 10:00:01.800 AlphaAdapter_1165 [PID=1165][TID=0x1a2b] - (WARNING) Instruction Command: Exception while executing Create Instruction from ExampleProcessor: Example failure.

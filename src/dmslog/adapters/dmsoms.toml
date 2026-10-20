@@ -1,0 +1,1858 @@
+# Real-time OMS-side services (family DMSOMS): OMS_IncidentManagementService (IMS),
+# OMS_CrewManagementService (CRS), DMS_OutageProcessingService (OPS), DMS_WorkManagementService
+# (WMS), DMS_MajorEventService (MES), DMS_SmartMeterManagementService (SMMS) and
+# DMS_AlarmsEventsService (AES), normal and sensitive streams. Design:
+# docs/notas/rt-templates-desenho.md.
+#
+# Codes: DOM-001..049 IMS, 050..099 WMS, 100..114 OPS, 115..139 CRS, 140..159 AES, 160..184 SMMS,
+# 185..209 MES; the sensitive streams use the same ranges with an S (DOM-S001..S019 IMS, S050 WMS,
+# S100..S104 OPS, S115 CRS, S140 AES, S160 SMMS). Correlation keys (only on life-cycle, creation,
+# archive, status and failure lines, never on per-line tracing): `incident_gid`, `inc`, `gid`
+# (signals and outages of the OPS), `job_id` (FLISR/prediction functions that cross to the
+# FunctionHost). Infrastructure lines shared with other real-time families belong to `_dmsrt`, not
+# to this file. Per-line tracing (queue workers, handler durations, cache statistics) is sev 5 and
+# `fts = false` when it passes 50 thousand records.
+
+schema = 1
+family = "DMSOMS"
+description = "OMS-side real-time services: incidents, crews, outages, work, major events, smart meters and alarms"
+extends = ["_dmsrt", "_common"]
+
+# ---------------------------------------------------------------------------------------------
+# IncidentManagementService, normal stream (DOM-001..049)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-001"
+class = "other"
+title = "Publisher manager read no incidents or problems of the day-after-restoration list"
+sev = 5
+fts = false
+text = "[PublisherManager]: Got DAR incidents:  and DAR problems:  from DB."
+examples = ["[PublisherManager]: Got DAR incidents:  and DAR problems:  from DB."]
+counter_examples = ["[PublisherManager]: Got DAR incidents:  and DAR problems:  from cache."]
+
+[[template]]
+code = "DOM-002"
+class = "other"
+title = "Delta applied to the cache (operations by element)"
+sev = 5
+fts = false
+regex = '''^ApplyDelta (?P<operations>(?:Inserted|Updated|Deleted): [\w:;, ]+)$'''
+examples = [
+    "ApplyDelta Inserted: 0x615:6;",
+    "ApplyDelta Inserted: 0x61A:3, 0x61B:3; Updated: 0x44:12;",
+    "ApplyDelta Updated: 0x44:12; Deleted: 0x45:2, 0x46:2;",
+]
+counter_examples = ["ApplyDelta nothing to do"]
+
+[[template]]
+code = "DOM-003"
+class = "other"
+title = "Historical query engine call (insert by table, feeder data)"
+sev = 5
+fts = false
+regex = '''^HQE: method (?P<method>\w+) (?:(?P<phase>started|finished)(?: for (?P<table>\w+)(?:: \d+)?)?|updating (?P<done>\d+) from (?P<total>\d+) feeders)\.$'''
+fields = { done = "int", total = "int" }
+examples = [
+    { msg = "HQE: method BulkInsert started for INCIDENT_EXT.", fields = { method = "BulkInsert", phase = "started", table = "INCIDENT_EXT" } },
+    "HQE: method BulkInsert finished.",
+    "HQE: method ProcedureInsert started for INCIDENT: 1000123.",
+    "HQE: method SetFeederDynamicData updating 25 from 649 feeders.",
+]
+counter_examples = ["HQE: method BulkInsert aborted."]
+
+[[template]]
+code = "DOM-004"
+class = "req_resp"
+title = "Replication request enqueued for primary processing"
+sev = 5
+fts = false
+regex = '''^IMS replication: Enqueuing request (?P<request>\d+) operation (?P<operation>\w+) for primary processing\.$'''
+fields = { request = "int" }
+examples = [{ msg = "IMS replication: Enqueuing request 1000123 operation Add for primary processing.", fields = { request = 1000123, operation = "Add" } }]
+counter_examples = ["IMS replication: Enqueuing request x operation Add for primary processing."]
+
+[[template]]
+code = "DOM-005"
+class = "req_resp"
+title = "Replication requests processed or approved"
+sev = 5
+fts = false
+regex = '''^IMS replication: (?:Auto approved requests (?P<auto>\d+)|Processed requests: (?P<processed>\d+)-(?P<decision>\w+)-(?P<ack>\w+)|Skipping primary cache command\. Handler not registered|Replication IU finished|Primary cache request synchronization started)\.$'''
+fields = { auto = "int", processed = "int" }
+examples = [
+    { msg = "IMS replication: Auto approved requests 3.", fields = { auto = 3 } },
+    "IMS replication: Processed requests: 2-Approved-AcknowledgedByPrimary.",
+    "IMS replication: Skipping primary cache command. Handler not registered.",
+    "IMS replication: Replication IU finished.",
+]
+counter_examples = ["IMS replication: Processed requests: two-Approved."]
+
+[[template]]
+code = "DOM-006"
+class = "req_resp"
+title = "Request rejected automatically"
+sev = 4
+regex = '''^Request: (?P<request>\d+) : (?P<ref>REQ \d+) auto rejected\.$'''
+fields = { request = "int" }
+examples = [{ msg = "Request: 1000123 : REQ 1000124 auto rejected.", fields = { request = 1000123, ref = "REQ 1000124" } }]
+counter_examples = ["Request: 1000123 : REQ 1000124 accepted."]
+
+[[template]]
+code = "DOM-007"
+class = "statistics"
+title = "Outage time, restoration time or energization status count of a publication or cleanup"
+sev = 5
+fts = false
+regex = '''^\[(?P<scope>SDP Cleanup|SDP Publications|TR Publication|TR Cleanup)\]: (?P<what>Outage time|Restoration time|Status) - count: (?P<value>[\w:.-]+(?: [\w:.-]+)?) - (?P<count>\d+)$'''
+fields = { count = "int" }
+examples = [
+    { msg = "[SDP Cleanup]: Outage time - count: 2026-01-02 03:04:05.000 - 4", fields = { scope = "SDP Cleanup", what = "Outage time", value = "2026-01-02 03:04:05.000" } },
+    "[TR Publication]: Status - count: TA_ENERGIZED - 12",
+]
+counter_examples = ["[SDP Cleanup]: Outage time - count: none"]
+
+[[template]]
+code = "DOM-008"
+class = "statistics"
+title = "Disconnected service delivery points of a publication"
+sev = 5
+fts = false
+regex = '''^\[SDP Publications\]: Disconnected: (?P<sdps>[\d; ]+)$'''
+examples = [
+    "[SDP Publications]: Disconnected: 1000123; 1000124; 1000125",
+    "[SDP Publications]: Disconnected: 1000123",
+]
+counter_examples = ["[SDP Publications]: Connected: 1000123"]
+
+[[template]]
+code = "DOM-009"
+class = "start"
+title = "Status transition validation started for an incident or problem"
+sev = 4
+regex = '''^\[(?P<kind>Incident|Problem)StatusTransitionValidator(?:_\w+)?\] Validation of transition from status (?P<from_status>\d+) to status (?P<to_status>\d+) for entity (?P<gid>\d+) started\.(?: LifecycleID: (?P<lifecycle>\d+)\.)?$'''
+fields = { gid = "int" }
+examples = [
+    { msg = "[IncidentStatusTransitionValidator_Example] Validation of transition from status 1000001 to status 1000002 for entity 1000123 started. LifecycleID: 1000003.", fields = { kind = "Incident", gid = 1000123 } },
+    "[ProblemStatusTransitionValidator] Validation of transition from status 1000001 to status 1000002 for entity 1000124 started.",
+]
+counter_examples = ["[IncidentStatusTransitionValidator_Example] Validation of transition from status a to status b for entity 1 started."]
+
+[[template]]
+code = "DOM-010"
+class = "end"
+title = "Status transition validation finished"
+sev = 4
+regex = '''^\[(?P<kind>Incident|Problem)StatusTransitionValidator(?:_\w+)?\] Validation of status transition for entity (?P<gid>\d+) finished\.$'''
+fields = { gid = "int" }
+examples = [
+    { msg = "[IncidentStatusTransitionValidator_Example] Validation of status transition for entity 1000123 finished.", fields = { kind = "Incident", gid = 1000123 } },
+    "[ProblemStatusTransitionValidator] Validation of status transition for entity 1000124 finished.",
+]
+counter_examples = ["[IncidentStatusTransitionValidator_Example] Validation of status transition for entity 1000123 started."]
+
+[[template]]
+code = "DOM-011"
+class = "validation"
+title = "Automatic FLISR or load shedding check before an incident status change"
+sev = 5
+regex = '''^\[IncidentStatusTransitionValidator(?:_\w+)?\] (?:Checking (?:is automatic FLISR running on outages from|are there automatic load shedding outages running on) Incident|Incident|There are no FLISR/LAR outages in Automatic mode for Incident) \(GID: (?P<gid>\d+)\)(?P<result>\.| has no (?:load shedding|FLISR/LAR) outages\.)$'''
+fields = { gid = "int" }
+examples = [
+    { msg = "[IncidentStatusTransitionValidator_Example] Checking is automatic FLISR running on outages from Incident (GID: 1000123).", fields = { gid = 1000123 } },
+    "[IncidentStatusTransitionValidator_Example] Incident (GID: 1000123) has no load shedding outages.",
+    "[IncidentStatusTransitionValidator_Example] There are no FLISR/LAR outages in Automatic mode for Incident (GID: 1000123).",
+]
+counter_examples = ["[IncidentStatusTransitionValidator_Example] Checking the incident (GID: 1000123)."]
+
+[[template]]
+code = "DOM-012"
+class = "lifecycle"
+title = "Incident ownership taken, released or updated"
+sev = 4
+regex = '''^(?:\[ActionIncidentOwnershipStatus\] (?P<action>Taking|Releasing) ownership for Incidents|Updating incident ownership status for incidents): (?P<incidents>[\d, ]+)\.$'''
+examples = [
+    { msg = "[ActionIncidentOwnershipStatus] Taking ownership for Incidents: 1000123.", fields = { incidents = "1000123" } },
+    "Updating incident ownership status for incidents: 1000123, 1000124.",
+]
+counter_examples = ["[ActionIncidentOwnershipStatus] Taking ownership for Incidents: none."]
+
+[[template]]
+code = "DOM-013"
+class = "lifecycle"
+title = "Phone call events created"
+sev = 4
+regex = '''^Successfully created (?P<count>\d+) phone call event\(s\): \(GID: (?P<gid>\d+), CustomerGID: (?P<customer_gid>\d*), CustomID: (?P<custom_id>\w*), AccountID: (?P<account>\w*)\)\.$'''
+fields = { count = "int" }
+examples = [{ msg = "Successfully created 1 phone call event(s): (GID: 1000123, CustomerGID: 1000124, CustomID: C0001, AccountID: ).", fields = { count = 1, gid = "1000123" } }]
+counter_examples = ["Successfully created 1 phone call event(s) without customer."]
+
+[[template]]
+code = "DOM-014"
+class = "statistics"
+title = "Trouble events sent, processed or joined to incidents"
+sev = 4
+regex = '''^(?P<verb>Sent|Processed|Joined) (?P<count>\d+) trouble event\(s\)(?: (?P<target>to processing|to incident\(s\))| out of which (?P<priority>\d+) are priority ones)?\.$'''
+fields = { count = "int" }
+examples = [
+    { msg = "Sent 3 trouble event(s) to processing.", fields = { verb = "Sent", count = 3, target = "to processing" } },
+    "Processed 5 trouble event(s).",
+    "Processed 5 trouble event(s) out of which 2 are priority ones.",
+    "Joined 4 trouble event(s) to incident(s).",
+]
+counter_examples = ["Sent three trouble event(s) to processing."]
+
+[[template]]
+code = "DOM-015"
+class = "statistics"
+title = "Unprocessed trouble events by kind"
+sev = 5
+regex = '''^\[Unprocessed trouble events\] Priority Call - (?P<priority_call>\d+), Call - (?P<call>\d+), Location Call - (?P<location_call>\d+), Smart Meter - (?P<smart_meter>\d+), Predicted Smart Meter - (?P<predicted>\d+)\.$'''
+fields = { call = "int", smart_meter = "int" }
+examples = [
+    { msg = "[Unprocessed trouble events] Priority Call - 0, Call - 1, Location Call - 0, Smart Meter - 2, Predicted Smart Meter - 0.", fields = { priority_call = "0", call = 1, smart_meter = 2 } },
+]
+counter_examples = ["[Unprocessed trouble events] Priority Call - none."]
+
+[[template]]
+code = "DOM-016"
+class = "other"
+title = "Tag or signal instruction prepared for devices and affected incidents"
+sev = 5
+regex = '''^(?:Preparing (?:TAG \(DMSType\.TAG\) instruction based on TAG publication for signals/devices|NDS \(DMSType\.DSIGNAL\) instruction's based on NDS publication's for devices|to create/update NDS\(TAG\) instruction for device): |Affected incidents not match any devices: )(?P<detail>.+)$'''
+examples = [
+    "Preparing TAG (DMSType.TAG) instruction based on TAG publication for signals/devices: 1000123.",
+    "Preparing NDS (DMSType.DSIGNAL) instruction's based on NDS publication's for devices: [1000123 - Open].",
+    "Preparing to create/update NDS(TAG) instruction for device: 1000123, affected incident(s): 1000124.",
+    "Affected incidents not match any devices: 1000123 for create/update NDS(TAG) instruction's.",
+]
+counter_examples = ["Preparing something else for devices: 1000123."]
+
+[[template]]
+code = "DOM-017"
+class = "lifecycle"
+title = "Crews assigned to or removed from incidents and work plans"
+sev = 4
+regex = '''^(?P<action>Assigned crews|Assigning crews|Creating incident crews|Deleting incident crews|Deassigning crews|Deassigned crews): (?P<detail>\d[\w, :]*)\.$'''
+examples = [
+    { msg = "Assigned crews: 1000001 to incidents: 1000123.", fields = { action = "Assigned crews" } },
+    "Assigning crews: 1000001, 1000002 to OMS work plans: 1000124.",
+    "Creating incident crews: 1000001.",
+    "Deassigning crews: 1000001 from OMS work plans: 1000124.",
+    "Deassigned crews: 1000001 from incidents: 1000123.",
+]
+counter_examples = ["Assigned crews: none."]
+
+[[template]]
+code = "DOM-018"
+class = "lifecycle"
+title = "Crew assignment or instruction counted, added, updated or removed"
+sev = 4
+regex = '''^(?:(?P<action>Assign|Adding|Deassigning) (?P<count>\d+) crew (?:assignments|instructions)|(?P<crew_action>Deleting crew|Adding crew|Updating crew|Deassign crew) (?P<crew>\d+) (?:instruction )?(?:for|from) incident (?P<incident>\d+)(?:\. Devices: (?P<devices>[\d, ]+))?|(?:Assign|Deassign) crews (?P<crew2>\d+) (?:to|from) OMS work plan (?P<plan>\d+)|Crew (?P<crew3>\d+) to Incident \(GID: (?P<gid>\d+)\) set to invisible)\.$'''
+fields = { count = "int" }
+examples = [
+    { msg = "Assign 3 crew assignments.", fields = { action = "Assign", count = 3 } },
+    "Deassigning 2 crew assignments.",
+    "Deleting crew 1000001 instruction for incident 1000123.",
+    "Adding crew 1000001 instruction for incident 1000123. Devices: 1000200.",
+    "Deassign crew 1000001 from incident 1000123.",
+    "Assign crews 1000001 to OMS work plan 1000124.",
+    "Crew 1000001 to Incident (GID: 1000123) set to invisible.",
+]
+counter_examples = ["Assign many crew assignments."]
+
+[[template]]
+code = "DOM-019"
+class = "lifecycle"
+title = "Crew assignments of an incident moved to completed or invisible"
+sev = 4
+regex = '''^(?P<action>Transferring crew assignment to completed state for|Setting assignments from) Incident \(GID: (?P<gid>\d+)\)(?: to invisible)?\.$'''
+fields = { gid = "int" }
+examples = [
+    { msg = "Transferring crew assignment to completed state for Incident (GID: 1000123).", fields = { action = "Transferring crew assignment to completed state for", gid = 1000123 } },
+    "Setting assignments from Incident (GID: 1000123) to invisible.",
+]
+counter_examples = ["Setting assignments from Incident (GID: x) to invisible."]
+
+[[template]]
+code = "DOM-020"
+class = "other"
+title = "Incident command step (device failures, protective devices, municipality, device update)"
+sev = 5
+fts = false
+regex = '''^(?:\[(?P<command>CalculateProtectiveDevicesCommand|CalculateNumberOfIncidentDeviceFailuresCommand|CalculateMunicipalityFromDeviceCommand|UpdateIncidentDeviceCommand)\]: (?P<detail>.+)|CalculateProtectiveDevicesWorker SynchronizedPhase found valid incident: (?P<incident>\d+))$'''
+examples = [
+    { msg = "[CalculateProtectiveDevicesCommand]: CalculateProtectiveDevicesCommand started for incident: 1000123.", fields = { command = "CalculateProtectiveDevicesCommand" } },
+    "[CalculateMunicipalityFromDeviceCommand]: CalculateMunicipalityFromDeviceCommand succesfuly updated municipality field : EXAMPLE CITY for incident : 1000123.",
+    "[UpdateIncidentDeviceCommand]: UpdateIncidentDeviceCommand finished for incident: 1000123.",
+    "CalculateProtectiveDevicesWorker SynchronizedPhase found valid incident: 1000123",
+]
+counter_examples = ["[CalculateProtectiveDevicesWorker] started"]
+
+[[template]]
+code = "DOM-021"
+class = "lifecycle"
+title = "ETR of an incident set by the calculation"
+sev = 4
+regex = '''^For incident (?P<gid>\d+) ETR is set to (?P<etr>[\d/]+ [\d:]+ [AP]M) \(UTC\)\. See below for more details about ETR calculation\.$'''
+fields = { gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }]
+examples = [{ msg = "For incident 1000123 ETR is set to 10/19/2026 11:00:00 PM (UTC). See below for more details about ETR calculation.", fields = { gid = 1000123 } }]
+counter_examples = ["For incident 1000123 ETR is not set."]
+
+[[template]]
+code = "DOM-022"
+class = "other"
+title = "ETR calculation profile and starting time"
+sev = 5
+fts = false
+regex = '''^Incident ETR will be determined based on profile where time range type is '(?P<range_type>[^']*)' and calculation type is '(?P<calc_type>[^']*)'\..*$'''
+examples = [
+    { msg = "Incident ETR will be determined based on profile where time range type is 'Elapsed' and calculation type is 'CustomerRange'. Starting ETR time during calculation will be 10/18/2026 3:03:42 PM (UTC).", fields = { range_type = "Elapsed", calc_type = "CustomerRange" } },
+]
+counter_examples = ["Incident ETR will be determined based on defaults."]
+
+[[template]]
+code = "DOM-023"
+class = "lifecycle"
+title = "ETR or actual restoration time of an incident updated"
+sev = 4
+regex = '''^(?:ETR in Incident \(GID: (?P<etr_gid>\d+)\) is updated to: (?P<etr>[\d/]+ [\d:]+ [AP]M)|Actual restoration time \(ART\) of incident\(GID:(?P<art_gid>\d+)\) set to (?P<art>[\d/]+ [\d:]+ [AP]M))\.$'''
+fields = { etr_gid = "int", art_gid = "int" }
+keys = [{ field = "etr_gid", type = "incident_gid" }, { field = "art_gid", type = "incident_gid" }]
+examples = [
+    { msg = "ETR in Incident (GID: 1000123) is updated to: 10/19/2026 11:00:00 PM.", fields = { etr_gid = 1000123 } },
+    "Actual restoration time (ART) of incident(GID:1000123) set to 10/19/2026 1:00:00 PM.",
+]
+counter_examples = ["ETR in Incident (GID: 1000123) is not updated."]
+
+[[template]]
+code = "DOM-024"
+class = "lifecycle"
+title = "Old outage time or ETR sent through the client delta"
+sev = 4
+regex = '''^Old (?P<what>outage time|ETR): (?P<old_value>[\d/]+ [\d:]+ [AP]M) in Incident \(GID: (?P<gid>\d+)\) is sent through client delta\. '(?P<flag>\w+)' flag is set to false\.$'''
+fields = { gid = "int" }
+examples = [
+    { msg = "Old outage time: 10/17/2026 11:27:58 PM in Incident (GID: 1000123) is sent through client delta. 'OutageTimeIsManuallySet' flag is set to false.", fields = { what = "outage time", gid = 1000123 } },
+    "Old ETR: 10/18/2026 4:09:15 AM in Incident (GID: 1000123) is sent through client delta. 'EtrIsManuallySet' flag is set to false.",
+]
+counter_examples = ["Old ETR: 10/18/2026 4:09:15 AM in Incident (GID: 1000123) is kept."]
+
+[[template]]
+code = "DOM-025"
+class = "start"
+title = "New incident created (GID and custom id)"
+sev = 4
+regex = '''^Successfully created new incident with GID: (?P<gid>\d+) and custom id: (?P<inc>INC \d+) on device: (?P<device>\d*)\.$'''
+fields = { gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }, "inc"]
+examples = [
+    { msg = "Successfully created new incident with GID: 1000123 and custom id: INC 1000124 on device: 1000125.", fields = { gid = 1000123, inc = "INC 1000124" } },
+    "Successfully created new incident with GID: 1000123 and custom id: INC 1000124 on device: .",
+]
+counter_examples = ["Successfully created new incident with GID: 1000123 on device: 1000125."]
+
+[[template]]
+code = "DOM-026"
+class = "lifecycle"
+title = "Incident updated (custom id and GID)"
+sev = 4
+regex = '''^Successfully updated incident '(?P<inc>[^']*)' \(ID: (?P<gid>\d+)\)$'''
+fields = { gid = "int" }
+examples = [{ msg = "Successfully updated incident 'INC 1000124' (ID: 1000123)", fields = { inc = "INC 1000124", gid = 1000123 } }]
+counter_examples = ["Successfully updated incident (ID: 1000123)"]
+
+[[template]]
+code = "DOM-027"
+class = "lifecycle"
+title = "Creation of a new incident (below a feeder, from a location call or a potential incident)"
+sev = 4
+regex = '''^(?:Creation of new Incident (?P<phase>starting)|Creation of new Incident \(GID: (?P<gid>\d+)\) finished successfully|Started creating new incidents below feeder \(GID:(?P<feeder>\d+)\)|Creation of (?P<count>\d+) new incidents below feeder \(GID:(?P<feeder2>\d+)\) from (?P<events>\d+) trouble event\(s\) is finished|Creating new incident for location based call (?P<call>\d+)|Created (?P<single>\d+) single call incident\(s\)|Creating Incident \(GID: (?P<new_gid>\d+)\) from Potential Incident \(GID: (?P<potential>\d+)\))\.$'''
+fields = { gid = "int", new_gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }, { field = "new_gid", type = "incident_gid" }]
+examples = [
+    { msg = "Creation of new Incident starting.", fields = { phase = "starting" } },
+    "Creation of new Incident (GID: 1000123) finished successfully.",
+    "Started creating new incidents below feeder (GID:1000200).",
+    "Creation of 2 new incidents below feeder (GID:1000200) from 3 trouble event(s) is finished.",
+    "Created 4 single call incident(s).",
+    "Creating Incident (GID: 1000123) from Potential Incident (GID: 1000124).",
+]
+counter_examples = ["Creation of new Incident failed."]
+
+[[template]]
+code = "DOM-028"
+class = "lifecycle"
+title = "Incident archived (start, asynchronous start, ready to archive, found by the archive thread)"
+sev = 4
+regex = '''^(?:Archiving Incident \(GID: (?P<gid>\d+)\)(?P<async> async started)?|Incident \(GID: (?P<ready_gid>\d+)\) has switched to ready for archiving state\. Setting ready to archive time stamp\.\.\.|Incident auto archive thread found Incident \(GID: (?P<found_gid>\d+)\) to archive\. Incident is (?P<archived>not already|already) in archived status|Incident \(GID: (?P<busy_gid>\d+)\) is already archiving)\.?$'''
+fields = { gid = "int", ready_gid = "int", found_gid = "int", busy_gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }, { field = "ready_gid", type = "incident_gid" }, { field = "found_gid", type = "incident_gid" }, { field = "busy_gid", type = "incident_gid" }]
+examples = [
+    { msg = "Archiving Incident (GID: 1000123).", fields = { gid = 1000123 } },
+    "Archiving Incident (GID: 1000123) async started.",
+    "Incident (GID: 1000123) has switched to ready for archiving state. Setting ready to archive time stamp...",
+    "Incident auto archive thread found Incident (GID: 1000123) to archive. Incident is not already in archived status.",
+    "Incident (GID: 1000123) is already archiving.",
+]
+counter_examples = ["Archiving Incident 1000123."]
+
+[[template]]
+code = "DOM-029"
+class = "end"
+title = "Incident archived to the database (done)"
+sev = 4
+regex = '''^(?:Archive incident (?P<start>\d+) to DB|Archive (?P<done>\d+) to DB finished)\.$'''
+fields = { start = "int", done = "int" }
+keys = [{ field = "start", type = "incident_gid" }, { field = "done", type = "incident_gid" }]
+examples = [
+    { msg = "Archive incident 1000123 to DB.", fields = { start = 1000123 } },
+    "Archive 1000123 to DB finished.",
+]
+counter_examples = ["Archive incident to DB."]
+
+[[template]]
+code = "DOM-030"
+class = "lifecycle"
+title = "Incident closed or changed to momentary or sustained"
+sev = 4
+regex = '''^(?:Incident \(GID: (?P<closed_gid>\d+)\) successfully closed|Trying to automatically close momentary Incident \(GID: (?P<auto_gid>\d+)\)|Incident \(GID: (?P<kind_gid>\d+)\) updated to (?P<kind>momentary|sustained)|Incident (?P<no_gid>\d+) has no status with (?P<semantic>\w+) semantic to go to)\.$'''
+fields = { closed_gid = "int", auto_gid = "int", kind_gid = "int", no_gid = "int" }
+keys = [{ field = "closed_gid", type = "incident_gid" }, { field = "auto_gid", type = "incident_gid" }, { field = "kind_gid", type = "incident_gid" }]
+examples = [
+    { msg = "Incident (GID: 1000123) successfully closed.", fields = { closed_gid = 1000123 } },
+    "Trying to automatically close momentary Incident (GID: 1000123).",
+    "Incident (GID: 1000123) updated to sustained.",
+    "Incident 1000123 has no status with Final semantic to go to.",
+]
+counter_examples = ["Incident (GID: 1000123) not closed."]
+
+[[template]]
+code = "DOM-031"
+class = "lifecycle"
+title = "Power status of an incident changed"
+sev = 4
+regex = '''^Power Status of incident GID: (?P<gid>\d+) set to (?P<status>\w+), unrestored customers (?P<unrestored>\d+)\.$'''
+fields = { gid = "int", unrestored = "int" }
+keys = [{ field = "gid", type = "incident_gid" }]
+examples = [{ msg = "Power Status of incident GID: 1000123 set to Restored, unrestored customers 0.", fields = { gid = 1000123, status = "Restored", unrestored = 0 } }]
+counter_examples = ["Power Status of incident GID: 1000123 unchanged."]
+
+[[template]]
+code = "DOM-032"
+class = "lifecycle"
+title = "Work plan state updated for an incident"
+sev = 4
+regex = '''^(?:Work plan (?P<plan>\d+)(?:, state (?P<state>\d+))? updated (?:to (?P<to_state>\w+(?: \w+)?) state with GID: (?P<gid>\d+)|for incident (?P<incident>\d+)\.Oms complete state with GID: (?P<gid2>\d+) set)|Work Plan state for Work Plan (?P<plan2>\d+) is already set as OMS completed\. GID: (?P<gid3>\d+)|Getting restoration devices for instructions of work plan : (?P<plan3>\d+))\.?$'''
+fields = { plan = "int" }
+examples = [
+    { msg = "Work plan 1000124 updated to Archived state with GID: 1000125.", fields = { plan = 1000124 } },
+    "Work plan 1000124, state 1000126 updated for incident 1000123.Oms complete state with GID: 1000125 set",
+    "Work Plan state for Work Plan 1000124 is already set as OMS completed. GID: 1000125",
+    "Getting restoration devices for instructions of work plan : 1000124.",
+]
+counter_examples = ["Work plan 1000124 deleted."]
+
+[[template]]
+code = "DOM-033"
+class = "other"
+title = "Customers and service delivery points updated for incidents"
+sev = 5
+fts = false
+regex = '''^(?:Calling (?:CreateCustomerCommand|'\w+') for (?P<count>\d+) (?:customers|SDP-s under feeder \(GID:\d+\))|Successfully added (?P<added>\d+) new SDP-s to delta|Updating customer info for incidents: (?P<incidents>[\d, ]+)|Updating energization for (?P<energized>\d+) (?:customers|transformers)|Updating customer energization statistics finished\. Next update iteration will be in (?P<minutes>\d+) minutes|GetAdditionSdpsForTroubleEventsAndFeedbacks returned SDPs (?P<sdps>\d*)|Fetching (?P<fetch>\d+) (?:updated network elements|PSR Location for devices|Symbol Devices information|updated device phase information)|Got (?P<got>\d+) (?:network elements from NMS|PSR Location for devices from NMS|Symbol Devices from NMS|device phases from NMS))\s?\.?$'''
+fields = { count = "int" }
+examples = [
+    { msg = "Calling CreateCustomerCommand for 3 customers.", fields = { count = 3 } },
+    "Calling 'ExampleFunction' for 5 SDP-s under feeder (GID:1000200).",
+    "Successfully added 7 new SDP-s to delta.",
+    "Updating customer info for incidents: 1000123, 1000124.",
+    "Updating energization for 4 transformers.",
+    "Updating customer energization statistics finished. Next update iteration will be in 15 minutes.",
+    "GetAdditionSdpsForTroubleEventsAndFeedbacks returned SDPs .",
+    "Fetching 12 updated network elements",
+    "Got 12 network elements from NMS",
+]
+counter_examples = ["Calling something else."]
+
+[[template]]
+code = "DOM-034"
+class = "start"
+title = "Prediction function execution (job) of an incident"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4, Running = 5 }
+regex = '''^PredictionFunction (?P<event>execution started|execution finished|failed)\. JobID: (?P<job_id>\d+)\. JobRequestStatus: (?P<status>\w+)\. ResultsPartOrdinalNumber: (?P<part>\d+)\. TotalNumberOfResultsParts: (?P<parts>\d+)\.$'''
+fields = { job_id = "int", part = "int", parts = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "PredictionFunction execution started. JobID: 1000123. JobRequestStatus: Waiting. ResultsPartOrdinalNumber: 0. TotalNumberOfResultsParts: 1.", fields = { event = "execution started", job_id = 1000123, status = "Waiting" } },
+    "PredictionFunction execution finished. JobID: 1000123. JobRequestStatus: DoneWithSuccess. ResultsPartOrdinalNumber: 1. TotalNumberOfResultsParts: 1.",
+    "PredictionFunction failed. JobID: 1000123. JobRequestStatus: DoneWithError. ResultsPartOrdinalNumber: 1. TotalNumberOfResultsParts: 1.",
+]
+counter_examples = ["PredictionFunction execution started. JobID: x. JobRequestStatus: Waiting. ResultsPartOrdinalNumber: 0. TotalNumberOfResultsParts: 1."]
+
+[[template]]
+code = "DOM-036"
+class = "other"
+title = "Publisher manager read the incidents and problems of the day-after-restoration list"
+sev = 5
+fts = false
+regex = '''^\[PublisherManager\]: Got DAR incidents: (?P<incidents>\S.*)$'''
+examples = ["[PublisherManager]: Got DAR incidents: INC 1000001, INC 1000002 and DAR problems: PROB 2000001 from DB."]
+counter_examples = ["[PublisherManager]: Got DAR incidents:  and DAR problems:  from DB."]
+
+[[template]]
+code = "DOM-037"
+class = "statistics"
+title = "Dynamic limits of the storm command"
+sev = 5
+regex = '''^\[DynamicLimitProvider\] Executed Storm Command: (?P<command>\d+)\. New limits single (?P<single>\d+), storm: (?P<storm>\d+)\.$'''
+fields = { command = "int", single = "int", storm = "int" }
+examples = [{ msg = "[DynamicLimitProvider] Executed Storm Command: 1. New limits single 2, storm: 28.", fields = { command = 1, single = 2, storm = 28 } }]
+counter_examples = ["[DynamicLimitProvider] Executed Storm Command: one."]
+
+[[template]]
+code = "DOM-038"
+class = "other"
+title = "Dynamic feeder synchronizer refreshing feeders"
+sev = 5
+regex = '''^\[DynamicFeederSynchronizer\]\[(?P<cache>\w+)\] Refresh feeders (?:finished|for entities (?P<entities>[\d, ]+) started)\.$'''
+examples = [
+    { msg = "[DynamicFeederSynchronizer][ExampleCache] Refresh feeders finished.", fields = { cache = "ExampleCache" } },
+    "[DynamicFeederSynchronizer][ExampleCache] Refresh feeders for entities 1000123, 1000124 started.",
+]
+counter_examples = ["[DynamicFeederSynchronizer][ExampleCache] Refresh feeders skipped."]
+
+[[template]]
+code = "DOM-039"
+class = "lifecycle"
+title = "Incident note created or updated"
+sev = 4
+regex = '''^Successfully (?P<action>created new|updated) Incident Note \(GID: (?P<note_gid>\d+)\)(?: to Incident \(GID: (?P<gid>\d+)\))?\.$'''
+fields = { gid = "int", note_gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }]
+examples = [
+    { msg = "Successfully created new Incident Note (GID: 1000125) to Incident (GID: 1000123).", fields = { action = "created new", note_gid = 1000125, gid = 1000123 } },
+    "Successfully updated Incident Note (GID: 1000125).",
+]
+counter_examples = ["Successfully deleted Incident Note (GID: 1000125)."]
+
+[[template]]
+code = "DOM-040"
+class = "req_resp"
+title = "Callbacks created with a ready processing time"
+sev = 4
+regex = '''^Creating callbacks with ready processing time (?P<ready>[\d/]+ [\d:]+ [AP]M) Miliseconds: (?P<ms>\d+)\. CallbackIds: (?P<callbacks>[\d, ]+)\.$'''
+fields = { ms = "int" }
+examples = [{ msg = "Creating callbacks with ready processing time 10/19/2026 1:00:00 PM Miliseconds: 500. CallbackIds: 1000123.", fields = { ms = 500 } }]
+counter_examples = ["Creating callbacks with ready processing time soon."]
+
+[[template]]
+code = "DOM-041"
+class = "other"
+title = "Model update phase skipped on a standby server"
+sev = 5
+regex = '''^Skipping model update(?: (?P<phase>prepare|commit|execute) phase)?\. System active: (?P<active>True|False), hot: (?P<hot>True|False)\.$'''
+examples = [
+    { msg = "Skipping model update execute phase. System active: True, hot: False.", fields = { phase = "execute", active = "True", hot = "False" } },
+    "Skipping model update. System active: False, hot: False.",
+]
+counter_examples = ["Skipping model update execute phase. System active: maybe, hot: False."]
+
+[[template]]
+code = "DOM-042"
+class = "other"
+title = "Model update service and manager housekeeping"
+sev = 5
+regex = '''^(?:ModelUpdateService\.(?:ApplyUpdates, model version: (?P<version>\d+)|SwitchVersion, from model version: (?P<from_version>\d+), to model version: (?P<to_version>\d+))|\[ModelUpdateManagerFactory\]: Found (?P<overrides>\d+) project overrides\.|Post processing sync on (?P<manager>\w+) (?P<phase>starting|finished)\.|Detected update for (?P<updated_manager>\w+)!|Dispatcher (?P<dispatcher>\w+) (?:paused|will continue with work)\.)$'''
+examples = [
+    "ModelUpdateService.ApplyUpdates, model version: 1000123",
+    "ModelUpdateService.SwitchVersion, from model version: 1000123, to model version: 1000124",
+    "[ModelUpdateManagerFactory]: Found 3 project overrides.",
+    "Post processing sync on ExampleModelUpdateManager starting.",
+    "Detected update for ExampleModelUpdateManager!",
+    "Dispatcher MainDispatcher paused.",
+]
+counter_examples = ["ModelUpdateService.Unknown, model version: 1"]
+
+[[template]]
+code = "DOM-043"
+class = "other"
+title = "Changed, inserted or deleted elements detected"
+sev = 5
+regex = '''^(?:Detected (?P<change>changed|inserted|deleted) elements of type\(s\): (?P<types>[\w,]+)|Operations for entities changed: founded (?P<found>\d+) of DMSType\.(?P<type>\w+))\.?$'''
+examples = [
+    { msg = "Detected changed elements of type(s): EQUIPMENT,CONDEQ", fields = { change = "changed" } },
+    "Operations for entities changed: founded 3 of DMSType.DSIGNAL.",
+]
+counter_examples = ["Detected nothing of type(s): X"]
+
+[[template]]
+code = "DOM-044"
+class = "lifecycle"
+title = "Device confirmation (open, close, restore) of an incident, called or finished"
+sev = 4
+regex = '''^(?:Confirm|Restore) (?P<operation>open/unrestore device|close/restore device|open device|close device|unrestore SDP/SL|SDP/SL) (?P<phase>called|finished)(?: for (?:non-outage )?incident (?P<incident>\d+))?\.(?: Devices: (?P<devices>[\d, ]+)\.)?(?: Action time: (?P<action_time>[\d/]+ [\d:]+ [AP]M)\.)?$'''
+fields = { incident = "int" }
+examples = [
+    { msg = "Confirm open/unrestore device finished.", fields = { operation = "open/unrestore device", phase = "finished" } },
+    "Confirm close/restore device called for incident 1000123. Devices: 1000200. Action time: 10/19/2026 1:11:00 PM.",
+    "Restore SDP/SL finished for incident 1000123.",
+]
+counter_examples = ["Confirm open/unrestore device ignored."]
+
+[[template]]
+code = "DOM-045"
+class = "lifecycle"
+title = "Device opened or closed for an incident"
+sev = 4
+regex = '''^(?:\[ConfirmDevice(?:Close|Open)ForIncident\] (?:Closing|Opening) device for Incident \(GID: (?P<gid>\d+)\)|(?:Closing|Opening) device \(GID: (?P<device>\d+)\)\. Action time: (?P<action_time>[\d/]+ [\d:]+ [AP]M))\.?$'''
+fields = { gid = "int", device = "int" }
+examples = [
+    { msg = "[ConfirmDeviceCloseForIncident] Closing device for Incident (GID: 1000123).", fields = { gid = 1000123 } },
+    "Opening device (GID: 1000200). Action time: 10/19/2026 1:11:00 PM.",
+]
+counter_examples = ["Closing device for Incident (GID: 1000123)."]
+
+[[template]]
+code = "DOM-046"
+class = "req_resp"
+title = "Outage publication received from the outage processing (create, update, remove)"
+sev = 4
+regex = '''^(?:New OPS publication - (?P<operation>Create|Remove|Update) outage (?P<outage>\d+)\. Processing\.\.\.|Outage (?P<outage_done>\d+) (?:creation|update) processed successfully)\.?$'''
+fields = { outage = "int" }
+examples = [
+    { msg = "New OPS publication - Create outage 1000200. Processing...", fields = { operation = "Create", outage = 1000200 } },
+    "Outage 1000200 creation processed successfully.",
+]
+counter_examples = ["New OPS publication - Reset outage 1000200. Processing..."]
+
+[[template]]
+code = "DOM-047"
+class = "validation"
+title = "Client delta has validation errors or warnings"
+sev = 3
+regex = '''^(?:Found (?:new validation error|validation error ignored by client)|Client ignore errors|Aborting apply delta\. There are (?P<kind>blocking|warning) validation results)[.:]$'''
+examples = [
+    "Found new validation error:",
+    "Found validation error ignored by client:",
+    "Client ignore errors:",
+    "Aborting apply delta. There are blocking validation results.",
+]
+counter_examples = ["Found no validation error:"]
+
+[[template]]
+code = "DOM-048"
+class = "error"
+title = "Delta or command failed in the incident service"
+sev = 2
+regex = '''^(?:Failed to (?:apply priority delta|execute (?P<command>[\w.]+) command)|Error fetching related gids, gids (?P<gids>[\d, ]+) don't exists on NMS|PredictionFunction returned error code: (?P<errcode>\w+))\.$'''
+examples = [
+    "Failed to apply priority delta.",
+    "Failed to execute ExampleServices.IncidentManagementService.CloseIncidentFromSPCommand command.",
+    "Error fetching related gids, gids 1000123, 1000124 don't exists on NMS.",
+    "PredictionFunction returned error code: DMSERR_PF_EXAMPLE.",
+]
+counter_examples = ["Failed to apply the delta."]
+
+[[template]]
+code = "DOM-049"
+class = "lifecycle"
+title = "Incident created from a switching plan closed or archived"
+sev = 4
+sev_field = "outcome"
+sev_map = { failed = 2 }
+regex = '''^(?P<action>Closing|Archiving) Incident \(GID: (?P<gid>\d+)\) created from switching plan(?: (?P<outcome>failed))?\.$'''
+fields = { gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }]
+examples = [
+    { msg = "Closing Incident (GID: 1000123) created from switching plan.", fields = { action = "Closing", gid = 1000123 } },
+    "Archiving Incident (GID: 1000123) created from switching plan failed.",
+]
+counter_examples = ["Closing Incident (GID: 1000123) created from a call."]
+
+[[template]]
+code = "DOM-035"
+class = "error"
+title = "Error reported by the incident service (error level marker in the text)"
+sev = 2
+regex = '''^\(ERROR\) (?!\[Communication)(?P<detail>.+)$'''
+examples = [
+    { msg = "(ERROR) Unknown job result for entity 1000123 received from WMS.", fields = { detail = "Unknown job result for entity 1000123 received from WMS." } },
+    "(ERROR) Field Complete must be after the first trouble call event time.",
+]
+counter_examples = ["(ERROR)"]
+
+# ---------------------------------------------------------------------------------------------
+# IncidentManagementService, sensitive stream (DOM-S001..S019)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-S001"
+class = "lifecycle"
+title = "Old outage time or ETR sent through the client delta (with the user)"
+sev = 4
+stream = "sensitive"
+regex = '''^Old (?P<what>outage time|ETR): (?P<old_value>[\d/]+ [\d:]+ [AP]M) in Incident \(GID: (?P<gid>\d+)\) is sent through client delta\. '(?P<flag>\w+)' flag is set to false\. User: (?P<user>\S+)\.$'''
+fields = { gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }]
+examples = [
+    { msg = "Old outage time: 10/17/2026 11:27:58 PM in Incident (GID: 1000123) is sent through client delta. 'OutageTimeIsManuallySet' flag is set to false. User: EXAMPLE\\user01.", fields = { what = "outage time", gid = 1000123, user = "EXAMPLE\\user01" } },
+    "Old ETR: 10/18/2026 4:09:15 AM in Incident (GID: 1000123) is sent through client delta. 'EtrIsManuallySet' flag is set to false. User: EXAMPLE\\user02.",
+]
+counter_examples = ["Old ETR: 10/18/2026 4:09:15 AM in Incident (GID: 1000123) is sent through client delta. 'EtrIsManuallySet' flag is set to false."]
+
+[[template]]
+code = "DOM-S002"
+class = "lifecycle"
+title = "ETR of an incident updated (with the user)"
+sev = 4
+stream = "sensitive"
+regex = '''^ETR in Incident \(GID: (?P<gid>\d+)\) is updated to: (?P<etr>[\d/]+ [\d:]+ [AP]M)\. ETR update user: (?P<user>\S+)\.$'''
+fields = { gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }]
+examples = [{ msg = "ETR in Incident (GID: 1000123) is updated to: 10/1/2026 7:37:22 PM. ETR update user: EXAMPLE\\user01.", fields = { gid = 1000123, user = "EXAMPLE\\user01" } }]
+counter_examples = ["ETR in Incident (GID: 1000123) is updated to: 10/1/2026 7:37:22 PM."]
+
+[[template]]
+code = "DOM-S003"
+class = "lifecycle"
+title = "Outage time of an incident set or updated (with the user)"
+sev = 4
+stream = "sensitive"
+regex = '''^Outage time in Incident \(GID: (?P<gid>\d+)\) is (?P<action>set to|updated to): (?P<outage_time>[\d/]+ [\d:]+ [AP]M)\. Outage time update user: (?P<user>\S+)\.$'''
+fields = { gid = "int" }
+keys = [{ field = "gid", type = "incident_gid" }]
+examples = [
+    { msg = "Outage time in Incident (GID: 1000123) is set to: 10/1/2026 7:37:22 PM. Outage time update user: EXAMPLE\\user01.", fields = { gid = 1000123, action = "set to", user = "EXAMPLE\\user01" } },
+    "Outage time in Incident (GID: 1000123) is updated to: 10/1/2026 7:37:22 PM. Outage time update user: EXAMPLE\\user02.",
+]
+counter_examples = ["Outage time in Incident (GID: 1000123) is cleared."]
+
+# ---------------------------------------------------------------------------------------------
+# OutageProcessingService, normal stream (DOM-100..114)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-100"
+class = "other"
+title = "Signal status received (relay trip, enabled, switch status, lockout, fault status, frequency, hot line tag)"
+sev = 4
+fts = false
+regex = '''^(?P<signal>Relay Trip signal|Enabled signal|Switch Status signal|Recloser Lockout signal|Fault Status signal|UnderFrequency signal|Hot line tag) (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16}) with status "(?P<status>[^"]*)" received\. Timestamp: (?P<signal_time>[\d/]+ [\d:]+(?:\.\d+)?)\.?(?: Polling id: (?P<polling>[0-9A-Fa-f]+))?$'''
+fields = { gid = "hex" }
+keys = ["gid"]
+examples = [
+    { msg = "Relay Trip signal 4A00B00C00D00E01 with status \"Open\" received. Timestamp: 10/19/2026 16:29:53.208.", fields = { signal = "Relay Trip signal", status = "Open" } },
+    "Switch Status signal 4A00B00C00D00E02 with status \"Closed\" received. Timestamp: 10/19/2026 16:29:53.208. Polling id: 00000000",
+    "Hot line tag 12345678 with status \"Open\" received. Timestamp: 10/19/2026 16:29:53.208.",
+    "UnderFrequency signal 4A00B00C00D00E03 with status \"Open\" received. Timestamp: 10/19/2026 16:29:53",
+]
+counter_examples = ["Relay Trip signal 4A00B00C00D00E01 without status received. Timestamp: 10/19/2026 16:29:53.208."]
+
+[[template]]
+code = "DOM-101"
+class = "other"
+title = "Under frequency monitoring (UFOD, UFLS) and alarm signal discarded"
+sev = 4
+regex = '''^(?:Under frequency alarm signal: (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16}) received with status (?P<status>\w+)\. Signal excluded from consideration\.|UFOD: (?P<ufod>.+)|Trigger conditions for UFLS for device: (?P<device>(?:0x)?[0-9A-Fa-f]{1,16}) are: (?P<conditions>\w+)\.)$'''
+fields = { gid = "hex", device = "hex" }
+examples = [
+    { msg = "Under frequency alarm signal: 4A00B00C00D00E01 received with status TurnOff. Signal excluded from consideration.", fields = { status = "TurnOff" } },
+    "UFOD: Under frequency monitoring initiated...",
+    "UFOD: Stage: 1 . Protected load: 0 [KW]. Percentage of system load: 0 [KW]. Breakers:",
+    "Trigger conditions for UFLS for device: 4A00B00C00D00E02 are: UnderFrequencyAlarm.",
+]
+counter_examples = ["Under frequency alarm signal: 4A00B00C00D00E01 received without status."]
+
+[[template]]
+code = "DOM-102"
+class = "other"
+title = "Tag added to or removed from a signal"
+sev = 4
+regex = '''^Signal Id: (?P<signal>(?:0x)?[0-9A-Fa-f]{1,16})\. (?P<action>Add|Remove) Tag ID: (?P<tag>(?:0x)?[0-9A-Fa-f]{1,16})\.(?: Catalog: (?P<catalog>(?:0x)?[0-9A-Fa-f]{1,16})\.)?$'''
+fields = { signal = "hex", tag = "hex", catalog = "hex" }
+examples = [
+    { msg = "Signal Id: 4A00B00C00D00E01. Add Tag ID: 4A00B00C00D00E02. Catalog: 4A00B00C00D00E03.", fields = { action = "Add" } },
+    "Signal Id: 12345678. Remove Tag ID: 4A00B00C00D00E02.",
+]
+counter_examples = ["Signal Id: 4A00B00C00D00E01. Move Tag ID: 4A00B00C00D00E02."]
+
+[[template]]
+code = "DOM-103"
+class = "other"
+title = "Island source object added to the list or discarded"
+sev = 5
+regex = '''^Island: (?P<island>(?:0x)?[0-9A-Fa-f]{1,16})\. SourceObject: (?P<source>(?:0x)?[0-9A-Fa-f]{1,16})(?: added to List as: (?P<list>Add|Update)| discarded\. Island is not relevant and not increment!!!)$'''
+fields = { island = "hex", source = "hex" }
+examples = [
+    { msg = "Island: 4A00B00C00D00E01. SourceObject: 4A00B00C00D00E02 added to List as: Add", fields = { list = "Add" } },
+    "Island: 4A00B00C00D00E01. SourceObject: 12345678 discarded. Island is not relevant and not increment!!!",
+]
+counter_examples = ["Island: 4A00B00C00D00E01. SourceObject: 4A00B00C00D00E02 removed."]
+
+[[template]]
+code = "DOM-104"
+class = "lifecycle"
+title = "Outage created, removed, closed or archive requested"
+sev = 4
+regex = '''^(?:Island Id: (?P<island>(?:0x)?[0-9A-Fa-f]{1,16})\. Successfully created Outage with Id: (?P<created>(?:0x)?[0-9A-Fa-f]{1,16})|Outage Id: (?P<removing>(?:0x)?[0-9A-Fa-f]{1,16})\. Removing outage started\.\.\.|Outage Id: (?P<removed>(?:0x)?[0-9A-Fa-f]{1,16})\. Outage removed|Outage Id: (?P<closed>(?:0x)?[0-9A-Fa-f]{1,16})\. Outage closed|(?P<action>Remove/Archive|Close) of outage: (?P<requested>(?:0x)?[0-9A-Fa-f]{1,16}) initiated \.\.\.)\.?$'''
+fields = { created = "hex", removing = "hex", removed = "hex", closed = "hex", requested = "hex", island = "hex" }
+keys = [{ field = "created", type = "gid" }, { field = "removing", type = "gid" }, { field = "removed", type = "gid" }, { field = "closed", type = "gid" }, { field = "requested", type = "gid" }]
+examples = [
+    "Island Id: 4A00B00C00D00E01. Successfully created Outage with Id: 4A00B00C00D00E02",
+    "Outage Id: 4A00B00C00D00E02. Removing outage started...",
+    "Outage Id: 4A00B00C00D00E02. Outage removed.",
+    "Outage Id: 4A00B00C00D00E02. Outage closed.",
+    "Close of outage: 4A00B00C00D00E02 initiated ...",
+]
+counter_examples = ["Outage Id: 4A00B00C00D00E02. Outage reopened."]
+
+[[template]]
+code = "DOM-105"
+class = "lifecycle"
+title = "Automatic FLISR or LAR state of an outage changed"
+sev = 4
+sev_field = "to_state"
+sev_map = { ApplicationAborted = 3 }
+regex = '''^Outage Id: (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16})\. Auto (?P<mode>FLISR|LAR) (?P<what>State|Status)(?::| changed:?) From: (?P<from_state>\w+) To: (?P<to_state>\w+)(?:\. TimeStamp: (?P<state_time>[\d/]+ [\d:]+(?:\.\d+)?))?\.?$'''
+fields = { gid = "hex" }
+keys = ["gid"]
+examples = [
+    { msg = "Outage Id: 4A00B00C00D00E01. Auto FLISR State: From: NotAuto To: CheckingTriggers. TimeStamp: 10/20/2026 05:31:11.924.", fields = { mode = "FLISR", to_state = "CheckingTriggers" } },
+    "Outage Id: 4A00B00C00D00E01. Auto FLISR State: From: CheckingTriggers To: ApplicationAborted. TimeStamp: 10/20/2026 05:32:41.936.",
+    "Outage Id: 4A00B00C00D00E01. Auto LAR Status changed From: NotStarted To: AutoFLISRInProgress.",
+    "Outage Id: 4A00B00C00D00E01. Auto LAR State: From: CouplingAreas To: DetermineTriggerConditions",
+]
+counter_examples = ["Outage Id: 4A00B00C00D00E01. Auto FLISR State is idle."]
+
+[[template]]
+code = "DOM-106"
+class = "start"
+title = "Outage function execution (job) started or its latest status"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4, Running = 5 }
+regex = '''^Outage [Ii]d: (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16})\. (?:Function '(?P<function>\w+)' execution started|Latest function \((?P<latest>\w+)\) status: (?P<status>\w+)), jobID: (?P<job_id>\d+)$'''
+fields = { gid = "hex", job_id = "int" }
+keys = ["gid", "job_id"]
+examples = [
+    { msg = "Outage Id: 4A00B00C00D00E01. Function 'OutageTrace' execution started, jobID: 160120", fields = { function = "OutageTrace", job_id = 160120 } },
+    "Outage id: 4A00B00C00D00E01. Latest function (FLISRCommandOT) status: DoneWithSuccess, jobID: 160120",
+]
+counter_examples = ["Outage Id: 4A00B00C00D00E01. Function 'OutageTrace' execution started, jobID: x"]
+
+[[template]]
+code = "DOM-107"
+class = "start"
+title = "New island received (feeder, substation, source object, reason)"
+sev = 4
+window = 720
+regex = '''^New island received\. Island Id: (?P<island>(?:0x)?[0-9A-Fa-f]{1,16})\. Feeder: (?P<feeder>(?:0x)?[0-9A-Fa-f]{1,16})\. Substation: (?P<substation>(?:0x)?[0-9A-Fa-f]{1,16})\. Source object: (?P<source>(?:0x)?[0-9A-Fa-f]{1,16})\. Uncommanded: (?P<uncommanded>True|False)\. Relevant island: (?P<relevant>True|False)\. Source bayend: (?P<bayend>(?:0x)?[0-9A-Fa-f]{1,16})\. Temporary element (?P<temp>(?:0x)?[0-9A-Fa-f]{1,16})\. Reason Source: (?P<reason_source>[^.]*)\. Reason ID: (?P<reason_id>[^.]*)\. Timestamp: (?P<island_time>.+)$'''
+fields = { island = "hex", feeder = "hex", substation = "hex", source = "hex", bayend = "hex", temp = "hex" }
+examples = [
+    { msg = "New island received. Island Id: 4A00B00C00D00E01. Feeder: 4A00B00C00D00E02. Substation: 4A00B00C00D00E03. Source object: 4A00B00C00D00E04. Uncommanded: False. Relevant island: True. Source bayend: 4A00B00C00D00E05. Temporary element 00000000. Reason Source: Work order. Reason ID: INC 1000123. Timestamp: 10/19/2026 16:29:53.208", fields = { uncommanded = "False", relevant = "True", reason_source = "Work order" } },
+]
+counter_examples = ["New island received. Island Id: 4A00B00C00D00E01."]
+
+[[template]]
+code = "DOM-108"
+class = "other"
+title = "Island decision (outage creation, appropriate device, child switch)"
+sev = 4
+regex = '''^Island Id: (?P<island>(?:0x)?[0-9A-Fa-f]{1,16})\. (?!Successfully created Outage)(?P<detail>.+)$'''
+fields = { island = "hex" }
+examples = [
+    { msg = "Island Id: 4A00B00C00D00E01. Creating Forced outage (manual FLISR mode).", fields = { detail = "Creating Forced outage (manual FLISR mode)." } },
+    "Island Id: 4A00B00C00D00E01. Device: 4A00B00C00D00E02 type: FUSE is not appropriate for creating of auto outage!",
+]
+counter_examples = ["Island Id: 4A00B00C00D00E01. Successfully created Outage with Id: 4A00B00C00D00E02"]
+
+[[template]]
+code = "DOM-109"
+class = "other"
+title = "Signal counts of the PSR handler after a model change"
+sev = 5
+regex = '''^\[PSR Handler\]: (?P<signal_kind>\w+) (?P<signal_type>discrete|analog) signals count: (?P<count>\d+)$'''
+fields = { count = "int" }
+examples = [
+    { msg = "[PSR Handler]: SwitchStatus discrete signals count: 100", fields = { signal_kind = "SwitchStatus", signal_type = "discrete", count = 100 } },
+    "[PSR Handler]: Current analog signals count: 20",
+]
+counter_examples = ["[PSR Handler]: SwitchStatus digital signals count: 100"]
+
+[[template]]
+code = "DOM-110"
+class = "other"
+title = "Outage detail (signal values, voltage control, reclosing, commands, isolation)"
+sev = 5
+fts = false
+regex = '''^Outage [Ii]d: (?P<outage>(?:0x)?[0-9A-Fa-f]{1,16})\. (?!Auto (?:FLISR|LAR) |Function '|Latest function |Removing outage started|Outage removed|Outage closed)(?P<detail>.+)$'''
+fields = { outage = "hex" }
+examples = [
+    { msg = "Outage Id: 4A00B00C00D00E01. Signal 4A00B00C00D00E02. Last not zero value: 2. Quality: ValidityGood.", fields = { detail = "Signal 4A00B00C00D00E02. Last not zero value: 2. Quality: ValidityGood." } },
+    "Outage id: 4A00B00C00D00E01. Mark LV candidates started...",
+    "Outage Id: 4A00B00C00D00E01. Command to change Switch Status to Open is sent.",
+]
+counter_examples = ["Outage Id: 4A00B00C00D00E01. Auto FLISR State: From: NotAuto To: CheckingTriggers."]
+
+[[template]]
+code = "DOM-111"
+class = "statistics"
+title = "Consumption type of the outage (service delivery points, locations, customers)"
+sev = 5
+regex = '''^(?:Condition is not satisfied\. OutageConsumptionTypeCondition|OutageConsumptionTypeCondition) is: (?P<condition>\w+)\. Number of SDP: (?P<sdp>\d+)\. Number of SL: (?P<sl>\d+)\. Number of EC: (?P<ec>\d+)$'''
+fields = { sdp = "int", sl = "int", ec = "int" }
+examples = [
+    { msg = "OutageConsumptionTypeCondition is: SDP_SL_EC. Number of SDP: 31. Number of SL: 23. Number of EC: 1", fields = { condition = "SDP_SL_EC", sdp = 31, sl = 23 } },
+    "Condition is not satisfied. OutageConsumptionTypeCondition is: SDP_SL_EC. Number of SDP: 0. Number of SL: 0. Number of EC: 0",
+]
+counter_examples = ["OutageConsumptionTypeCondition is: SDP_SL_EC."]
+
+[[template]]
+code = "DOM-112"
+class = "lifecycle"
+title = "Model version switch and queue pause or resume of the outage and major event services"
+sev = 4
+regex = '''^(?:Request for switch of version received\.|Switch version finished|DynamicListeners (?:paused|resumed)!|FunctionManagerQueue & (?:Outage|Event)ManagerQueue executor (?:paused|resumed)!|SwitchingManagerQueue executor (?:paused|resumed)!|Item cache commit update (?:entered|finished)\.)$'''
+examples = [
+    "Request for switch of version received.",
+    "Switch version finished",
+    "DynamicListeners paused!",
+    "FunctionManagerQueue & OutageManagerQueue executor resumed!",
+    "SwitchingManagerQueue executor resumed!",
+    "Item cache commit update entered.",
+]
+counter_examples = ["DynamicListeners stopped!"]
+
+[[template]]
+code = "DOM-113"
+class = "other"
+title = "Historical data library writing packed data of a cache"
+sev = 5
+fts = false
+regex = '''^HDL (?P<cache>\w+) (?:Start writing|Finished write) packed data to PACKED_ENTITY table\.$'''
+examples = [
+    { msg = "HDL ExampleCache Start writing packed data to PACKED_ENTITY table.", fields = { cache = "ExampleCache" } },
+    "HDL ExampleCache Finished write packed data to PACKED_ENTITY table.",
+]
+counter_examples = ["HDL ExampleCache Start reading packed data from PACKED_ENTITY table."]
+
+# ---------------------------------------------------------------------------------------------
+# OutageProcessingService, sensitive stream (DOM-S100..S104)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-S100"
+class = "lifecycle"
+title = "Outage closed or removed by an operator"
+sev = 4
+stream = "sensitive"
+regex = '''^User: (?P<user>[\w\\@-]+)\. (?P<action>Remove/Archive|Close) of outage: (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16}) initiated \.\.\.$'''
+fields = { gid = "hex" }
+keys = ["gid"]
+examples = [
+    { msg = "User: EXAMPLE\\user01. Remove/Archive of outage: 4A00B00C00D00E01 initiated ...", fields = { user = "EXAMPLE\\user01", action = "Remove/Archive" } },
+    "User: EXAMPLE\\user01. Close of outage: 4A00B00C00D00E01 initiated ...",
+]
+counter_examples = ["User: EXAMPLE\\user01. Open of outage: 4A00B00C00D00E01 initiated ..."]
+
+[[template]]
+code = "DOM-S101"
+class = "other"
+title = "Operator action on the outage processing (auto mode, FLISR or LAR profile, manual mode)"
+sev = 4
+stream = "sensitive"
+regex = '''^User: (?P<user>[\w\\@-]+)\. (?!(?:Remove/Archive|Close) of outage: )(?P<detail>.+)$'''
+examples = [
+    { msg = "User: EXAMPLE\\user01. Auto mode canceled.", fields = { user = "EXAMPLE\\user01" } },
+    "User: 1000123@EXAMPLE. Auto LAR profile disabled for substation: 4A00B00C00D00E01.",
+]
+counter_examples = ["User: EXAMPLE\\user01. Close of outage: 4A00B00C00D00E01 initiated ..."]
+
+# ---------------------------------------------------------------------------------------------
+# WorkManagementService, normal stream (DOM-050..099)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-050"
+class = "other"
+title = "Document queue consumer: worker started, finished or consuming"
+sev = 5
+fts = false
+regex = '''^\[(?P<queue>Main|DFS|Communication)-Consumer\]: (?:Main worker - (?:Consuming next action\.\.\.|Parallel workers: (?P<parallel>\d+)|Package is locked\. Requeuing\.\.\.)|Starting worker: (?P<worker>\d+)|Worker: (?P<finished_worker>\d+) - Finished\. Parallel workers left: (?P<left>\d+), Number of actions in queue: (?P<queued>\d+))$'''
+fields = { parallel = "int", left = "int", queued = "int" }
+examples = [
+    { msg = "[Main-Consumer]: Main worker - Consuming next action...", fields = { queue = "Main" } },
+    "[DFS-Consumer]: Main worker - Parallel workers: 2",
+    "[Main-Consumer]: Starting worker: 158808",
+    "[Communication-Consumer]: Worker: 158808 - Finished. Parallel workers left: 1, Number of actions in queue: 0",
+    "[Main-Consumer]: Main worker - Package is locked. Requeuing...",
+]
+counter_examples = ["[Other-Consumer]: Main worker - Consuming next action..."]
+
+[[template]]
+code = "DOM-051"
+class = "other"
+title = "Document queue consumer: documents locked, package running or removed"
+sev = 5
+fts = false
+regex = '''^\[(?P<queue>Main|DFS|Communication)-Consumer\]: (?:Main worker - (?:Locked documents|Running action for package)|Worker: (?P<worker>\d+) - (?:Locked documents left|Removing package)):(?: (?P<document>\[[^\]]*\]))?$'''
+examples = [
+    { msg = "[Main-Consumer]: Main worker - Locked documents:", fields = { queue = "Main" } },
+    "[Main-Consumer]: Main worker - Running action for package: [0x44E0191000023|1000123|system:1102|type:WORK_REQUEST]",
+    "[DFS-Consumer]: Worker: 158808 - Locked documents left:",
+    "[Communication-Consumer]: Worker: 158808 - Removing package: [0x44E0191000023|1000123|system:1102|type:WORK_PLAN]",
+]
+counter_examples = ["[Main-Consumer]: Main worker - Locked documents left:"]
+
+[[template]]
+code = "DOM-052"
+class = "statistics"
+title = "Semantic step of a document command started or timed"
+sev = 5
+fts = false
+regex = '''^\[SemanticSetupBuilder\]: (?:Executing func for semantic (?P<semantic>\w+)\.\.\.|\[(?P<timed_semantic>\w+)\] Processing duration: (?P<duration>[\d:.]+))$'''
+examples = [
+    { msg = "[SemanticSetupBuilder]: Executing func for semantic AutoOperation...", fields = { semantic = "AutoOperation" } },
+    "[SemanticSetupBuilder]: [AutoOperation] Processing duration: 00:00:00.0123456",
+]
+counter_examples = ["[SemanticSetupBuilder]: Skipping semantic AutoOperation"]
+
+[[template]]
+code = "DOM-053"
+class = "statistics"
+title = "Handler or validation duration of a document command"
+sev = 5
+fts = false
+regex = '''^\[(?P<component>AutoOperation|ReferenceIntegrityModelValidation|DeleteIntegrityModelValidation|CacheSessions)\](?: : | )(?:\[(?P<handler>\w+)\] Handler number (?P<number>\d+) )?[Dd]uration: (?P<duration>[\d:.]+)\.$'''
+examples = [
+    { msg = "[AutoOperation] : [ITransitionDocumentDataPrepare] Handler number 1 duration: 00:00:00.0000325.", fields = { component = "AutoOperation", duration = "00:00:00.0000325" } },
+    "[ReferenceIntegrityModelValidation] Duration: 00:00:00.0012345.",
+    "[CacheSessions] : Duration: 00:00:00.0001234.",
+]
+counter_examples = ["[CacheSessions] : Elapsed: 00:00:00.0001234."]
+
+[[template]]
+code = "DOM-054"
+class = "other"
+title = "Device id read"
+sev = 5
+fts = false
+regex = '''^DeviceId (?P<device>\d+)$'''
+fields = { device = "int" }
+examples = [{ msg = "DeviceId 1000123", fields = { device = 1000123 } }]
+counter_examples = ["DeviceId abc"]
+
+[[template]]
+code = "DOM-055"
+class = "other"
+title = "Delta persisted by the work cache"
+sev = 5
+fts = false
+regex = '''^\[(?:Persister\] : Persisting delta with (?P<inserts>\d+) insert operation\(s\), (?P<updates>\d+) update operations\(s\) and (?P<deletes>\d+) delete operation\(s\)|ElementCacheValidatorDFS\]: Filtered input delta with (?P<from_ops>\d+) to (?P<to_ops>\d+) operations)\.$'''
+fields = { inserts = "int", updates = "int", deletes = "int" }
+examples = [
+    { msg = "[Persister] : Persisting delta with 1 insert operation(s), 2 update operations(s) and 0 delete operation(s).", fields = { inserts = 1, updates = 2, deletes = 0 } },
+    "[ElementCacheValidatorDFS]: Filtered input delta with 3 to 1 operations.",
+]
+counter_examples = ["[Persister] : Persisting delta without operations."]
+
+[[template]]
+code = "DOM-056"
+class = "other"
+title = "Command step of the work management (executer, action composer)"
+sev = 5
+fts = false
+regex = '''^\[WMS => (?P<command>[^\s\]]+) (?P<account>[^\s\]]+)\] \[(?P<component>CommandExecuter|ConsumableActionComposer)\]: (?P<step>(?:Created TCS|Set TCS)\[\d+\] on \w+(?: completed)?\.|Adding command(?: \(action, postAction, callback\))? to consumer\.\.\.|Worker Id: \d+ - [\w ]+\.{1,3})$'''
+examples = [
+    { msg = "[WMS => ApplyDeltaCommand_27604 EXAMPLE\\user01] [ConsumableActionComposer]: Worker Id: 158850 - Execute started...", fields = { command = "ApplyDeltaCommand_27604", component = "ConsumableActionComposer" } },
+    "[WMS => ApplyDeltaCommand_27604 EXAMPLE\\user01] [CommandExecuter]: Created TCS[3] on Execute.",
+    "[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [CommandExecuter]: Adding command (action, postAction, callback) to consumer...",
+    "[WMS => AssignCrews_1000123 EXAMPLE\\user01] [CommandExecuter]: Set TCS[3] on PostExecute completed.",
+]
+counter_examples = ["[WMS => ApplyDeltaCommand_27604 EXAMPLE\\user01] [CommandExecuter]: Dropped command."]
+
+[[template]]
+code = "DOM-057"
+class = "other"
+title = "Semantic action received for a document command"
+sev = 5
+fts = false
+regex = '''^\[WMS => (?P<command>[^\s\]]+) (?P<account>[^\s\]]+)\] \[SemanticActionSetup\]: Received (?P<stage>\w+) for (?P<semantic>\w+) semantic\.$'''
+examples = [
+    { msg = "[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [SemanticActionSetup]: Received Condition for MandatoryFieldCheck semantic.", fields = { stage = "Condition", semantic = "MandatoryFieldCheck" } },
+]
+counter_examples = ["[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [SemanticActionSetup]: Dropped Condition."]
+
+[[template]]
+code = "DOM-058"
+class = "validation"
+title = "Condition or prepare error while creating the inputs of a document command"
+sev = 3
+regex = '''^\[WMS => (?P<command>[^\s\]]+) (?P<account>[^\s\]]+)\] \[GenericDocumentCommand\] : (?P<stage>Condition|Prepare|Post execute) error creating\.\.\.$'''
+examples = [
+    { msg = "[WMS => GenericDocumentCommand:WORK_REQUEST_(T)_260309 EXAMPLE\\user01] [GenericDocumentCommand] : Condition error creating...", fields = { stage = "Condition" } },
+]
+counter_examples = ["[WMS => GenericDocumentCommand:WORK_REQUEST_(T)_260309 EXAMPLE\\user01] [GenericDocumentCommand] : Condition inputs are created."]
+
+[[template]]
+code = "DOM-059"
+class = "other"
+title = "Document command step (inputs, actions, transition command)"
+sev = 5
+fts = false
+regex = '''^\[WMS => (?P<command>[^\s\]]+) (?P<account>[^\s\]]+)\] \[(?P<component>GenericDocumentCommand|CommandFactory)\] ?: (?!(?:Condition|Prepare|Post execute) error creating)(?P<detail>.+)$'''
+examples = [
+    { msg = "[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [GenericDocumentCommand] : Condition inputs are created.", fields = { component = "GenericDocumentCommand" } },
+    "[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [CommandFactory] : Creating transition command for entity [0x44E0191000023|1000123|system:1102|type:WORK_PLAN] in context Transition.",
+]
+counter_examples = ["[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [GenericDocumentCommand] : Condition error creating..."]
+
+[[template]]
+code = "DOM-060"
+class = "other"
+title = "Security permission check of the work management"
+sev = 5
+fts = false
+regex = '''^\[SecurityHelper\] (?:User is DNAApp skip checking permission\.|Checking DNA Permission - (?P<permission>\w+) premission\.\.\.)$'''
+examples = [
+    "[SecurityHelper] User is DNAApp skip checking permission.",
+    "[SecurityHelper] Checking DNA Permission - Edit_WorkRequest premission...",
+]
+counter_examples = ["[SecurityHelper] Checking DNA Permission"]
+
+[[template]]
+code = "DOM-061"
+class = "other"
+title = "Document handler updating entity data (coordinates, AORs, parent tree, pending execution)"
+sev = 5
+fts = false
+regex = '''^\[(?P<handler>CoordinatesHandler|AORHandler|ParentHandler|PendingExecutionHandler)\] ?:{1,2} (?P<detail>.+)$'''
+examples = [
+    { msg = "[CoordinatesHandler] : Updating coordinates for entity [0x44E0191000023|1000123|system:1102|type:WORK_PLAN]", fields = { handler = "CoordinatesHandler" } },
+    "[ParentHandler]: Updating parent tree for entity [0x44E0191000023|1000123|system:1102|type:WORK_REQUEST]",
+    "[PendingExecutionHandler]:: Checking pending execution for entity [0x44E0191000023|1000123|system:1102|type:WORK_PLAN]",
+]
+counter_examples = ["[CoordinatesHandler] Updating coordinates"]
+
+[[template]]
+code = "DOM-062"
+class = "other"
+title = "Tag selection for the execution of a switching sequence"
+sev = 5
+fts = false
+regex = '''^\[SequenceConverterSourceForExecution\] (?P<detail>.+)$'''
+examples = [
+    "[SequenceConverterSourceForExecution] Choosing tag for removal.",
+    "[SequenceConverterSourceForExecution] Selected tag 4A00B00C00D00E01",
+]
+counter_examples = ["[SequenceConverterSource] Choosing tag for removal."]
+
+[[template]]
+code = "DOM-063"
+class = "lifecycle"
+title = "Work document state change, save, execution or takeover requested"
+sev = 4
+regex = '''^\[WMSDataManagementService\] (?:\[START\] (?:ChangeState called for GID: (?P<gid>\d+), to stateID: (?P<state>\d+)|SaveChanges called for GID: (?P<save_gid>\d+)|Takeover called for GID: (?P<takeover_gid>(?:0x)?[0-9A-Fa-f]{1,16}))|Takeover called for GID: (?P<takeover2_gid>(?:0x)?[0-9A-Fa-f]{1,16})|ExecuteAsync called\. Action: (?P<action>\w+), Gids: (?P<gids>[\d, ]+))$'''
+fields = { gid = "int", save_gid = "int" }
+keys = ["gid", { field = "save_gid", type = "gid" }]
+examples = [
+    { msg = "[WMSDataManagementService] [START] ChangeState called for GID: 1000123, to stateID: 1000124", fields = { gid = 1000123, state = "1000124" } },
+    "[WMSDataManagementService] [START] SaveChanges called for GID: 1000123",
+    "[WMSDataManagementService] Takeover called for GID: 4A00B00C00D00E01",
+    "[WMSDataManagementService] ExecuteAsync called. Action: MarkAsExecuted, Gids: 1000123",
+]
+counter_examples = ["[WMSDataManagementService] [START] Rollback called for GID: 1000123"]
+
+[[template]]
+code = "DOM-064"
+class = "other"
+title = "Lifecycle repository found fields for a document state"
+sev = 5
+fts = false
+regex = '''^\[LifecycleRepository\] => +Found (?P<count>\d+) field\(s\) for gid (?P<gid>\d+) in (?P<state>\w+(?: \w+)?) state after filter by (?P<field_type>String|DateTime) type:(?: (?P<field>\w+))?$'''
+fields = { count = "int", gid = "int" }
+examples = [
+    { msg = "[LifecycleRepository] =>  Found 1 field(s) for gid 1000123 in Example state after filter by String type:", fields = { count = 1, gid = 1000123, state = "Example" } },
+    "[LifecycleRepository] => Found 1 field(s) for gid 1000123 in Example State state after filter by DateTime type: SM_EXAMPLE_FIELD",
+]
+counter_examples = ["[LifecycleRepository] => Found 1 field(s) for gid 1000123 after filter by String type:"]
+
+[[template]]
+code = "DOM-065"
+class = "other"
+title = "Switching sequence processing (execute or mark as executed)"
+sev = 5
+fts = false
+regex = '''^\[(?P<processor>ExecuteOrUpdateSwitchingProcessor|MarkAsExecuteSwitchingProcessor)\] (?!Sequence with guid [0-9a-fA-F-]{36} in state )(?P<detail>.+)$'''
+examples = [
+    { msg = "[ExecuteOrUpdateSwitchingProcessor] Start waiting for SequentialExecution...", fields = { processor = "ExecuteOrUpdateSwitchingProcessor" } },
+    "[MarkAsExecuteSwitchingProcessor] Processing started.",
+    "[ExecuteOrUpdateSwitchingProcessor] Sending event for sequence with id 1000123 finished with status Executed.",
+]
+counter_examples = ["[ExecuteOrUpdateSwitchingProcessor] Sequence with guid 00000000-0000-4000-8000-000000000001 in state Executed."]
+
+[[template]]
+code = "DOM-066"
+class = "end"
+title = "Switching sequence reached its final state"
+sev = 4
+sev_field = "state"
+sev_map = { Failed = 2, Executed = 4 }
+regex = '''^\[ExecuteOrUpdateSwitchingProcessor\] Sequence with guid (?P<sequence>[0-9a-fA-F-]{36}) in state (?P<state>\w+)\.$'''
+fields = { sequence = "guid" }
+examples = [
+    { msg = "[ExecuteOrUpdateSwitchingProcessor] Sequence with guid 00000000-0000-4000-8000-000000000001 in state Executed.", fields = { state = "Executed" } },
+    "[ExecuteOrUpdateSwitchingProcessor] Sequence with guid 00000000-0000-4000-8000-000000000001 in state Failed.",
+]
+counter_examples = ["[ExecuteOrUpdateSwitchingProcessor] Sequence with guid not-a-guid in state Executed."]
+
+[[template]]
+code = "DOM-067"
+class = "validation"
+title = "Clash checking of a switching document"
+sev = 4
+regex = '''^\[WorkOnSameFeeder\]\[(?P<document>WorkRequest|WorkPlan)\] : (?P<detail>.+)$'''
+examples = [
+    { msg = "[WorkOnSameFeeder][WorkRequest] : Clash checking for switching document [1000123] found 2 clashes.", fields = { document = "WorkRequest" } },
+    "[WorkOnSameFeeder][WorkPlan] : GIDs of clashed documents: 1000124,1000125.",
+]
+counter_examples = ["[WorkOnSameFeeder][WorkOrder] : Clash checking."]
+
+[[template]]
+code = "DOM-068"
+class = "other"
+title = "Document ownership check"
+sev = 5
+fts = false
+regex = '''^\[(?P<component>CheckOwnership|DocumentOwnershipValidator)\]:? (?P<detail>.+)$'''
+examples = [
+    { msg = "[CheckOwnership]: User 'EXAMPLE\\user01' is the owner of document [0x44E0191000023|1000123|system:1102|type:WORK_REQUEST].", fields = { component = "CheckOwnership" } },
+    "[DocumentOwnershipValidator] User is in DNA Apps role, not checking ownership.",
+]
+counter_examples = ["[CheckOwner]: User is the owner."]
+
+[[template]]
+code = "DOM-069"
+class = "lifecycle"
+title = "Crew assignment of a work plan (deassign, category change)"
+sev = 4
+regex = '''^(?:\[WMSCrewAssignment\] (?!Warning: Assignment not found|CRSFault exception)(?P<detail>.+)|WMSCrewAssignmentManagementService (?P<service_call>\w+) called\.\.\.)$'''
+examples = [
+    { msg = "[WMSCrewAssignment] Deassigning crew 1000001", fields = { detail = "Deassigning crew 1000001" } },
+    "WMSCrewAssignmentManagementService WorkPlanDeassignCrews called...",
+]
+counter_examples = ["[WMSCrewAssignment] Warning: Assignment not found on CRS."]
+
+[[template]]
+code = "DOM-070"
+class = "error"
+title = "Crew assignment not found in the crew service"
+sev = 3
+sev_field = "kind"
+sev_map = { CRSFault = 2 }
+regex = '''^\[WMSCrewAssignment\] (?P<kind>Warning|CRSFault)(?:: Assignment not found on CRS\.| exception error occurred while updating crew assignment category\. .*)$'''
+examples = [
+    { msg = "[WMSCrewAssignment] Warning: Assignment not found on CRS.", fields = { kind = "Warning" } },
+    "[WMSCrewAssignment] CRSFault exception error occurred while updating crew assignment category. Assignment not found. Check CRS log for details.",
+]
+counter_examples = ["[WMSCrewAssignment] Note: Assignment not found on CRS."]
+
+[[template]]
+code = "DOM-071"
+class = "error"
+title = "Exception in the crew message service"
+sev = 2
+text = "[CR]: DMSException occurred in CRMsgService. Reason:"
+examples = ["[CR]: DMSException occurred in CRMsgService. Reason:"]
+counter_examples = ["[CR]: DMSException occurred in CRMsgService."]
+
+[[template]]
+code = "DOM-072"
+class = "error"
+title = "Error while the dynamic feeder synchronizer or the PSR delegate read the model"
+sev = 2
+regex = '''^(?:\[DynamicFeederSynchronizer\]\[(?P<cache>\w+)\] Error occurred in PSR delegate\. Details: |\[PSRDelegate\] Failed to get circuit ids\. Reason: )(?P<detail>.+)$'''
+examples = [
+    { msg = "[DynamicFeederSynchronizer][ExampleCache] Error occurred in PSR delegate. Details: System.NullReferenceException: Object reference not set to an instance of an object.", fields = { detail = "System.NullReferenceException: Object reference not set to an instance of an object." } },
+    "[PSRDelegate] Failed to get circuit ids. Reason: ExampleCacheException: Exception of type 'X' was thrown.",
+]
+counter_examples = ["[PSRDelegate] Got circuit ids."]
+
+[[template]]
+code = "DOM-073"
+class = "other"
+title = "Work management step (archive, events, notifications, commands, outage statistics, simulation)"
+sev = 5
+fts = false
+regex = '''^\[(?P<component>Archive|DBHelper|AsyncCommandProcessor|GenerateEvents|DynamicFeedersHandler|OutageStatisticsFunctionHelper|WMSSimulationService|ArchivingTool|SendOutageReportHelper|NetworkViewDataRepository|CRExecuter|CR - Transfer|Final|WMSNotificationService|SafetyDocumentValidation)\] ?:? (?!Function error code )(?P<detail>.+)$'''
+examples = [
+    { msg = "[Archive] : Archived state set for [0x44E0191000023|1000123|system:1102|type:WORK_PLAN]", fields = { component = "Archive" } },
+    "[GenerateEvents] : Start with GenerateUpdateEvent...",
+    "[AsyncCommandProcessor] Waiting for new command...",
+    "[Final] : CloseIncident for SP [1000123] execution call started...",
+    "[SafetyDocumentValidation] Electrical isolation point: 1000123",
+]
+counter_examples = ["[Unknown] : nothing"]
+
+[[template]]
+code = "DOM-074"
+class = "other"
+title = "Work management helper call (field control, device check, command generation)"
+sev = 5
+fts = false
+regex = '''^(?:AutoOperation - Check for SD State to update SDInstruction\.|WMSFieldControlService GetDevicesByBlockIds called\.\.\.|IsHot & IsArbitrated checked\.\.\.|WMSFieldControlHelper -> There is no field control data in cache|GenerateCommand called for list of list of commands\.|Device gid \[(?P<device>\d+)\] is neither psr nor signal\.|\{(?P<scope>\d+)\} Entering scheduling date time validation)$'''
+examples = [
+    "AutoOperation - Check for SD State to update SDInstruction.",
+    "IsHot & IsArbitrated checked...",
+    "Device gid [1000123] is neither psr nor signal.",
+    "{1} Entering scheduling date time validation",
+]
+counter_examples = ["IsHot checked."]
+
+[[template]]
+code = "DOM-075"
+class = "validation"
+title = "Safety document validation returned an error code"
+sev = 3
+regex = '''^\[SafetyDocumentValidation\] Function error code (?P<errcode>\w+)$'''
+examples = [{ msg = "[SafetyDocumentValidation] Function error code DMSERR_SDV_EXAMPLE", fields = { errcode = "DMSERR_SDV_EXAMPLE" } }]
+counter_examples = ["[SafetyDocumentValidation] Function result ok"]
+
+[[template]]
+code = "DOM-076"
+class = "validation"
+title = "Work plan execution before its start time or model update with errors"
+sev = 3
+sev_field = "errors"
+sev_map = { 0 = 4 }
+regex = '''^(?:\[WMS => ModelUpdateCommand\]: Async method (?P<method>\w+)\(\) finished with (?P<errors>\d+) errors|\[WarnExecutionBeforeStartDateCommand\] Callback populated with (?P<callback_errors>\d+) errors|\[ExecutionDateTimeChecker\] Work plan start date time is greater than execution time\. Throw (?P<warning>\w+) error with type Warning)\.$'''
+examples = [
+    { msg = "[WMS => ModelUpdateCommand]: Async method HandleModelUpdateAsync() finished with 0 errors.", fields = { method = "HandleModelUpdateAsync", errors = "0" } },
+    "[WarnExecutionBeforeStartDateCommand] Callback populated with 1 errors.",
+    "[ExecutionDateTimeChecker] Work plan start date time is greater than execution time. Throw WMS_EXAMPLE_WARNING error with type Warning.",
+]
+counter_examples = ["[WarnExecutionBeforeStartDateCommand] Callback populated."]
+
+# ---------------------------------------------------------------------------------------------
+# WorkManagementService, sensitive stream (DOM-S050)
+# ---------------------------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------------------------
+# CrewManagementService, normal stream (DOM-115..139)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-115"
+class = "other"
+title = "Delta applied to the crew cache (counts)"
+sev = 5
+fts = false
+regex = '''^(?:Applying delta with (?P<inserts>\d+) inserts, (?P<updates>\d+) updates and (?P<deletes>\d+) deletes|Delta successfully applied)\.$'''
+fields = { inserts = "int", updates = "int", deletes = "int" }
+examples = [
+    { msg = "Applying delta with 1 inserts, 2 updates and 0 deletes.", fields = { inserts = 1, updates = 2, deletes = 0 } },
+    "Delta successfully applied.",
+]
+counter_examples = ["Applying delta with many inserts."]
+
+[[template]]
+code = "DOM-116"
+class = "other"
+title = "Crew entity updated with the timestamp of the cache or in the future"
+sev = 5
+fts = false
+regex = '''^Updating entity (?P<entity>OMS_\w+) \(ID: (?P<id>\d+)\) with (?:same timestamp as in cache|time in future) (?P<entity_time>[\d-]+ [\d:.]+)$'''
+fields = { id = "int" }
+examples = [
+    { msg = "Updating entity OMS_CREW_ASSIGNMENT (ID: 1000123) with same timestamp as in cache 2026-10-15 20:30:39.677", fields = { entity = "OMS_CREW_ASSIGNMENT", id = 1000123 } },
+    "Updating entity OMS_CREW (ID: 1000123) with time in future 2026-10-15 20:30:39.677",
+]
+counter_examples = ["Updating entity OMS_CREW (ID: 1000123) with a new timestamp 2026-10-15 20:30:39.677"]
+
+[[template]]
+code = "DOM-117"
+class = "lifecycle"
+title = "Crew assignment status, category or leading flag changed"
+sev = 4
+regex = '''^Changing (?:assignment status to status with ID (?P<status_id>\d+), for crew (?P<crew>\d+), assignment (?P<assignment>\d+)|assignment category to (?P<category>\w+), for crew (?P<crew_cat>\d+), assignment (?P<assignment_cat>\d+)|leading crew flag to (?P<flag>True|False), for assignment (?P<assignment_flag>\d+), crew (?P<crew_flag>\d+)) and service type (?P<service_type>\w+) \([Tt]imestamp: (?P<change_time>[\d/]+ [\d:]+ [AP]M)\)\.$'''
+fields = { assignment = "int", assignment_cat = "int", assignment_flag = "int" }
+keys = [{ field = "assignment", type = "gid" }, { field = "assignment_cat", type = "gid" }, { field = "assignment_flag", type = "gid" }]
+examples = [
+    { msg = "Changing assignment status to status with ID 1000001, for crew 1000002, assignment 1000003 and service type Incident (Timestamp: 10/15/2026 8:30:06 PM).", fields = { service_type = "Incident", assignment = 1000003 } },
+    "Changing assignment category to Invisible, for crew 1000002, assignment 1000003 and service type WorkOrder (timestamp: 10/15/2026 8:30:06 AM).",
+    "Changing leading crew flag to True, for assignment 1000003, crew 1000002 and service type Incident (timestamp: 10/15/2026 8:30:06 PM).",
+]
+counter_examples = ["Changing assignment status to status with ID 1000001, for crew 1000002, assignment 1000003 and service type Incident."]
+
+[[template]]
+code = "DOM-118"
+class = "lifecycle"
+title = "Crew availability changed"
+sev = 4
+regex = '''^Changing crew availability to availability with ID (?P<availability>\d+), for crew (?P<crew>\d+) \(timestamp: (?P<change_time>[\d/]+ [\d:]+ [AP]M)\)\.$'''
+examples = [
+    { msg = "Changing crew availability to availability with ID 1000001, for crew 1000002 (timestamp: 10/15/2026 8:30:06 AM).", fields = { availability = "1000001", crew = "1000002" } },
+]
+counter_examples = ["Changing crew availability to unknown."]
+
+[[template]]
+code = "DOM-119"
+class = "lifecycle"
+title = "Crew assignments or instructions added, removed or changed (batch steps)"
+sev = 4
+regex = '''^(?:(?:Adding|Removing) (?:crew assignments|instructions)(?: finished successfully\.| \((?:serviceType|service type): (?P<service_type>\w+)\):)|Crew assignment category successfully changed\.|Changing assignment status for:|Assignment status successfully changed\.|Crew availability successfully changed\.|Leading crew flag successfully changed\.)$'''
+examples = [
+    "Removing crew assignments finished successfully.",
+    "Adding instructions (service type: Incident):",
+    "Removing crew assignments (serviceType: WorkOrder):",
+    "Crew assignment category successfully changed.",
+    "Changing assignment status for:",
+]
+counter_examples = ["Adding crews finished successfully."]
+
+[[template]]
+code = "DOM-120"
+class = "validation"
+title = "Assignment already has the requested category"
+sev = 4
+regex = '''^Assignment: (?P<inc>INC \d+) \(ID: (?P<id>\d+)\) with service assignment ID: (?P<service_assignment>\d+) already has assignment category (?P<category>\w+)\.$'''
+fields = { id = "int" }
+examples = [
+    { msg = "Assignment: INC 1000124 (ID: 1000123) with service assignment ID: 1000125 already has assignment category Invisible.", fields = { inc = "INC 1000124", id = 1000123, category = "Invisible" } },
+]
+counter_examples = ["Assignment: INC 1000124 (ID: 1000123) has no category."]
+
+[[template]]
+code = "DOM-121"
+class = "lifecycle"
+title = "Crew assignment alarm sent"
+sev = 4
+regex = '''^(?:Sending alarm|Alarm) with category (?P<category>\w+) and catalog custom ID (?P<catalog>\w+)(?: sent)?\.$'''
+examples = [
+    { msg = "Sending alarm with category OMS_CREW_EXAMPLE and catalog custom ID OMS_CREW_EXAMPLE.", fields = { category = "OMS_CREW_EXAMPLE" } },
+    "Alarm with category OMS_CREW_EXAMPLE and catalog custom ID OMS_CREW_EXAMPLE sent.",
+]
+counter_examples = ["Sending alarm without a category."]
+
+[[template]]
+code = "DOM-122"
+class = "other"
+title = "Crew cache transaction command finished"
+sev = 5
+regex = '''^CacheTransactionCommand (?P<phase>prepare|commit|rollback) finished\.$'''
+examples = [
+    { msg = "CacheTransactionCommand commit finished.", fields = { phase = "commit" } },
+    "CacheTransactionCommand rollback finished.",
+]
+counter_examples = ["CacheTransactionCommand abort finished."]
+
+[[template]]
+code = "DOM-123"
+class = "other"
+title = "Model update steps of the crew and alarm services (apply, switch version)"
+sev = 4
+regex = '''^(?:\(AES\) )?(?:SwitchVersion started\.|SwitchVersion from model version: (?P<from_version>\d+) to model version: (?P<to_version>\d+)\.|ApplyUpdates model version: (?P<version>\d+))$'''
+examples = [
+    "SwitchVersion started.",
+    "SwitchVersion from model version: 1000123 to model version: 1000124.",
+    "ApplyUpdates model version: 1000123",
+    "(AES) SwitchVersion started.",
+]
+counter_examples = ["SwitchVersion finished."]
+
+[[template]]
+code = "DOM-124"
+class = "error"
+title = "Crew operation failed (send events, change category, remove assignments)"
+sev = 2
+regex = '''^Failed to (?P<what>send events|change assignment category|remove crew assignments)\.(?: Message: (?P<message>.+))?$'''
+examples = [
+    { msg = "Failed to change assignment category.", fields = { what = "change assignment category" } },
+    "Failed to send events. Message: Object reference not set to an instance of an object..",
+]
+counter_examples = ["Failed to send mail."]
+
+[[template]]
+code = "DOM-125"
+class = "error"
+title = "Non fatal service fault returned to a caller (crew or tag service)"
+sev = 2
+regex = '''^Non Fatal Exception (?P<exc_type>System\.ServiceModel\.FaultException)`\d+\[TelventDMS\.Common\.ServiceContracts\.(?P<fault>\w+)\]: (?P<detail>.+)$'''
+keys = ["exc_type"]
+examples = [
+    { msg = "Non Fatal Exception System.ServiceModel.FaultException`1[TelventDMS.Common.ServiceContracts.CRSFault]: Cannot find assignment for crew: CREW01 (ID: 1000123), service type: WorkOrder and service assignment ID: 1000124", fields = { fault = "CRSFault" } },
+    "Non Fatal Exception System.ServiceModel.FaultException`1[TelventDMS.Common.ServiceContracts.TagsManagementFaultContract]: Tag actions are not allowed on servers that are not in HOT status.",
+]
+counter_examples = ["Non Fatal Exception System.ServiceModel.FaultException`1[Other.Namespace.Fault]: detail"]
+
+# ---------------------------------------------------------------------------------------------
+# AlarmsEventsService, normal stream (DOM-140..159)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-140"
+class = "statistics"
+title = "Event log monitoring: event record received or processing result of a request"
+sev = 4
+fts = false
+regex = '''^\(Event[Ll]og[Mm]onitoring\) - (?:Received event record through exception\. Event record ID: (?P<record_id>\d+)|Processing result: Alarms count: (?P<alarms>\d+)\. Events count: (?P<events>\d+)\. System event processing failure alarms count: (?P<failures>\d+)|Received (?P<received>\d+) event records through integrity update|Processing (?P<processing>\d+) event records)\. Request ID:(?: (?P<request_id>\S+))?$'''
+fields = { alarms = "int", events = "int", failures = "int", record_id = "int" }
+examples = [
+    { msg = "(EventLogMonitoring) - Received event record through exception. Event record ID: 1000123. Request ID: ZONE_HOST01_ADMS", fields = { record_id = 1000123, request_id = "ZONE_HOST01_ADMS" } },
+    "(EventlogMonitoring) - Processing result: Alarms count: 0. Events count: 1. System event processing failure alarms count: 0. Request ID: ZONE_HOST02_ADMS",
+    "(EventLogMonitoring) - Received 3 event records through integrity update. Request ID:",
+    "(EventlogMonitoring) - Processing 4 event records. Request ID: ZONE_HOST01_ADMS",
+]
+counter_examples = ["(EventLogMonitoring) - Received event record through exception. Event record ID: x. Request ID: ZONE_HOST01_ADMS"]
+
+[[template]]
+code = "DOM-141"
+class = "error"
+title = "Event log monitoring could not start, read or update (monitor, watcher, events, integrity)"
+sev = 2
+regex = '''^\(EventLogMonitoring\) (?P<what>Failed to start monitor|Failed to retrieve events from event log|- Integrity update failed)\.(?: Reason: (?P<reason>[^.]+)\.)?\.? Request ID: (?P<request_id>[\w-]+)\.?$'''
+examples = [
+    { msg = "(EventLogMonitoring) Failed to start monitor. Reason: Sequence contains no elements. Request ID: ZONE_HOST01_ADMS.", fields = { what = "Failed to start monitor", request_id = "ZONE_HOST01_ADMS" } },
+    "(EventLogMonitoring) Failed to retrieve events from event log. Request ID: ZONE_HOST01_ADMS.",
+    "(EventLogMonitoring) - Integrity update failed. Reason: Attempted to perform an unauthorized operation.. Request ID: ZONE_HOST01_ADMS",
+]
+counter_examples = ["(EventLogMonitoring) Started monitor. Request ID: ZONE_HOST01_ADMS."]
+
+[[template]]
+code = "DOM-142"
+class = "error"
+title = "Event log watcher could not start"
+sev = 3
+regex = '''^\(WARNING\) \(EventLogMonitoring\) Failed to start watcher\. RequestID: (?P<request_id>[\w-]+)\.$'''
+examples = [{ msg = "(WARNING) (EventLogMonitoring) Failed to start watcher. RequestID: ZONE_HOST01_ADMS.", fields = { request_id = "ZONE_HOST01_ADMS" } }]
+counter_examples = ["(WARNING) (EventLogMonitoring) Started watcher. RequestID: ZONE_HOST01_ADMS."]
+
+[[template]]
+code = "DOM-143"
+class = "lifecycle"
+title = "Event log monitoring request scheduled again or sent for processing"
+sev = 3
+regex = '''^\(EventLogMonitoring\) (?:Failed request with ID: (?P<request_id>[\w-]+) is scheduled for processing\.|Scheduled request are successfully sent for processing\. Requests count: (?P<count>\d+)\. Requests IDs: (?P<request_ids>.+)|Starting monitor for request with ID: (?P<monitor_request>[\w-]+)\. .*)$'''
+fields = { count = "int" }
+examples = [
+    { msg = "(EventLogMonitoring) Failed request with ID: ZONE_HOST01_ADMS is scheduled for processing.", fields = { request_id = "ZONE_HOST01_ADMS" } },
+    "(EventLogMonitoring) Scheduled request are successfully sent for processing. Requests count: 2. Requests IDs: ZONE_HOST01_ADMS, ZONE_HOST02_ADMS",
+    "(EventLogMonitoring) Starting monitor for request with ID: ZONE_HOST01_ADMS. Service: Example.",
+]
+counter_examples = ["(EventLogMonitoring) Request dropped."]
+
+[[template]]
+code = "DOM-144"
+class = "lifecycle"
+title = "Events tossed away on a standby server"
+sev = 3  # standby discards
+regex = '''^\(AES\) (?:Trying to add events on stand by server\. Data tossed away\.|Failed to add event with message: \[(?P<exc_type>[\w.]+)\] Tried to add events on server that is not HOT\.)$'''
+examples = [
+    "(AES) Trying to add events on stand by server. Data tossed away.",
+    "(AES) Failed to add event with message: [System.InvalidOperationException] Tried to add events on server that is not HOT.",
+]
+counter_examples = ["(AES) Added events on the hot server."]
+
+[[template]]
+code = "DOM-145"
+class = "other"
+title = "Alarm service model update and transaction steps"
+sev = 4
+regex = '''^\(AES\) (?:Transaction finished event received\.|ModelUpdateManager - Old mdc = (?P<old_mdc>\d+), New mdc = (?P<new_mdc>\d+), smdc= (?P<smdc>\d+)|CatalogProviderTransactionCommand (?:executed|prepared|committed)|CacheTransactionCommand commit finished\.|Apply model update started\. Model version (?P<version>\d+), mdc (?P<mdc>\d+)|Model updates applied successfully\. Model version (?P<applied_version>\d+), mdc (?P<applied_mdc>\d+))$'''
+fields = { old_mdc = "int", new_mdc = "int" }
+examples = [
+    "(AES) Transaction finished event received.",
+    "(AES) ModelUpdateManager - Old mdc = 1000123, New mdc = 1000124, smdc= 1000125",
+    "(AES) CatalogProviderTransactionCommand prepared",
+    "(AES) Apply model update started. Model version 1000123, mdc 1000124",
+    "(AES) Model updates applied successfully. Model version 1000123, mdc 1000124",
+]
+counter_examples = ["(AES) Model update ignored."]
+
+[[template]]
+code = "DOM-146"
+class = "validation"
+title = "Alarm event catalog message could not be formatted"
+sev = 3
+regex = '''^WARNING \(AES\) \[AlarmEventMessageProvider\] (?:GetAlarmMessage: Alarm event catalog CustomId: (?P<catalog>\w+) expects formated message|Failed to format alarm catalog \(Name: ).*$'''
+examples = [
+    { msg = "WARNING (AES) [AlarmEventMessageProvider] GetAlarmMessage: Alarm event catalog CustomId: DMS_EXAMPLE_EVENT expects formated message Example text {0} started", fields = { catalog = "DMS_EXAMPLE_EVENT" } },
+    "WARNING (AES) [AlarmEventMessageProvider] Failed to format alarm catalog (Name: Example event, Text: {0}, {1}).",
+]
+counter_examples = ["WARNING (AES) [AlarmEventMessageProvider] Formatted alarm catalog."]
+
+[[template]]
+code = "DOM-147"
+class = "other"
+title = "Notification queue and model update descriptor housekeeping"
+sev = 5
+regex = '''^\[(?:NotificationCircularQueuesManager\] - EnqueueNotificationRequest: Notification of type: (?P<kind>\w+) enqueued\. Requests count: (?P<count>\d+)\.|ModelUpdateDescriptorSynchronizer\] (?P<detail>.+))$'''
+fields = { count = "int" }
+examples = [
+    { msg = "[NotificationCircularQueuesManager] - EnqueueNotificationRequest: Notification of type: Event enqueued. Requests count: 3.", fields = { kind = "Event", count = 3 } },
+    "[ModelUpdateDescriptorSynchronizer] Adding 2 descriptors of type Example.AlignAlarmDescriptor that will be applied after model version 1000123:1000124 is switched.",
+]
+counter_examples = ["[NotificationCircularQueuesManager] - Initialization started..."]
+
+[[template]]
+code = "DOM-148"
+class = "lifecycle"
+title = "Alarms acknowledged or tags cleared by an integrity update"
+sev = 4
+regex = '''^\(AES\) (?:AlarmsEventsControlService - AcknowledgeAlarm: Finished for (?P<alarms>\d+) alarms\.|TagsManager - Tag storage is cleared for (?P<scope>'[^']*'|\"[^\"]*\") due to integrity update\. Total number of tags after update is (?P<tags>\d+)\.|Received IntegrityUpdate for (?P<semantics>\w+) tag semantics\.|Integrity update for (?P<done_semantics>\w+) tag semantics finished\. Number of processed notifications: (?P<processed>\d+)\.)$'''
+fields = { alarms = "int", tags = "int" }
+examples = [
+    { msg = "(AES) AlarmsEventsControlService - AcknowledgeAlarm: Finished for 3 alarms.", fields = { alarms = 3 } },
+    "(AES) TagsManager - Tag storage is cleared for 'Example' due to integrity update. Total number of tags after update is 12.",
+    "(AES) Received IntegrityUpdate for PointTest tag semantics.",
+    "(AES) Integrity update for PointTest tag semantics finished. Number of processed notifications: 4.",
+]
+counter_examples = ["(AES) AlarmsEventsControlService - AcknowledgeAlarm: Started."]
+
+[[template]]
+code = "DOM-149"
+class = "error"
+title = "Alarm acknowledge, queue or consumer failed"
+sev = 2
+regex = '''^\(AES\)(?: \(ERROR\) Failed to Acknowledge for (?P<alarms>\d+) alarms\. Reason: (?P<reason>.+)|\[AlarmsConsumer\] Failed to process alarms due to unexpected failure\. Reason: (?P<failure>.+)| Failed to add alarm to queue\. Catalog custom id: (?P<catalog>\w+)\. Reason: (?P<queue_reason>.+))$'''
+examples = [
+    { msg = "(AES) (ERROR) Failed to Acknowledge for 3 alarms. Reason: Invalid operation sequence number.", fields = { alarms = "3" } },
+    "(AES)[AlarmsConsumer] Failed to process alarms due to unexpected failure. Reason: Example failure.",
+    "(AES) Failed to add alarm to queue. Catalog custom id: DMS_EXAMPLE_EVENT. Reason: [System.ArgumentException] Dataset not found.",
+]
+counter_examples = ["(AES) Acknowledged 3 alarms."]
+
+[[template]]
+code = "DOM-150"
+class = "statistics"
+title = "Event record consumer processed a batch of records"
+sev = 5
+fts = false
+regex = '''^\(AES\) \[EventReporting\] \[RecordConsumer_EventRecordInvariant\] ConsumerWorker: Processed (?P<records>\d+) records in (?P<duration>[\d:.]+)\.$'''
+fields = { records = "int" }
+examples = [
+    { msg = "(AES) [EventReporting] [RecordConsumer_EventRecordInvariant] ConsumerWorker: Processed 3 records in 00:00:00.0123456.", fields = { records = 3, duration = "00:00:00.0123456" } },
+]
+counter_examples = ["(AES) [EventReporting] [RecordConsumer_EventRecordInvariant] ConsumerWorker: Started."]
+
+# ---------------------------------------------------------------------------------------------
+# AlarmsEventsService, sensitive stream (DOM-S140)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-S140"
+class = "other"
+title = "Event record enqueued by the event reporting (alarm or event content follows in the continuation)"
+sev = 4
+fts = false
+stream = "sensitive"
+text = "(AES) [EventReporting] [RecordQueues] of eventRecord. EnqueueEvent: Event log =>"
+examples = ["(AES) [EventReporting] [RecordQueues] of eventRecord. EnqueueEvent: Event log =>"]
+counter_examples = ["(AES) [EventReporting] [RecordQueues] of eventRecord. Started RecordQueues initialization."]
+
+# ---------------------------------------------------------------------------------------------
+# SmartMeterManagementService, normal stream (DOM-160..184)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-160"
+class = "other"
+title = "Analog signal not found in the element cache"
+sev = 5
+fts = false
+regex = '''^\[AnalogSignalManager\] Analog signal with id (?P<signal>\d+) doesn't exist in element cache(?: or not significant for SMMS)?\.$'''
+fields = { signal = "int" }
+examples = [
+    { msg = "[AnalogSignalManager] Analog signal with id 1000123 doesn't exist in element cache.", fields = { signal = 1000123 } },
+    "[AnalogSignalManager] Analog signal with id 1000123 doesn't exist in element cache or not significant for SMMS.",
+]
+counter_examples = ["[AnalogSignalManager] Analog signal with id 1000123 exists in element cache."]
+
+[[template]]
+code = "DOM-161"
+class = "other"
+title = "Meter catalog read from the network model service"
+sev = 5
+regex = '''^\(SMMS\) \[NMSServiceHelper\] Reading meter catalog (?P<phase>started|finished)\.$'''
+examples = [
+    { msg = "(SMMS) [NMSServiceHelper] Reading meter catalog started.", fields = { phase = "started" } },
+    "(SMMS) [NMSServiceHelper] Reading meter catalog finished.",
+]
+counter_examples = ["(SMMS) [NMSServiceHelper] Reading meter catalog failed."]
+
+[[template]]
+code = "DOM-162"
+class = "other"
+title = "Cache transaction command step (constructor, execute, prepare, commit, rollback)"
+sev = 5
+fts = false
+regex = '''^\(SMMS\) \[(?P<command>(?:Element|Item|BellwetherItem)CacheTransactionCommand)\] \[(?P<step>Constructor|Execute|Prepare|Commit|Rollback)\] (?P<detail>.+)$'''
+examples = [
+    { msg = "(SMMS) [ElementCacheTransactionCommand] [Execute] Method is called.", fields = { command = "ElementCacheTransactionCommand", step = "Execute" } },
+    "(SMMS) [ItemCacheTransactionCommand] [Commit] Method is finished. ItemCache: 12",
+    "(SMMS) [ElementCacheTransactionCommand] [Rollback] Compact is called.",
+]
+counter_examples = ["(SMMS) [ElementCacheTransactionCommand] Method is called."]
+
+[[template]]
+code = "DOM-163"
+class = "other"
+title = "Cache transaction command constructed (counts of changes)"
+sev = 5
+fts = false
+regex = '''^\[ElementCacheTransactionCommand\] \[Constructor\] (?P<detail>.+)$'''
+examples = [
+    "[ElementCacheTransactionCommand] [Constructor] InsertedGidLidPairs: 1 | UpdatedGidLidPairs: 2 | DeletedGidLidPairs 0 | MeterCatMap: 5 | CustomIdMap: 5 | SdpIdMap: 5 | FromVersionId: 1",
+]
+counter_examples = ["[ElementCacheTransactionCommand] [Execute] Method is called."]
+
+[[template]]
+code = "DOM-164"
+class = "other"
+title = "Model manager step (entities updated, inserted, deleted)"
+sev = 5
+fts = false
+regex = '''^\[(?P<manager>MeterCatalogManager|SdpModelUpdateManager|FeederManager|FaultedMeterManager|EventManager\(\w+\)|AnalogSignalManager|SmartMeterManager|BellwetherSmartMeterManager)\] \[(?P<step>\w+)\] Method is (?P<phase>called|finished)\.(?: (?P<detail>.+))?$'''
+examples = [
+    { msg = "[FeederManager] [OnEntitiesUpdated] Method is called. UpdatedIds: 3 | DeletedIds: 0 | InsertedIds: 1", fields = { manager = "FeederManager", step = "OnEntitiesUpdated", phase = "called" } },
+    "[EventManager(SMMS_EVENT_RETENTION)] [OnEntitiesUpdated] Method is finished. UpdatedElements: 1 | DeletedElements: 0 | InsertedElements: 0",
+    "[SdpModelUpdateManager] [OnEntitiesUpdated] Method is finished.",
+    "[BellwetherSmartMeterManager] [InsertEntities] Method is called. InsertedIds: 3",
+]
+counter_examples = ["[FeederManager] [OnEntitiesUpdated] Method was skipped."]
+
+[[template]]
+code = "DOM-165"
+class = "other"
+title = "Model updates applied by the smart meter service"
+sev = 4
+regex = '''^\(SMMS\) (?:ElementCacheTransactionCommand SourceModelDeltaCounter (?P<counter>\d+)\.|(?:Apply model updates(?: and switch)?|Model updates applied successfully)\. (?:From model version : (?P<from_version>\d+) to model version : (?P<to_version>\d+) and model delta counter : (?P<delta_counter>\d+)\.|Model version : (?P<version>\d+), model delta counter : (?P<version_counter>\d+)))$'''
+examples = [
+    { msg = "(SMMS) ElementCacheTransactionCommand SourceModelDeltaCounter 12.", fields = { counter = "12" } },
+    "(SMMS) Apply model updates and switch. From model version : 1000123 to model version : 1000124 and model delta counter : 12.",
+    "(SMMS) Apply model updates. Model version : 1000123, model delta counter : 12",
+    "(SMMS) Model updates applied successfully. Model version : 1000123, model delta counter : 12",
+]
+counter_examples = ["(SMMS) Apply model updates skipped."]
+
+# ---------------------------------------------------------------------------------------------
+# MajorEventService, normal stream (DOM-185..209)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DOM-185"
+class = "other"
+title = "Topology change published for a list of roots"
+sev = 5
+fts = false
+regex = '''^\[MTS Topology Change\]: Root Id: (?P<roots>[\w :|]+)$'''
+examples = [
+    "[MTS Topology Change]: Root Id: 4A00B00C00D00E01 |",
+    "[MTS Topology Change]: Root Id: 4A00B00C00D00E01 | Root Id: 4A00B00C00D00E02 | Root Id: 12345678 |",
+]
+counter_examples = ["[MTS Topology Change]: no roots"]
+
+[[template]]
+code = "DOM-186"
+class = "other"
+title = "Fire mitigation not licensed or job not executed on a standby server"
+sev = 5
+fts = false
+regex = '''^(?:\[FM\] Automatic Fire Mitigation is not licensed!|Job (?P<job>[\w.]+) not executed because AmIHot = (?P<hot>True|False) and DatasetOwner = (?P<owner>True|False))$'''
+examples = [
+    "[FM] Automatic Fire Mitigation is not licensed!",
+    "Job ExampleServices.MajorEventService.MESJobExecuteFireMitigationFunction not executed because AmIHot = False and DatasetOwner = True",
+]
+counter_examples = ["[FM] Automatic Fire Mitigation is licensed!"]
+
+[[template]]
+code = "DOM-187"
+class = "start"
+title = "Fire mitigation initiated for feeders"
+sev = 4
+regex = '''^\[FM\] (?:FireMitigation will be initiated for: (?P<feeders>\d+) feeders!|Initial Scheduled triggers\.)$'''
+fields = { feeders = "int" }
+examples = [
+    { msg = "[FM] FireMitigation will be initiated for: 3 feeders!", fields = { feeders = 3 } },
+    "[FM] Initial Scheduled triggers.",
+]
+counter_examples = ["[FM] FireMitigation was initiated."]
+
+[[template]]
+code = "DOM-188"
+class = "other"
+title = "Tag added, updated or removed for a signal of the major event service"
+sev = 4
+regex = '''^(?P<signal_type>HotLineTag Signal|HotLineTag|ReclosingEnabled|Enabled|ControlActiveSetting) signal: (?P<signal>(?:0x)?[0-9A-Fa-f]{1,16})\. (?P<action>Update|Add|Remove) Tag ID: (?P<tag>(?:0x)?[0-9A-Fa-f]{1,16})\.(?: Catalog: (?P<catalog>(?:0x)?[0-9A-Fa-f]{1,16})\.)?(?: Tag Link Ids:(?P<link_ids>[^.]*)\. Tag Link Names:(?P<link_names>[^.]*)\.)?$'''
+fields = { signal = "hex", tag = "hex", catalog = "hex" }
+examples = [
+    { msg = "HotLineTag signal: 4A00B00C00D00E01. Add Tag ID: 4A00B00C00D00E02. Catalog: 4A00B00C00D00E03. Tag Link Ids: . Tag Link Names: .", fields = { signal_type = "HotLineTag", action = "Add" } },
+    "ReclosingEnabled signal: 12345678. Remove Tag ID: 4A00B00C00D00E02.",
+    "ControlActiveSetting signal: 4A00B00C00D00E01. Add Tag ID: 4A00B00C00D00E02. Catalog: 4A00B00C00D00E03.",
+]
+counter_examples = ["HotLineTag signal: 4A00B00C00D00E01. Move Tag ID: 4A00B00C00D00E02."]
+
+[[template]]
+code = "DOM-189"
+class = "lifecycle"
+title = "Model change status published (switch, close, update)"
+sev = 4
+regex = '''^ModelChangeStatus: (?P<status>\w+), ModelChangeMessage: (?P<message>\w+), ModelVersion:(?: (?P<version>.+))?$'''
+examples = [
+    { msg = "ModelChangeStatus: SwitchVersion, ModelChangeMessage: SwitchVersion, ModelVersion: Release 1000123", fields = { status = "SwitchVersion", message = "SwitchVersion" } },
+    "ModelChangeStatus: TemporaryElementsUpdate, ModelChangeMessage: ApplyUpdatesTE, ModelVersion:",
+]
+counter_examples = ["ModelChangeStatus: SwitchVersion"]
+
+[[template]]
+code = "DOM-190"
+class = "statistics"
+title = "Counts of the dynamic model handler after a model change"
+sev = 5
+regex = '''^\[DynamicModel Handler\]: (?P<what>\w+(?: Areas)?)(?: signals)? count: (?P<count>\d+)$'''
+fields = { count = "int" }
+examples = [
+    { msg = "[DynamicModel Handler]: RiskLevel signals count: 0", fields = { what = "RiskLevel", count = 0 } },
+    "[DynamicModel Handler]: Mitigation Areas count: 12",
+]
+counter_examples = ["[DynamicModel Handler]: RiskLevel signals total: 0"]
+
+[[template]]
+code = "DOM-191"
+class = "validation"
+title = "Breaker in the exclusion list"
+sev = 4  # per-element
+regex = '''^Breaker: (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16})\. In exclusion list: (?P<excluded>True|False)\.$'''
+fields = { gid = "hex" }
+examples = [
+    { msg = "Breaker: 4A00B00C00D00E01. In exclusion list: True.", fields = { excluded = "True" } },
+    "Breaker: 12345678. In exclusion list: False.",
+]
+counter_examples = ["Breaker: 4A00B00C00D00E01. Not in exclusion list."]
+
+[[template]]
+code = "DOM-192"
+class = "error"
+title = "Unhandled exception during a major event job"
+sev = 2
+regex = '''^Unhandled exception occurred during MEM job execution, exception info: (?P<detail>.+)$'''
+examples = [
+    "Unhandled exception occurred during MEM job execution, exception info: System.ServiceModel.FaultException`1[Example.Fault]: Tag actions are not allowed on servers that are not in HOT status.",
+]
+counter_examples = ["Unhandled exception occurred during the job."]
+
+[[template]]
+code = "DOM-193"
+class = "lifecycle"
+title = "Major event service enlistment, apply updates and topology subscription"
+sev = 4
+regex = '''^(?:Request for enlistment received\.|Attempting to subscribe to TopologyChangeSubscriptionServiceProxy!)$'''
+examples = [
+    "Request for enlistment received.",
+    "Attempting to subscribe to TopologyChangeSubscriptionServiceProxy!",
+]
+counter_examples = ["Request for enlistment refused."]

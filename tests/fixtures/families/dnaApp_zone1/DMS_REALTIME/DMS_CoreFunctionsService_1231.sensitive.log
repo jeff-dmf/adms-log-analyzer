@@ -1,0 +1,10 @@
+﻿2030-01-15 10:00:00.000 [PID=1231][TID=0x1a2b] INFO - Client [EXAMPLE\user01] is connected to context [12] on machine [HOST01].
+2030-01-15 10:00:00.050 [PID=1231][TID=0x1a2b] INFO - [JobQueueTable] some redundant jobs found.
+2030-01-15 10:00:00.100 [PID=1231][TID=0x1a2b] INFO - New session [00000000-0000-4000-8000-0000a0000001] for user [EXAMPLE\user01] and context [12] created.
+2030-01-15 10:00:00.150 [PID=1231][TID=0x1a2b] INFO - [OMH] Operational model for OM_DMS network is released.
+2030-01-15 10:00:00.200 [PID=1231][TID=0x1a2b] INFO - Client [EXAMPLE\user01] is connected to context [12] on machine [HOST01].
+2030-01-15 10:00:00.250 [PID=1231][TID=0x1a2b] INFO - AcquireOperationalModels succeeded for Meshed roots.
+2030-01-15 10:00:00.300 [PID=1231][TID=0x1a2b] INFO - Session 00000000-0000-4000-8000-0000a0000002 reconnected to context [12] for user [EXAMPLE\user01].
+2030-01-15 10:00:00.350 [PID=1231][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1231][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1231][TID=0x1a2b] INFO - Qqq synthetic noise without template

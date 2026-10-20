@@ -786,11 +786,12 @@ code = "RTL-057"
 class = "other"
 title = "MTS transaction and cache progress"
 sev = 5
-regex = '''^MTS: (?:The publication timestamp is: (?P<published>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)? [+-]\d\d:\d\d)|(?P<signals>\d+) signal changes was written into transactional model|Filter Update Blocks for optimized transaction (?P<filter_phase>started|stopped)\.?|Cache commit compact started\.?|Cache commit compact finished\. Execution took (?P<took>[\d:.]+)\.|ModelProcessor: Starting topology analysys on transactional model|ModelProcessor: Topology analysys on transactional model finished succesfully|Cache (?P<cache_phase>prepare|commit) phase (?P<phase>started|finished)|Creating a transaction model has (?P<creation>started|finished)\.|Internal model size: (?P<model_bytes>\d+) bytes)$'''
+regex = '''^MTS: (?:The publication timestamp is: (?P<published>\d{4}-\d\d-\d\d \d{1,2}:\d\d:\d\d(?:\.\d+)? [+-]\d\d:\d\d)|(?P<signals>\d+) signal changes was written into transactional model|Filter Update Blocks for optimized transaction (?P<filter_phase>started|stopped)\.?|Cache commit compact started\.?|Cache commit compact finished\. Execution took (?P<took>[\d:.]+)\.|ModelProcessor: Starting topology analysys on transactional model|ModelProcessor: Topology analysys on transactional model finished succesfully|Cache (?P<cache_phase>prepare|commit) phase (?P<phase>started|finished)|Creating a transaction model has (?P<creation>started|finished)\.|Internal model size: (?P<model_bytes>\d+) bytes)$'''
 fields = { signals = "int", model_bytes = "int" }
 examples = [
     { msg = "MTS: The publication timestamp is: 2000-01-02 03:04:05.678 -03:00", fields = { published = "2000-01-02 03:04:05.678 -03:00" } },
     { msg = "MTS: 21 signal changes was written into transactional model", fields = { signals = 21 } },
+    "MTS: The publication timestamp is: 2000-01-02 3:04:05.678 -03:00",
     { msg = "MTS: Cache commit compact finished. Execution took 00:00.0261.", fields = { took = "00:00.0261" } },
     "MTS: Cache prepare phase started",
     "MTS: Cache commit compact started.",

@@ -1,31 +1,38 @@
 ﻿2030-01-15 10:00:00.000 [PID=1143][TID=0x1a2b] ALWAYS - The initial settings for BLTHost are:
 2030-01-15 10:00:00.050 [PID=1143][TID=0x1a2b] ALWAYS - [RTDBConfigAccessor] doas_system record read: name=sysa, zone=PROD, site=MainSite
 2030-01-15 10:00:00.100 [PID=1143][TID=0x1a2b] ALWAYS - [CommandLineConfig] - Start up script provided following parameters: [C:\Example\BLTHost.exe -a SVC -s SVC].
-2030-01-15 10:00:00.150 [PID=1143][TID=0x1a2b] INFO - Managed BLT: bobjExample.dll
-2030-01-15 10:00:00.200 [PID=1143][TID=0x1a2b] WARNING - [ParticipantsHandler] - Process with pid : 1234 and name : ExampleService is not up and running and will be removed from participants table.
+2030-01-15 10:00:00.150 [PID=1143][TID=0x1a2b] WARNING - [ParticipantsHandler] - Process with pid : 1234 and name : ExampleService is not up and running and will be removed from participants table.
+2030-01-15 10:00:00.200 [PID=1143][TID=0x1a2b] INFO - [RTDBConfigAccessor] unknown record read: name=x
 2030-01-15 10:00:00.250 [PID=1143][TID=0x1a2b] ERROR - Failed to create the Service (The specified service has been marked for deletion. [1072])  {E:\Builds\1\Example\Main.cs:50}
 2030-01-15 10:00:00.300 [PID=1143][TID=0x1a2b] INFO - [IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution started with input parameters: Originator system: 'sysa', Originator service: 'svc', Skip unreachable nodes: 'False'. Local system: 'sysb', service: 'svc'
-2030-01-15 10:00:00.350 [PID=1143][TID=0x1a2b] INFO - [RTDBConfigAccessor] unknown record read: name=x
-2030-01-15 10:00:00.400 [PID=1143][TID=0x1a2b] DEBUGLOG - [IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution completed. Result: LocalAndDownstreamNodesReady status: 'False' 
-2030-01-15 10:00:00.450 [PID=1143][TID=0x1a2b] DEBUGLOG - [ParticipationDelegate] Calling participate: 
+2030-01-15 10:00:00.350 [PID=1143][TID=0x1a2b] DEBUGLOG - [IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution completed. Result: LocalAndDownstreamNodesReady status: 'False' 
+2030-01-15 10:00:00.400 [PID=1143][TID=0x1a2b] DEBUGLOG - [ParticipationDelegate] Calling participate: 
 Address: shmem://example/MSParticipation_Example_1
 ActionType: Example
+2030-01-15 10:00:00.450 [PID=1143][TID=0x1a2b] INFO - [CommandLineConfig] - Other
 2030-01-15 10:00:00.500 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivationProcessor] RemoteModeActivation BLT execution started with the following parameters: System name:'sysa', Service name:'svc', Originator system name:'sysb', Originator service name:'svc', User name:'u', Calling system name:'sysb'
-2030-01-15 10:00:00.550 [PID=1143][TID=0x1a2b] INFO - [CommandLineConfig] - Other
-2030-01-15 10:00:00.600 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivation] ModeGroup/Mode: 'DMSGroup'/'MainMode' activated on SystemName: sysa, ServiceName: svc.
-2030-01-15 10:00:00.650 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivationProcessor] RemoteModeActivation BLT execution finished for ModeGroup/Mode : 'DMSGroup'/'MainMode'. Result: ModeActivation status: 'Ok' 
-2030-01-15 10:00:00.700 [PID=1143][TID=0x1a2b] ALWAYS - [ModeSwitchTimeouts] Setting ModeSwitch MaxParticipation timeout to 60sec.
-2030-01-15 10:00:00.750 [PID=1143][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
-2030-01-15 10:00:00.800 [PID=1143][TID=0x1a2b] ALWAYS - The codified settings for BLTHost are:
-2030-01-15 10:00:00.850 [PID=1143][TID=0x1a2b] ALWAYS - BLTHost started on address 'net.tcp://localhost:9000/BLTService/*' ServiceEndpoint 'TCP'. {E:\Builds\1\Example\Main.cs:373}
-2030-01-15 10:00:00.900 [PID=1143][TID=0x1a2b] ALWAYS - Managed BLT: bobjExample.dll {E:\Builds\1\Example\Main.cs:200}
-2030-01-15 10:00:00.950 [PID=1143][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
-2030-01-15 10:00:01.000 [PID=1143][TID=0x1a2b] ALWAYS - =============================== {E:\Builds\1\Example\Main.cs:150}
-2030-01-15 10:00:01.050 [PID=1143][TID=0x1a2b] ALWAYS - [RTDBConfigAccessor] storeandforward record read: name=sysa_RT-sysb_RT, systemName=sysa, serviceName=DMS_RealTime, activeMode=primary.
-2030-01-15 10:00:01.100 [PID=1143][TID=0x1a2b] ALWAYS - (ReplicationServiceProxy) Connecting to Replication service.
-2030-01-15 10:00:01.150 [PID=1143][TID=0x1a2b] INFO - Qqq synthetic noise without template
-2030-01-15 10:00:01.200 [PID=1143][TID=0x1a2b] ALWAYS - DistribuSysAPI: Initialized.
-2030-01-15 10:00:01.250 [PID=1143][TID=0x1a2b] DEBUGLOG - [IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution completed. Result: LocalAndDownstreamNodesReady status: 'True'
-2030-01-15 10:00:01.300 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivation] Executing dms_savedata.csc script asynchronously.
-2030-01-15 10:00:01.350 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivation] Sync state check was skipped. Operation type: Site Switch, ForceModeSwitch: True, Originator: sysa.
-2030-01-15 10:00:01.400 [PID=1143][TID=0x1a2b] ALWAYS - [ModeSwitchTimeouts] Setting LMS Disconnect timeout to 5000ms.
+2030-01-15 10:00:00.550 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivation] ModeGroup/Mode: 'DMSGroup'/'MainMode' activated on SystemName: sysa, ServiceName: svc.
+2030-01-15 10:00:00.600 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivationProcessor] RemoteModeActivation BLT execution finished for ModeGroup/Mode : 'DMSGroup'/'MainMode'. Result: ModeActivation status: 'Ok' 
+2030-01-15 10:00:00.650 [PID=1143][TID=0x1a2b] ALWAYS - [ModeSwitchTimeouts] Setting ModeSwitch MaxParticipation timeout to 60sec.
+2030-01-15 10:00:00.700 [PID=1143][TID=0x1a2b] INFO - [ParticipantsHandler] - Process with pid : x
+2030-01-15 10:00:00.750 [PID=1143][TID=0x1a2b] ALWAYS - Components loaded successfully.
+2030-01-15 10:00:00.800 [PID=1143][TID=0x1a2b] ALWAYS - [UpstreamServiceMonitor] Create ExampleStateProvider for [examplecore:EXAMPLE_SVC].
+2030-01-15 10:00:00.850 [PID=1143][TID=0x1a2b] ALWAYS - Managed BLT: bobjExample.dll
+2030-01-15 10:00:00.900 [PID=1143][TID=0x1a2b] ALWAYS - The codified settings for BLTHost are:
+2030-01-15 10:00:00.950 [PID=1143][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:01.000 [PID=1143][TID=0x1a2b] ALWAYS - BLTHost started on address 'net.tcp://localhost:9000/BLTService/*' ServiceEndpoint 'TCP'. {E:\Builds\1\Example\Main.cs:373}
+2030-01-15 10:00:01.050 [PID=1143][TID=0x1a2b] ALWAYS - Managed BLT: bobjExample.dll {E:\Builds\1\Example\Main.cs:200}
+2030-01-15 10:00:01.100 [PID=1143][TID=0x1a2b] ALWAYS - =============================== {E:\Builds\1\Example\Main.cs:150}
+2030-01-15 10:00:01.150 [PID=1143][TID=0x1a2b] ALWAYS - [RTDBConfigAccessor] storeandforward record read: name=sysa_RT-sysb_RT, systemName=sysa, serviceName=DMS_RealTime, activeMode=primary.
+2030-01-15 10:00:01.200 [PID=1143][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:01.250 [PID=1143][TID=0x1a2b] ALWAYS - (ReplicationServiceProxy) Connecting to Replication service.
+2030-01-15 10:00:01.300 [PID=1143][TID=0x1a2b] ALWAYS - DistribuSysAPI: Initialized.
+2030-01-15 10:00:01.350 [PID=1143][TID=0x1a2b] DEBUGLOG - [IsReadyForModeSwitchProcessor] IsReadyForModeSwitch BLT execution completed. Result: LocalAndDownstreamNodesReady status: 'True'
+2030-01-15 10:00:01.400 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivation] Executing dms_savedata.csc script asynchronously.
+2030-01-15 10:00:01.450 [PID=1143][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:01.500 [PID=1143][TID=0x1a2b] INFO - [RemoteModeActivation] Sync state check was skipped. Operation type: Site Switch, ForceModeSwitch: True, Originator: sysa.
+2030-01-15 10:00:01.550 [PID=1143][TID=0x1a2b] ALWAYS - [ModeSwitchTimeouts] Setting LMS Disconnect timeout to 5000ms.
+2030-01-15 10:00:01.600 [PID=1143][TID=0x1a2b] ALWAYS - This server is not listening for other Certificate Authenticated System Link Servers.
+2030-01-15 10:00:01.650 [PID=1143][TID=0x1a2b] ALWAYS - Minimum IO ThreadPool size set to 8 (.NET Default is 4), Minimum Worker ThreadPool size set to 16 (.NET default is 4
+2030-01-15 10:00:01.700 [PID=1143][TID=0x1a2b] ALWAYS - BLTHost started on address 'net.tcp://192.0.2.10:9000/BLTService/*' ServiceEndpoint 'TCP'.
+2030-01-15 10:00:01.750 [PID=1143][TID=0x1a2b] ALWAYS - [UpstreamServiceMonitor] Initialize state monitor.

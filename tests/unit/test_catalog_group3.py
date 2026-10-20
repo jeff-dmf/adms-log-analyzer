@@ -57,9 +57,12 @@ EXPECTED = {
         "BLT-021",
         "BLT-022",
         "BLT-023",
+        "BLT-030",
+        "BLT-031",
+        "BLT-032",
     },
-    "OASERR": {"OAS-001", "OAS-002", "OAS-003", "OAS-004"},
-    "SERVICE": {f"SVC-{n:03d}" for n in range(1, 20)},
+    "OASERR": {f"OAS-{n:03d}" for n in range(1, 23)},
+    "SERVICE": {f"SVC-{n:03d}" for n in range(1, 26)},
 }
 
 

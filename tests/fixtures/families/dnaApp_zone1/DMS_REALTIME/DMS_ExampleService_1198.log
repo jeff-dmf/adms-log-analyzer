@@ -136,12 +136,13 @@
 2030-01-15 10:00:06.700 [PID=1198][TID=0x1a2b] INFO - (SavecaseAndPlaybackService): Started.
 2030-01-15 10:00:06.750 [PID=1198][TID=0x1a2b] INFO - (SavecaseAndPlaybackService): Operation DeleteCase completed.
 2030-01-15 10:00:06.800 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: 21 signal changes was written into transactional model
-2030-01-15 10:00:06.850 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache commit compact finished. Execution took 00:00.0261.
-2030-01-15 10:00:06.900 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache prepare phase started
-2030-01-15 10:00:06.950 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache commit compact started.
-2030-01-15 10:00:07.000 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Filter Update Blocks for optimized transaction stopped.
-2030-01-15 10:00:07.050 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Internal model size: 6103901 bytes
-2030-01-15 10:00:07.100 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Creating a transaction model has finished.
-2030-01-15 10:00:07.150 [PID=1198][TID=0x1a2b] INFO - MTS: Requested element doesn't exist in InternalModel, element id: 0x4A00B00D
-2030-01-15 10:00:07.200 [PID=1198][TID=0x1a2b] INFO - MTS: Root for given element could not be retrieved, element id: 4A00B00E
-2030-01-15 10:00:07.250 [PID=1198][TID=0x1a2b] INFO - MTS: Cut already exists in internalModel
+2030-01-15 10:00:06.850 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: The publication timestamp is: 2000-01-02 3:04:05.678 -03:00
+2030-01-15 10:00:06.900 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache commit compact finished. Execution took 00:00.0261.
+2030-01-15 10:00:06.950 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache prepare phase started
+2030-01-15 10:00:07.000 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache commit compact started.
+2030-01-15 10:00:07.050 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Filter Update Blocks for optimized transaction stopped.
+2030-01-15 10:00:07.100 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Internal model size: 6103901 bytes
+2030-01-15 10:00:07.150 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Creating a transaction model has finished.
+2030-01-15 10:00:07.200 [PID=1198][TID=0x1a2b] INFO - MTS: Requested element doesn't exist in InternalModel, element id: 0x4A00B00D
+2030-01-15 10:00:07.250 [PID=1198][TID=0x1a2b] INFO - MTS: Root for given element could not be retrieved, element id: 4A00B00E
+2030-01-15 10:00:07.300 [PID=1198][TID=0x1a2b] INFO - MTS: Cut already exists in internalModel

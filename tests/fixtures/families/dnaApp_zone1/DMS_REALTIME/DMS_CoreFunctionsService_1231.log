@@ -1,0 +1,200 @@
+﻿2030-01-15 10:00:00.000 [PID=1231][TID=0x1a2b] DEBUGLOG - [JobQueueTable] 3 redundant jobs found.
+2030-01-15 10:00:00.050 [PID=1231][TID=0x1a2b] DEBUGLOG - [OMH] Operational model for OM_DMS, OM_LV network containing root 0x4A00B00C00D00E01 is acquired.
+2030-01-15 10:00:00.100 [PID=1231][TID=0x1a2b] ERROR - [OMH] TryGetOperationalModel: Failed to retrieve operational model
+2030-01-15 10:00:00.150 [PID=1231][TID=0x1a2b] DEBUGLOG - [SMP][DIAG] SM exported. BLT is BLT_EXAMPLE. Elapsed times[msec] - Waiting lock: 0. Prepare: 1. Common: 4. LC params: 5. Weather regions: 0.  Interval Scheduels: 0. Total: 10.
+2030-01-15 10:00:00.200 [PID=1231][TID=0x1a2b] DEBUGLOG - [SMP] Updating Static and Network model done. Static model: 4ms, Network model: 6ms, Total: 10ms
+2030-01-15 10:00:00.250 [PID=1231][TID=0x1a2b] INFO - [PRH] JobId: 1000123, RootId: 0x4A00B00C00D00E01 Function: StateEstimation is submitted.
+2030-01-15 10:00:00.300 [PID=1231][TID=0x1a2b] INFO - [PRS] Job status report is received. JobId: 1000123, Job Status: DoneWithWarning
+2030-01-15 10:00:00.350 [PID=1231][TID=0x1a2b] DEBUGLOG - [PRH][DIAG] Number of jobs: 2. Function: LoadFlow. OM: 12ms. Total: 30ms.
+2030-01-15 10:00:00.400 [PID=1231][TID=0x1a2b] DEBUGLOG - [PRH] CancelRequest: Cancelling job execution for jobIds: 1000123.
+2030-01-15 10:00:00.450 [PID=1231][TID=0x1a2b] INFO - [PRH] CancelRequest: Failed to find powerAppsJob for jobId 1000123.
+2030-01-15 10:00:00.500 [PID=1231][TID=0x1a2b] INFO - [PRS] Handling results of JobId: 1000123 with predecessor JobId: 0, job type: StateEstimation, is client: False.
+2030-01-15 10:00:00.550 [PID=1231][TID=0x1a2b] DEBUGLOG - [PRS][DIAG] Result is handled for LoadFlow, JobId: 1000123. Job's lifespan: 0.25s, result handling took: 0s.
+2030-01-15 10:00:00.600 [PID=1231][TID=0x1a2b] DEBUGLOG - [PRS] JobId: 1000123 progress info sent to client.
+2030-01-15 10:00:00.650 [PID=1231][TID=0x1a2b] ERROR - [PRS] Error while sending execution status information for JobId: 1000123 to client. Client is not reachable.
+2030-01-15 10:00:00.700 [PID=1231][TID=0x1a2b] INFO - [CRS] Handle results of JobId: 1000123 for function StateEstimation. RootId: 0x4A00B00C00D00E01, job status: DoneWithError.
+2030-01-15 10:00:00.750 [PID=1231][TID=0x1a2b] DEBUGLOG - [CRS] PU LF Results for job 1000123 are being written to cache.
+2030-01-15 10:00:00.800 [PID=1231][TID=0x1a2b] DEBUGLOG - [JobMonitor] No cache item for function TraceFunction and source lid 4A00B00C00D00E01
+2030-01-15 10:00:00.850 [PID=1231][TID=0x1a2b] DEBUGLOG - [CJR] Received Client Request for DMS function execution. Options type: TraceFunctionOptions
+2030-01-15 10:00:00.900 [PID=1231][TID=0x1a2b] INFO - [PRMFC-ParallelizationClientRequestManager]: Unable to cancel request with ID 700123. Request is not present in callback map.
+2030-01-15 10:00:00.950 [PID=1231][TID=0x1a2b] DEBUGLOG - [PRS][DIAG] Result handler thread time usage:
+2030-01-15 10:00:01.000 [PID=1231][TID=0x1a2b] INFO - [SETrigger] Function will be executed for root 0x4A00B00C00D00E01, reason: MeasurementChange
+2030-01-15 10:00:01.050 [PID=1231][TID=0x1a2b] DEBUGLOG - SE_TT: T2 elapsed on root 0x4A00B00C00D00E01.
+2030-01-15 10:00:01.100 [PID=1231][TID=0x1a2b] DEBUGLOG - [RTM] [RTM_Change] [TopologyUpdateChange] Finished handling change for trafoareas: [100,200,300]. Elapsed milliseconds: 1180
+2030-01-15 10:00:01.150 [PID=1231][TID=0x1a2b] INFO - [VVOTrigger] Mode for circuit 1001 is not set. Default profile for No Optimization will be set.
+2030-01-15 10:00:01.200 [PID=1231][TID=0x1a2b] DEBUGLOG - VVC: Redistributing VVC Timeouts... 174 VVC calculations are waiting for execution. They will be redistributed equally in next 900 seconds.
+2030-01-15 10:00:01.250 [PID=1231][TID=0x1a2b] DEBUGLOG - [CLN] PowerApps Cleaner was activated: 0/2 job was cleaned.
+2030-01-15 10:00:01.300 [PID=1231][TID=0x1a2b] INFO - [ECT] EMS SE function has been finished for rootId: 0x4A00B00C00D00E02 with status DoneWithSuccess, as a result of TopologyChange
+2030-01-15 10:00:01.350 [PID=1231][TID=0x1a2b] INFO - [JobQueueTable] some redundant jobs found.
+2030-01-15 10:00:01.400 [PID=1231][TID=0x1a2b] DEBUGLOG - --- Topology changed notification received ---
+2030-01-15 10:00:01.450 [PID=1231][TID=0x1a2b] DEBUGLOG - [ASC] Prepare phase in AnnualScheduleCache started.
+2030-01-15 10:00:01.500 [PID=1231][TID=0x1a2b] DEBUGLOG - [VVOClosedLoopControl] Synchronizing circuits and assignments started.
+2030-01-15 10:00:01.550 [PID=1231][TID=0x1a2b] INFO - [OutageProvider] Added auto flisr outage on feeder 1A00B00C
+2030-01-15 10:00:01.600 [PID=1231][TID=0x1a2b] DEBUGLOG - [RemoteInputADMSManager] Found 3 AINPUTADMS
+2030-01-15 10:00:01.650 [PID=1231][TID=0x1a2b] INFO - [ResultsCacheSummarizer GetChildrenIds] No children for Circuit id: 4A00B00C00D00E01
+2030-01-15 10:00:01.700 [PID=1231][TID=0x1a2b] DEBUGLOG - GetOMForRoots: Wait 0.0000s. Created 67MB [23 blocks] in 0.0398s.
+2030-01-15 10:00:01.750 [PID=1231][TID=0x1a2b] DEBUGLOG - returnModel->IsEMSOperationalModel has value y
+2030-01-15 10:00:01.800 [PID=1231][TID=0x1a2b] DEBUGLOG - Topology is skipped because roots are not affected
+2030-01-15 10:00:01.850 [PID=1231][TID=0x1a2b] DEBUGLOG - Total topology update duration: 0.5s, model copying: 0.1s, DMS/EMS topology processing: 0.3s, model finalization: 0.001s.
+2030-01-15 10:00:01.900 [PID=1231][TID=0x1a2b] INFO - MTS : Changes in signal values are faster than 500 (1.18) Milliseconds. Signal gid: 4A00B00C00D00E04, old value: 1, new value: 2.
+2030-01-15 10:00:01.950 [PID=1231][TID=0x1a2b] DEBUGLOG - MTS : Delta Manager: Forced transaction!
+2030-01-15 10:00:02.000 [PID=1231][TID=0x1a2b] DEBUGLOG - MTS : ApplyUpdatesTE Entered WriteLock.
+2030-01-15 10:00:02.050 [PID=1231][TID=0x1a2b] INFO - MTS :  Temporary cut added, gid: 10000123, section gid: 10000456, cut phases: ABC
+2030-01-15 10:00:02.100 [PID=1231][TID=0x1a2b] INFO - Element Gid: 10000123 / Message: 12 consumers deenergized by switching device.
+2030-01-15 10:00:02.150 [PID=1231][TID=0x1a2b] DEBUGLOG - Opening connection with MMS versioning.
+2030-01-15 10:00:02.200 [PID=1231][TID=0x1a2b] DEBUGLOG - (Product) Getting changesets hash by ids succeeded. Count = 3.
+2030-01-15 10:00:02.250 [PID=1231][TID=0x1a2b] DEBUGLOG - Getting changesets by ids from database. Count = 4.
+2030-01-15 10:00:02.300 [PID=1231][TID=0x1a2b] DEBUGLOG - Locking model by user started
+2030-01-15 10:00:02.350 [PID=1231][TID=0x1a2b] DEBUGLOG - Apply Replicate CacheActivity Delegate started.
+2030-01-15 10:00:02.400 [PID=1231][TID=0x1a2b] DEBUGLOG - Configurable for "ExampleModel" dataset: True
+2030-01-15 10:00:02.450 [PID=1231][TID=0x1a2b] DEBUGLOG - Pushing version started.
+2030-01-15 10:00:02.500 [PID=1231][TID=0x1a2b] DEBUGLOG - Endpoint for ChangesetRepositoryService on ExampleBox: http://192.0.2.10:8080/Service
+2030-01-15 10:00:02.550 [PID=1231][TID=0x1a2b] DEBUGLOG - SystemId of example is: 12
+2030-01-15 10:00:02.600 [PID=1231][TID=0x1a2b] DEBUGLOG - Smart cache activity delegate received Update. ResourceDescription type from id: Update. Entity Id: 1000123
+2030-01-15 10:00:02.650 [PID=1231][TID=0x1a2b] INFO - [CollectionPool][ElementContainer-LongHashSetPool] Failed to return collection to pool. TargetBucket: 3, BucketSize: 8, CollectionSize: 20
+2030-01-15 10:00:02.700 [PID=1231][TID=0x1a2b] DEBUGLOG - Get Block Ids query to NMS started.
+2030-01-15 10:00:02.750 [PID=1231][TID=0x1a2b] INFO - [OMH] Operational model for OM_DMS network is released.
+2030-01-15 10:00:02.800 [PID=1231][TID=0x1a2b] DEBUGLOG - [GetPolygonsForElements] Found 12 graphical elements for 14 gids
+2030-01-15 10:00:02.850 [PID=1231][TID=0x1a2b] DEBUGLOG - Switch model from versionId=4 to versionId=5 succeeded.
+2030-01-15 10:00:02.900 [PID=1231][TID=0x1a2b] DEBUGLOG - Transaction commit finished.
+2030-01-15 10:00:02.950 [PID=1231][TID=0x1a2b] DEBUGLOG - [CalculationExecutionStatistics] Priority Calculations Statistics (Gid - Number Of Calculations - Under Execution):
+2030-01-15 10:00:03.000 [PID=1231][TID=0x1a2b] INFO - [DataConfigurationManager] Calculation with gid: 10000123 does not exists in the GCSCalculationConfigurations collection.
+2030-01-15 10:00:03.050 [PID=1231][TID=0x1a2b] ALWAYS - [CompilerConfiguration] Failed to read temp files count. Message: Value for product 'ExampleProduct', subkey '', value 'TempFilesCount' does not exist.
+2030-01-15 10:00:03.100 [PID=1231][TID=0x1a2b] DEBUGLOG - [Compiler] Compiling 12 calculation codes.
+2030-01-15 10:00:03.150 [PID=1231][TID=0x1a2b] DEBUGLOG - [CalculationTransactionCommand] Commit started.
+2030-01-15 10:00:03.200 [PID=1231][TID=0x1a2b] DEBUGLOG - [SynchronousCalculationQueue] Model Update is finished.
+2030-01-15 10:00:03.250 [PID=1231][TID=0x1a2b] WARNING - [CalculationWatchDog] Execution of calculation with gid: 10000123 and name: 100_200_EXAMPLE exceed timeout.
+2030-01-15 10:00:03.300 [PID=1231][TID=0x1a2b] WARNING - [ExecutorProcessHandler] Executing fail command for calculation with Gid: 10000123.
+2030-01-15 10:00:03.350 [PID=1231][TID=0x1a2b] DEBUGLOG - [ExecutorProcessHandler] CalculationExecutor with Id: 3 is started.
+2030-01-15 10:00:03.400 [PID=1231][TID=0x1a2b] INFO - ExternalTransaction.RollbackPrivate: Collection was not locked.
+2030-01-15 10:00:03.450 [PID=1231][TID=0x1a2b] DEBUGLOG - [LookAhead] Processing 26 state(s) for 8 circuit(s) from substation 10000123: more details on info log level.
+2030-01-15 10:00:03.500 [PID=1231][TID=0x1a2b] INFO - [LookAhead] [OnResultsReceivedInSeparateThread][JobID=1000123] Received result with status: DoneWithWarning.
+2030-01-15 10:00:03.550 [PID=1231][TID=0x1a2b] INFO - [LookAhead][JobID=1000123] Saving results.
+2030-01-15 10:00:03.600 [PID=1231][TID=0x1a2b] ERROR - [LookAhead][RequestID=1000123] Failed to submit jobs.
+2030-01-15 10:00:03.650 [PID=1231][TID=0x1a2b] DEBUGLOG - [LookAhead] Execution finished.
+2030-01-15 10:00:03.700 [PID=1231][TID=0x1a2b] DEBUGLOG - [LoadFlowCache](Model Update) Prepare phase started.
+2030-01-15 10:00:03.750 [PID=1231][TID=0x1a2b] DEBUGLOG - [TopologyUpdateManager] Applying update.
+2030-01-15 10:00:03.800 [PID=1231][TID=0x1a2b] DEBUGLOG - [BackcastTrigger] Retrieving backcast data for 4170 element(s).
+2030-01-15 10:00:03.850 [PID=1231][TID=0x1a2b] DEBUGLOG - [NetworkModelTree] Updated tree with 1200 nodes.
+2030-01-15 10:00:03.900 [PID=1231][TID=0x1a2b] WARNING - [DMSTopologyTree] Some parents were not retrieved from topology cache (3100 children might be unparented or their parents might be missing). For more details, change the log level to info next time.
+2030-01-15 10:00:03.950 [PID=1231][TID=0x1a2b] WARNING - [ExampleDMS.Common.PowerApps.LookAheadInputDataProvider] Input forecast data failed for circuits: 10000123 | 10000124.
+2030-01-15 10:00:04.000 [PID=1231][TID=0x1a2b] ERROR - (ERROR) [IdentityCache] Failed to refresh identity for user -123456 due to error.
+2030-01-15 10:00:04.050 [PID=1231][TID=0x1a2b] DEBUGLOG - HDL LFSFunctionResultsCache: Staling data for dataset 4. HDLState: NORMAL.
+2030-01-15 10:00:04.100 [PID=1231][TID=0x1a2b] INFO - Connecting session 00000000-0000-4000-8000-0000a0000001 to context 12...
+2030-01-15 10:00:04.150 [PID=1231][TID=0x1a2b] INFO - AcquireOperationalModels succeeded for Meshed roots.
+2030-01-15 10:00:04.200 [PID=1231][TID=0x1a2b] INFO - Session 00000000-0000-4000-8000-0000a0000001 disconnected from context [12], clientType = ExampleClient.
+2030-01-15 10:00:04.250 [PID=1231][TID=0x1a2b] INFO - Saving session 00000000-0000-4000-8000-0000a0000001 for context ID [12]...
+2030-01-15 10:00:04.300 [PID=1231][TID=0x1a2b] DEBUGLOG - Preparing macros for context ID [12]...
+2030-01-15 10:00:04.350 [PID=1231][TID=0x1a2b] DEBUGLOG - Increased number of used licenses for client ExampleClient. Current license count: 3, Max license count: 10
+2030-01-15 10:00:04.400 [PID=1231][TID=0x1a2b] INFO - Connecting to context -1, on: ExampleClient.
+2030-01-15 10:00:04.450 [PID=1231][TID=0x1a2b] DEBUGLOG - SM document 12 pulled from scratchpad.
+2030-01-15 10:00:04.500 [PID=1231][TID=0x1a2b] DEBUGLOG - Received new MDC: 100. Local model delta counter changed from 4 to 5.
+2030-01-15 10:00:04.550 [PID=1231][TID=0x1a2b] ALWAYS - Registering process EXA with id 3 and port 5000 in context 12...
+2030-01-15 10:00:04.600 [PID=1231][TID=0x1a2b] ALWAYS - [RTDBConfigAccessor] doas_system record read: name=example, zone=PROD, site=MainSite
+2030-01-15 10:00:04.650 [PID=1231][TID=0x1a2b] ALWAYS - Unknown licence attribute ExampleFeature read from license file and it will be ignored.
+2030-01-15 10:00:04.700 [PID=1231][TID=0x1a2b] DEBUGLOG - ConnectSessionPrivate session state: Opened
+2030-01-15 10:00:04.750 [PID=1231][TID=0x1a2b] DEBUGLOG - [UserStatusSubscriber] Publication received.
+2030-01-15 10:00:04.800 [PID=1231][TID=0x1a2b] INFO - [UserStatusSubscriber] Publish: ContextId [12], Status [Connected], Connected Users [3]
+2030-01-15 10:00:04.850 [PID=1231][TID=0x1a2b] INFO - [ModelVersionSubscriber] Publish: Model Version Name [Example 12], Model Version CreationTime [10/3/2026 12:00:00 AM]
+2030-01-15 10:00:04.900 [PID=1231][TID=0x1a2b] DEBUGLOG - Opening proxy to LCM at address HOST01 and port 5000...
+2030-01-15 10:00:04.950 [PID=1231][TID=0x1a2b] DEBUGLOG - Services with good health state are: [HOST01, 1, DMS_RealTime]
+2030-01-15 10:00:05.000 [PID=1231][TID=0x1a2b] DEBUGLOG - Getting context groups with servers and contexts...
+2030-01-15 10:00:05.050 [PID=1231][TID=0x1a2b] DEBUGLOG - [NetworkModelConfigurationCallback] Recieved configuration for ExampleSystem external system
+2030-01-15 10:00:05.100 [PID=1231][TID=0x1a2b] DEBUGLOG - [ListenerDataProvider] Configuration delta ExampleSystem is successfully sent to Listener.
+2030-01-15 10:00:05.150 [PID=1231][TID=0x1a2b] DEBUGLOG - [ServiceCacheManager] Loading configurations from cache started.
+2030-01-15 10:00:05.200 [PID=1231][TID=0x1a2b] WARNING - [ExportService] Failed to get ExampleEntity.Status enum for enum code: 0.
+2030-01-15 10:00:05.250 [PID=1231][TID=0x1a2b] INFO - [ExportService] Request configuration on model update. Model has switched to model version: 1000123, model delta counter: 1000124, model version name: Example 12.
+2030-01-15 10:00:05.300 [PID=1231][TID=0x1a2b] DEBUGLOG - [ExportService] Process configuration request: SendUpdateConfiguration. Next request would be: None.
+2030-01-15 10:00:05.350 [PID=1231][TID=0x1a2b] WARNING - WARNING [RouteID:0, Dataset:10, Dataflow:7] RequestIU: No destination info for client with ID: 4 (the client on destination side doesn't propagate it).
+2030-01-15 10:00:05.400 [PID=1231][TID=0x1a2b] DEBUGLOG - TASSubscriber - PublicationHandler: Publication received for signal (gid = 10000123), tagId = 10000124, tagCatalogId = 10000125, tagSemantic = DoNotAutoClose, WarnOnOpen
+2030-01-15 10:00:05.450 [PID=1231][TID=0x1a2b] DEBUGLOG - ControlSequenceTransactionCommand - prepare started
+2030-01-15 10:00:05.500 [PID=1231][TID=0x1a2b] DEBUGLOG - (NDS) Interlocking manager loaded 12 rules.
+2030-01-15 10:00:05.550 [PID=1231][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:05.600 [PID=1231][TID=0x1a2b] DEBUGLOG - [NDSSubscriber] RestartSubscriber: Subscriber is restarted.
+2030-01-15 10:00:05.650 [PID=1231][TID=0x1a2b] ERROR - [NDSSubscriber] OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = False. Reason: Subscriber(ExamplePubSub) failed to connect to the service with an exception: 
+2030-01-15 10:00:05.700 [PID=1231][TID=0x1a2b] DEBUGLOG - ModelUpdateService - SwitchVersion: Switching from 1000123 to 1000124 version, MDC: 1000125
+2030-01-15 10:00:05.750 [PID=1231][TID=0x1a2b] DEBUGLOG - [OMH] Operational model for OM_EMS network is acquired for: 0x4A00B00C00D00E02, 0x4A00B00C00D00E03, 0x4A00B00C00D00E04,
+2030-01-15 10:00:05.800 [PID=1231][TID=0x1a2b] ERROR - AcquireOperationalModels failed because of Meshed roots.
+2030-01-15 10:00:05.850 [PID=1231][TID=0x1a2b] INFO - [PRS] Job status report is received. JobId: 1000124, Job Status: DoneWithSuccess
+2030-01-15 10:00:05.900 [PID=1231][TID=0x1a2b] DEBUGLOG - [PRH] CleanUp is called.
+2030-01-15 10:00:05.950 [PID=1231][TID=0x1a2b] DEBUGLOG - [CRS] PU LF Results for job 1000123 have been written to cache.
+2030-01-15 10:00:06.000 [PID=1231][TID=0x1a2b] DEBUGLOG - [CJR] Received Client Request ID: 700123 for DMS function cancelation.
+2030-01-15 10:00:06.050 [PID=1231][TID=0x1a2b] DEBUGLOG - SE_TT: T1 elapsed on root 0x4A00B00C00D00E01, and there is still significant measurement value change.  SignalID: 4A00B00C00D00E02   Last Value: 119.5   Final Significant Value: 125.5
+2030-01-15 10:00:06.100 [PID=1231][TID=0x1a2b] DEBUGLOG - SE_TT: T3 elapsed on root 0x4A00B00C00D00E01, but there are changes that are not stabilised yet.
+2030-01-15 10:00:06.150 [PID=1231][TID=0x1a2b] DEBUGLOG - SE_TT: SE executions for 12 root(s) scheduled from 10/20/2026 11:35:14 AM to 10/20/2026 11:50:14 AM.
+2030-01-15 10:00:06.200 [PID=1231][TID=0x1a2b] DEBUGLOG - SE_TT: Redistribute timeout expired!
+2030-01-15 10:00:06.250 [PID=1231][TID=0x1a2b] DEBUGLOG - [RTM] [RTM_Change] [ReadingsValueChange] Started handling change
+2030-01-15 10:00:06.300 [PID=1231][TID=0x1a2b] DEBUGLOG - [RTM] [RTM_Change] [ReadingsValueChange] Finished handling change for trafoareas: [100,200].
+2030-01-15 10:00:06.350 [PID=1231][TID=0x1a2b] DEBUGLOG - [RTM] [InitializationChange] Updating RTMData...
+2030-01-15 10:00:06.400 [PID=1231][TID=0x1a2b] DEBUGLOG - [RTM] [RealTimeMonitoringData] [UXP] Received value change for signal 1001, but it wasn't present in RTMData
+2030-01-15 10:00:06.450 [PID=1231][TID=0x1a2b] INFO - [VVOTrigger] VVC: Timeout has expired for circuit(s): 1001, 1002
+2030-01-15 10:00:06.500 [PID=1231][TID=0x1a2b] INFO - [VVOTrigger] VVC: Trigger on violation : VVO will not be triggered for - RootId: 0x4A00B00C00D00E01, and circuits: 1001 because it's in NoOptimization mode.
+2030-01-15 10:00:06.550 [PID=1231][TID=0x1a2b] DEBUGLOG - VVC: Timeout has expired for redistribution
+2030-01-15 10:00:06.600 [PID=1231][TID=0x1a2b] DEBUGLOG - [EMSBCT]: Add job for transmission network in queue as a result of topology change.
+2030-01-15 10:00:06.650 [PID=1231][TID=0x1a2b] DEBUGLOG - [DSMT]: DMS topology changed notification has been received.
+2030-01-15 10:00:06.700 [PID=1231][TID=0x1a2b] DEBUGLOG - [TCN] LoadFlow will be executed for root 0x4A00B00C00D00E01, reason: TopologyChange
+2030-01-15 10:00:06.750 [PID=1231][TID=0x1a2b] DEBUGLOG - [RootsDiary] Received updated roots. Number of roots: 4
+2030-01-15 10:00:06.800 [PID=1231][TID=0x1a2b] DEBUGLOG - [TopologyChangeSubscriber] Not affected roots: 
+2030-01-15 10:00:06.850 [PID=1231][TID=0x1a2b] DEBUGLOG - Root ID:0x4A00B00C00D00E01, Root status: Changed
+2030-01-15 10:00:06.900 [PID=1231][TID=0x1a2b] DEBUGLOG - [ECC]: Commit method of model update procedure has been succeeded.
+2030-01-15 10:00:06.950 [PID=1231][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:07.000 [PID=1231][TID=0x1a2b] DEBUGLOG - [CPC]: Prepare for model update
+2030-01-15 10:00:07.050 [PID=1231][TID=0x1a2b] DEBUGLOG - [HostingCapacity => HostingCapacityCache] Insertion process lasted 40ms.
+2030-01-15 10:00:07.100 [PID=1231][TID=0x1a2b] DEBUGLOG - [CircuitsCache] No DER groups defined in network
+2030-01-15 10:00:07.150 [PID=1231][TID=0x1a2b] DEBUGLOG - CircuitProfileAssignmentEditor - Execute: Transaction execute finished.
+2030-01-15 10:00:07.200 [PID=1231][TID=0x1a2b] DEBUGLOG - [MRResultHandler] No circuit found in input results.
+2030-01-15 10:00:07.250 [PID=1231][TID=0x1a2b] DEBUGLOG - [TagResourceManager] Tag transaction - Commit.
+2030-01-15 10:00:07.300 [PID=1231][TID=0x1a2b] DEBUGLOG - [HistoricalConfigurationService] GetExtentValuesWithLv HISTTYPECONFIG from history.
+2030-01-15 10:00:07.350 [PID=1231][TID=0x1a2b] DEBUGLOG - Creating of StaticInternalModel Started
+2030-01-15 10:00:07.400 [PID=1231][TID=0x1a2b] DEBUGLOG - [RemoteInputADMSManager] Collecting AINPUTADMS
+2030-01-15 10:00:07.450 [PID=1231][TID=0x1a2b] DEBUGLOG - GetSystemUnavailableIntervals called
+2030-01-15 10:00:07.500 [PID=1231][TID=0x1a2b] DEBUGLOG - GetOMForLevels: Wait 0.0000s. Created 44MB [166 blocks] in 0.0300s. OM count 1
+2030-01-15 10:00:07.550 [PID=1231][TID=0x1a2b] DEBUGLOG - MTS : Delta Manager: Updated blocks: 1762,1938,1900
+2030-01-15 10:00:07.600 [PID=1231][TID=0x1a2b] DEBUGLOG - MTS : Commit phase finished.
+2030-01-15 10:00:07.650 [PID=1231][TID=0x1a2b] INFO - MTS :Temporary jumper removed, gid: 10000123, Node1: 4 , Node2: 5, Phases1: ABC, Phases2: ABC
+2030-01-15 10:00:07.700 [PID=1231][TID=0x1a2b] INFO - Element Gid: 10000123 / Message: 4 consumers energized
+2030-01-15 10:00:07.750 [PID=1231][TID=0x1a2b] DEBUGLOG - Connection with MMS locking successfully opened.
+2030-01-15 10:00:07.800 [PID=1231][TID=0x1a2b] DEBUGLOG - Getting active versions started.
+2030-01-15 10:00:07.850 [PID=1231][TID=0x1a2b] DEBUGLOG - Getting service type succeeded.
+2030-01-15 10:00:07.900 [PID=1231][TID=0x1a2b] DEBUGLOG - (Product) Saving synchronization report. ID = 1000123, SaveChangesetReport = False, SaveServerReport = True, SaveAffectedViews = False
+2030-01-15 10:00:07.950 [PID=1231][TID=0x1a2b] DEBUGLOG - Getting changeset locks from database succeeded. Count = 2.
+2030-01-15 10:00:08.000 [PID=1231][TID=0x1a2b] DEBUGLOG - Unlock changeset database by user ExampleLockUser succeeded.
+2030-01-15 10:00:08.050 [PID=1231][TID=0x1a2b] DEBUGLOG - Is model lock by user finished
+2030-01-15 10:00:08.100 [PID=1231][TID=0x1a2b] DEBUGLOG - CacheActivityDelegate: Cache activity: Update, Lock data received rdId = 1000123
+2030-01-15 10:00:08.150 [PID=1231][TID=0x1a2b] DEBUGLOG - Failover data:
+2030-01-15 10:00:08.200 [PID=1231][TID=0x1a2b] DEBUGLOG - <PubSub> Processing model promotion notification message skipped: [IsHot: True, IsOwner: True]
+2030-01-15 10:00:08.250 [PID=1231][TID=0x1a2b] DEBUGLOG - [ModeSwitch] Not in hot state. Publishing message skipped.
+2030-01-15 10:00:08.300 [PID=1231][TID=0x1a2b] DEBUGLOG - Extract with id 1000123 still is not in a state 4, on this system.
+2030-01-15 10:00:08.350 [PID=1231][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:08.400 [PID=1231][TID=0x1a2b] DEBUGLOG - Cache[ChangesetRepositoryCache] Dataset 1 does not belong to this cache.
+2030-01-15 10:00:08.450 [PID=1231][TID=0x1a2b] DEBUGLOG - Complete database updates finished.
+2030-01-15 10:00:08.500 [PID=1231][TID=0x1a2b] DEBUGLOG - Creating new version started. Parent version ID = 12.
+2030-01-15 10:00:08.550 [PID=1231][TID=0x1a2b] DEBUGLOG - Getting system configuration for 'ExampleSystem'
+2030-01-15 10:00:08.600 [PID=1231][TID=0x1a2b] DEBUGLOG - ChangesetRepositoryService on http://192.0.2.10:8080/Service returned UNKNOWN
+2030-01-15 10:00:08.650 [PID=1231][TID=0x1a2b] DEBUGLOG - Database buffer check is disabled on QA
+2030-01-15 10:00:08.700 [PID=1231][TID=0x1a2b] DEBUGLOG - Trying to open connection with CSS model update contract on net.tcp://192.0.2.10:9000/Update
+2030-01-15 10:00:08.750 [PID=1231][TID=0x1a2b] DEBUGLOG - System example is placed in PROD zone.
+2030-01-15 10:00:08.800 [PID=1231][TID=0x1a2b] DEBUGLOG - Services (3): Arbitration,Common,DMS_RealTime
+2030-01-15 10:00:08.850 [PID=1231][TID=0x1a2b] DEBUGLOG - SystemId on Simulation = 7
+2030-01-15 10:00:08.900 [PID=1231][TID=0x1a2b] INFO - [CollectionPool][ElementContainer-LongHashSetPool] Failed to select bucket for 7 elements.
+2030-01-15 10:00:08.950 [PID=1231][TID=0x1a2b] DEBUGLOG - Apply delta on model with 12 element operations started.
+2030-01-15 10:00:09.000 [PID=1231][TID=0x1a2b] DEBUGLOG - Create block changing operations finished. Block changing operations created: 4
+2030-01-15 10:00:09.050 [PID=1231][TID=0x1a2b] DEBUGLOG - [SNAPSHOT]Saving snapshot chunk 3
+2030-01-15 10:00:09.100 [PID=1231][TID=0x1a2b] DEBUGLOG - [AdditionalModelValidator] Validation started. Validation config id: 2
+2030-01-15 10:00:09.150 [PID=1231][TID=0x1a2b] DEBUGLOG - Max chunk id in database is 7, incrementing chunk Ids in current snapshot
+2030-01-15 10:00:09.200 [PID=1231][TID=0x1a2b] DEBUGLOG - Validate model finished.
+2030-01-15 10:00:09.250 [PID=1231][TID=0x1a2b] DEBUGLOG - Applying of graphical delta with NoValidation flag. Graphical validations will not be triggered.
+2030-01-15 10:00:09.300 [PID=1231][TID=0x1a2b] DEBUGLOG - Check symbols uniqueness started.
+2030-01-15 10:00:09.350 [PID=1231][TID=0x1a2b] DEBUGLOG - Wait for end of NMS transaction finished
+2030-01-15 10:00:09.400 [PID=1231][TID=0x1a2b] DEBUGLOG - Executed calculations since last trigger: 12
+2030-01-15 10:00:09.450 [PID=1231][TID=0x1a2b] INFO - [ModelUpdateTransactionManager] Affected calculation with gid: 10000124 does not exist.
+2030-01-15 10:00:09.500 [PID=1231][TID=0x1a2b] DEBUGLOG - [Compiler] Compile finished successfully.
+2030-01-15 10:00:09.550 [PID=1231][TID=0x1a2b] DEBUGLOG - [NetworkModelManager] Numbers of Shared calculation codes: 4 are retrieved from NMS.
+2030-01-15 10:00:09.600 [PID=1231][TID=0x1a2b] DEBUGLOG - [CompilerConfiguration] Default value: 8 will be used for temp files count.
+2030-01-15 10:00:09.650 [PID=1231][TID=0x1a2b] DEBUGLOG - [ModelUpdateService] Switching Version from 4 to 5, model delta counter: 7
+2030-01-15 10:00:09.700 [PID=1231][TID=0x1a2b] DEBUGLOG - [GCSCalcStatusCacheUpdateCommand] Executing command, [modelVersion - 5] [sourceModelDeltaCounter - 7]
+2030-01-15 10:00:09.750 [PID=1231][TID=0x1a2b] DEBUGLOG - [GenericAssemblyService] Notifying executor about assembly changes.
+2030-01-15 10:00:09.800 [PID=1231][TID=0x1a2b] DEBUGLOG - [NDSSignalSubscriber] Integrity update event is raised.
+2030-01-15 10:00:09.850 [PID=1231][TID=0x1a2b] DEBUGLOG - [ResultWriter] Results writer worker ExampleWriter_1 started.
+2030-01-15 10:00:09.900 [PID=1231][TID=0x1a2b] DEBUGLOG - [LookAhead] Processing 4 state(s) for 2 circuit(s) from substation 10000123: 3.
+2030-01-15 10:00:09.950 [PID=1231][TID=0x1a2b] INFO - [LookAhead] [OnResultsReceived][JobID=1000124] Received result with status: DoneWithError).
