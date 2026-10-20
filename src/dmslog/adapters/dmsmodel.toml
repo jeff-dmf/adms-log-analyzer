@@ -358,17 +358,6 @@ counter_examples = ["[AdditionalModelValidationPlugin] Validation of Update oper
 # ---------------------------------------------------------------------------------------------
 
 [[template]]
-code = "DMD-050"
-class = "statistics"
-title = "Rows compressed by the dynamics cache"
-sev = 5
-fts = false
-regex = '''^HDL DynamicsCache Compressed data: there is (?P<rows>\d+) rows in changes$'''
-fields = { rows = "int" }
-examples = [{ msg = "HDL DynamicsCache Compressed data: there is 120 rows in changes", fields = { rows = 120 } }]
-counter_examples = ["HDL DynamicsCache Compressed data: there is x rows in changes"]
-
-[[template]]
 code = "DMD-051"
 class = "error"
 title = "Changeset operation of a trend not found"

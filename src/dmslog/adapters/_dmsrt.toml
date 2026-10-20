@@ -863,3 +863,285 @@ examples = [
     { msg = "Utils ProcessBlockAttributes method (blockIDS count: 1, number of parallel: 2, property count: 3, class count: 4) Total time: 0.0002733s, on the NMS : 0.0002373s, on local: 1.07E-05s.", fields = { blocks = 1, parallel = 2, properties = 3, classes = 4, total_s = 0.0002733 } },
 ]
 counter_examples = ["Utils ProcessBlockAttributes method (blockIDS count: x, number of parallel: 2)"]
+
+# ============================================================================================
+# Lines shared by two or more RT families (task T10): HDL, publisher, smart cache, security,
+# plugins, metamodel, arbitration and user logon
+# ============================================================================================
+
+[[template]]
+code = "RTL-063"
+class = "statistics"
+title = "Rows compressed by a historical data cache"
+sev = 5
+fts = false
+regex = '''^(?: HDL|HDL) (?P<cache>\w+) Compressed data: there is (?P<rows>\d+) rows in changes$'''
+fields = { rows = "int" }
+examples = [
+    { msg = " HDL ExampleCache Compressed data: there is 44 rows in changes", fields = { cache = "ExampleCache", rows = 44 } },
+    "HDL OtherCache Compressed data: there is 7 rows in changes",
+]
+counter_examples = ["HDL ExampleCache Compressed data: there is x rows in changes"]
+
+[[template]]
+code = "RTL-064"
+class = "statistics"
+title = "Historical data cache cleanup of old changesets"
+sev = 5
+fts = false
+regex = '''^HDL (?P<cache>\w+) \[(?P<store>ItemDALSQLite|ElementDALSQLite|SerializedChangesetsStorage)\]: Number of deleted (?P<what>changesets|archived serialized changesets|elements with changesets) (?:with )?ids equal or lower than (?P<changeset_id>\d+) for machineId (?P<machine_id>\d+) and dataset (?P<dataset>\S+) is (?P<count>\d+)\.$'''
+fields = { changeset_id = "int", machine_id = "int", count = "int" }
+examples = [
+    { msg = "HDL ExampleCache [ItemDALSQLite]: Number of deleted changesets with ids equal or lower than 1000123 for machineId 638 and dataset ExampleDS is 47.", fields = { cache = "ExampleCache", store = "ItemDALSQLite", what = "changesets", changeset_id = 1000123, machine_id = 638, count = 47 } },
+    "HDL ExampleCache [ElementDALSQLite]: Number of deleted elements with changesets ids equal or lower than 1000123 for machineId 638 and dataset ExampleDS is 3610.",
+    "HDL ExampleCache [SerializedChangesetsStorage]: Number of deleted archived serialized changesets with ids equal or lower than 1000124 for machineId 639 and dataset ExampleDS is 45.",
+]
+counter_examples = ["HDL ExampleCache [ItemDALSQLite]: Number of deleted changesets with ids equal or lower than x for machineId 638 and dataset ExampleDS is 47."]
+
+[[template]]
+code = "RTL-065"
+class = "lifecycle"
+title = "Publisher integrity update"
+sev = 4
+fts = false
+regex = '''^Publisher \((?P<publisher>\w+)\) INTEGRITY UPDATE (?P<phase>STARTED|FINISHED) --- Request: originator: (?P<originator>[0-9a-fA-F-]{36}) topics count: (?P<topics>\d+) clients \((?P<clients>\d+)\): .*$'''
+fields = { topics = "int", clients = "int", originator = "guid" }
+examples = [
+    { msg = "Publisher (ExamplePubSub) INTEGRITY UPDATE STARTED --- Request: originator: 00000000-0000-4000-8000-000000000001 topics count: 1 clients (2): 00000000-0000-4000-8000-000000000001(4) 00000000-0000-4000-8000-000000000002(4)", fields = { publisher = "ExamplePubSub", phase = "STARTED", topics = 1, clients = 2 } },
+    "Publisher (ExamplePubSub) INTEGRITY UPDATE FINISHED --- Request: originator: 00000000-0000-4000-8000-000000000001 topics count: 2 clients (1): 00000000-0000-4000-8000-000000000001(3).",
+]
+counter_examples = ["Publisher (ExamplePubSub) INTEGRITY UPDATE PAUSED --- Request: originator: 00000000-0000-4000-8000-000000000001 topics count: 1 clients (1): x"]
+
+[[template]]
+code = "RTL-066"
+class = "other"
+title = "Smart cache transaction disposed after inactivity"
+sev = 3  # pool or cache housekeeping: the abandoned transaction is rolled back by the cache itself
+regex = '''^\(SMART_CACHE_ERROR\) Cache\[(?P<cache>\w+)\] Transaction automatically disposing, no activity for (?P<idle_ms>\d+) msec\.$'''
+fields = { idle_ms = "int" }
+examples = [
+    { msg = "(SMART_CACHE_ERROR) Cache[ExampleCache] Transaction automatically disposing, no activity for 900000 msec.", fields = { cache = "ExampleCache", idle_ms = 900000 } },
+]
+counter_examples = ["(SMART_CACHE_ERROR) Cache[ExampleCache] Transaction automatically disposing, no activity for a while."]
+
+[[template]]
+code = "RTL-067"
+class = "validation"
+title = "Smart cache entity or resource not found"
+sev = 3
+regex = '''^\(SMART_CACHE_ERROR\) Cache\[(?P<cache>\w+)\] (?:Entity not found!| {1,2}\(GetValues\) Unknown resource identifier (?P<resource_id>\d+)\.)$'''
+examples = [
+    { msg = "(SMART_CACHE_ERROR) Cache[ExampleCache] Entity not found!", fields = { cache = "ExampleCache" } },
+    { msg = "(SMART_CACHE_ERROR) Cache[ExampleCache]  (GetValues) Unknown resource identifier 1000123.", fields = { resource_id = "1000123" } },
+]
+counter_examples = ["(SMART_CACHE_ERROR) Cache[ExampleCache]  (GetValues) Unknown resource identifier x."]
+
+[[template]]
+code = "RTL-068"
+class = "error"
+title = "Smart cache rejected an operation"
+sev = 2
+regex = '''^\(SMART_CACHE_ERROR\) Cache\[(?P<cache>\w+)\] (?P<problem>Historian failed|Invalid type id|Invalid property id|Duplicate entity in cache)!$'''
+examples = [
+    { msg = "(SMART_CACHE_ERROR) Cache[ExampleCache] Historian failed!", fields = { cache = "ExampleCache", problem = "Historian failed" } },
+    "(SMART_CACHE_ERROR) Cache[ExampleCache] Invalid type id!",
+    "(SMART_CACHE_ERROR) Cache[ExampleCache] Duplicate entity in cache!",
+    "(SMART_CACHE_ERROR) Cache[ExampleCache] Invalid property id!",
+]
+counter_examples = ["(SMART_CACHE_ERROR) Cache[ExampleCache] Historian worked!"]
+
+[[template]]
+code = "RTL-069"
+class = "error"
+title = "Performance counter disabled after a failure"
+sev = 3
+regex = '''^Performance counter instance (?P<instance>\S+) operation failed\. Counter will be disabled\. Performance counter name: (?P<counter>\w+), Message: (?P<message>.*)$'''
+examples = [
+    { msg = "Performance counter instance ExampleCache.DMS_ExampleService(Global) operation failed. Counter will be disabled. Performance counter name: GetValuesPerformanceCounters, Message: Custom counters file view is out of memory.", fields = { instance = "ExampleCache.DMS_ExampleService(Global)", counter = "GetValuesPerformanceCounters" } },
+]
+counter_examples = ["Performance counter instance ExampleCache.DMS_ExampleService(Global) operation succeeded."]
+
+[[template]]
+code = "RTL-070"
+class = "error"
+title = "Service operation threw an unexpected exception"
+sev = 2
+regex = '''^(?:\(ERROR\) \[Communication|\[Communication)(?P<chan>\d+)\] - Service operation (?P<operation>\w+) threw unexpected exception\.$'''
+examples = [
+    { msg = "[Communication2] - Service operation GetExample threw unexpected exception.", fields = { chan = "2", operation = "GetExample" } },
+    "(ERROR) [Communication2] - Service operation DisconnectExample threw unexpected exception.",
+]
+counter_examples = ["[Communication2] - Service operation GetExample completed."]
+
+[[template]]
+code = "RTL-071"
+class = "other"
+title = "Circular queue tail page moved"
+sev = 5
+fts = false
+regex = '''^\(Circular Queue\) \[(?P<queue>[\w-]+)\] (?:Advance tail page to (?P<page>\d+)|Wrap tail page)\.$'''
+fields = { page = "int" }
+examples = [
+    { msg = "(Circular Queue) [exampleQueue] Advance tail page to 1.", fields = { queue = "exampleQueue", page = 1 } },
+    "(Circular Queue) [example-Queue-Default] Wrap tail page.",
+]
+counter_examples = ["(Circular Queue) [exampleQueue] Advance tail page to x."]
+
+[[template]]
+code = "RTL-072"
+class = "error"
+title = "Client has no permission"
+sev = 3
+regex = '''^\[SecurityHelper\]: Client '(?P<client>[^']*)' has no permission '(?P<permission>[^']*)'\.$'''
+examples = [
+    { msg = "[SecurityHelper]: Client 'EXAMPLE\\user01' has no permission 'DNA Permission - Example_Function'.", fields = { client = "EXAMPLE\\user01", permission = "DNA Permission - Example_Function" } },
+]
+counter_examples = ["[SecurityHelper]: Client 'EXAMPLE\\user01' has permission 'DNA Permission - Example_Function'."]
+
+[[template]]
+code = "RTL-073"
+class = "error"
+title = "Security error"
+sev = 3
+text = "Security error."
+examples = ["Security error."]
+counter_examples = ["Security error"]
+
+[[template]]
+code = "RTL-074"
+class = "startup"
+title = "Publisher dead client checker initializing a publisher"
+sev = 5
+regex = '''^Publisher check dead or slow clients worker: initializing publisher (?P<publisher>\w+)\.$'''
+examples = [
+    { msg = "Publisher check dead or slow clients worker: initializing publisher ExamplePublisher.", fields = { publisher = "ExamplePublisher" } },
+]
+counter_examples = ["Publisher check dead or slow clients worker: initializing."]
+
+[[template]]
+code = "RTL-075"
+class = "startup"
+title = "Assembly loaded"
+sev = 5
+fts = false
+regex = '''^Assembly name (?P<assembly>[\w.]+), Version=(?P<version>[\d.]+), Culture=(?P<culture>\w+), PublicKeyToken=(?P<token>\w+) loaded successfully from the following file: (?P<path>.+)$'''
+examples = [
+    { msg = "Assembly name Example.Assembly, Version=3.9.0, Culture=neutral, PublicKeyToken=0123456789abcdef loaded successfully from the following file: .\\Example.Assembly.dll", fields = { assembly = "Example.Assembly", version = "3.9.0", culture = "neutral", path = ".\\Example.Assembly.dll" } },
+]
+counter_examples = ["Assembly name Example.Assembly, Version=3.9.0 failed to load"]
+
+[[template]]
+code = "RTL-076"
+class = "startup"
+title = "Plugin lookup and component initialization"
+sev = 5
+fts = false
+regex = '''^(?:Plugin not found for (?P<missing>[\w.]+?)(?: and no default implementation supplied)?\.|Loaded plugin (?P<plugin>[\w.]+) for (?P<target>[\w.]+)\.|Initializing (?P<component>[\w.]+)\.)$'''
+examples = [
+    { msg = "Plugin not found for Example.Service.ModelConverter.", fields = { missing = "Example.Service.ModelConverter" } },
+    "Plugin not found for Example.Service.Missing and no default implementation supplied.",
+    { msg = "Loaded plugin Example.Plugins.Custom_Example for Example.Service.Base.", fields = { plugin = "Example.Plugins.Custom_Example", target = "Example.Service.Base" } },
+    { msg = "Initializing Example.Service.CacheProvider.", fields = { component = "Example.Service.CacheProvider" } },
+    "Initializing GMS.",
+]
+counter_examples = ["Initializing connection pool started.", "Plugin found for Example.Service."]
+
+[[template]]
+code = "RTL-077"
+class = "startup"
+title = "Metamodel provider initialization"
+sev = 5
+regex = '''^(?:\[MetamodelProvider - (?P<provider>\w+)\] Initializing with metamodel xml|Initializing metamodel provider with xml): (?P<path>.+)$'''
+examples = [
+    { msg = "[MetamodelProvider - ExampleCache] Initializing with metamodel xml: C:\\Example\\Metamodel\\Example.xml", fields = { provider = "ExampleCache", path = "C:\\Example\\Metamodel\\Example.xml" } },
+    "Initializing metamodel provider with xml: C:\\Example\\Metamodel\\Example.xml",
+]
+counter_examples = ["[MetamodelProvider - ExampleCache] Initialized."]
+
+[[template]]
+code = "RTL-078"
+class = "other"
+title = "Apply updates finished"
+sev = 5
+text = "Apply updates finished"
+examples = ["Apply updates finished"]
+counter_examples = ["Apply updates started"]
+
+[[template]]
+code = "RTL-079"
+class = "startup"
+title = "Configuration context XML value"
+sev = 5
+regex = '''^\[Configuration\] \[(?P<name>\w+)\]: \[(?P<value>[^\]]*)\]\. Type: \[ConfigurationContextXml\]$'''
+examples = [
+    { msg = "[Configuration] [ExampleFlag]: [True]. Type: [ConfigurationContextXml]", fields = { name = "ExampleFlag", value = "True" } },
+]
+counter_examples = ["[Configuration] [ExampleFlag]: [True]. Type: [ConfigurationUnknown]"]
+
+[[template]]
+code = "RTL-080"
+class = "other"
+title = "Arbitration pub/sub lookup with the arbitration state"
+sev = 5
+sev_field = "state"
+sev_map = { FAIL = 3 }
+fts = false
+regex = '''^arb_pubSubLookup: Cache updated with system: (?P<system>[^,]+), service: (?P<service>[^,]+), host: (?P<host>[^,]+), topic: (?P<topic>[^,]+), arb state: (?P<state>\w+), ps status: (?P<ps_status>\w+)$'''
+examples = [
+    { msg = "arb_pubSubLookup: Cache updated with system: sys, service: svc, host: host1, topic: sys.svc.arb.host1.states.state, arb state: HOT, ps status: OK", fields = { state = "HOT", ps_status = "OK" } },
+    "arb_pubSubLookup: Cache updated with system: sys, service: svc, host: host1, topic: sys.svc.arb.host1.states.state, arb state: FAIL, ps status: NO_PUBLISHERS",
+]
+counter_examples = ["arb_pubSubLookup: Cache updated with system: sys, service: svc, host: host1, topic: t, sync state: SYNC_SYNCED, ps status: OK"]
+
+[[template]]
+code = "RTL-081"
+class = "lifecycle"
+title = "Interlocking rules loaded"
+sev = 5
+fts = false
+regex = '''^\(NDS\) Interlocking manager loaded (?P<rules>\d+) rules\.$'''
+fields = { rules = "int" }
+examples = [
+    { msg = "(NDS) Interlocking manager loaded 12 rules.", fields = { rules = 12 } },
+]
+counter_examples = ["(NDS) Interlocking manager loaded some rules."]
+
+[[template]]
+code = "RTL-082"
+class = "lifecycle"
+title = "User logged on a machine"
+sev = 4
+stream = "normal"
+fts = false
+regex = '''^User (?P<user>[^,\s]+)(?:, hashed user: (?P<user_hash>-?\d+))? logged on machine (?P<machine>[^,\s]+)(?:, hashed machine: (?P<machine_hash>-?\d+))?, login method lasts (?P<elapsed>[\d:.]+) seconds\.$'''
+examples = [
+    { msg = "User 1001 logged on machine -2002, login method lasts 00:00:00.0163811 seconds.", fields = { user = "1001", machine = "-2002", elapsed = "00:00:00.0163811" } },
+    { msg = 'User EXAMPLE\user01, hashed user: -1001 logged on machine HOST01, hashed machine: 2002, login method lasts 00:00:00.0184474 seconds.', fields = { user = 'EXAMPLE\user01', user_hash = "-1001", machine = "HOST01", machine_hash = "2002" } },
+]
+counter_examples = ["User 1001 logged on machine 2002."]
+
+[[template]]
+code = "RTL-083"
+class = "startup"
+title = "Model delta counter initialized"
+sev = 5
+regex = '''^Model delta counter initialized to (?P<delta_counter>(?:0x)?[0-9A-Fa-f]{1,16})(?:\.| \(one less than received from MMS\))$'''
+fields = { delta_counter = "hex" }
+examples = [
+    "Model delta counter initialized to 0x4A00B00C00D00E01.",
+    "Model delta counter initialized to 0x4A00B00C00D00E02 (one less than received from MMS)",
+]
+counter_examples = ["Model delta counter initialized to nothing."]
+
+[[template]]
+code = "RTL-084"
+class = "lifecycle"
+title = "Context created for a model version"
+sev = 5
+regex = '''^Creating Context with Id = (?P<context_id>\d+) for model version (?P<model_version>\d+(?:\.\d+)?)(?P<done> succeeded)?\.$'''
+examples = [
+    { msg = "Creating Context with Id = 1000123 for model version 1000456.", fields = { context_id = "1000123", model_version = "1000456" } },
+    "Creating Context with Id = 1000123 for model version 1000456 succeeded.",
+    "Creating Context with Id = 1000123 for model version 1000.2.",
+]
+counter_examples = ["Creating Context with Id = x for model version 1."]

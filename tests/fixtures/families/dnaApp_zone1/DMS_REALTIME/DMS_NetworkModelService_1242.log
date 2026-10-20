@@ -26,175 +26,175 @@
 2030-01-15 10:00:01.250 [PID=1242][TID=0x1a2b] ERROR - (ERROR) Failed to get range of ResourceDescription iterators. index:0, count:3
 2030-01-15 10:00:01.300 [PID=1242][TID=0x1a2b] ERROR - (ERROR) Unknown property id = EXAMPLE_PROP for entity (GID = 0x4A00B00C00D00E02, LID = 0x4A00B00C00D00E01).
 2030-01-15 10:00:01.350 [PID=1242][TID=0x1a2b] INFO - ---------- not a separator ----------
-2030-01-15 10:00:01.400 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache Compressed data: there is 120 rows in changes
-2030-01-15 10:00:01.450 [PID=1242][TID=0x1a2b] ERROR - (ERROR) HDL DynamicsCache Changeset operation and timestamp not found. Using Update as default operation for trend.
-2030-01-15 10:00:01.500 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache GetValuesWithOperationForInterval returned 90 results for 1 gids.
-2030-01-15 10:00:01.550 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE) [DOMCountersRolloverModule] Roll Over delay expired.
-2030-01-15 10:00:01.600 [PID=1242][TID=0x1a2b] DEBUGLOG - [StatisticsRolloverModuleBase] Roll Over skipped on stand by system for processing type: ExampleRollover.
-2030-01-15 10:00:01.650 [PID=1242][TID=0x1a2b] INFO - (NDS) [DiscreteSignalMappingModule] Message mapping EXAMPLE_MAP does not contain DMS value for raw value -12. Raw value will be written in value because specified raw value does not exist in SCADA values for signal with Gid = 1000123.
-2030-01-15 10:00:01.700 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointValidator] Finished permissions validation for 3 points and category AllCategories in 12ms.
-2030-01-15 10:00:01.750 [PID=1242][TID=0x1a2b] INFO - (PSS) [BaseOperation] MethodName: MultipleSelectPoint.Execute, Operation: Select, Insert: 1000123, Update: , Delete: , UserName: -97394, Console: 72619
-2030-01-15 10:00:01.800 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointSelectService] MultipleSelectPoint has been called. Requests count: 3.
-2030-01-15 10:00:01.850 [PID=1242][TID=0x1a2b] DEBUGLOG - (CMS) [SendEventToAES] Call to aesCommandingProxy.AddEvent executed in 12ms
-2030-01-15 10:00:01.900 [PID=1242][TID=0x1a2b] ERROR - [AlarmDelayProcessor] (ERROR) Failed to add alarm state delay context for Alarm identifier: Element ID: 1000123, Alarm category: ANALOG_SIGNAL_HIGH_LOW.
-2030-01-15 10:00:01.950 [PID=1242][TID=0x1a2b] WARNING - Non Fatal Exception System.ServiceModel.FaultException`1[Example.Contracts.ExampleFaultContract]: Failed to add event.
-2030-01-15 10:00:02.000 [PID=1242][TID=0x1a2b] INFO - (NDS) [BackendProcessingManager] (WARNING) Failed to get local identifier for GID: 1000123. Entity will be skipped from further processing.
-2030-01-15 10:00:02.050 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Configuration] [ExampleConfigurationProcessor] DMSType: [EXAMPLETYPE] received for processing. There are 1 inserted records, 2 updated records and 3 deleted records.
-2030-01-15 10:00:02.100 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE) ExampleConfigurationProcessor - ProcessType: Entity type: EXAMPLETYPE. Updated entities count:3
-2030-01-15 10:00:02.150 [PID=1242][TID=0x1a2b] ERROR - Integrity update request failed for topic Example.Common.ExampleTopic. Request: originator: 00000000-0000-4000-8000-0000a0000001 topics count: 20 clients (1): 00000000-0000-4000-8000-0000a0000001(0). Message Object reference not set to an instance of an object..
-2030-01-15 10:00:02.200 [PID=1242][TID=0x1a2b] ERROR - [HDL DynamicsCache] (ERROR) reading data from DB. Reason: Specified cast is not valid.
-2030-01-15 10:00:02.250 [PID=1242][TID=0x1a2b] ERROR - (TES) ERROR: Unable to validate temporary element(s) [TEs GID(s): 1000123, 1000124]
-2030-01-15 10:00:02.300 [PID=1242][TID=0x1a2b] INFO - (TES) Retrieving invalid temporary elements...
-2030-01-15 10:00:02.350 [PID=1242][TID=0x1a2b] INFO - (CMS) Publishing execution status of switching sequence entry ID=[00000000-0000-4000-8000-0000a0000001] in switching sequence ID=[00000000-0000-4000-8000-0000a0000002]. Execution status: Failed.
-2030-01-15 10:00:02.400 [PID=1242][TID=0x1a2b] INFO - (CMS) [SS Id: 00000000-0000-4000-8000-0000a0000001] [SSEntry Id: 00000000-0000-4000-8000-0000a0000002] Tag Removal completed. Status : Failed. Reason: Tag does not exists.
-2030-01-15 10:00:02.450 [PID=1242][TID=0x1a2b] ERROR - (CMS) [SwitchingSequenceExecuto] Switching Sequence successfully suspended due to the server internal request. Reason: Switching command is not validated.
-2030-01-15 10:00:02.500 [PID=1242][TID=0x1a2b] INFO - (CMS) [SwitchingCommandDispatcher] [SignalFactory] CMS got change for discrete signal with ID: 1000123, value: 1, CMD in progress: False, CMD fail: True
-2030-01-15 10:00:02.550 [PID=1242][TID=0x1a2b] DEBUGLOG - (CMS) [SwitchingCommandDispatcher] ProcessDynamicChanges started. Publications count 3
-2030-01-15 10:00:02.600 [PID=1242][TID=0x1a2b] WARNING - (CMS)[DeviceSignalGetter] Failed to read ISREMOTE property from NDS for signals: 1000123. Some of signals does not exists.
-2030-01-15 10:00:02.650 [PID=1242][TID=0x1a2b] ERROR - (NDS) [Commanding] [DiscreteCommandMonitorProcessor] Command timeout for signal: 1000123. Action: [( ActionDiscrete, GID: 1000123, RequestId: 5 )( Value: 1, CtrlMode: EXECUTE )]
-2030-01-15 10:00:02.700 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [DynamicsControl] Action(s) received for execution. There are 0 local, 1 FEP and 0 FEP Test Mode action(s).
+2030-01-15 10:00:01.400 [PID=1242][TID=0x1a2b] ERROR - (ERROR) HDL DynamicsCache Changeset operation and timestamp not found. Using Update as default operation for trend.
+2030-01-15 10:00:01.450 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache GetValuesWithOperationForInterval returned 90 results for 1 gids.
+2030-01-15 10:00:01.500 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE) [DOMCountersRolloverModule] Roll Over delay expired.
+2030-01-15 10:00:01.550 [PID=1242][TID=0x1a2b] DEBUGLOG - [StatisticsRolloverModuleBase] Roll Over skipped on stand by system for processing type: ExampleRollover.
+2030-01-15 10:00:01.600 [PID=1242][TID=0x1a2b] INFO - (NDS) [DiscreteSignalMappingModule] Message mapping EXAMPLE_MAP does not contain DMS value for raw value -12. Raw value will be written in value because specified raw value does not exist in SCADA values for signal with Gid = 1000123.
+2030-01-15 10:00:01.650 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointValidator] Finished permissions validation for 3 points and category AllCategories in 12ms.
+2030-01-15 10:00:01.700 [PID=1242][TID=0x1a2b] INFO - (PSS) [BaseOperation] MethodName: MultipleSelectPoint.Execute, Operation: Select, Insert: 1000123, Update: , Delete: , UserName: -97394, Console: 72619
+2030-01-15 10:00:01.750 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointSelectService] MultipleSelectPoint has been called. Requests count: 3.
+2030-01-15 10:00:01.800 [PID=1242][TID=0x1a2b] DEBUGLOG - (CMS) [SendEventToAES] Call to aesCommandingProxy.AddEvent executed in 12ms
+2030-01-15 10:00:01.850 [PID=1242][TID=0x1a2b] ERROR - [AlarmDelayProcessor] (ERROR) Failed to add alarm state delay context for Alarm identifier: Element ID: 1000123, Alarm category: ANALOG_SIGNAL_HIGH_LOW.
+2030-01-15 10:00:01.900 [PID=1242][TID=0x1a2b] WARNING - Non Fatal Exception System.ServiceModel.FaultException`1[Example.Contracts.ExampleFaultContract]: Failed to add event.
+2030-01-15 10:00:01.950 [PID=1242][TID=0x1a2b] INFO - (NDS) [BackendProcessingManager] (WARNING) Failed to get local identifier for GID: 1000123. Entity will be skipped from further processing.
+2030-01-15 10:00:02.000 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Configuration] [ExampleConfigurationProcessor] DMSType: [EXAMPLETYPE] received for processing. There are 1 inserted records, 2 updated records and 3 deleted records.
+2030-01-15 10:00:02.050 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE) ExampleConfigurationProcessor - ProcessType: Entity type: EXAMPLETYPE. Updated entities count:3
+2030-01-15 10:00:02.100 [PID=1242][TID=0x1a2b] ERROR - Integrity update request failed for topic Example.Common.ExampleTopic. Request: originator: 00000000-0000-4000-8000-0000a0000001 topics count: 20 clients (1): 00000000-0000-4000-8000-0000a0000001(0). Message Object reference not set to an instance of an object..
+2030-01-15 10:00:02.150 [PID=1242][TID=0x1a2b] ERROR - [HDL DynamicsCache] (ERROR) reading data from DB. Reason: Specified cast is not valid.
+2030-01-15 10:00:02.200 [PID=1242][TID=0x1a2b] ERROR - (TES) ERROR: Unable to validate temporary element(s) [TEs GID(s): 1000123, 1000124]
+2030-01-15 10:00:02.250 [PID=1242][TID=0x1a2b] INFO - (TES) Retrieving invalid temporary elements...
+2030-01-15 10:00:02.300 [PID=1242][TID=0x1a2b] INFO - (CMS) Publishing execution status of switching sequence entry ID=[00000000-0000-4000-8000-0000a0000001] in switching sequence ID=[00000000-0000-4000-8000-0000a0000002]. Execution status: Failed.
+2030-01-15 10:00:02.350 [PID=1242][TID=0x1a2b] INFO - (CMS) [SS Id: 00000000-0000-4000-8000-0000a0000001] [SSEntry Id: 00000000-0000-4000-8000-0000a0000002] Tag Removal completed. Status : Failed. Reason: Tag does not exists.
+2030-01-15 10:00:02.400 [PID=1242][TID=0x1a2b] ERROR - (CMS) [SwitchingSequenceExecuto] Switching Sequence successfully suspended due to the server internal request. Reason: Switching command is not validated.
+2030-01-15 10:00:02.450 [PID=1242][TID=0x1a2b] INFO - (CMS) [SwitchingCommandDispatcher] [SignalFactory] CMS got change for discrete signal with ID: 1000123, value: 1, CMD in progress: False, CMD fail: True
+2030-01-15 10:00:02.500 [PID=1242][TID=0x1a2b] DEBUGLOG - (CMS) [SwitchingCommandDispatcher] ProcessDynamicChanges started. Publications count 3
+2030-01-15 10:00:02.550 [PID=1242][TID=0x1a2b] WARNING - (CMS)[DeviceSignalGetter] Failed to read ISREMOTE property from NDS for signals: 1000123. Some of signals does not exists.
+2030-01-15 10:00:02.600 [PID=1242][TID=0x1a2b] ERROR - (NDS) [Commanding] [DiscreteCommandMonitorProcessor] Command timeout for signal: 1000123. Action: [( ActionDiscrete, GID: 1000123, RequestId: 5 )( Value: 1, CtrlMode: EXECUTE )]
+2030-01-15 10:00:02.650 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [DynamicsControl] Action(s) received for execution. There are 0 local, 1 FEP and 0 FEP Test Mode action(s).
+2030-01-15 10:00:02.700 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) [TagsManagementService] Applying delta. Inserted 1 | Updated 0 | Deleted 2
 2030-01-15 10:00:02.750 [PID=1242][TID=0x1a2b] INFO - -----
-2030-01-15 10:00:02.800 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) [TagsManagementService] Applying delta. Inserted 1 | Updated 0 | Deleted 2
-2030-01-15 10:00:02.850 [PID=1242][TID=0x1a2b] WARNING - (TAS) [TagsManagementService] WARNING: Invalid action, tag actions is not allowed on servers that are not in HOT state.
-2030-01-15 10:00:02.900 [PID=1242][TID=0x1a2b] INFO - (NDS) [ItemCacheHelper] Cache configuration: Operation timeout 1200000ms, Transaction timeout: Infinite.
-2030-01-15 10:00:02.950 [PID=1242][TID=0x1a2b] DEBUGLOG - Getting active versions.
-2030-01-15 10:00:03.000 [PID=1242][TID=0x1a2b] DEBUGLOG - Deleting incomplete snapshot.
-2030-01-15 10:00:03.050 [PID=1242][TID=0x1a2b] DEBUGLOG - Decreasing number of services in transaction: current number = 22. Transaction Guid = 00000000-0000-4000-8000-0000a0000001. Transaction Guid from service = 00000000-0000-4000-8000-0000a0000002
-2030-01-15 10:00:03.100 [PID=1242][TID=0x1a2b] DEBUGLOG - TransactionCompleted called from service. Service name = EXS. Transaction GUID from service = 00000000-0000-4000-8000-0000a0000003.
-2030-01-15 10:00:03.150 [PID=1242][TID=0x1a2b] DEBUGLOG - Pushing version to central repository. Version ID = 100.200
-2030-01-15 10:00:03.200 [PID=1242][TID=0x1a2b] DEBUGLOG - Creating new version (replicated) succeeded. Version ID = 100.200. Parent version ID = 100.100.
-2030-01-15 10:00:03.250 [PID=1242][TID=0x1a2b] DEBUGLOG - Saving versions and deltas to database succeeded.
-2030-01-15 10:00:03.300 [PID=1242][TID=0x1a2b] DEBUGLOG - Applying TE updates finished. Version = 100.200. Context Id = 1000123. Model delta counter = 100.300. Result type = Failed.
-2030-01-15 10:00:03.350 [PID=1242][TID=0x1a2b] DEBUGLOG - Finished calling switch version to EXS from task. From version = 100.200. To Version = 100.201.  Context ID = 1000123. Address = shmem://HOST01:9852/ExampleModelUpdateService. Result = Succeeded.
-2030-01-15 10:00:03.400 [PID=1242][TID=0x1a2b] DEBUGLOG - Finished calling apply updates to EXS from task. Context ID = 1000123. Version = 100.200. Address = shmem://HOST01:9863/ExampleModelUpdateService. Result = Succeeded.
-2030-01-15 10:00:03.450 [PID=1242][TID=0x1a2b] DEBUGLOG - Transaction (replicated) completed: Aborted.
-2030-01-15 10:00:03.500 [PID=1242][TID=0x1a2b] DEBUGLOG - Update entity information in table - start
-2030-01-15 10:00:03.550 [PID=1242][TID=0x1a2b] DEBUGLOG - [VersionsPathFinder] Find path between versions 1000123 and 1000456 started.
-2030-01-15 10:00:03.600 [PID=1242][TID=0x1a2b] DEBUGLOG - Opening connection with NMS.
-2030-01-15 10:00:03.650 [PID=1242][TID=0x1a2b] DEBUGLOG - Replication message received. DatasetId: 2, dataflowId: 6.
-2030-01-15 10:00:03.700 [PID=1242][TID=0x1a2b] ERROR - Failed to apply TE updates to EXS. Address = shmem://HOST01:9823/ExampleModelUpdateService.
-2030-01-15 10:00:03.750 [PID=1242][TID=0x1a2b] DEBUGLOG - MessageManager: Number of unacknowledged messages is 10.
-2030-01-15 10:00:03.800 [PID=1242][TID=0x1a2b] DEBUGLOG - EXS:                             ExampleCache:                    3                   40
-2030-01-15 10:00:03.850 [PID=1242][TID=0x1a2b] DEBUGLOG - arb_pubSubLookup: Cache updated with system: sys, service: svc, host: HOST01, topic: sys.svc.arb.HOST01.states.state, arb state: FAIL, ps status: OK
-2030-01-15 10:00:03.900 [PID=1242][TID=0x1a2b] DEBUGLOG - DumpStatistics lasted: 12ms
-2030-01-15 10:00:03.950 [PID=1242][TID=0x1a2b] WARNING - MessageManager: There is no matching callback contract for message identifier: clientId: 5, serviceId: 6, routeId: -1, systemId: 7, processId: 8, messageOrderNumber: 9, dataflow: 2.
-2030-01-15 10:00:04.000 [PID=1242][TID=0x1a2b] DEBUGLOG - [ASCache] Commit phase in AnnualScheduleCache completed.
-2030-01-15 10:00:04.050 [PID=1242][TID=0x1a2b] ALWAYS - [Configurator] Arbitration state is changed to TRUE.
-2030-01-15 10:00:04.100 [PID=1242][TID=0x1a2b] ALWAYS - [ModelHandler] Get extent values for "static" properties from NMS completed in 248 ms for EXAMPLETYPE gids count 399.
+2030-01-15 10:00:02.800 [PID=1242][TID=0x1a2b] WARNING - (TAS) [TagsManagementService] WARNING: Invalid action, tag actions is not allowed on servers that are not in HOT state.
+2030-01-15 10:00:02.850 [PID=1242][TID=0x1a2b] INFO - (NDS) [ItemCacheHelper] Cache configuration: Operation timeout 1200000ms, Transaction timeout: Infinite.
+2030-01-15 10:00:02.900 [PID=1242][TID=0x1a2b] DEBUGLOG - Getting active versions.
+2030-01-15 10:00:02.950 [PID=1242][TID=0x1a2b] DEBUGLOG - Deleting incomplete snapshot.
+2030-01-15 10:00:03.000 [PID=1242][TID=0x1a2b] DEBUGLOG - Decreasing number of services in transaction: current number = 22. Transaction Guid = 00000000-0000-4000-8000-0000a0000001. Transaction Guid from service = 00000000-0000-4000-8000-0000a0000002
+2030-01-15 10:00:03.050 [PID=1242][TID=0x1a2b] DEBUGLOG - TransactionCompleted called from service. Service name = EXS. Transaction GUID from service = 00000000-0000-4000-8000-0000a0000003.
+2030-01-15 10:00:03.100 [PID=1242][TID=0x1a2b] DEBUGLOG - Pushing version to central repository. Version ID = 100.200
+2030-01-15 10:00:03.150 [PID=1242][TID=0x1a2b] DEBUGLOG - Creating new version (replicated) succeeded. Version ID = 100.200. Parent version ID = 100.100.
+2030-01-15 10:00:03.200 [PID=1242][TID=0x1a2b] DEBUGLOG - Saving versions and deltas to database succeeded.
+2030-01-15 10:00:03.250 [PID=1242][TID=0x1a2b] DEBUGLOG - Applying TE updates finished. Version = 100.200. Context Id = 1000123. Model delta counter = 100.300. Result type = Failed.
+2030-01-15 10:00:03.300 [PID=1242][TID=0x1a2b] DEBUGLOG - Finished calling switch version to EXS from task. From version = 100.200. To Version = 100.201.  Context ID = 1000123. Address = shmem://HOST01:9852/ExampleModelUpdateService. Result = Succeeded.
+2030-01-15 10:00:03.350 [PID=1242][TID=0x1a2b] DEBUGLOG - Finished calling apply updates to EXS from task. Context ID = 1000123. Version = 100.200. Address = shmem://HOST01:9863/ExampleModelUpdateService. Result = Succeeded.
+2030-01-15 10:00:03.400 [PID=1242][TID=0x1a2b] DEBUGLOG - Transaction (replicated) completed: Aborted.
+2030-01-15 10:00:03.450 [PID=1242][TID=0x1a2b] DEBUGLOG - Update entity information in table - start
+2030-01-15 10:00:03.500 [PID=1242][TID=0x1a2b] DEBUGLOG - [VersionsPathFinder] Find path between versions 1000123 and 1000456 started.
+2030-01-15 10:00:03.550 [PID=1242][TID=0x1a2b] DEBUGLOG - Opening connection with NMS.
+2030-01-15 10:00:03.600 [PID=1242][TID=0x1a2b] DEBUGLOG - Replication message received. DatasetId: 2, dataflowId: 6.
+2030-01-15 10:00:03.650 [PID=1242][TID=0x1a2b] ERROR - Failed to apply TE updates to EXS. Address = shmem://HOST01:9823/ExampleModelUpdateService.
+2030-01-15 10:00:03.700 [PID=1242][TID=0x1a2b] DEBUGLOG - MessageManager: Number of unacknowledged messages is 10.
+2030-01-15 10:00:03.750 [PID=1242][TID=0x1a2b] DEBUGLOG - EXS:                             ExampleCache:                    3                   40
+2030-01-15 10:00:03.800 [PID=1242][TID=0x1a2b] DEBUGLOG - arb_pubSubLookup: Cache updated with system: sys, service: svc, host: HOST01, topic: sys.svc.arb.HOST01.states.state, arb state: FAIL, ps status: OK
+2030-01-15 10:00:03.850 [PID=1242][TID=0x1a2b] DEBUGLOG - DumpStatistics lasted: 12ms
+2030-01-15 10:00:03.900 [PID=1242][TID=0x1a2b] WARNING - MessageManager: There is no matching callback contract for message identifier: clientId: 5, serviceId: 6, routeId: -1, systemId: 7, processId: 8, messageOrderNumber: 9, dataflow: 2.
+2030-01-15 10:00:03.950 [PID=1242][TID=0x1a2b] DEBUGLOG - [ASCache] Commit phase in AnnualScheduleCache completed.
+2030-01-15 10:00:04.000 [PID=1242][TID=0x1a2b] ALWAYS - [Configurator] Arbitration state is changed to TRUE.
+2030-01-15 10:00:04.050 [PID=1242][TID=0x1a2b] ALWAYS - [ModelHandler] Get extent values for "static" properties from NMS completed in 248 ms for EXAMPLETYPE gids count 399.
+2030-01-15 10:00:04.100 [PID=1242][TID=0x1a2b] INFO - Opening connection with EXS Global Query Service. 
 2030-01-15 10:00:04.150 [PID=1242][TID=0x1a2b] INFO - [GDA Statistics] [GetValues] Properties: IDOBJ_NAME, Count: x
-2030-01-15 10:00:04.200 [PID=1242][TID=0x1a2b] INFO - Opening connection with EXS Global Query Service. 
-2030-01-15 10:00:04.250 [PID=1242][TID=0x1a2b] ERROR - (ERROR) Failed to get model type code for DMS type: 7. Invalid DMS type
-2030-01-15 10:00:04.300 [PID=1242][TID=0x1a2b] DEBUGLOG - Executing command with parameters:
-2030-01-15 10:00:04.350 [PID=1242][TID=0x1a2b] ALWAYS - Vector layers loaded: 38
-2030-01-15 10:00:04.400 [PID=1242][TID=0x1a2b] ERROR - (ERROR) [Communication2] - Service operation GetExampleBlocks threw unexpected exception.
-2030-01-15 10:00:04.450 [PID=1242][TID=0x1a2b] DEBUGLOG - [GDA Statistics] [GetValues] Properties: IDOBJ_NAME, IDOBJ_LID, Count: 7
-2030-01-15 10:00:04.500 [PID=1242][TID=0x1a2b] INFO - Full text search list on Context with Id = 1000123. Entity type = EXAMPLETYPE. Property = IDOBJ_CUSTOMID. Filter count = 7.
-2030-01-15 10:00:04.550 [PID=1242][TID=0x1a2b] INFO - Full text search on Context with Id = 1000123. Entity type = EXAMPLETYPE. Property = IDOBJ_NAME. Filter = example.
-2030-01-15 10:00:04.600 [PID=1242][TID=0x1a2b] INFO - Get network view properties finished.
-2030-01-15 10:00:04.650 [PID=1242][TID=0x1a2b] INFO - Get internal elements for 89 gids, and types .
-2030-01-15 10:00:04.700 [PID=1242][TID=0x1a2b] INFO - Get all internal elements for 1 gids, and ASIGNAL types finished. Results number: 12.
-2030-01-15 10:00:04.750 [PID=1242][TID=0x1a2b] INFO - Get line direction for lines finished.
-2030-01-15 10:00:04.800 [PID=1242][TID=0x1a2b] DEBUGLOG - Get feeder equipment by circuit - finished.
-2030-01-15 10:00:04.850 [PID=1242][TID=0x1a2b] DEBUGLOG - [SNAPSHOT]Exporting EXAMPLETYPE .
-2030-01-15 10:00:04.900 [PID=1242][TID=0x1a2b] DEBUGLOG - [SNAPSHOT]EXAMPLETYPE exported. Count 20. Elapsed 1.5s.
-2030-01-15 10:00:04.950 [PID=1242][TID=0x1a2b] ERROR - Getting values for resource with ID = 0x4A00B00C00D00E01 failed.  Failed to retrieve LID for GID = 0x4A00B00C00D00E02.
-2030-01-15 10:00:05.000 [PID=1242][TID=0x1a2b] ERROR - Getting values for resource with ID = 0x4A00B00C00D00E02 failed. Message from EXS: Exception of type 'Example.Common.ExampleException' was thrown.
-2030-01-15 10:00:05.050 [PID=1242][TID=0x1a2b] ERROR - Getting descendent values failed. Sources count = 2. Association depth = 1.Data with invalid IDs requested: 0x4A00B00C00D00E02.
-2030-01-15 10:00:05.100 [PID=1242][TID=0x1a2b] ERROR - Getting descendent values properties failed. Sources count = 2. Association depth = 1. Types count = 3.Data with invalid IDs requested: 0x4A00B00C00D00E02.
-2030-01-15 10:00:05.150 [PID=1242][TID=0x1a2b] ERROR - (ERROR) Failed to get related gids for entities. Data with invalid IDs requested: 0x4A00B00C00D00E02.
-2030-01-15 10:00:05.200 [PID=1242][TID=0x1a2b] ERROR - (ERROR) Get attribute values failed.  Warning: Failed to get model for specified version 100.200 and model delta counter 100.300.
-2030-01-15 10:00:05.250 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Prepare data for query with GID: 1000123 started.
-2030-01-15 10:00:05.300 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Prepare data started. Directory GID: 1000123
-2030-01-15 10:00:05.350 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Prepare data ended.
-2030-01-15 10:00:05.400 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Table data for DMS Type [EXAMPLETYPE] created.
-2030-01-15 10:00:05.450 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Getting ETL Directories by external system names started.
-2030-01-15 10:00:05.500 [PID=1242][TID=0x1a2b] DEBUGLOG - Getting ETL export configuration for external system names [DA] started.
+2030-01-15 10:00:04.200 [PID=1242][TID=0x1a2b] ERROR - (ERROR) Failed to get model type code for DMS type: 7. Invalid DMS type
+2030-01-15 10:00:04.250 [PID=1242][TID=0x1a2b] DEBUGLOG - Executing command with parameters:
+2030-01-15 10:00:04.300 [PID=1242][TID=0x1a2b] ALWAYS - Vector layers loaded: 38
+2030-01-15 10:00:04.350 [PID=1242][TID=0x1a2b] ERROR - (ERROR) [Communication2] - Service operation GetExampleBlocks threw unexpected exception.
+2030-01-15 10:00:04.400 [PID=1242][TID=0x1a2b] DEBUGLOG - [GDA Statistics] [GetValues] Properties: IDOBJ_NAME, IDOBJ_LID, Count: 7
+2030-01-15 10:00:04.450 [PID=1242][TID=0x1a2b] INFO - Full text search list on Context with Id = 1000123. Entity type = EXAMPLETYPE. Property = IDOBJ_CUSTOMID. Filter count = 7.
+2030-01-15 10:00:04.500 [PID=1242][TID=0x1a2b] INFO - Full text search on Context with Id = 1000123. Entity type = EXAMPLETYPE. Property = IDOBJ_NAME. Filter = example.
+2030-01-15 10:00:04.550 [PID=1242][TID=0x1a2b] INFO - Get network view properties finished.
+2030-01-15 10:00:04.600 [PID=1242][TID=0x1a2b] INFO - Get internal elements for 89 gids, and types .
+2030-01-15 10:00:04.650 [PID=1242][TID=0x1a2b] INFO - Get all internal elements for 1 gids, and ASIGNAL types finished. Results number: 12.
+2030-01-15 10:00:04.700 [PID=1242][TID=0x1a2b] INFO - Get line direction for lines finished.
+2030-01-15 10:00:04.750 [PID=1242][TID=0x1a2b] DEBUGLOG - Get feeder equipment by circuit - finished.
+2030-01-15 10:00:04.800 [PID=1242][TID=0x1a2b] DEBUGLOG - [SNAPSHOT]Exporting EXAMPLETYPE .
+2030-01-15 10:00:04.850 [PID=1242][TID=0x1a2b] DEBUGLOG - [SNAPSHOT]EXAMPLETYPE exported. Count 20. Elapsed 1.5s.
+2030-01-15 10:00:04.900 [PID=1242][TID=0x1a2b] ERROR - Getting values for resource with ID = 0x4A00B00C00D00E01 failed.  Failed to retrieve LID for GID = 0x4A00B00C00D00E02.
+2030-01-15 10:00:04.950 [PID=1242][TID=0x1a2b] ERROR - Getting values for resource with ID = 0x4A00B00C00D00E02 failed. Message from EXS: Exception of type 'Example.Common.ExampleException' was thrown.
+2030-01-15 10:00:05.000 [PID=1242][TID=0x1a2b] ERROR - Getting descendent values failed. Sources count = 2. Association depth = 1.Data with invalid IDs requested: 0x4A00B00C00D00E02.
+2030-01-15 10:00:05.050 [PID=1242][TID=0x1a2b] ERROR - Getting descendent values properties failed. Sources count = 2. Association depth = 1. Types count = 3.Data with invalid IDs requested: 0x4A00B00C00D00E02.
+2030-01-15 10:00:05.100 [PID=1242][TID=0x1a2b] ERROR - (ERROR) Failed to get related gids for entities. Data with invalid IDs requested: 0x4A00B00C00D00E02.
+2030-01-15 10:00:05.150 [PID=1242][TID=0x1a2b] ERROR - (ERROR) Get attribute values failed.  Warning: Failed to get model for specified version 100.200 and model delta counter 100.300.
+2030-01-15 10:00:05.200 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Prepare data for query with GID: 1000123 started.
+2030-01-15 10:00:05.250 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Prepare data started. Directory GID: 1000123
+2030-01-15 10:00:05.300 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Prepare data ended.
+2030-01-15 10:00:05.350 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Table data for DMS Type [EXAMPLETYPE] created.
+2030-01-15 10:00:05.400 [PID=1242][TID=0x1a2b] DEBUGLOG - [ETL] Getting ETL Directories by external system names started.
+2030-01-15 10:00:05.450 [PID=1242][TID=0x1a2b] DEBUGLOG - Getting ETL export configuration for external system names [DA] started.
+2030-01-15 10:00:05.500 [PID=1242][TID=0x1a2b] DEBUGLOG - Getting ETL export configuration finished.
 2030-01-15 10:00:05.550 [PID=1242][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
-2030-01-15 10:00:05.600 [PID=1242][TID=0x1a2b] DEBUGLOG - Getting ETL export configuration finished.
-2030-01-15 10:00:05.650 [PID=1242][TID=0x1a2b] DEBUGLOG - Release ETLEntityPool - Global: 10, Local: 2).
-2030-01-15 10:00:05.700 [PID=1242][TID=0x1a2b] DEBUGLOG - Wait for end of transaction finished
-2030-01-15 10:00:05.750 [PID=1242][TID=0x1a2b] DEBUGLOG - Applying delta on Block Model finished.
-2030-01-15 10:00:05.800 [PID=1242][TID=0x1a2b] DEBUGLOG - Max Number Of Tasks For Apply Delta Parallel is: [28]
-2030-01-15 10:00:05.850 [PID=1242][TID=0x1a2b] DEBUGLOG - Deserialization completed in 217 ms.
-2030-01-15 10:00:05.900 [PID=1242][TID=0x1a2b] DEBUGLOG - Total wait time due to blockWorkers: 29 ms.
-2030-01-15 10:00:05.950 [PID=1242][TID=0x1a2b] DEBUGLOG - Validation trigers time: 12 ms.
-2030-01-15 10:00:06.000 [PID=1242][TID=0x1a2b] DEBUGLOG - Memory usage data before ApplyDeltas:
-2030-01-15 10:00:06.050 [PID=1242][TID=0x1a2b] DEBUGLOG - Switch version of text properties (FTS) from version 100.200 to version 100.201.
-2030-01-15 10:00:06.100 [PID=1242][TID=0x1a2b] DEBUGLOG - Inserting new values for 5 entities.
-2030-01-15 10:00:06.150 [PID=1242][TID=0x1a2b] DEBUGLOG - Entering write lock to txt db.
-2030-01-15 10:00:06.200 [PID=1242][TID=0x1a2b] DEBUGLOG - TextPropertyManager created inside transaction scope. Concurrent access to txt db will be possible after the transaction is finished.
-2030-01-15 10:00:06.250 [PID=1242][TID=0x1a2b] DEBUGLOG - Deleted values from FTS table.
-2030-01-15 10:00:06.300 [PID=1242][TID=0x1a2b] DEBUGLOG - UPDATE idobj_text_fts SET "IDOBJ_NAME" =@IDOBJ_NAME WHERE rowid = @rowId
-2030-01-15 10:00:06.350 [PID=1242][TID=0x1a2b] DEBUGLOG - Created select query.
-2030-01-15 10:00:06.400 [PID=1242][TID=0x1a2b] DEBUGLOG - Affected 3 rows.
-2030-01-15 10:00:06.450 [PID=1242][TID=0x1a2b] DEBUGLOG - Updating contexts on version switch (current context ID = 1000123) started.
-2030-01-15 10:00:06.500 [PID=1242][TID=0x1a2b] DEBUGLOG - Transaction completed: Aborted.
-2030-01-15 10:00:06.550 [PID=1242][TID=0x1a2b] DEBUGLOG - Transaction completed: Committed.
-2030-01-15 10:00:06.600 [PID=1242][TID=0x1a2b] DEBUGLOG - Transaction completed. Concurrent access to txt database is now available.
-2030-01-15 10:00:06.650 [PID=1242][TID=0x1a2b] DEBUGLOG - Counting reference number in block model - start
-2030-01-15 10:00:06.700 [PID=1242][TID=0x1a2b] DEBUGLOG - CompareTransactionalModels started. Model Version: 100.200, MDC old: 100.300, new MDC 100.301, Elements count: 55
-2030-01-15 10:00:06.750 [PID=1242][TID=0x1a2b] DEBUGLOG - CompareTransactionalModels getting blocks finished.
-2030-01-15 10:00:06.800 [PID=1242][TID=0x1a2b] DEBUGLOG - Initializing connection pool started.
-2030-01-15 10:00:06.850 [PID=1242][TID=0x1a2b] DEBUGLOG - Disposing connection pool...
-2030-01-15 10:00:06.900 [PID=1242][TID=0x1a2b] DEBUGLOG - All found elements without filtering - start
+2030-01-15 10:00:05.600 [PID=1242][TID=0x1a2b] DEBUGLOG - Release ETLEntityPool - Global: 10, Local: 2).
+2030-01-15 10:00:05.650 [PID=1242][TID=0x1a2b] DEBUGLOG - Wait for end of transaction finished
+2030-01-15 10:00:05.700 [PID=1242][TID=0x1a2b] DEBUGLOG - Applying delta on Block Model finished.
+2030-01-15 10:00:05.750 [PID=1242][TID=0x1a2b] DEBUGLOG - Max Number Of Tasks For Apply Delta Parallel is: [28]
+2030-01-15 10:00:05.800 [PID=1242][TID=0x1a2b] DEBUGLOG - Deserialization completed in 217 ms.
+2030-01-15 10:00:05.850 [PID=1242][TID=0x1a2b] DEBUGLOG - Total wait time due to blockWorkers: 29 ms.
+2030-01-15 10:00:05.900 [PID=1242][TID=0x1a2b] DEBUGLOG - Validation trigers time: 12 ms.
+2030-01-15 10:00:05.950 [PID=1242][TID=0x1a2b] DEBUGLOG - Memory usage data before ApplyDeltas:
+2030-01-15 10:00:06.000 [PID=1242][TID=0x1a2b] DEBUGLOG - Switch version of text properties (FTS) from version 100.200 to version 100.201.
+2030-01-15 10:00:06.050 [PID=1242][TID=0x1a2b] DEBUGLOG - Inserting new values for 5 entities.
+2030-01-15 10:00:06.100 [PID=1242][TID=0x1a2b] DEBUGLOG - Entering write lock to txt db.
+2030-01-15 10:00:06.150 [PID=1242][TID=0x1a2b] DEBUGLOG - TextPropertyManager created inside transaction scope. Concurrent access to txt db will be possible after the transaction is finished.
+2030-01-15 10:00:06.200 [PID=1242][TID=0x1a2b] DEBUGLOG - Deleted values from FTS table.
+2030-01-15 10:00:06.250 [PID=1242][TID=0x1a2b] DEBUGLOG - UPDATE idobj_text_fts SET "IDOBJ_NAME" =@IDOBJ_NAME WHERE rowid = @rowId
+2030-01-15 10:00:06.300 [PID=1242][TID=0x1a2b] DEBUGLOG - Created select query.
+2030-01-15 10:00:06.350 [PID=1242][TID=0x1a2b] DEBUGLOG - Affected 3 rows.
+2030-01-15 10:00:06.400 [PID=1242][TID=0x1a2b] DEBUGLOG - Updating contexts on version switch (current context ID = 1000123) started.
+2030-01-15 10:00:06.450 [PID=1242][TID=0x1a2b] DEBUGLOG - Transaction completed: Aborted.
+2030-01-15 10:00:06.500 [PID=1242][TID=0x1a2b] DEBUGLOG - Transaction completed: Committed.
+2030-01-15 10:00:06.550 [PID=1242][TID=0x1a2b] DEBUGLOG - Transaction completed. Concurrent access to txt database is now available.
+2030-01-15 10:00:06.600 [PID=1242][TID=0x1a2b] DEBUGLOG - Counting reference number in block model - start
+2030-01-15 10:00:06.650 [PID=1242][TID=0x1a2b] DEBUGLOG - CompareTransactionalModels started. Model Version: 100.200, MDC old: 100.300, new MDC 100.301, Elements count: 55
+2030-01-15 10:00:06.700 [PID=1242][TID=0x1a2b] DEBUGLOG - CompareTransactionalModels getting blocks finished.
+2030-01-15 10:00:06.750 [PID=1242][TID=0x1a2b] DEBUGLOG - Initializing connection pool started.
+2030-01-15 10:00:06.800 [PID=1242][TID=0x1a2b] DEBUGLOG - Disposing connection pool...
+2030-01-15 10:00:06.850 [PID=1242][TID=0x1a2b] DEBUGLOG - All found elements without filtering - start
+2030-01-15 10:00:06.900 [PID=1242][TID=0x1a2b] DEBUGLOG - GC Collect called.
 2030-01-15 10:00:06.950 [PID=1242][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
-2030-01-15 10:00:07.000 [PID=1242][TID=0x1a2b] DEBUGLOG - GC Collect called.
-2030-01-15 10:00:07.050 [PID=1242][TID=0x1a2b] DEBUGLOG - [Feeder Segments] Getting affected blocks started.
-2030-01-15 10:00:07.100 [PID=1242][TID=0x1a2b] DEBUGLOG - Operation: Update. Count: 3
-2030-01-15 10:00:07.150 [PID=1242][TID=0x1a2b] DEBUGLOG - Examine delta with id 100.200.
-2030-01-15 10:00:07.200 [PID=1242][TID=0x1a2b] DEBUGLOG - Setting circuit to 5 entities started.
-2030-01-15 10:00:07.250 [PID=1242][TID=0x1a2b] DEBUGLOG - Setting circuit finished.
-2030-01-15 10:00:07.300 [PID=1242][TID=0x1a2b] ERROR - (ERROR) IteratorGetRange failed. Iterator ID = 7. Resources to fetch count = 3. Index = 0. Unknown property id = EXAMPLE_PROP for entity (GID = 0x4A00B00C00D00E02, LID = 0x4A00B00C00D00E01).
-2030-01-15 10:00:07.350 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache GetValuesWithOperationForInterval called with 1 gids, 2 model codes, time from 2026-01-01T05:00:00.0000000Z to 2026-01-01T06:00:00.0000000Z, includePrev True, includeNext False.
-2030-01-15 10:00:07.400 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL TemporaryElementsCache [ElementDALSQLite]: Number of deleted elements with changesets ids equal or lower than 1000123 for machineId 5 and dataset exampleDS is 12.
-2030-01-15 10:00:07.450 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache [ItemDALSQLite]: Number of deleted changesets with ids equal or lower than 1000123 for machineId 5 and dataset exampleDS is 3.
-2030-01-15 10:00:07.500 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache Connect to file C:\Example\data\HDL_Example.db, connection readOnly=False
-2030-01-15 10:00:07.550 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache DeleteValuesBefore delete file C:\Example\data\HDL_Example.db from disk.
-2030-01-15 10:00:07.600 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) Manager - Remote units and links archive delay expired.
-2030-01-15 10:00:07.650 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) Manager - Removing timeout (Id: 7) for statistics archiving.
-2030-01-15 10:00:07.700 [PID=1242][TID=0x1a2b] INFO - (NDS) [DiscreteSignalMappingModule] Message mapping is not defined or valid for signal with Gid = 1000123 and raw value 0 will be written to DMS value for that signal.
-2030-01-15 10:00:07.750 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointValidator] Finished filtering missing GIDs against NMS in 0ms.
-2030-01-15 10:00:07.800 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointValidator] Finished AOR groups fetch from NMS in 4ms.
-2030-01-15 10:00:07.850 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointSelectService] MultipleSelectPointWithCompleteResult has been called for 3 requests.
-2030-01-15 10:00:07.900 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointSelectService] SelectPoint has been called. PointId: 1000123, Category: AllCategories.
-2030-01-15 10:00:07.950 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointSelectService] MultipleSelectPoint finished with result: [Lock Succeeded: True, Locked Points: <gid: 1000123, lockId: 55>, Already Selected Points: N/A]
-2030-01-15 10:00:08.000 [PID=1242][TID=0x1a2b] DEBUGLOG - (CMS) [SendEventToAES] Swap Identities
-2030-01-15 10:00:08.050 [PID=1242][TID=0x1a2b] ERROR - [StateDelayManager] (ERROR) Failed to remove alarm state delay context. Element Id: 1000123, Delay processing type: ExampleDelayProcessing.
-2030-01-15 10:00:08.100 [PID=1242][TID=0x1a2b] ERROR - [DDelayInhibitProcessor] Failed to delete alarm state delay context. Alarm state processing will be continued for Processing type: ExampleDelayProcessing.
-2030-01-15 10:00:08.150 [PID=1242][TID=0x1a2b] WARNING - Non Fatal Exception System.Exception:
-2030-01-15 10:00:08.200 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Configuration] [ExampleConfigurationProcessor] Execute method called.
-2030-01-15 10:00:08.250 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Configuration] [ExampleConfigurationProcessor] GetChangedReferences for root class SIGNAL returned 4 affected roots. Execution took 00:00.0120.
-2030-01-15 10:00:08.300 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE-Alarming) ExampleAlarmProcessor - Execute: Searching for signals affected by alarm configuration reference changes.
+2030-01-15 10:00:07.000 [PID=1242][TID=0x1a2b] DEBUGLOG - [Feeder Segments] Getting affected blocks started.
+2030-01-15 10:00:07.050 [PID=1242][TID=0x1a2b] DEBUGLOG - Operation: Update. Count: 3
+2030-01-15 10:00:07.100 [PID=1242][TID=0x1a2b] DEBUGLOG - Examine delta with id 100.200.
+2030-01-15 10:00:07.150 [PID=1242][TID=0x1a2b] DEBUGLOG - Setting circuit to 5 entities started.
+2030-01-15 10:00:07.200 [PID=1242][TID=0x1a2b] DEBUGLOG - Setting circuit finished.
+2030-01-15 10:00:07.250 [PID=1242][TID=0x1a2b] ERROR - (ERROR) IteratorGetRange failed. Iterator ID = 7. Resources to fetch count = 3. Index = 0. Unknown property id = EXAMPLE_PROP for entity (GID = 0x4A00B00C00D00E02, LID = 0x4A00B00C00D00E01).
+2030-01-15 10:00:07.300 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache GetValuesWithOperationForInterval called with 1 gids, 2 model codes, time from 2026-01-01T05:00:00.0000000Z to 2026-01-01T06:00:00.0000000Z, includePrev True, includeNext False.
+2030-01-15 10:00:07.350 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL TemporaryElementsCache [ElementDALSQLite]: Number of deleted elements with changesets ids equal or lower than 1000123 for machineId 5 and dataset exampleDS is 12.
+2030-01-15 10:00:07.400 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache [ItemDALSQLite]: Number of deleted changesets with ids equal or lower than 1000123 for machineId 5 and dataset exampleDS is 3.
+2030-01-15 10:00:07.450 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache Connect to file C:\Example\data\HDL_Example.db, connection readOnly=False
+2030-01-15 10:00:07.500 [PID=1242][TID=0x1a2b] DEBUGLOG - HDL DynamicsCache DeleteValuesBefore delete file C:\Example\data\HDL_Example.db from disk.
+2030-01-15 10:00:07.550 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) Manager - Remote units and links archive delay expired.
+2030-01-15 10:00:07.600 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) Manager - Removing timeout (Id: 7) for statistics archiving.
+2030-01-15 10:00:07.650 [PID=1242][TID=0x1a2b] INFO - (NDS) [DiscreteSignalMappingModule] Message mapping is not defined or valid for signal with Gid = 1000123 and raw value 0 will be written to DMS value for that signal.
+2030-01-15 10:00:07.700 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointValidator] Finished filtering missing GIDs against NMS in 0ms.
+2030-01-15 10:00:07.750 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointValidator] Finished AOR groups fetch from NMS in 4ms.
+2030-01-15 10:00:07.800 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointSelectService] MultipleSelectPointWithCompleteResult has been called for 3 requests.
+2030-01-15 10:00:07.850 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointSelectService] SelectPoint has been called. PointId: 1000123, Category: AllCategories.
+2030-01-15 10:00:07.900 [PID=1242][TID=0x1a2b] DEBUGLOG - (PSS) [PointSelectService] MultipleSelectPoint finished with result: [Lock Succeeded: True, Locked Points: <gid: 1000123, lockId: 55>, Already Selected Points: N/A]
+2030-01-15 10:00:07.950 [PID=1242][TID=0x1a2b] DEBUGLOG - (CMS) [SendEventToAES] Swap Identities
+2030-01-15 10:00:08.000 [PID=1242][TID=0x1a2b] ERROR - [StateDelayManager] (ERROR) Failed to remove alarm state delay context. Element Id: 1000123, Delay processing type: ExampleDelayProcessing.
+2030-01-15 10:00:08.050 [PID=1242][TID=0x1a2b] ERROR - [DDelayInhibitProcessor] Failed to delete alarm state delay context. Alarm state processing will be continued for Processing type: ExampleDelayProcessing.
+2030-01-15 10:00:08.100 [PID=1242][TID=0x1a2b] WARNING - Non Fatal Exception System.Exception:
+2030-01-15 10:00:08.150 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Configuration] [ExampleConfigurationProcessor] Execute method called.
+2030-01-15 10:00:08.200 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Configuration] [ExampleConfigurationProcessor] GetChangedReferences for root class SIGNAL returned 4 affected roots. Execution took 00:00.0120.
+2030-01-15 10:00:08.250 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE-Alarming) ExampleAlarmProcessor - Execute: Searching for signals affected by alarm configuration reference changes.
+2030-01-15 10:00:08.300 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE-Alarming) ExampleAlarmProcessor - Execute: Searching for signals affected by alarm configuration reference changes. Reference type: EXAMPLEREF...
 2030-01-15 10:00:08.350 [PID=1242][TID=0x1a2b] INFO - Qqq synthetic noise without template
-2030-01-15 10:00:08.400 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE-Alarming) ExampleAlarmProcessor - Execute: Searching for signals affected by alarm configuration reference changes. Reference type: EXAMPLEREF...
-2030-01-15 10:00:08.450 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE) ExampleSignalProcessor - Execute: Searching for signals affected by reference changes...
-2030-01-15 10:00:08.500 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE-Alarming) ExampleAlarmProcessor - Execute: Search finished. Affected analog signals count by reference changes:  5.
-2030-01-15 10:00:08.550 [PID=1242][TID=0x1a2b] ERROR - (ERROR) (NDS) NDSConfigurator - Failed to configure alarming for discrete signal with gid 1000123. Reason: Failed to add event.
-2030-01-15 10:00:08.600 [PID=1242][TID=0x1a2b] ERROR - (ERROR) (TES) An exception occurred while validation temporary switch: Trying to add temporary switch which switch signal is connected to 0.
-2030-01-15 10:00:08.650 [PID=1242][TID=0x1a2b] ERROR - (TES) An exception occurred while validation of creating temporary element [GID: 1000123, CustomID: ]. Reason: Trying to add temporary switch.
-2030-01-15 10:00:08.700 [PID=1242][TID=0x1a2b] ERROR - Error Creating TE element. Reason: Validation for temporary element 1000123 creation failed.
-2030-01-15 10:00:08.750 [PID=1242][TID=0x1a2b] INFO - (TES) No invalid temporary elements received.
-2030-01-15 10:00:08.800 [PID=1242][TID=0x1a2b] INFO - (TES) Performing forced model update, failed validations will be ignored.
-2030-01-15 10:00:08.850 [PID=1242][TID=0x1a2b] INFO - (CMS) Temporary Element Placement completed. Status : Succeeded.
-2030-01-15 10:00:08.900 [PID=1242][TID=0x1a2b] ERROR - (CMS) [SwitchingCommandDispatcher] Switching Command (Id = 00000000-0000-4000-8000-0000a0000001, SS Id = 00000000-0000-4000-8000-0000a0000002) failed to be successfully executed.
-2030-01-15 10:00:08.950 [PID=1242][TID=0x1a2b] DEBUGLOG - (CMS) [SwitchingSequenceExecutor] ProcessDynamicChanges finished.
-2030-01-15 10:00:09.000 [PID=1242][TID=0x1a2b] WARNING - (CMS) [DeviceSignalGetter] Failed to read ISREMOTE property from NDS for signals: 1000123, 1000124
-2030-01-15 10:00:09.050 [PID=1242][TID=0x1a2b] ERROR - (NDS) [Commanding] [DiscreteCommandMonitorProcessor] Async notification received that command failed for output signal: 1000123, Status: Failed, Error: TimedOut, Action: [( ActionDiscrete, GID: 1000123, RequestId: 5 )( Value: 1, CtrlMode: EXECUTE )]. Notification text.
-2030-01-15 10:00:09.100 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [TagValidationPlugin] Validation successfully completed for 1 action.
-2030-01-15 10:00:09.150 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [FEPActionsExecutor] Sending 2 actions(s) for execution on FCS.
-2030-01-15 10:00:09.200 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [FEPActionsExecutor] Execution of 2 actions(s) finished on FCS.
-2030-01-15 10:00:09.250 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [FEPActionsExecutor] FEP action(s) successfully sent for execution to FCS example-FrontEnd-Default. There were 1 action(s):
-2030-01-15 10:00:09.300 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) [TagsManagementService] Applying delta. Delta after the call preprocessing plugin: Inserted 1 | Updated 0 | Deleted 2
-2030-01-15 10:00:09.350 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) [TagsManagementService] Items dispatched. Inserted 1 | Updated 0 | Deleted 2
-2030-01-15 10:00:09.400 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) Passing delta to tags dispatcher.
-2030-01-15 10:00:09.450 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) Processing: 1 insert operations, 0 update operations, 2 delete operations
-2030-01-15 10:00:09.500 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) Detecting reapplications finished. No tags to reapply.
-2030-01-15 10:00:09.550 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) [NotifySubscribers] Notifying TagsUpdate subscribers by semantic. Notifications count: 3
-2030-01-15 10:00:09.600 [PID=1242][TID=0x1a2b] INFO - (NDS) [ItemCacheHelper] WARNING: Not supported model type 'EXAMPLE_TYPE' received in processing.
-2030-01-15 10:00:09.650 [PID=1242][TID=0x1a2b] INFO - (NDS) [CommandMonitor] Reporting events on async notification or timeout. Events count 1
-2030-01-15 10:00:09.700 [PID=1242][TID=0x1a2b] INFO - [AlarmEventCatalogOverrideProvider] Alarm catalog override not supproted for default custom id: EXAMPLE_ID.
-2030-01-15 10:00:09.750 [PID=1242][TID=0x1a2b] INFO - [ServingDataProvider] Detected graph state changed. Invalidating serving descriptors cache.
-2030-01-15 10:00:09.800 [PID=1242][TID=0x1a2b] DEBUGLOG - Increasing number of services in transaction: current number = 1.
-2030-01-15 10:00:09.850 [PID=1242][TID=0x1a2b] DEBUGLOG - Reset number of services in transaction: current number = 0.
-2030-01-15 10:00:09.900 [PID=1242][TID=0x1a2b] DEBUGLOG - Increasing max IDs in DB.
-2030-01-15 10:00:09.950 [PID=1242][TID=0x1a2b] DEBUGLOG - Pushing version to central repository succeeded. Version ID = 100.200
+2030-01-15 10:00:08.400 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE) ExampleSignalProcessor - Execute: Searching for signals affected by reference changes...
+2030-01-15 10:00:08.450 [PID=1242][TID=0x1a2b] DEBUGLOG - (BPE-Alarming) ExampleAlarmProcessor - Execute: Search finished. Affected analog signals count by reference changes:  5.
+2030-01-15 10:00:08.500 [PID=1242][TID=0x1a2b] ERROR - (ERROR) (NDS) NDSConfigurator - Failed to configure alarming for discrete signal with gid 1000123. Reason: Failed to add event.
+2030-01-15 10:00:08.550 [PID=1242][TID=0x1a2b] ERROR - (ERROR) (TES) An exception occurred while validation temporary switch: Trying to add temporary switch which switch signal is connected to 0.
+2030-01-15 10:00:08.600 [PID=1242][TID=0x1a2b] ERROR - (TES) An exception occurred while validation of creating temporary element [GID: 1000123, CustomID: ]. Reason: Trying to add temporary switch.
+2030-01-15 10:00:08.650 [PID=1242][TID=0x1a2b] ERROR - Error Creating TE element. Reason: Validation for temporary element 1000123 creation failed.
+2030-01-15 10:00:08.700 [PID=1242][TID=0x1a2b] INFO - (TES) No invalid temporary elements received.
+2030-01-15 10:00:08.750 [PID=1242][TID=0x1a2b] INFO - (TES) Performing forced model update, failed validations will be ignored.
+2030-01-15 10:00:08.800 [PID=1242][TID=0x1a2b] INFO - (CMS) Temporary Element Placement completed. Status : Succeeded.
+2030-01-15 10:00:08.850 [PID=1242][TID=0x1a2b] ERROR - (CMS) [SwitchingCommandDispatcher] Switching Command (Id = 00000000-0000-4000-8000-0000a0000001, SS Id = 00000000-0000-4000-8000-0000a0000002) failed to be successfully executed.
+2030-01-15 10:00:08.900 [PID=1242][TID=0x1a2b] DEBUGLOG - (CMS) [SwitchingSequenceExecutor] ProcessDynamicChanges finished.
+2030-01-15 10:00:08.950 [PID=1242][TID=0x1a2b] WARNING - (CMS) [DeviceSignalGetter] Failed to read ISREMOTE property from NDS for signals: 1000123, 1000124
+2030-01-15 10:00:09.000 [PID=1242][TID=0x1a2b] ERROR - (NDS) [Commanding] [DiscreteCommandMonitorProcessor] Async notification received that command failed for output signal: 1000123, Status: Failed, Error: TimedOut, Action: [( ActionDiscrete, GID: 1000123, RequestId: 5 )( Value: 1, CtrlMode: EXECUTE )]. Notification text.
+2030-01-15 10:00:09.050 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [TagValidationPlugin] Validation successfully completed for 1 action.
+2030-01-15 10:00:09.100 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [FEPActionsExecutor] Sending 2 actions(s) for execution on FCS.
+2030-01-15 10:00:09.150 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [FEPActionsExecutor] Execution of 2 actions(s) finished on FCS.
+2030-01-15 10:00:09.200 [PID=1242][TID=0x1a2b] DEBUGLOG - (NDS) [Commanding] [FEPActionsExecutor] FEP action(s) successfully sent for execution to FCS example-FrontEnd-Default. There were 1 action(s):
+2030-01-15 10:00:09.250 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) [TagsManagementService] Applying delta. Delta after the call preprocessing plugin: Inserted 1 | Updated 0 | Deleted 2
+2030-01-15 10:00:09.300 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) [TagsManagementService] Items dispatched. Inserted 1 | Updated 0 | Deleted 2
+2030-01-15 10:00:09.350 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) Passing delta to tags dispatcher.
+2030-01-15 10:00:09.400 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) Processing: 1 insert operations, 0 update operations, 2 delete operations
+2030-01-15 10:00:09.450 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) Detecting reapplications finished. No tags to reapply.
+2030-01-15 10:00:09.500 [PID=1242][TID=0x1a2b] DEBUGLOG - (TAS) [NotifySubscribers] Notifying TagsUpdate subscribers by semantic. Notifications count: 3
+2030-01-15 10:00:09.550 [PID=1242][TID=0x1a2b] INFO - (NDS) [ItemCacheHelper] WARNING: Not supported model type 'EXAMPLE_TYPE' received in processing.
+2030-01-15 10:00:09.600 [PID=1242][TID=0x1a2b] INFO - (NDS) [CommandMonitor] Reporting events on async notification or timeout. Events count 1
+2030-01-15 10:00:09.650 [PID=1242][TID=0x1a2b] INFO - [AlarmEventCatalogOverrideProvider] Alarm catalog override not supproted for default custom id: EXAMPLE_ID.
+2030-01-15 10:00:09.700 [PID=1242][TID=0x1a2b] INFO - [ServingDataProvider] Detected graph state changed. Invalidating serving descriptors cache.
+2030-01-15 10:00:09.750 [PID=1242][TID=0x1a2b] DEBUGLOG - Increasing number of services in transaction: current number = 1.
+2030-01-15 10:00:09.800 [PID=1242][TID=0x1a2b] DEBUGLOG - Reset number of services in transaction: current number = 0.
+2030-01-15 10:00:09.850 [PID=1242][TID=0x1a2b] DEBUGLOG - Increasing max IDs in DB.
+2030-01-15 10:00:09.900 [PID=1242][TID=0x1a2b] DEBUGLOG - Pushing version to central repository succeeded. Version ID = 100.200
+2030-01-15 10:00:09.950 [PID=1242][TID=0x1a2b] DEBUGLOG - Version already exists in central repository.
