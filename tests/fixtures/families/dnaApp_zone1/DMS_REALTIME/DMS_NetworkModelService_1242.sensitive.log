@@ -1,0 +1,15 @@
+﻿2030-01-15 10:00:00.000 [PID=1242][TID=0x1a2b] INFO - (PSS) [BaseOperation] MethodName: MultipleSelectPoint.Execute, Operation: Select, Insert: 1000123, Update: , Delete: , UserName: EXAMPLE\user01, Hashed UserName: -97394, Console: HOST01, Hashed console: 72619
+2030-01-15 10:00:00.050 [PID=1242][TID=0x1a2b] INFO - ---------- not a separator ----------
+2030-01-15 10:00:00.100 [PID=1242][TID=0x1a2b] INFO - (NDS) [SustainedActionsManager] Client host name from thread principal: HOST01; Computer host name from configuration: HOST02; Console name: HOST01
+2030-01-15 10:00:00.150 [PID=1242][TID=0x1a2b] INFO - -----
+2030-01-15 10:00:00.200 [PID=1242][TID=0x1a2b] INFO - Logging in user EXAMPLE\user01, hashed user: -97394 on machine HOST01, hashed machine: 72619
+2030-01-15 10:00:00.250 [PID=1242][TID=0x1a2b] INFO - [GDA Statistics] [GetValues] Properties: IDOBJ_NAME, Count: x
+2030-01-15 10:00:00.300 [PID=1242][TID=0x1a2b] INFO - (PSS) [PointValidator] User EXAMPLE\user01, hashed user: -97394 does not have permission to control AOR group Example-Region.
+2030-01-15 10:00:00.350 [PID=1242][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1242][TID=0x1a2b] INFO - (AMS - RemoveInactiveUsersWorker) User EXAMPLE\user01, hashed username: 97394 from console host01 [ hashed console: 72619 ] will be removed. Last checkin time 2026 - 01 - 01 10: 00:00.000. Checkin timeout is 10 second(s). CheckinTimeoutMultiplier 2.
+2030-01-15 10:00:00.450 [PID=1242][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.500 [PID=1242][TID=0x1a2b] INFO - (PSS) [BaseOperation] MethodName: OnPointSelectTimedOut.OnTimeOut, Operation: Deselect, Insert: , Update: , Delete: 1000123, UserName: EXAMPLE\svc01, Hashed UserName: 17577, Console: , Hashed console: 37185
+2030-01-15 10:00:00.550 [PID=1242][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.600 [PID=1242][TID=0x1a2b] INFO - (AMS) [AORManagementService] Logging out user EXAMPLE\user01, hashed user: 97394 on machine HOST01, hashed machine: 72619
+2030-01-15 10:00:00.650 [PID=1242][TID=0x1a2b] INFO - (AMS) [AORManagementService] User EXAMPLE\user01, hashed user: 97394 logged out.
+2030-01-15 10:00:00.700 [PID=1242][TID=0x1a2b] INFO - User EXAMPLE\user01, hashed user: 97394 logged on machine HOST01, hashed machine: -72619, login method lasts 00:00:01 seconds.

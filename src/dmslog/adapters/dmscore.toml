@@ -1,0 +1,1525 @@
+# Core real-time services (family DMSCORE): CoreFunctionsService, ModelTopologyService,
+# ChangesetRepositoryService, ModelPromotionService, GraphicalModelService, GenericCalculationService,
+# LoadForecastService, LocalContextManager, ContextCoordinatorService, ExportService and
+# ControlSequenceManagementService (normal and sensitive streams). Design: docs/notas/rt-templates-desenho.md.
+#
+# Codes: DCR-001..099 CoreFunctions, 100..129 ModelTopology, 130..149 ChangesetRepository,
+# 150..159 ModelPromotion, 160..179 GraphicalModel, 180..219 GenericCalculation, 220..279 LoadForecast,
+# 280..319 LocalContextManager (S280..S289 sensitive), 320..339 ContextCoordinator, 340..369 Export,
+# 370..399 ControlSequenceManagement. Correlation keys: `job_id` only on the submit, status and result
+# lines of a calculation job (CoreFunctions) and on the result lines of the LoadForecast LookAhead.
+# Infrastructure lines shared with other real-time families belong to `_dmsrt`, not to this file.
+#
+# Job status (section 3.3 of the design note): a line with ONE status maps the severity through `sev_map`.
+
+schema = 1
+family = "DMSCORE"
+description = "Core real-time services: CoreFunctions, ModelTopology, ChangesetRepository, ModelPromotion, GraphicalModel, GenericCalculation, LoadForecast, LocalContextManager, ContextCoordinator, Export and ControlSequenceManagement"
+extends = ["_dmsrt", "_common"]
+
+# ---------------------------------------------------------------------------------------------
+# CoreFunctionsService (DCR-001..099)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-001"
+class = "statistics"
+title = "Redundant jobs found in the job queue table"
+sev = 5
+fts = false
+regex = '''^\[JobQueueTable\] (?P<count>\d+) redundant jobs found\.$'''
+fields = { count = "int" }
+examples = [{ msg = "[JobQueueTable] 3 redundant jobs found.", fields = { count = 3 } }]
+counter_examples = ["[JobQueueTable] some redundant jobs found."]
+
+[[template]]
+code = "DCR-002"
+class = "other"
+title = "Operational model acquired"
+sev = 5
+fts = false
+regex = '''^\[OMH\] Operational model for (?P<models>OM_[\w, ]*\w) network (?:containing root (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) is acquired\.|is acquired for: .*)$'''
+fields = { root = "hex" }
+examples = [
+    { msg = "[OMH] Operational model for OM_DMS, OM_LV network containing root 0x4A00B00C00D00E01 is acquired.", fields = { models = "OM_DMS, OM_LV" } },
+    { msg = "[OMH] Operational model for OM_EMS network is acquired for: 0x4A00B00C00D00E02, 0x4A00B00C00D00E03, 0x4A00B00C00D00E04,", fields = { models = "OM_EMS" } },
+]
+counter_examples = ["[OMH] Operational model for OM_DMS network is released."]
+
+[[template]]
+code = "DCR-003"
+class = "error"
+title = "Operational model could not be retrieved or acquired"
+sev = 2
+regex = '''^(?:\[OMH\] TryGetOperationalModel: Failed to retrieve operational model|AcquireOperationalModels failed because of (?P<reason>.+)\.)$'''
+examples = [
+    "[OMH] TryGetOperationalModel: Failed to retrieve operational model",
+    { msg = "AcquireOperationalModels failed because of Meshed roots.", fields = { reason = "Meshed roots" } },
+]
+counter_examples = ["AcquireOperationalModels succeeded for Meshed roots."]
+
+[[template]]
+code = "DCR-005"
+class = "statistics"
+title = "State model export timings"
+sev = 5
+fts = false
+regex = '''^\[SMP\]\[DIAG\] SM exported\. BLT is (?P<blt>\w+)\. Elapsed times\[msec\] - Waiting lock: (?P<wait_ms>\d+)\. Prepare: (?P<prepare_ms>\d+)\. Common: (?P<common_ms>\d+)\. LC params: (?P<lc_params_ms>\d+)\. Weather regions: (?P<weather_ms>\d+)\. +Interval Scheduels: (?P<schedules_ms>\d+)\. Total: (?P<total_ms>\d+)\.$'''
+fields = { wait_ms = "int", prepare_ms = "int", common_ms = "int", lc_params_ms = "int", weather_ms = "int", schedules_ms = "int", total_ms = "int" }
+examples = [{ msg = "[SMP][DIAG] SM exported. BLT is BLT_EXAMPLE. Elapsed times[msec] - Waiting lock: 0. Prepare: 1. Common: 4. LC params: 5. Weather regions: 0.  Interval Scheduels: 0. Total: 10.", fields = { blt = "BLT_EXAMPLE", total_ms = 10 } }]
+counter_examples = ["[SMP][DIAG] SM exported. BLT is BLT_EXAMPLE. Elapsed times[msec] - Waiting lock: x."]
+
+[[template]]
+code = "DCR-006"
+class = "other"
+title = "State model update step"
+sev = 5
+fts = false
+regex = '''^\[SMP\] (?P<detail>(?:Updating Static and Network model|Found transmission block - ID: \d+|Updating Static and Network model done\.).*)$'''
+examples = [{ msg = "[SMP] Updating Static and Network model done. Static model: 4ms, Network model: 6ms, Total: 10ms", fields = { detail = "Updating Static and Network model done. Static model: 4ms, Network model: 6ms, Total: 10ms" } }]
+counter_examples = ["[SMP][DIAG] SM exported."]
+
+[[template]]
+code = "DCR-010"
+class = "start"
+title = "Calculation job submitted"
+sev = 4
+regex = '''^\[PRH\] JobId: (?P<job_id>\d+), RootId: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) Function: (?P<function>\w+) is submitted\.$'''
+fields = { job_id = "int", root = "hex" }
+keys = ["job_id"]
+examples = [{ msg = "[PRH] JobId: 1000123, RootId: 0x4A00B00C00D00E01 Function: StateEstimation is submitted.", fields = { job_id = 1000123, function = "StateEstimation" } }]
+counter_examples = ["[PRH] JobId: x, RootId: 0x4A00B00C00D00E01 Function: StateEstimation is submitted."]
+
+[[template]]
+code = "DCR-011"
+class = "end"
+title = "Calculation job status report received"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4, Running = 5 }
+regex = '''^\[PRS\] Job status report is received\. JobId: (?P<job_id>\d+), Job Status: (?P<status>\w+)$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "[PRS] Job status report is received. JobId: 1000123, Job Status: DoneWithWarning", fields = { job_id = 1000123, status = "DoneWithWarning" } },
+    "[PRS] Job status report is received. JobId: 1000124, Job Status: DoneWithSuccess",
+]
+counter_examples = ["[PRS] Job status report is received. JobId: x, Job Status: DoneWithSuccess"]
+
+[[template]]
+code = "DCR-012"
+class = "statistics"
+title = "Job submission timings"
+sev = 5
+fts = false
+regex = '''^\[PRH\]\[DIAG\] Number of jobs: (?P<jobs>\d+)\. Function: (?P<function>\w+)\. OM: (?P<om_ms>\d+)ms\. Total: (?P<total_ms>\d+)ms\.$'''
+fields = { jobs = "int", om_ms = "int", total_ms = "int" }
+examples = [{ msg = "[PRH][DIAG] Number of jobs: 2. Function: LoadFlow. OM: 12ms. Total: 30ms.", fields = { jobs = 2, function = "LoadFlow", total_ms = 30 } }]
+counter_examples = ["[PRH][DIAG] Number of jobs: x. Function: LoadFlow. OM: 12ms. Total: 30ms."]
+
+[[template]]
+code = "DCR-013"
+class = "other"
+title = "Job request handler housekeeping"
+sev = 5
+fts = false
+regex = '''^\[PRH\] (?:SetElementIdsAffectedByOperationalModel: Affected element IDs set\.|CleanUp is called\.|CancelRequest: Cancelling job execution for jobIds: (?P<job_ids>[\d, ]+)\.)$'''
+examples = [
+    { msg = "[PRH] CancelRequest: Cancelling job execution for jobIds: 1000123.", fields = { job_ids = "1000123" } },
+    "[PRH] CleanUp is called.",
+]
+counter_examples = ["[PRH] CancelRequest: Cancelling job execution for jobIds: none."]
+
+[[template]]
+code = "DCR-014"
+class = "validation"
+title = "Cancel request for a job that is not found"
+sev = 4  # cleanup of something absent
+regex = '''^\[PRH\] CancelRequest: Failed to find powerAppsJob for jobId (?P<job_id>\d+)\.$'''
+fields = { job_id = "int" }
+examples = [{ msg = "[PRH] CancelRequest: Failed to find powerAppsJob for jobId 1000123.", fields = { job_id = 1000123 } }]
+counter_examples = ["[PRH] CancelRequest: Failed to find powerAppsJob for jobId x."]
+
+[[template]]
+code = "DCR-015"
+class = "lifecycle"
+title = "Results of a job being handled"
+sev = 4
+fts = false
+regex = '''^\[PRS\] Handling results of JobId: (?P<job_id>\d+) with predecessor JobId: (?P<predecessor>\d+), job type: (?P<function>\w+), is client: (?P<is_client>True|False)\.$'''
+fields = { job_id = "int", predecessor = "int" }
+examples = [{ msg = "[PRS] Handling results of JobId: 1000123 with predecessor JobId: 0, job type: StateEstimation, is client: False.", fields = { job_id = 1000123, predecessor = 0, is_client = "False" } }]
+counter_examples = ["[PRS] Handling results of JobId: 1000123 with predecessor JobId: 0, job type: StateEstimation, is client: Maybe."]
+
+[[template]]
+code = "DCR-016"
+class = "statistics"
+title = "Job result handling timings"
+sev = 5
+fts = false
+regex = '''^\[PRS\]\[DIAG\] Result is handled for (?P<function>\w+), JobId: (?P<job_id>\d+)\. Job's lifespan: (?P<lifespan_s>[\d.]+)s, result handling took: (?P<handling_s>[\d.]+)s\.$'''
+fields = { job_id = "int", lifespan_s = "float", handling_s = "float" }
+examples = [{ msg = "[PRS][DIAG] Result is handled for LoadFlow, JobId: 1000123. Job's lifespan: 0.25s, result handling took: 0s.", fields = { job_id = 1000123, lifespan_s = 0.25, handling_s = 0.0 } }]
+counter_examples = ["[PRS][DIAG] Result is handled for LoadFlow, JobId: x."]
+
+[[template]]
+code = "DCR-017"
+class = "req_resp"
+title = "Job status or progress sent to the client"
+sev = 5
+fts = false
+regex = '''^\[PRS\] JobId: (?P<job_id>\d+) (?P<kind>status|progress) info sent to client\.$'''
+fields = { job_id = "int" }
+examples = [{ msg = "[PRS] JobId: 1000123 progress info sent to client.", fields = { job_id = 1000123, kind = "progress" } }]
+counter_examples = ["[PRS] JobId: 1000123 result info sent to client."]
+
+[[template]]
+code = "DCR-018"
+class = "error"
+title = "Job status could not be sent to the client"
+sev = 2
+regex = '''^\[PRS\] Error while sending execution status information for JobId: (?P<job_id>\d+) to client\. Client is not reachable\.$'''
+fields = { job_id = "int" }
+examples = [{ msg = "[PRS] Error while sending execution status information for JobId: 1000123 to client. Client is not reachable.", fields = { job_id = 1000123 } }]
+counter_examples = ["[PRS] Error while sending execution status information for JobId: x to client."]
+
+[[template]]
+code = "DCR-019"
+class = "end"
+title = "Calculation job result handled"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4 }
+regex = '''^\[CRS\] Handle results of JobId: (?P<job_id>\d+) for function (?P<function>\w+)\. RootId: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}), job status: (?P<status>\w+)\.$'''
+fields = { job_id = "int", root = "hex" }
+keys = ["job_id"]
+examples = [{ msg = "[CRS] Handle results of JobId: 1000123 for function StateEstimation. RootId: 0x4A00B00C00D00E01, job status: DoneWithError.", fields = { job_id = 1000123, function = "StateEstimation", status = "DoneWithError" } }]
+counter_examples = ["[CRS] Handle results of JobId: x for function StateEstimation. RootId: 0x4A, job status: DoneWithError."]
+
+[[template]]
+code = "DCR-020"
+class = "other"
+title = "Load flow results written to the cache"
+sev = 5
+fts = false
+regex = '''^\[CRS\] PU LF Results for job (?P<job_id>\d+) (?:are being|have been) written to cache\.$'''
+fields = { job_id = "int" }
+examples = [{ msg = "[CRS] PU LF Results for job 1000123 are being written to cache.", fields = { job_id = 1000123 } }, "[CRS] PU LF Results for job 1000123 have been written to cache."]
+counter_examples = ["[CRS] PU LF Results for job x are being written to cache."]
+
+[[template]]
+code = "DCR-021"
+class = "validation"
+title = "Job monitor has no cache item for the function and source"
+sev = 5
+fts = false
+regex = '''^\[JobMonitor\] No cache item for function (?P<function>\w+) and source lid (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16})$'''
+fields = { lid = "hex" }
+examples = [{ msg = "[JobMonitor] No cache item for function TraceFunction and source lid 4A00B00C00D00E01", fields = { function = "TraceFunction" } }]
+counter_examples = ["[JobMonitor] Cache item found for function TraceFunction and source lid 4A00B00C00D00E01"]
+
+[[template]]
+code = "DCR-022"
+class = "req_resp"
+title = "Client request to execute or cancel a function received"
+sev = 4
+regex = '''^\[CJR\] Received Client Request (?:for DMS function execution\. Options type: (?P<options>\w+)|ID: (?P<request_id>\d+) for DMS function cancelation\.)$'''
+fields = { request_id = "int" }
+examples = [
+    { msg = "[CJR] Received Client Request for DMS function execution. Options type: TraceFunctionOptions", fields = { options = "TraceFunctionOptions" } },
+    { msg = "[CJR] Received Client Request ID: 700123 for DMS function cancelation.", fields = { request_id = 700123 } },
+]
+counter_examples = ["[CJR] Received Client Request for DMS function execution."]
+
+[[template]]
+code = "DCR-024"
+class = "validation"
+title = "Cancel request for an unknown client request"
+sev = 4  # cleanup of something absent
+regex = '''^\[PRMFC-ParallelizationClientRequestManager\]: Unable to cancel request with ID (?P<request_id>\d+)\. Request is not present in callback map\.$'''
+fields = { request_id = "int" }
+examples = [{ msg = "[PRMFC-ParallelizationClientRequestManager]: Unable to cancel request with ID 700123. Request is not present in callback map.", fields = { request_id = 700123 } }]
+counter_examples = ["[PRMFC-ParallelizationClientRequestManager]: Request 700123 cancelled."]
+
+[[template]]
+code = "DCR-025"
+class = "statistics"
+title = "Result handler thread time usage"
+sev = 5
+fts = false
+text = "[PRS][DIAG] Result handler thread time usage:"
+examples = ["[PRS][DIAG] Result handler thread time usage:"]
+counter_examples = ["[PRS][DIAG] Result handler thread time usage: 3"]
+
+[[template]]
+code = "DCR-026"
+class = "start"
+title = "State estimation triggered for a root"
+sev = 4
+fts = false
+regex = '''^\[SETrigger\] Function will be executed for root (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}), reason: (?P<reason>\w+)$'''
+fields = { root = "hex" }
+examples = [{ msg = "[SETrigger] Function will be executed for root 0x4A00B00C00D00E01, reason: MeasurementChange", fields = { reason = "MeasurementChange" } }]
+counter_examples = ["[SETrigger] Function will not be executed for root 0x4A00B00C00D00E01, reason: MeasurementChange"]
+
+[[template]]
+code = "DCR-027"
+class = "other"
+title = "State estimation time tier: elapsed on a root, schedule and timeouts"
+sev = 5
+fts = false
+regex = '''^SE_TT: (?:T(?P<tier>\d+) elapsed on root (?P<root>(?:0x)?[0-9A-Fa-f]{1,16})(?:\.|, (?P<detail>.*))|(?P<other>SE executions for .*|Redistribute timeout expired!|\.\.\.but, .*))$'''
+fields = { tier = "int", root = "hex" }
+examples = [
+    { msg = "SE_TT: T2 elapsed on root 0x4A00B00C00D00E01.", fields = { tier = 2 } },
+    "SE_TT: T1 elapsed on root 0x4A00B00C00D00E01, and there is still significant measurement value change.  SignalID: 4A00B00C00D00E02   Last Value: 119.5   Final Significant Value: 125.5",
+    "SE_TT: T3 elapsed on root 0x4A00B00C00D00E01, but there are changes that are not stabilised yet.",
+    "SE_TT: SE executions for 12 root(s) scheduled from 10/20/2026 11:35:14 AM to 10/20/2026 11:50:14 AM.",
+    "SE_TT: Redistribute timeout expired!",
+]
+counter_examples = ["SE_TT: unrelated text", "SE_TT: T2 elapsed on root none."]
+
+[[template]]
+code = "DCR-030"
+class = "other"
+title = "Real-time monitoring: change handling, initialization and value updates"
+sev = 5
+fts = false
+regex = '''^\[RTM\] (?:\[RTM_Change\] \[(?P<change>\w+)\] (?:Started handling change|Finished handling change for trafoareas: \[[\d,]*\]\.(?: Elapsed milliseconds: (?P<elapsed_ms>\d+))?)|\[(?:InitializationChange|RealTimeMonitoringData)\] (?P<detail>.*))$'''
+fields = { elapsed_ms = "int" }
+examples = [
+    { msg = "[RTM] [RTM_Change] [TopologyUpdateChange] Finished handling change for trafoareas: [100,200,300]. Elapsed milliseconds: 1180", fields = { change = "TopologyUpdateChange", elapsed_ms = 1180 } },
+    "[RTM] [RTM_Change] [ReadingsValueChange] Started handling change",
+    "[RTM] [RTM_Change] [ReadingsValueChange] Finished handling change for trafoareas: [100,200].",
+    { msg = "[RTM] [InitializationChange] Updating RTMData...", fields = { detail = "Updating RTMData..." } },
+    "[RTM] [RealTimeMonitoringData] [UXP] Received value change for signal 1001, but it wasn't present in RTMData",
+]
+counter_examples = ["[RTM] [RTM_Change] [ReadingsValueChange] Aborted handling change", "[RTM] [Other] Updating RTMData..."]
+
+[[template]]
+code = "DCR-032"
+class = "other"
+title = "Volt/var optimization trigger decision"
+sev = 4  # per-element
+regex = '''^\[VVOTrigger\] (?:Mode for circuit (?P<circuit>\d+) is not set\. Default profile for No Optimization will be set\.|VVC: Timeout has expired for circuit\(s\): (?P<circuits>[\d, ]+)|VVC: Trigger on violation : VVO will not be triggered for - RootId: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}), and circuits: (?P<trigger_circuits>[\d, ]+) because it's in NoOptimization mode\.)$'''
+fields = { circuit = "int", root = "hex" }
+examples = [
+    { msg = "[VVOTrigger] Mode for circuit 1001 is not set. Default profile for No Optimization will be set.", fields = { circuit = 1001 } },
+    "[VVOTrigger] VVC: Timeout has expired for circuit(s): 1001, 1002",
+    "[VVOTrigger] VVC: Trigger on violation : VVO will not be triggered for - RootId: 0x4A00B00C00D00E01, and circuits: 1001 because it's in NoOptimization mode.",
+]
+counter_examples = ["[VVOTrigger] Mode for circuit x is not set."]
+
+[[template]]
+code = "DCR-033"
+class = "other"
+title = "Volt/var control timeouts redistributed"
+sev = 5
+fts = false
+regex = '''^VVC: (?:Timeout has expired for redistribution|Redistributing VVC Timeouts\.\.\. (?P<waiting>\d+) VVC calculations are waiting for execution\. They will be redistributed equally in next (?P<seconds>\d+) seconds\.)$'''
+fields = { waiting = "int", seconds = "int" }
+examples = [
+    { msg = "VVC: Redistributing VVC Timeouts... 174 VVC calculations are waiting for execution. They will be redistributed equally in next 900 seconds.", fields = { waiting = 174, seconds = 900 } },
+    "VVC: Timeout has expired for redistribution",
+]
+counter_examples = ["VVC: Redistributing VVC Timeouts... many VVC calculations are waiting."]
+
+[[template]]
+code = "DCR-034"
+class = "lifecycle"
+title = "Power apps cleaner activated"
+sev = 5
+fts = false
+regex = '''^\[CLN\] PowerApps Cleaner was activated: (?P<cleaned>\d+)/(?P<total>\d+) job was cleaned\.$'''
+fields = { cleaned = "int", total = "int" }
+examples = [{ msg = "[CLN] PowerApps Cleaner was activated: 0/2 job was cleaned.", fields = { cleaned = 0, total = 2 } }]
+counter_examples = ["[CLN] PowerApps Cleaner was activated: x/y job was cleaned."]
+
+[[template]]
+code = "DCR-035"
+class = "end"
+title = "EMS state estimation finished after a topology change"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4 }
+regex = '''^\[ECT\] EMS SE function has been finished for rootId: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) with status (?P<status>\w+), as a result of (?P<cause>\w+)$'''
+fields = { root = "hex" }
+examples = [{ msg = "[ECT] EMS SE function has been finished for rootId: 0x4A00B00C00D00E02 with status DoneWithSuccess, as a result of TopologyChange", fields = { status = "DoneWithSuccess", cause = "TopologyChange" } }]
+counter_examples = ["[ECT] EMS SE function has been started for rootId: 0x4A00B00C00D00E02"]
+
+[[template]]
+code = "DCR-036"
+class = "other"
+title = "Topology change notification handled by the calculation triggers"
+sev = 5
+fts = false
+regex = '''^(?:\[EMSBCT\]|\[EMSFCT\]|\[EST\]|\[DSMT\]|\[TCN\]|\[RootsDiary\]|\[TopologyChangeSubscriber\]|\[ECT\] EMS Contingency|\[RTM\] \[TopologyUpdateProvider\]|--- Topology changed notification received ---|Root ID:)(?P<detail>.*)$'''
+examples = [
+    { msg = "--- Topology changed notification received ---", fields = { detail = "" } },
+    "[EMSBCT]: Add job for transmission network in queue as a result of topology change.",
+    "[DSMT]: DMS topology changed notification has been received.",
+    "[TCN] LoadFlow will be executed for root 0x4A00B00C00D00E01, reason: TopologyChange",
+    "[RootsDiary] Received updated roots. Number of roots: 4",
+    "[TopologyChangeSubscriber] Not affected roots: ",
+    "Root ID:0x4A00B00C00D00E01, Root status: Changed",
+]
+counter_examples = ["[ECT] EMS SE function has been finished for rootId: 0x4A00B00C00D00E02 with status DoneWithSuccess, as a result of TopologyChange"]
+
+[[template]]
+code = "DCR-044"
+class = "validation"
+title = "Results cache summarizer found no children for a circuit"
+sev = 4  # per-element
+fts = false
+regex = '''^\[ResultsCacheSummarizer GetChildrenIds\] No children for Circuit id: (?P<circuit>(?:0x)?[0-9A-Fa-f]{1,16})$'''
+fields = { circuit = "hex" }
+examples = ["[ResultsCacheSummarizer GetChildrenIds] No children for Circuit id: 4A00B00C00D00E01"]
+counter_examples = ["[ResultsCacheSummarizer GetChildrenIds] Children found for Circuit id: 4A00B00C00D00E03"]
+[[template]]
+code = "DCR-037"
+class = "lifecycle"
+title = "Model update participant phase (annual schedule, contingency analysis, power apps caches)"
+sev = 5
+fts = false
+window = 400
+regex = '''^\[(?:ASC|ECC|CPC)\]:? (?!.*(?:[Ff]ail|[Ee]rror|[Ee]xception))(?P<detail>.+)$'''
+examples = [
+    { msg = "[ASC] Prepare phase in AnnualScheduleCache started.", fields = { detail = "Prepare phase in AnnualScheduleCache started." } },
+    "[ECC]: Commit method of model update procedure has been succeeded.",
+    "[CPC]: Prepare for model update",
+]
+counter_examples = ["[ABC] Prepare phase in AnnualScheduleCache started.", "[ASC] Prepare phase in AnnualScheduleCache failed."]
+
+[[template]]
+code = "DCR-038"
+class = "other"
+title = "Closed-loop volt/var, hosting capacity, circuits cache, model readiness, tags and historical configuration"
+sev = 5
+fts = false
+regex = '''^(?:\[VVOClosedLoop(?:Runtime|Control)\]|\[HostingCapacity => HostingCapacityCache\]|\[CircuitsCache\]|CircuitProfileAssignmentEditor -|\[MRResultHandler\]|\[TagResourceManager\]|\[HistoricalConfigurationService\]|Creating of StaticInternalModel) (?P<detail>.+)$'''
+examples = [
+    { msg = "[VVOClosedLoopControl] Synchronizing circuits and assignments started.", fields = { detail = "Synchronizing circuits and assignments started." } },
+    "[HostingCapacity => HostingCapacityCache] Insertion process lasted 40ms.",
+    "[CircuitsCache] No DER groups defined in network",
+    "CircuitProfileAssignmentEditor - Execute: Transaction execute finished.",
+    "[MRResultHandler] No circuit found in input results.",
+    "[TagResourceManager] Tag transaction - Commit.",
+    "[HistoricalConfigurationService] GetExtentValuesWithLv HISTTYPECONFIG from history.",
+    "Creating of StaticInternalModel Started",
+]
+counter_examples = ["[VVOClosedLoopOther] Synchronizing circuits.", "Creating of StaticInternalModel"]
+
+[[template]]
+code = "DCR-040"
+class = "other"
+title = "Outage provider auto FLISR outage added or removed"
+sev = 4
+fts = false
+regex = '''^\[OutageProvider\] (?P<action>Added|Removed) auto flisr outage on feeder (?P<feeder>[0-9A-Fa-f]+)$'''
+examples = [{ msg = "[OutageProvider] Added auto flisr outage on feeder 1A00B00C", fields = { action = "Added" } }]
+counter_examples = ["[OutageProvider] Updated auto flisr outage on feeder 1A00B00C"]
+
+[[template]]
+code = "DCR-041"
+class = "other"
+title = "Remote ADMS input manager and system unavailability queries"
+sev = 5
+fts = false
+regex = '''^(?:\[RemoteInputADMSManager\] (?:Collecting AINPUTADMS|Found (?P<found>\d+) AINPUTADMS|Detected appropriate model update)|GetSystemUnavailableIntervals called)$'''
+fields = { found = "int" }
+examples = [
+    { msg = "[RemoteInputADMSManager] Found 3 AINPUTADMS", fields = { found = 3 } },
+    "[RemoteInputADMSManager] Collecting AINPUTADMS",
+    "GetSystemUnavailableIntervals called",
+]
+counter_examples = ["[RemoteInputADMSManager] Found none AINPUTADMS"]
+
+# ---------------------------------------------------------------------------------------------
+# ModelTopologyService (DCR-100..129)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-100"
+class = "statistics"
+title = "Operational model created for roots, levels or elements"
+sev = 5
+fts = false
+regex = '''^GetOMFor(?P<scope>Roots|Levels|Elements): Wait (?P<wait_s>[\d.]+)s\. Created (?P<size_mb>\d+)MB \[(?P<blocks>\d+) blocks\] in (?P<elapsed_s>[\d.]+)s\.(?: OM count (?P<om_count>\d+))?$'''
+fields = { wait_s = "float", size_mb = "int", blocks = "int", elapsed_s = "float", om_count = "int" }
+examples = [
+    { msg = "GetOMForRoots: Wait 0.0000s. Created 67MB [23 blocks] in 0.0398s.", fields = { scope = "Roots", size_mb = 67, blocks = 23 } },
+    { msg = "GetOMForLevels: Wait 0.0000s. Created 44MB [166 blocks] in 0.0300s. OM count 1", fields = { scope = "Levels", om_count = 1 } },
+]
+counter_examples = ["GetOMForRoots: Wait x. Created 67MB [23 blocks] in 0.0398s."]
+
+[[template]]
+code = "DCR-101"
+class = "other"
+title = "Operational model kind returned (EMS or not)"
+sev = 5
+fts = false
+regex = '''^returnModel->IsEMSOperationalModel has value (?P<is_ems>y|n)$'''
+examples = [{ msg = "returnModel->IsEMSOperationalModel has value y", fields = { is_ems = "y" } }]
+counter_examples = ["returnModel->IsEMSOperationalModel has value maybe"]
+
+[[template]]
+code = "DCR-102"
+class = "other"
+title = "Topology update skipped because the roots are not affected"
+sev = 5
+fts = false
+text = "Topology is skipped because roots are not affected"
+examples = ["Topology is skipped because roots are not affected"]
+counter_examples = ["Topology is skipped because roots are affected"]
+
+[[template]]
+code = "DCR-103"
+class = "statistics"
+title = "Total topology update duration"
+sev = 5
+fts = false
+regex = '''^Total topology update duration: (?P<total_s>[\d.]+)s, model copying: (?P<copy_s>[\d.]+)s, DMS/EMS topology processing: (?P<processing_s>[\d.]+)s, model finalization: (?P<finalization_s>[\d.]+)s\.$'''
+fields = { total_s = "float", copy_s = "float", processing_s = "float", finalization_s = "float" }
+examples = [{ msg = "Total topology update duration: 0.5s, model copying: 0.1s, DMS/EMS topology processing: 0.3s, model finalization: 0.001s.", fields = { total_s = 0.5, finalization_s = 0.001 } }]
+counter_examples = ["Total topology update duration: x s."]
+
+[[template]]
+code = "DCR-104"
+class = "validation"
+title = "Signal values changing faster than the configured interval"
+sev = 4  # per-element
+regex = '''^MTS : Changes in signal values are faster than (?P<limit_ms>\d+) \((?P<interval_ms>[\d.]+)\) Milliseconds\. Signal gid: (?P<signal>[0-9A-Fa-f]{1,16}), old value: (?P<old_value>-?[\d.]+), new value: (?P<new_value>-?[\d.]+)\.$'''
+fields = { limit_ms = "int", interval_ms = "float", signal = "hex", old_value = "float", new_value = "float" }
+examples = [{ msg = "MTS : Changes in signal values are faster than 500 (1.18) Milliseconds. Signal gid: 4A00B00C00D00E04, old value: 1, new value: 2.", fields = { limit_ms = 500, old_value = 1.0, new_value = 2.0 } }]
+counter_examples = ["MTS : Changes in signal values are slower than 500 (1.18) Milliseconds."]
+
+[[template]]
+code = "DCR-105"
+class = "other"
+title = "Delta manager step"
+sev = 5
+fts = false
+regex = '''^MTS : Delta Manager: (?P<detail>.*)$'''
+examples = [
+    { msg = "MTS : Delta Manager: Forced transaction!", fields = { detail = "Forced transaction!" } },
+    "MTS : Delta Manager: Updated blocks: 1762,1938,1900",
+]
+counter_examples = ["MTS: Delta Manager: Forced transaction!"]
+
+[[template]]
+code = "DCR-106"
+class = "lifecycle"
+title = "Topology transaction phase or write lock"
+sev = 5
+fts = false
+regex = '''^MTS : (?:(?P<op>ApplyUpdatesTE|UpdateModel|UpdateStateOfBays) (?P<lock>Entered|Exiting) WriteLock\.|(?P<phase>Prepare|Commit|Rollback) phase (?P<edge>entered|finished)\.)$'''
+examples = [
+    { msg = "MTS : ApplyUpdatesTE Entered WriteLock.", fields = { op = "ApplyUpdatesTE", lock = "Entered" } },
+    { msg = "MTS : Commit phase finished.", fields = { phase = "Commit", edge = "finished" } },
+]
+counter_examples = ["MTS : Verify phase entered."]
+
+[[template]]
+code = "DCR-107"
+class = "validation"
+title = "Temporary cut, jumper or generator added or removed on a section"
+sev = 4  # per-element
+regex = '''^MTS : *Temporary (?P<element>cut|jumper|generator|Switch) (?P<action>added|removed), gid: (?P<gid>\d+)(?P<detail>.*)$'''
+examples = [
+    { msg = "MTS :  Temporary cut added, gid: 10000123, section gid: 10000456, cut phases: ABC", fields = { element = "cut", action = "added" } },
+    "MTS :Temporary jumper removed, gid: 10000123, Node1: 4 , Node2: 5, Phases1: ABC, Phases2: ABC",
+]
+counter_examples = ["MTS : Temporary cut added, gid: x"]
+[[template]]
+code = "DCR-108"
+class = "validation"
+title = "Consumers energized or de-energized on an element"
+sev = 4  # per-element
+fts = false
+regex = '''^Element Gid: (?P<gid>\d+) / Message: (?P<consumers>\d+) consumers (?P<state>energized|deenergized)(?: by switching device)?\.?$'''
+fields = { consumers = "int" }
+examples = [
+    { msg = "Element Gid: 10000123 / Message: 12 consumers deenergized by switching device.", fields = { consumers = 12, state = "deenergized" } },
+    "Element Gid: 10000123 / Message: 4 consumers energized",
+]
+counter_examples = ["Element Gid: x / Message: 12 consumers energized"]
+
+# ---------------------------------------------------------------------------------------------
+# ChangesetRepositoryService (DCR-130..149). The failure guard (?!.*...) keeps the catch-all
+# narration templates from swallowing a line that reports a problem.
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-130"
+class = "lifecycle"
+title = "Model management connection opened and versions or service state read"
+sev = 5
+fts = false
+regex = '''^(?:(?:Opening connection with MMS|Connection with MMS) (?P<contract>\w+)(?: successfully opened)?\.|Getting (?P<what>active versions|all versions|service state|service type)(?: (?P<phase>started|finished|succeeded))?\.)$'''
+examples = [
+    { msg = "Opening connection with MMS versioning.", fields = { contract = "versioning" } },
+    "Connection with MMS locking successfully opened.",
+    { msg = "Getting active versions started.", fields = { what = "active versions", phase = "started" } },
+    "Getting service type succeeded.",
+]
+counter_examples = ["Closing connection with MMS versioning.", "Getting active versions from database."]
+
+[[template]]
+code = "DCR-132"
+class = "other"
+title = "Changeset database operation (product prefix)"
+sev = 5
+fts = false
+regex = '''^\(Product\) (?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<operation>.+)$'''
+window = 720
+examples = [
+    { msg = "(Product) Getting changesets hash by ids succeeded. Count = 3.", fields = { operation = "Getting changesets hash by ids succeeded. Count = 3." } },
+    "(Product) Saving synchronization report. ID = 1000123, SaveChangesetReport = False, SaveServerReport = True, SaveAffectedViews = False",
+]
+counter_examples = ["(Product) Saving synchronization report failed. ID = 1000123"]
+
+[[template]]
+code = "DCR-133"
+class = "other"
+title = "Changeset and extract reads and writes"
+sev = 5
+fts = false
+regex = '''^(?:Getting changeset|Getting all changeset)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Getting changesets by ids from database. Count = 4.", fields = { detail = "s by ids from database. Count = 4." } },
+    "Getting changeset locks from database succeeded. Count = 2.",
+]
+counter_examples = ["Getting changeset locks failed."]
+
+[[template]]
+code = "DCR-134"
+class = "lifecycle"
+title = "Model or changeset database locked or unlocked"
+sev = 5
+fts = false
+regex = '''^(?:Locking |Unlocking |Lock |Unlock |Is model lock |Changeset database is locked )(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Locking model by user started", fields = { detail = "model by user started" } },
+    "Unlock changeset database by user ExampleLockUser succeeded.",
+    "Is model lock by user finished",
+]
+counter_examples = ["Lock changeset database by user ExampleLockUser failed."]
+
+[[template]]
+code = "DCR-135"
+class = "other"
+title = "Replicated cache activity delegate, changeset state publication and mode switch"
+sev = 5
+fts = false
+regex = '''^(?:Apply Replicate CacheActivity Delegate (?P<phase>started|finished)\.|Failover data:|(?:CacheActivityDelegate: |<PubSub> |\[ModeSwitch\] )(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*))$'''
+window = 720
+examples = [
+    { msg = "Apply Replicate CacheActivity Delegate started.", fields = { phase = "started" } },
+    "CacheActivityDelegate: Cache activity: Update, Lock data received rdId = 1000123",
+    "Failover data:",
+    { msg = "<PubSub> Processing model promotion notification message skipped: [IsHot: True, IsOwner: True]", fields = { detail = "Processing model promotion notification message skipped: [IsHot: True, IsOwner: True]" } },
+    "[ModeSwitch] Not in hot state. Publishing message skipped.",
+]
+counter_examples = ["Apply Replicate CacheActivity Delegate aborted.", "[ModeSwitch] Publishing failed."]
+
+[[template]]
+code = "DCR-137"
+class = "validation"
+title = "Changeset dataset and extract state checks"
+sev = 5
+fts = false
+regex = '''^(?:Configurable for "(?P<dataset>[^"]*)" dataset: (?P<configurable>True|False)|Extract with id (?P<extract_id>\d+) still is not in a state (?P<state>\d+), on this system\.|Cache\[ChangesetRepositoryCache\] Dataset (?P<dataset_id>\d+) does not belong to this cache\.)$'''
+fields = { extract_id = "int", state = "int", dataset_id = "int" }
+examples = [
+    { msg = "Configurable for \"ExampleModel\" dataset: True", fields = { dataset = "ExampleModel", configurable = "True" } },
+    { msg = "Extract with id 1000123 still is not in a state 4, on this system.", fields = { extract_id = 1000123, state = 4 } },
+    "Cache[ChangesetRepositoryCache] Dataset 1 does not belong to this cache.",
+]
+counter_examples = ["Configurable for ExampleModel dataset: True"]
+
+[[template]]
+code = "DCR-138"
+class = "other"
+title = "Version, database transaction and availability steps"
+sev = 5
+fts = false
+regex = '''^(?:Complete database updates|Commit local transaction|Pushing version|Pulling version|Creating new version|Synchronizing production history|Unlock info added|Lock info added)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Pushing version started.", fields = { detail = " started." } },
+    "Complete database updates finished.",
+    "Creating new version started. Parent version ID = 12.",
+]
+counter_examples = ["Pushing version failed."]
+
+# ---------------------------------------------------------------------------------------------
+# ModelPromotionService (DCR-150..159)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-150"
+class = "lifecycle"
+title = "Promotion endpoints, system configuration and connections"
+sev = 5
+fts = false
+regex = '''^(?:Endpoint for (?P<service>\w+) on (?P<system>\w+): (?P<url>\S+)|Getting (?:system|service) configuration for .*|Trying to open connection with CSS model update contract on \S+|Connection with CSS model update contract on .* successfully opened\.|ChangesetRepositoryService on \S+ returned (?P<returned>\w+)|Database buffer check is disabled on (?P<buffer_system>\w+))$'''
+examples = [
+    { msg = "Endpoint for ChangesetRepositoryService on ExampleBox: http://192.0.2.10:8080/Service", fields = { service = "ChangesetRepositoryService", system = "ExampleBox" } },
+    "Getting system configuration for 'ExampleSystem'",
+    "ChangesetRepositoryService on http://192.0.2.10:8080/Service returned UNKNOWN",
+    "Database buffer check is disabled on QA",
+    "Trying to open connection with CSS model update contract on net.tcp://192.0.2.10:9000/Update",
+]
+counter_examples = ["Endpoint list for ExampleBox is empty"]
+
+[[template]]
+code = "DCR-151"
+class = "other"
+title = "System identity, zone and service list"
+sev = 5
+fts = false
+regex = '''^(?:SystemId of (?P<system>\w+) is: (?P<system_id>\d+)|System (?P<zone_system>\w+) is placed in (?P<zone>\w+) zone\.|Services \((?P<count>\d+)\): .*|SystemId on (?P<role>\w+) = (?P<role_id>\d+))$'''
+fields = { system_id = "int", count = "int", role_id = "int" }
+examples = [
+    { msg = "SystemId of example is: 12", fields = { system = "example", system_id = 12 } },
+    { msg = "System example is placed in PROD zone.", fields = { zone = "PROD" } },
+    { msg = "Services (3): Arbitration,Common,DMS_RealTime", fields = { count = 3 } },
+    "SystemId on Simulation = 7",
+]
+counter_examples = ["System example is placed nowhere"]
+
+[[template]]
+code = "DCR-152"
+class = "other"
+title = "Cache activity delegate received a change"
+sev = 5
+fts = false
+regex = '''^Smart cache activity delegate received (?P<activity>Update|Add|Remove)\. ResourceDescription type from id: (?:Update|Add|Remove)\. Entity Id: (?P<entity_id>\d+)$'''
+fields = { entity_id = "int" }
+examples = [{ msg = "Smart cache activity delegate received Update. ResourceDescription type from id: Update. Entity Id: 1000123", fields = { activity = "Update", entity_id = 1000123 } }]
+counter_examples = ["Smart cache activity delegate received Merge. ResourceDescription type from id: Merge. Entity Id: 1"]
+
+# ---------------------------------------------------------------------------------------------
+# GraphicalModelService (DCR-160..179)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-160"
+class = "validation"
+title = "Element collection could not be returned to the pool"
+sev = 4  # pool or cache housekeeping
+fts = false
+regex = '''^\[CollectionPool\]\[ElementContainer-LongHashSetPool\] Failed to (?:return collection to pool\. TargetBucket: (?P<bucket>\d+), BucketSize: (?P<bucket_size>\d+), CollectionSize: (?P<collection_size>\d+)|select bucket for (?P<elements>\d+) elements\.)$'''
+fields = { bucket = "int", bucket_size = "int", collection_size = "int", elements = "int" }
+examples = [
+    { msg = "[CollectionPool][ElementContainer-LongHashSetPool] Failed to return collection to pool. TargetBucket: 3, BucketSize: 8, CollectionSize: 20", fields = { bucket = 3, bucket_size = 8, collection_size = 20 } },
+    "[CollectionPool][ElementContainer-LongHashSetPool] Failed to select bucket for 7 elements.",
+]
+counter_examples = ["[CollectionPool][ElementContainer-LongHashSetPool] Collection returned to pool."]
+
+[[template]]
+code = "DCR-162"
+class = "other"
+title = "Graphical model lookups and snapshot chunks"
+sev = 5
+fts = false
+regex = '''^(?:\[GetPolygonsForElements\] |\[SNAPSHOT\]|\[AdditionalModelValidator\] |Max chunk id in database is |Found Elements for electricalIDs)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "[GetPolygonsForElements] Found 12 graphical elements for 14 gids", fields = { detail = "Found 12 graphical elements for 14 gids" } },
+    "[SNAPSHOT]Saving snapshot chunk 3",
+    "[AdditionalModelValidator] Validation started. Validation config id: 2",
+    "Max chunk id in database is 7, incrementing chunk Ids in current snapshot",
+]
+counter_examples = ["[SNAPSHOT]Snapshot failed"]
+
+[[template]]
+code = "DCR-161"
+class = "other"
+title = "Graphical model processing step (queries, delta, blocks)"
+sev = 5
+fts = false
+regex = '''^(?:Get Block (?:Ids|and AOR Group Ids for entities) query to NMS|Apply delta on model|Update (?:block ids|AOR [Gg]roups|Generic Elements Parameters)|Create (?:Oposite Direction Connections|block changing operations|AOR Group changing operations|model snapshot for version)|Determine (?:line|super section) directions|Autogenerate feeder segments)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Get Block Ids query to NMS started.", fields = { detail = " started." } },
+    "Apply delta on model with 12 element operations started.",
+    "Create block changing operations finished. Block changing operations created: 4",
+]
+counter_examples = ["Update block ids failed."]
+
+[[template]]
+code = "DCR-164"
+class = "lifecycle"
+title = "Graphical model transaction and model check step"
+sev = 5
+fts = false
+regex = '''^(?:Check (?:model|symbols uniqueness|elements integrity)|Transaction (?:prepare|commit|rollback)|Wait for end of NMS transaction|Publish changes|Process view removal)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Transaction commit finished.", fields = { detail = " finished." } },
+    "Check symbols uniqueness started.",
+    "Wait for end of NMS transaction finished",
+]
+counter_examples = ["Transaction commit failed."]
+[[template]]
+code = "DCR-163"
+class = "other"
+title = "Graphical model switch, delta and validation step"
+sev = 5
+fts = false
+regex = '''^(?:Get polygons for elements from any view|Remove (?:elements based on electrical|operations for parentlly dependent elements)|Detect conflicts delta|Validate (?:graphics delta|model|\d+ affected elements)|Additional model validate|Get Element Changes Based On Electrics|Save model snapshot for version|Prepare switch model from versionId|Switch model from versionId|Prepare apply delta for versionId|Applying (?:delta sequence|sequence delta|of graphical delta|of empty graphical delta))(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Switch model from versionId=4 to versionId=5 succeeded.", fields = { detail = "=4 to versionId=5 succeeded." } },
+    "Validate model finished.",
+    "Applying of graphical delta with NoValidation flag. Graphical validations will not be triggered.",
+]
+counter_examples = ["Switch model from versionId=4 to versionId=5 failed."]
+
+# ---------------------------------------------------------------------------------------------
+# GenericCalculationService (DCR-180..219)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-180"
+class = "statistics"
+title = "Calculation execution statistics header or executed count"
+sev = 5
+fts = false
+regex = '''^(?:\[CalculationExecutionStatistics\] (?P<kind>Priority|Regular) Calculations Statistics \(Gid - Number Of Calculations - Under Execution\):|Executed calculations since last trigger: (?P<count>\d+))$'''
+fields = { count = "int" }
+examples = [
+    { msg = "[CalculationExecutionStatistics] Priority Calculations Statistics (Gid - Number Of Calculations - Under Execution):", fields = { kind = "Priority" } },
+    { msg = "Executed calculations since last trigger: 12", fields = { count = 12 } },
+]
+counter_examples = ["Executed calculations since last trigger: many"]
+
+[[template]]
+code = "DCR-181"
+class = "validation"
+title = "Calculation is not in the configuration"
+sev = 4  # per-element
+fts = false
+regex = '''^(?:\[DataConfigurationManager\] Calculation with gid: (?P<gid>\d+) does not exists in the GCSCalculationConfigurations collection\.|\[ModelUpdateTransactionManager\] Affected calculation with gid: (?P<affected_gid>\d+) does not exist\.)$'''
+examples = [
+    { msg = "[DataConfigurationManager] Calculation with gid: 10000123 does not exists in the GCSCalculationConfigurations collection.", fields = { gid = "10000123" } },
+    "[ModelUpdateTransactionManager] Affected calculation with gid: 10000124 does not exist.",
+]
+counter_examples = ["[DataConfigurationManager] Calculation with gid: x does not exists in the GCSCalculationConfigurations collection."]
+
+[[template]]
+code = "DCR-182"
+class = "startup"
+title = "Compiler temp files count setting missing"
+sev = 4  # cleanup of something absent
+fts = false
+regex = '''^\[CompilerConfiguration\] Failed to read temp files count\. Message: (?P<detail>.*)$'''
+examples = [{ msg = "[CompilerConfiguration] Failed to read temp files count. Message: Value for product 'ExampleProduct', subkey '', value 'TempFilesCount' does not exist.", fields = { detail = "Value for product 'ExampleProduct', subkey '', value 'TempFilesCount' does not exist." } }]
+counter_examples = ["[CompilerConfiguration] Read temp files count."]
+
+[[template]]
+code = "DCR-183"
+class = "other"
+title = "Calculation compiler and shared codes"
+sev = 5
+fts = false
+regex = '''^(?:\[NetworkModelManager\] Numbers of Shared calculation codes: (?P<shared>\d+) are retrieved from NMS\.|\[CompilerConfiguration\] Default value: (?P<default>\d+) will be used for temp files count\.|\[Compiler\] Compiling (?P<codes>\d+) calculation codes\.|\[Compiler\] Compile finished successfully\.)$'''
+fields = { shared = "int", default = "int", codes = "int" }
+examples = [
+    { msg = "[Compiler] Compiling 12 calculation codes.", fields = { codes = 12 } },
+    "[Compiler] Compile finished successfully.",
+    "[NetworkModelManager] Numbers of Shared calculation codes: 4 are retrieved from NMS.",
+    "[CompilerConfiguration] Default value: 8 will be used for temp files count.",
+]
+counter_examples = ["[Compiler] Compile finished with a message."]
+
+[[template]]
+code = "DCR-184"
+class = "lifecycle"
+title = "Calculation transaction command phase"
+sev = 5
+fts = false
+regex = '''^\[CalculationTransactionCommand\] (?P<phase>Execute|Prepare|Commit|Rollback) (?P<edge>started|finished)\.$'''
+examples = [{ msg = "[CalculationTransactionCommand] Commit started.", fields = { phase = "Commit", edge = "started" } }]
+counter_examples = ["[CalculationTransactionCommand] Verify started."]
+
+[[template]]
+code = "DCR-185"
+class = "lifecycle"
+title = "Model update coordination in the calculation queue and assemblies"
+sev = 5
+fts = false
+regex = '''^(?:\[ModelUpdateSyncTransactionCommand\]|\[SynchronousCalculationQueue\]|\[GenericAssemblyService\]|\[GCSCalcStatusCacheUpdateCommand\]|\[GCSCalcStatusCache\]|\[ModelUpdateService\]) (?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "[SynchronousCalculationQueue] Model Update is finished.", fields = { detail = "Model Update is finished." } },
+    "[ModelUpdateService] Switching Version from 4 to 5, model delta counter: 7",
+    "[GCSCalcStatusCacheUpdateCommand] Executing command, [modelVersion - 5] [sourceModelDeltaCounter - 7]",
+    "[GenericAssemblyService] Notifying executor about assembly changes.",
+]
+counter_examples = ["[SynchronousCalculationQueue] Model Update failed."]
+
+[[template]]
+code = "DCR-186"
+class = "error"
+title = "Calculation execution exceeded its timeout"
+sev = 3
+regex = '''^\[CalculationWatchDog\] Execution of calculation with gid: (?P<gid>\d+) and name: (?P<name>\S+) exceed timeout\.$'''
+examples = [{ msg = "[CalculationWatchDog] Execution of calculation with gid: 10000123 and name: 100_200_EXAMPLE exceed timeout.", fields = { gid = "10000123", name = "100_200_EXAMPLE" } }]
+counter_examples = ["[CalculationWatchDog] Execution of calculation with gid: x and name: A exceed timeout."]
+
+[[template]]
+code = "DCR-187"
+class = "error"
+title = "Executor failed a calculation"
+sev = 3
+regex = '''^\[ExecutorProcessHandler\] Executing fail command for calculation with Gid: (?P<gid>\d+)\.$'''
+examples = [{ msg = "[ExecutorProcessHandler] Executing fail command for calculation with Gid: 10000123.", fields = { gid = "10000123" } }]
+counter_examples = ["[ExecutorProcessHandler] Executing command for calculation with Gid: 10000123."]
+
+[[template]]
+code = "DCR-188"
+class = "lifecycle"
+title = "Calculation executor processes, signal subscriber and result writer"
+sev = 5
+fts = false
+regex = '''^(?:\[ExecutorProcessHandler\]|\[NDSSignalSubscriber\]|\[ResultWriter\]|\[GCSConfigParams\]) (?!Executing fail command)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "[ExecutorProcessHandler] CalculationExecutor with Id: 3 is started.", fields = { detail = "CalculationExecutor with Id: 3 is started." } },
+    "[NDSSignalSubscriber] Integrity update event is raised.",
+    "[ResultWriter] Results writer worker ExampleWriter_1 started.",
+]
+counter_examples = ["[ExecutorProcessHandler] Executor start failed."]
+
+[[template]]
+code = "DCR-189"
+class = "validation"
+title = "External transaction rollback on an unlocked collection"
+sev = 4  # cleanup of something absent
+fts = false
+text = "ExternalTransaction.RollbackPrivate: Collection was not locked."
+examples = ["ExternalTransaction.RollbackPrivate: Collection was not locked."]
+counter_examples = ["ExternalTransaction.RollbackPrivate: Collection was locked."]
+
+# ---------------------------------------------------------------------------------------------
+# LoadForecastService (DCR-220..279)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-220"
+class = "other"
+title = "Look-ahead states processed for a substation"
+sev = 5
+fts = false
+regex = '''^\[LookAhead\] Processing (?P<states>\d+) state\(s\) for (?P<circuits>\d+) circuit\(s\) from substation (?P<substation>\d+): (?:more details on info log level|\d+)\.$'''
+fields = { states = "int", circuits = "int" }
+examples = [
+    { msg = "[LookAhead] Processing 26 state(s) for 8 circuit(s) from substation 10000123: more details on info log level.", fields = { states = 26, circuits = 8 } },
+    "[LookAhead] Processing 4 state(s) for 2 circuit(s) from substation 10000123: 3.",
+]
+counter_examples = ["[LookAhead] Processing x state(s) for 8 circuit(s) from substation 1: 3."]
+
+[[template]]
+code = "DCR-221"
+class = "end"
+title = "Look-ahead job result received"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4 }
+regex = '''^\[LookAhead\] \[OnResultsReceived(?:InSeparateThread)?\]\[JobID=(?P<job_id>\d+)\] Received result with status: (?P<status>\w+)[.)]+$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "[LookAhead] [OnResultsReceivedInSeparateThread][JobID=1000123] Received result with status: DoneWithWarning.", fields = { job_id = 1000123, status = "DoneWithWarning" } },
+    "[LookAhead] [OnResultsReceived][JobID=1000124] Received result with status: DoneWithError).",
+]
+counter_examples = ["[LookAhead] [OnResultsReceived][JobID=x] Received result with status: DoneWithError)."]
+
+[[template]]
+code = "DCR-222"
+class = "lifecycle"
+title = "Look-ahead job results being saved"
+sev = 4
+fts = false
+regex = '''^\[LookAhead\]\[JobID=(?P<job_id>\d+)\] Saving results\.$'''
+fields = { job_id = "int" }
+examples = [{ msg = "[LookAhead][JobID=1000123] Saving results.", fields = { job_id = 1000123 } }]
+counter_examples = ["[LookAhead][JobID=x] Saving results."]
+
+[[template]]
+code = "DCR-223"
+class = "error"
+title = "Look-ahead jobs could not be submitted"
+sev = 2
+fts = false
+regex = '''^\[LookAhead\]\[RequestID=(?P<request_id>\d+)\] Failed to submit jobs\.$'''
+fields = { request_id = "int" }
+examples = [{ msg = "[LookAhead][RequestID=1000123] Failed to submit jobs.", fields = { request_id = 1000123 } }]
+counter_examples = ["[LookAhead][RequestID=x] Failed to submit jobs."]
+
+[[template]]
+code = "DCR-224"
+class = "other"
+title = "Look-ahead scheduling and execution"
+sev = 5
+fts = false
+regex = '''^\[LookAhead\] (?!Processing )(?!\[OnResultsReceived)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "[LookAhead] Execution finished.", fields = { detail = "Execution finished." } },
+    "[LookAhead] Execution started for 76 substation(s) with ~24 second delay between them: more details on info log level.",
+    "[LookAhead] Time range: 10/3/2026 12:00:00 AM - 10/4/2026 1:00:00 AM, Time step: 60 minutes, Number of states: 26.",
+]
+counter_examples = ["[LookAhead] Processing 26 state(s) for 8 circuit(s) from substation 1: 3.", "[LookAhead] Execution failed."]
+
+[[template]]
+code = "DCR-225"
+class = "lifecycle"
+title = "Forecast cache model update phase"
+sev = 5
+fts = false
+regex = '''^\[(?P<cache>[\w.]+Cache)\]\(Model Update\) (?P<phase>Prepare|Execute|Commit|Rollback) phase (?P<edge>started|finished)\.$'''
+examples = [
+    { msg = "[LoadFlowCache](Model Update) Prepare phase started.", fields = { cache = "LoadFlowCache", phase = "Prepare", edge = "started" } },
+    "[Example.Services.ForecastCache](Model Update) Rollback phase finished.",
+]
+counter_examples = ["[LoadFlowCache](Model Update) Verify phase started."]
+
+[[template]]
+code = "DCR-226"
+class = "lifecycle"
+title = "Forecast topology and model update manager"
+sev = 5
+fts = false
+regex = '''^\[(?:TopologyUpdateManager|ModelUpdateManager)\] (?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "[TopologyUpdateManager] Applying update.", fields = { detail = "Applying update." } },
+    "[ModelUpdateManager] Forecast might be affected by model update related to 26 element(s): more details on info log level.",
+]
+counter_examples = ["[ModelUpdateManager] Update failed."]
+
+[[template]]
+code = "DCR-227"
+class = "other"
+title = "Backcast trigger step"
+sev = 5
+fts = false
+regex = '''^\[BackcastTrigger\] (?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [{ msg = "[BackcastTrigger] Retrieving backcast data for 4170 element(s).", fields = { detail = "Retrieving backcast data for 4170 element(s)." } }]
+counter_examples = ["[BackcastTrigger] Execution failed."]
+
+[[template]]
+code = "DCR-228"
+class = "other"
+title = "Forecast data trees and signals loaded or updated"
+sev = 5
+fts = false
+regex = '''^\[(?:DMSTopologyTree|DERGroups|NetworkSignals|NetworkModelTree|ForecastDataModelParamValidator)\] (?!Some parents were not retrieved)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "[NetworkModelTree] Updated tree with 1200 nodes.", fields = { detail = "Updated tree with 1200 nodes." } },
+    "[DERGroups] Data is already up-to-date.",
+    "[ForecastDataModelParamValidator] Skipping retrieval of requested data (more details on info log level).",
+]
+counter_examples = ["[DERGroups] Update failed."]
+
+[[template]]
+code = "DCR-229"
+class = "validation"
+title = "Topology tree has children without parents"
+sev = 3
+regex = '''^\[DMSTopologyTree\] Some parents were not retrieved from topology cache \((?P<children>\d+) children might be unparented or their parents might be missing\)\..*$'''
+fields = { children = "int" }
+examples = [{ msg = "[DMSTopologyTree] Some parents were not retrieved from topology cache (3100 children might be unparented or their parents might be missing). For more details, change the log level to info next time.", fields = { children = 3100 } }]
+counter_examples = ["[DMSTopologyTree] Some parents were retrieved from topology cache."]
+
+[[template]]
+code = "DCR-230"
+class = "validation"
+title = "Forecast input data failed for circuits"
+sev = 3
+fts = false
+regex = '''^\[[\w.]{0,60}LookAheadInputDataProvider\] Input forecast data failed for circuits: (?P<circuits>[\d |]+)\.?$'''
+examples = [{ msg = "[ExampleDMS.Common.PowerApps.LookAheadInputDataProvider] Input forecast data failed for circuits: 10000123 | 10000124.", fields = { circuits = "10000123 | 10000124" } }]
+counter_examples = ["[ExampleDMS.Common.PowerApps.LookAheadInputDataProvider] Input forecast data loaded for circuits: 1."]
+
+[[template]]
+code = "DCR-231"
+class = "error"
+title = "Identity could not be refreshed for a user"
+sev = 2
+regex = '''^\(ERROR\) \[IdentityCache\] Failed to refresh identity for user (?P<user_id>-?\d+) due to error\.$'''
+examples = [{ msg = "(ERROR) [IdentityCache] Failed to refresh identity for user -123456 due to error.", fields = { user_id = "-123456" } }]
+counter_examples = ["(ERROR) [IdentityCache] Failed to refresh identity for user x due to error."]
+
+[[template]]
+code = "DCR-232"
+class = "other"
+title = "Forecast results cache (historical data library)"
+sev = 5
+fts = false
+regex = '''^HDL LFSFunctionResultsCache:? (?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "HDL LFSFunctionResultsCache: Staling data for dataset 4. HDLState: NORMAL.", fields = { detail = "Staling data for dataset 4. HDLState: NORMAL." } },
+    "HDL LFSFunctionResultsCache Start Flusher",
+]
+counter_examples = ["HDL LFResultsCache Start Flusher"]
+
+# ---------------------------------------------------------------------------------------------
+# LocalContextManager (DCR-280..319; sensitive DCR-S280..S289)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-S280"
+class = "lifecycle"
+title = "Client connected to a context from a workstation"
+sev = 4
+stream = "sensitive"
+regex = '''^Client \[(?P<user>[^\]]*)\] is connected to context \[(?P<context>-?\d+)\] on machine \[(?P<host>[^\]]*)\]\.$'''
+fields = { context = "int" }
+examples = [{ msg = "Client [EXAMPLE\\user01] is connected to context [12] on machine [HOST01].", fields = { user = "EXAMPLE\\user01", context = 12, host = "HOST01" } }]
+counter_examples = ["Client [EXAMPLE\\user01] is disconnected from context [12] on machine [HOST01]."]
+
+[[template]]
+code = "DCR-S281"
+class = "lifecycle"
+title = "Session created or reconnected for a user"
+sev = 4
+stream = "sensitive"
+regex = '''^(?:New session \[(?P<session>[0-9a-fA-F-]{36})\] for user \[(?P<user>[^\]]*)\] and context \[(?P<context>-?\d+)\] created\.|Session (?P<reconnected_session>[0-9a-fA-F-]{36}) reconnected to context \[(?P<reconnected_context>-?\d+)\] for user \[(?P<reconnected_user>[^\]]*)\]\.)$'''
+fields = { session = "guid", context = "int", reconnected_session = "guid", reconnected_context = "int" }
+examples = [
+    { msg = "New session [00000000-0000-4000-8000-000000000001] for user [EXAMPLE\\user01] and context [12] created.", fields = { user = "EXAMPLE\\user01", context = 12 } },
+    "Session 00000000-0000-4000-8000-000000000002 reconnected to context [12] for user [EXAMPLE\\user01].",
+]
+counter_examples = ["New session [x] for user [EXAMPLE\\user01] and context [12] created."]
+
+[[template]]
+code = "DCR-280"
+class = "lifecycle"
+title = "Session connecting, disconnecting or reconnecting"
+sev = 4
+fts = false
+regex = '''^(?P<action>Connecting|Disconnecting|Reconnecting) session (?P<session>[0-9a-fA-F-]{36})(?: to context \[?(?P<context>-?\d+)\]?)?(?: from context \[(?P<from_context>-?\d+)\])?(?:\.\.\.| finished)?\.?$'''
+fields = { session = "guid", context = "int", from_context = "int" }
+examples = [
+    { msg = "Connecting session 00000000-0000-4000-8000-000000000001 to context 12...", fields = { action = "Connecting", context = 12 } },
+    "Connecting session 00000000-0000-4000-8000-000000000001 finished.",
+    "Reconnecting session 00000000-0000-4000-8000-000000000001 to context [12]...",
+    { msg = "Disconnecting session 00000000-0000-4000-8000-000000000001 from context [12].", fields = { action = "Disconnecting", from_context = 12 } },
+    "Disconnecting session 00000000-0000-4000-8000-000000000001...",
+]
+counter_examples = ["Connecting session abc to context 12..."]
+
+[[template]]
+code = "DCR-281"
+class = "lifecycle"
+title = "Session disconnected, removed or reconnected"
+sev = 4
+fts = false
+regex = '''^Session (?P<session>[0-9a-fA-F-]{36}) (?:disconnected from context \[(?P<context>-?\d+)\], clientType = (?P<client_type>\w+)|removed|reconnected to context \[(?P<reconnected_context>-?\d+)\])\.$'''
+fields = { session = "guid", context = "int", reconnected_context = "int" }
+examples = [
+    { msg = "Session 00000000-0000-4000-8000-000000000001 disconnected from context [12], clientType = ExampleClient.", fields = { context = 12, client_type = "ExampleClient" } },
+    "Session 00000000-0000-4000-8000-000000000001 removed.",
+    "Session 00000000-0000-4000-8000-000000000001 reconnected to context [12].",
+]
+counter_examples = ["Session abc removed."]
+
+[[template]]
+code = "DCR-282"
+class = "lifecycle"
+title = "Session saved, checked in, created or expired"
+sev = 4
+fts = false
+regex = '''^(?:Saving session (?P<saved_session>[0-9a-fA-F-]{36}) for context ID \[(?P<saved_context>-?\d+)\]\.\.\.|Checking in new session \[(?P<checkin_session>[0-9a-fA-F-]{36})\] for context \[(?P<checkin_context>-?\d+)\]\.|New session \[(?P<new_session>[0-9a-fA-F-]{36})\] for context \[(?P<new_context>-?\d+)\] created\.|Interval of (?P<interval_ms>\d+) \[ms\] for user check in expired\. Last check in was (?P<last_ms>[\d.]+) \[ms\] ago\. Removing session (?P<expired_session>[0-9a-fA-F-]{36}) from context \[(?P<expired_context>-?\d+)\]\.\.\.)$'''
+fields = { interval_ms = "int", last_ms = "float" }
+examples = [
+    "Saving session 00000000-0000-4000-8000-000000000001 for context ID [12]...",
+    "Checking in new session [00000000-0000-4000-8000-000000000001] for context [12].",
+    "New session [00000000-0000-4000-8000-000000000001] for context [12] created.",
+    { msg = "Interval of 30000 [ms] for user check in expired. Last check in was 61000 [ms] ago. Removing session 00000000-0000-4000-8000-000000000001 from context [12]...", fields = { interval_ms = 30000, last_ms = 61000 } },
+]
+counter_examples = ["Saving session abc for context ID [12]..."]
+
+[[template]]
+code = "DCR-292"
+class = "lifecycle"
+title = "Session connection state after connect"
+sev = 5
+fts = false
+text = "ConnectSessionPrivate session state: Opened"
+examples = ["ConnectSessionPrivate session state: Opened"]
+counter_examples = ["ConnectSessionPrivate session state: Closed"]
+
+[[template]]
+code = "DCR-283"
+class = "other"
+title = "Context macros, configuration and info read"
+sev = 5
+fts = false
+regex = '''^(?:Preparing macros for context ID |Macros for context ID |Gotten \d+ registered |Getting additional configuration for context ID |Additional configuration for context ID |Getting info for context id |Context info for context |Getting info for current model version|Info for model version |Getting connection macros for context |Retrieved macros for context |Getting contexts by Username |Contexts gotten: |Retrieving realtime context|Realtime context with id )(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Preparing macros for context ID [12]...", fields = { detail = "[12]..." } },
+    "Gotten 4 registered known processes.",
+    "Info for model version 12 gotten. Retrieved 4 substations, 90 network elements, 2 transmission and 8 feeders",
+    "Getting contexts by Username [EXAMPLE\\user01] and Machine [HOST01] started.",
+]
+counter_examples = ["Getting contexts failed."]
+
+[[template]]
+code = "DCR-284"
+class = "other"
+title = "Client licence count changed"
+sev = 5
+fts = false
+regex = '''^(?:Increased number of used licenses for client (?P<client>\w+)\. Current license count: (?P<current>\d+), Max license count: (?P<max>\d+)|Remove concurrent licence succeeded for client (?P<removed_client>\w+)\. Current count: (?P<removed_current>\d+), Max count: (?P<removed_max>\d+))$'''
+fields = { current = "int", max = "int", removed_current = "int", removed_max = "int" }
+examples = [
+    { msg = "Increased number of used licenses for client ExampleClient. Current license count: 3, Max license count: 10", fields = { client = "ExampleClient", current = 3, max = 10 } },
+    "Remove concurrent licence succeeded for client ExampleClient. Current count: 2, Max count: 10",
+]
+counter_examples = ["Increased number of used licenses for client ExampleClient."]
+
+[[template]]
+code = "DCR-285"
+class = "lifecycle"
+title = "Connecting to a context"
+sev = 4
+fts = false
+regex = '''^Connecting to context (?P<context>-?\d+), on: (?P<client_type>\w+)\.$'''
+fields = { context = "int" }
+examples = [{ msg = "Connecting to context -1, on: ExampleClient.", fields = { context = -1, client_type = "ExampleClient" } }]
+counter_examples = ["Connecting to context x, on: ExampleClient."]
+
+[[template]]
+code = "DCR-286"
+class = "other"
+title = "State model document pulled from or pushed to the scratchpad"
+sev = 5
+fts = false
+regex = '''^(?:Number of scratchpad records found |Document with ID: |Pulling SM document with ID: |SM document |Pushing SM document with ID: )(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "SM document 12 pulled from scratchpad.", fields = { detail = "12 pulled from scratchpad." } },
+    "Pulling SM document with ID: 12 from scratchpad for context with ID: 4. Integrity data hash: .",
+    "Number of scratchpad records found during the browse phase for selected context: 3 | Document 12 was found in 2 of them.",
+    "Document with ID: 12, with matching dataHash property, has been found in scratchpad records with ID: 4.",
+]
+counter_examples = ["SM document 12 push failed."]
+
+[[template]]
+code = "DCR-287"
+class = "lifecycle"
+title = "Local context manager model update and version switch"
+sev = 5
+fts = false
+regex = '''^(?:Received new MDC: |Updating contexts with new state in model |LCM model update |Performing SwitchVersion operation|Performing ApplyUpdates operation|Updated context data to autostart contexts XML|Getting active version from model service|Active version from model service )(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Received new MDC: 100. Local model delta counter changed from 4 to 5.", fields = { detail = "100. Local model delta counter changed from 4 to 5." } },
+    "LCM model update commit started.",
+    "Performing SwitchVersion operation...",
+    "Updating contexts with new state in model finished.",
+]
+counter_examples = ["LCM model update rollback failed."]
+
+[[template]]
+code = "DCR-288"
+class = "startup"
+title = "Process registration in a context and port lookups"
+sev = 5
+regex = '''^(?:Registering |Process (?:core )?\w+ registered with |Getting contex processes |Context processes |Getting core process |Core process )(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Registering process EXA with id 3 and port 5000 in context 12...", fields = { detail = "process EXA with id 3 and port 5000 in context 12..." } },
+    "Process core EXA registered with macro: %EXA_Port%=5000,ExampleService=5001.",
+    "Getting contex processes EXA ports...",
+    "Context processes EXA ports [5000] gotten.",
+]
+counter_examples = ["Process EXA started."]
+
+[[template]]
+code = "DCR-289"
+class = "startup"
+title = "Real-time database configuration record read"
+sev = 5
+regex = '''^\[RTDBConfigAccessor\] (?P<record>\w+) record read: (?P<detail>.*)$'''
+examples = [{ msg = "[RTDBConfigAccessor] doas_system record read: name=example, zone=PROD, site=MainSite", fields = { record = "doas_system" } }]
+counter_examples = ["[RTDBConfigAccessor] doas_system record skipped: name=example"]
+
+[[template]]
+code = "DCR-290"
+class = "startup"
+title = "Licence file attributes and limits"
+sev = 5
+regex = '''^(?:Unknown licence attribute (?P<attribute>\w+) read from license file and it will be ignored\.|Reading available licenses\.\.\.|Available licenses for service .*|Number of concurrent licenses per client for service .*)$'''
+examples = [
+    { msg = "Unknown licence attribute ExampleFeature read from license file and it will be ignored.", fields = { attribute = "ExampleFeature" } },
+    "Reading available licenses...",
+    "Number of concurrent licenses per client for service 'ExampleService': [ExampleClient=5]",
+]
+counter_examples = ["Unknown licence attribute read from license file."]
+
+# ---------------------------------------------------------------------------------------------
+# ContextCoordinatorService (DCR-320..339)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-320"
+class = "other"
+title = "Context information publication or subscription event"
+sev = 5
+fts = false
+regex = '''^\[(?P<component>MachineInfoSubscriber|MachineInfoPubSub|UserStatusSubscriber|ModelVersionSubscriber|ConnectedUsersAndCreatedContextsPubSub|ModifyContextProgressSubscriber)\] (?P<event>Publication received\.|MachineInfoMessage published successfully\.|Subscriber connected\.|Subscribe to topics\.)$'''
+examples = [
+    { msg = "[UserStatusSubscriber] Publication received.", fields = { component = "UserStatusSubscriber", event = "Publication received." } },
+    "[MachineInfoPubSub] MachineInfoMessage published successfully.",
+    "[ModelVersionSubscriber] Subscribe to topics.",
+]
+counter_examples = ["[UserStatusSubscriber] Publication dropped."]
+
+[[template]]
+code = "DCR-321"
+class = "lifecycle"
+title = "User status published for a context"
+sev = 4
+fts = false
+regex = '''^\[UserStatusSubscriber\] Publish: ContextId \[(?P<context>-?\d+)\], Status \[(?P<status>\w+)\], Connected Users \[(?P<users>\d+)\]$'''
+fields = { context = "int", users = "int" }
+examples = [{ msg = "[UserStatusSubscriber] Publish: ContextId [12], Status [Connected], Connected Users [3]", fields = { context = 12, status = "Connected", users = 3 } }]
+counter_examples = ["[UserStatusSubscriber] Publish: ContextId [x], Status [Connected], Connected Users [3]"]
+
+[[template]]
+code = "DCR-322"
+class = "lifecycle"
+title = "Model version published"
+sev = 4
+fts = false
+regex = '''^\[ModelVersionSubscriber\] Publish: Model Version Name \[(?P<version_name>[^\]]*)\], Model Version CreationTime \[(?P<created>[^\]]*)\]$'''
+examples = [{ msg = "[ModelVersionSubscriber] Publish: Model Version Name [Example 12], Model Version CreationTime [10/3/2026 12:00:00 AM]", fields = { version_name = "Example 12" } }]
+counter_examples = ["[ModelVersionSubscriber] Publish: Model Version Name Example 12"]
+
+[[template]]
+code = "DCR-323"
+class = "lifecycle"
+title = "Proxy to a local context manager opened"
+sev = 5
+fts = false
+regex = '''^(?:Opening proxy to LCM at address (?P<host>\S+) and port (?P<port>\d+)\.\.\.|Proxy to LCM at address (?P<opened_host>\S+) and port (?P<opened_port>\d+) opened\.)$'''
+fields = { port = "int", opened_port = "int" }
+examples = [
+    { msg = "Opening proxy to LCM at address HOST01 and port 5000...", fields = { host = "HOST01", port = 5000 } },
+    "Proxy to LCM at address HOST01 and port 5000 opened.",
+]
+counter_examples = ["Opening proxy to LCM at address HOST01."]
+
+[[template]]
+code = "DCR-324"
+class = "other"
+title = "Service health and system inventory"
+sev = 5
+fts = false
+regex = '''^(?:Services with (?P<health>good|bad) health state are: |Computer: |System Name = |Service: )(?P<detail>.*)$'''
+examples = [
+    { msg = "Services with good health state are: [HOST01, 1, DMS_RealTime]", fields = { health = "good" } },
+    "Computer: 'HOST01', composite system id: 12, local service names from computer: Common; Arbitration",
+    "System Name = example, Service Name = Common",
+]
+counter_examples = ["Services are unknown"]
+
+[[template]]
+code = "DCR-325"
+class = "other"
+title = "Context groups, connection parameters and quick study"
+sev = 5
+fts = false
+regex = '''^(?:Getting context groups with servers and contexts|Getting user configuration for Context Management Tool |Gotten \d+ context groups: |Getting connection parameters for context |Connection parameters gotten for context |\[QuickStudy-|Read additional context group attributes)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "Getting context groups with servers and contexts...", fields = { detail = "..." } },
+    "[QuickStudy-Started]",
+    "[QuickStudy-SelectContext-Started] for user [EXAMPLE\\user01] and machine [HOST01].",
+    "Getting user configuration for Context Management Tool started.",
+]
+counter_examples = ["Getting context groups failed."]
+
+# ---------------------------------------------------------------------------------------------
+# ExportService (DCR-340..369)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-340"
+class = "other"
+title = "Network model configuration received for an external system"
+sev = 5
+fts = false
+regex = '''^\[NetworkModelConfigurationCallback\] Recieved configuration for (?P<system>\w+) external system$'''
+examples = [{ msg = "[NetworkModelConfigurationCallback] Recieved configuration for ExampleSystem external system", fields = { system = "ExampleSystem" } }]
+counter_examples = ["[NetworkModelConfigurationCallback] Received configuration for ExampleSystem external system"]
+
+[[template]]
+code = "DCR-341"
+class = "req_resp"
+title = "Configuration delta sent to the listener"
+sev = 5
+fts = false
+regex = '''^\[ListenerDataProvider\] Configuration delta (?P<system>\w+) is successfully sent to Listener\.$'''
+examples = [{ msg = "[ListenerDataProvider] Configuration delta ExampleSystem is successfully sent to Listener.", fields = { system = "ExampleSystem" } }]
+counter_examples = ["[ListenerDataProvider] Configuration delta ExampleSystem could not be sent to Listener."]
+
+[[template]]
+code = "DCR-342"
+class = "other"
+title = "Export configuration service cache step"
+sev = 5
+fts = false
+regex = '''^\[(?:ServiceCacheManager|ServiceCacheInitializer|ExportConfigurationModifier|ComplexConfigComparer|ConfigurationProcessor|EtlReconfigurationManager|TimeMonitor|ListenerCommon|ListenerProxyHelper)\] (?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [
+    { msg = "[ServiceCacheManager] Loading configurations from cache started.", fields = { detail = "Loading configurations from cache started." } },
+    "[EtlReconfigurationManager] Get new configuration from NMS started.",
+    "[TimeMonitor] Execute configuration on NMS finished in 25.9 s.",
+    "[ComplexConfigComparer] - Deltas for service caches created: '0'.",
+    "[ServiceCacheInitializer] Received replicated data!",
+]
+counter_examples = ["[ServiceCacheManager] Loading failed."]
+
+[[template]]
+code = "DCR-343"
+class = "validation"
+title = "Enum code has no mapping in the export configuration"
+sev = 3  # cleanup of something absent
+regex = '''^\[ExportService\] Failed to get (?P<enum>[\w.]+) enum for enum code: (?P<code>-?\d+)\.$'''
+fields = { code = "int" }
+examples = [{ msg = "[ExportService] Failed to get ExampleEntity.Status enum for enum code: 0.", fields = { enum = "ExampleEntity.Status", code = 0 } }]
+counter_examples = ["[ExportService] Failed to get ExampleEntity.Status enum for enum code: x."]
+
+[[template]]
+code = "DCR-344"
+class = "lifecycle"
+title = "Export configuration requested after a model update"
+sev = 4
+regex = '''^\[ExportService\] Request configuration on model update\. Model has switched to model version: (?P<version>\d+), model delta counter: (?P<mdc>\d+), model version name: (?P<version_name>.*)\.$'''
+fields = { version = "int", mdc = "int" }
+examples = [{ msg = "[ExportService] Request configuration on model update. Model has switched to model version: 1000123, model delta counter: 1000124, model version name: Example 12.", fields = { version = 1000123, mdc = 1000124, version_name = "Example 12" } }]
+counter_examples = ["[ExportService] Request configuration on model update. Model has switched to model version: x."]
+
+[[template]]
+code = "DCR-345"
+class = "lifecycle"
+title = "Export service configuration request handling"
+sev = 5
+fts = false
+regex = '''^\[ExportService\] (?!Failed to get )(?!Request configuration on model update)(?!.*(?:[Ff]ail(?!over)|rror|xception|imeout|[Uu]nable|annot|ould not|bort|nvalid|lost|enied|ejected|WARN|arning))(?P<detail>.*)$'''
+window = 720
+examples = [{ msg = "[ExportService] Process configuration request: SendUpdateConfiguration. Next request would be: None.", fields = { detail = "Process configuration request: SendUpdateConfiguration. Next request would be: None." } }]
+counter_examples = ["[ExportService] Failed to get ExampleEntity.Status enum for enum code: 0."]
+
+[[template]]
+code = "DCR-346"
+class = "validation"
+title = "No destination info for a replication client"
+sev = 3
+regex = '''^WARNING \[RouteID:(?P<route_id>\d+), Dataset:(?P<dataset>\d+), Dataflow:(?P<dataflow>\d+)\] RequestIU: No destination info for client with ID: (?P<client_id>\d+) .*$'''
+fields = { route_id = "int", dataset = "int", dataflow = "int", client_id = "int" }
+examples = [{ msg = "WARNING [RouteID:0, Dataset:10, Dataflow:7] RequestIU: No destination info for client with ID: 4 (the client on destination side doesn't propagate it).", fields = { route_id = 0, dataset = 10, dataflow = 7, client_id = 4 } }]
+counter_examples = ["[RouteID:0, Dataset:10, Dataflow:7] RequestIU: No destination info for client with ID: 4 (x)."]
+
+# ---------------------------------------------------------------------------------------------
+# ControlSequenceManagementService (DCR-370..399)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DCR-370"
+class = "other"
+title = "Tag publication received for a signal"
+sev = 5
+fts = false
+regex = '''^TASSubscriber - PublicationHandler: Publication received for signal \(gid = (?P<gid>\d+)\), tagId = (?P<tag_id>\d+), tagCatalogId = (?P<catalog_id>\d+), tagSemantic = (?P<semantic>.*)$'''
+fields = { tag_id = "int", catalog_id = "int" }
+examples = [{ msg = "TASSubscriber - PublicationHandler: Publication received for signal (gid = 10000123), tagId = 10000124, tagCatalogId = 10000125, tagSemantic = DoNotAutoClose, WarnOnOpen", fields = { gid = "10000123", tag_id = 10000124, catalog_id = 10000125, semantic = "DoNotAutoClose, WarnOnOpen" } }]
+counter_examples = ["TASSubscriber - PublicationHandler: Publication received for signal (gid = x), tagId = 1, tagCatalogId = 2, tagSemantic = A"]
+
+[[template]]
+code = "DCR-371"
+class = "lifecycle"
+title = "Control sequence transaction command phase"
+sev = 5
+fts = false
+regex = '''^ControlSequenceTransactionCommand - (?P<phase>Execute|prepare|Commit|Rollback) (?P<edge>started|finished)$'''
+examples = [{ msg = "ControlSequenceTransactionCommand - prepare started", fields = { phase = "prepare", edge = "started" } }]
+counter_examples = ["ControlSequenceTransactionCommand - verify started"]
+
+[[template]]
+code = "DCR-372"
+class = "lifecycle"
+title = "Interlocking rules loaded and control sequence cache initialized"
+sev = 5
+fts = false
+regex = '''^(?:\(NDS\) Interlocking manager loaded (?P<rules>\d+) rules\.|\[ControlSequenceManager\] - InitializeCacheData: (?:Initializing cache\.\.\.|Cache initialized\.))$'''
+fields = { rules = "int" }
+examples = [
+    { msg = "(NDS) Interlocking manager loaded 12 rules.", fields = { rules = 12 } },
+    "[ControlSequenceManager] - InitializeCacheData: Cache initialized.",
+]
+counter_examples = ["(NDS) Interlocking manager loaded some rules."]
+
+[[template]]
+code = "DCR-373"
+class = "lifecycle"
+title = "Dynamics subscriber restarted"
+sev = 5
+fts = false
+regex = '''^\[NDSSubscriber\] RestartSubscriber: (?:Subscriber is restarted\.|Reinitializing topics\.\.\. Subscriber is going to be stopped\. Topic signals:.*)$'''
+examples = ["[NDSSubscriber] RestartSubscriber: Subscriber is restarted.", "[NDSSubscriber] RestartSubscriber: Reinitializing topics... Subscriber is going to be stopped. Topic signals: "]
+counter_examples = ["[NDSSubscriber] RestartSubscriber: Subscriber is stopped."]
+
+[[template]]
+code = "DCR-374"
+class = "error"
+title = "Subscriber disconnected because the publisher could not be reached"
+sev = 2
+sev_field = "on_demand"
+sev_map = { True = 4, False = 2 }
+regex = '''^(?:\[NDSSubscriber\]|TASSubscriber -) OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = (?P<on_demand>True|False)\. Reason: (?P<reason>.*)$'''
+examples = [
+    { msg = "[NDSSubscriber] OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = False. Reason: Subscriber(ExamplePubSub) failed to connect to the service with an exception: ", fields = { on_demand = "False" } },
+    "[NDSSubscriber] OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = True. Reason: User requested disconnect",
+]
+counter_examples = ["[NDSSubscriber] OnSubscriberConnected: Subscriber connected."]
+
+[[template]]
+code = "DCR-375"
+class = "lifecycle"
+title = "Control sequence model update version switch"
+sev = 5
+fts = false
+regex = '''^ModelUpdateService - (?:SwitchVersion: Switching from (?P<from_version>\d+) to (?P<to_version>\d+) version, MDC: (?P<mdc>\d+)|ApplyUpdates: Applying model updates\.\.\. Model version ID: (?P<version>\d+), MDC: (?P<apply_mdc>\d+))$'''
+examples = [
+    { msg = "ModelUpdateService - SwitchVersion: Switching from 1000123 to 1000124 version, MDC: 1000125", fields = { mdc = "1000125" } },
+    "ModelUpdateService - ApplyUpdates: Applying model updates... Model version ID: 1000124, MDC: 1000125",
+]
+counter_examples = ["ModelUpdateService - SwitchVersion: Switching from x to y version, MDC: z"]
+
+# ---------------------------------------------------------------------------------------------
+# Event rules
+# ---------------------------------------------------------------------------------------------
+
+# A calculation job submitted to the job launcher and its status report (CoreFunctions): measured
+# on a real-time case, almost every submitted job has exactly one status report with the same job
+# id, never before the submit; the 99.9th percentile of the distance is well under 60 s.
+[[link_rule]]
+kind = "response"
+a = "DCR-010"
+b = "DCR-011"
+key = "job_id"
+max_dt_ms = 60000

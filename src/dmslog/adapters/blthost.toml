@@ -147,3 +147,38 @@ end = ["BLT-011"]
 name = "RemoteModeActivation"
 start = ["BLT-020"]
 end = ["BLT-022"]
+
+# --- Real-time server gaps (BLT-030..049): startup lines written without the source suffix.
+
+[[template]]
+code = "BLT-030"
+class = "startup"
+title = "BLTHost startup lines without source suffix"
+sev = 4
+regex = '''^(?:Components loaded successfully\.|This server is not listening for other Certificate Authenticated System Link Servers\.|Minimum IO ThreadPool size set to (?P<io_threads>\d+) \(\.NET Default is \d+\), Minimum Worker ThreadPool size set to (?P<worker_threads>\d+) \(\.NET default is \d+\)?|BLTHost started on address '(?P<address>[^']*)' ServiceEndpoint '(?P<endpoint>[^']*)'\.)$'''
+fields = { io_threads = "int", worker_threads = "int" }
+examples = [
+    "Components loaded successfully.",
+    "This server is not listening for other Certificate Authenticated System Link Servers.",
+    { msg = "Minimum IO ThreadPool size set to 8 (.NET Default is 4), Minimum Worker ThreadPool size set to 16 (.NET default is 4", fields = { io_threads = 8, worker_threads = 16 } },
+    { msg = "BLTHost started on address 'net.tcp://192.0.2.10:9000/BLTService/*' ServiceEndpoint 'TCP'.", fields = { address = "net.tcp://192.0.2.10:9000/BLTService/*", endpoint = "TCP" } },
+]
+counter_examples = ["Components loaded successfully. {E:\\Builds\\1\\Example\\Main.cs:1}", "Components failed to load."]
+
+[[template]]
+code = "BLT-031"
+class = "startup"
+title = "Upstream service monitor initialization"
+sev = 4
+regex = '''^\[UpstreamServiceMonitor\] (?:Create (?P<provider>\w+) for \[(?P<upstream>[^\]]*)\]|Initialize state monitor)\.$'''
+examples = [{ msg = "[UpstreamServiceMonitor] Create ExampleStateProvider for [examplecore:EXAMPLE_SVC].", fields = { provider = "ExampleStateProvider", upstream = "examplecore:EXAMPLE_SVC" } }, "[UpstreamServiceMonitor] Initialize state monitor."]
+counter_examples = ["[UpstreamServiceMonitor] Terminate state monitor."]
+
+[[template]]
+code = "BLT-032"
+class = "startup"
+title = "Managed BLT loaded (no source suffix)"
+sev = 4
+regex = '''^Managed BLT: (?P<blt_file>\S+)$'''
+examples = [{ msg = "Managed BLT: bobjExample.dll", fields = { blt_file = "bobjExample.dll" } }]
+counter_examples = ["Managed BLT: bobjExample.dll {E:\\Builds\\1\\Example\\Main.cs:200}"]

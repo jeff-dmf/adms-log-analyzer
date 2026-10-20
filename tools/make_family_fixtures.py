@@ -85,6 +85,9 @@ PROCESSES: dict[str, tuple[str, str]] = {
     RT_LIBRARY: ("rt", "DMS_ExampleService"),
     "DMSFH": ("rtfh", "DMS_FunctionHost_1"),
     "DMSJOB": ("rt", "DMS_JobLauncher"),
+    "DMSCORE": ("rt", "DMS_CoreFunctionsService"),
+    "DMSMODEL": ("rt", "DMS_NetworkModelService"),
+    "DMSOMS": ("rt", "OMS_IncidentManagementService"),
 }
 # Family the discovery rules give to each file (for the tests).
 EXPECTED_FAMILY = {fam: LIBRARY_FAMILY.get(fam, fam) for fam in PROCESSES}

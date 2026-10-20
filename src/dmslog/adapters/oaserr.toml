@@ -45,3 +45,184 @@ sev = 3
 regex = '''^DAL The .* application is connecting using SSO credentials .*$'''
 examples = ["DAL The 'Example' application is connecting using SSO credentials 'x' with a TokenImpersonationLevel of 'Impersonation'. If the application is NOT running on the hot RCS server, then you have configured delegation incorrectly."]
 counter_examples = ["The 'Example' application is connecting"]
+
+# --- Real-time server gaps (OAS-005..029): lines that DMS_* / OMS_* processes write to oasErrLog.
+
+[[template]]
+code = "OAS-005"
+class = "validation"
+title = "Dynamics cache changeset without operation or timestamp"
+sev = 3
+text = "HDL DynamicsCache Changeset operation and timestamp not found. Using Update as default operation for trend."
+examples = ["HDL DynamicsCache Changeset operation and timestamp not found. Using Update as default operation for trend."]
+counter_examples = ["HDL DynamicsCache Changeset operation found."]
+
+[[template]]
+code = "OAS-006"
+class = "error"
+title = "Unknown job result received from WMS"
+sev = 3
+regex = '''^Unknown job result for entity (?P<entity>\d+) received from WMS\.$'''
+fields = { entity = "int" }
+keys = [{ field = "entity", type = "gid" }]
+examples = [{ msg = "Unknown job result for entity 1000123 received from WMS.", fields = { entity = 1000123 } }]
+counter_examples = ["Unknown job result for entity x received from WMS."]
+
+[[template]]
+code = "OAS-007"
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+class = "end"
+title = "Asynchronous job terminated successfully"
+sev = 4
+regex = '''^(?P<job_name>[A-Za-z][\w ]*?) job terminated successfully guid=(?P<job_ref>\w+)\.$'''
+examples = [{ msg = "Example Plan Validation job terminated successfully guid=1000123.", fields = { job_name = "Example Plan Validation", job_ref = "1000123" } }]
+counter_examples = ["Example Plan Validation job terminated with errors guid=1000123."]
+
+[[template]]
+code = "OAS-008"
+class = "error"
+title = "Command phase failed"
+sev = 2
+regex = '''^(?P<command>\w+): Invoke (?P<phase>[\w-]+) phase failed\. Exception: (?P<reason>.*)$'''
+examples = [
+    { msg = "ExampleArchiveCommand: Invoke pre-concurrent phase failed. Exception: Query execution failed!", fields = { command = "ExampleArchiveCommand", phase = "pre-concurrent", reason = "Query execution failed!" } },
+    "ExampleChangeCommand: Invoke synchronized phase failed. Exception: Exception of type 'Example.Common.ExampleException' was thrown.",
+]
+counter_examples = ["ExampleArchiveCommand: Invoke pre-concurrent phase completed."]
+
+[[template]]
+code = "OAS-009"
+class = "validation"
+title = "Field Complete time validation"
+sev = 3
+regex = '''^Field Complete must be (?P<rule>[^.]*)\.$'''
+examples = [{ msg = "Field Complete must be after the first trouble call event time.", fields = { rule = "after the first trouble call event time" } }, "Field Complete must be later than the earliest crew arrival time."]
+counter_examples = ["Field Complete is set."]
+
+[[template]]
+code = "OAS-010"
+class = "statistics"
+title = "User login duration"
+sev = 4
+regex = '''^User (?P<user_id>-?\d+) logged on machine (?P<machine_id>-?\d+), login method lasts (?P<elapsed>[\d:.]+) seconds\.$'''
+examples = [{ msg = "User 1001 logged on machine -2002, login method lasts 00:00:03.5000000 seconds.", fields = { user_id = "1001", machine_id = "-2002", elapsed = "00:00:03.5000000" } }]
+counter_examples = ["User 1001 logged on machine 2002."]
+
+[[template]]
+code = "OAS-011"
+class = "error"
+title = "Trace function failed"
+sev = 3
+regex = '''^Trace for (?P<element>-?\d+) function failed\. (?P<function>\w+) function$'''
+examples = [{ msg = "Trace for 1000123 function failed. TraceExample function", fields = { element = "1000123", function = "TraceExample" } }]
+counter_examples = ["Trace for 1000123 function completed."]
+
+[[template]]
+code = "OAS-012"
+class = "lifecycle"
+title = "FunctionHost process started on a slot"
+sev = 4
+regex = '''^Function Host service Process ID: (?P<fh_pid>\d+) is started on slot ID: (?P<slot>\d+)\.$'''
+fields = { fh_pid = "int", slot = "int" }
+keys = [{ field = "fh_pid", type = "pid" }]
+examples = [{ msg = "Function Host service Process ID: 4242 is started on slot ID: 3.", fields = { fh_pid = 4242, slot = 3 } }]
+counter_examples = ["Function Host service Process ID: x is started on slot ID: 3."]
+
+[[template]]
+code = "OAS-013"
+class = "lifecycle"
+title = "FunctionHost process restarted by the launcher"
+sev = 3
+regex = '''^\[Launcher\]\[(?P<trigger>\w+)\] FunctionHost process is restarted because (?P<cause>\w+(?: \w+)?) is occurred\. Old FH ProcessID: (?P<fh_pid>\d+), new FH ProcessID: (?P<new_pid>\d+)\.$'''
+fields = { fh_pid = "int", new_pid = "int" }
+keys = [{ field = "fh_pid", type = "pid" }, { field = "new_pid", type = "pid" }]
+examples = [
+    { msg = "[Launcher][ExampleCheck] FunctionHost process is restarted because memory leak is occurred. Old FH ProcessID: 4242, new FH ProcessID: 4343.", fields = { trigger = "ExampleCheck", cause = "memory leak", fh_pid = 4242, new_pid = 4343 } },
+    "[Launcher][ExampleMonitorEvent] FunctionHost process is restarted because ExampleCrashAlarm is occurred. Old FH ProcessID: 4242, new FH ProcessID: 4343.",
+]
+counter_examples = ["[Launcher][ExampleCheck] FunctionHost process is running. Old FH ProcessID: 4242, new FH ProcessID: 4343."]
+
+[[template]]
+code = "OAS-014"
+class = "startup"
+title = "Process start-up script parameters"
+sev = 4
+regex = '''^\[CommandLineConfig\] - Start up script provided following parameters: \[(?P<cmdline>.*)\]\.$'''
+examples = [{ msg = "[CommandLineConfig] - Start up script provided following parameters: [C:\\Example\\bin\\ExampleHost.exe 1 2 -slotid 3 -s EXAMPLE_SVC -serviceName EXAMPLE_SVC].", fields = { cmdline = "C:\\Example\\bin\\ExampleHost.exe 1 2 -slotid 3 -s EXAMPLE_SVC -serviceName EXAMPLE_SVC" } }]
+counter_examples = ["[CommandLineConfig] - Start up script provided no parameters."]
+
+[[template]]
+code = "OAS-015"
+class = "lifecycle"
+title = "Model promotion and synchronization steps"
+sev = 4
+regex = '''^(?:Synchronization with (?P<sync_target>\w+) started|(?P<sync_from>Staging|QA|Production) synchronized to (?P<sync_to>Staging|QA|Production)\.|Model promotion process ended|Scheduled synchronization triggered)$'''
+examples = [{ msg = "Synchronization with QA started", fields = { sync_target = "QA" } }, { msg = "Staging synchronized to Production.", fields = { sync_from = "Staging", sync_to = "Production" } }, "Model promotion process ended", "Scheduled synchronization triggered"]
+counter_examples = ["Synchronization with QA failed"]
+
+[[template]]
+code = "OAS-016"
+class = "error"
+title = "Manual incident merge failed"
+sev = 3
+regex = '''^Manual merge failed\. Error codes: ErrorCode: (?P<error_code>\w+)$'''
+keys = [{ field = "error_code", type = "errcode" }]
+examples = [{ msg = "Manual merge failed. Error codes: ErrorCode: EXAMPLE_MERGE_FAIL", fields = { error_code = "EXAMPLE_MERGE_FAIL" } }]
+counter_examples = ["Manual merge completed."]
+
+[[template]]
+code = "OAS-017"
+class = "error"
+title = "Asynchronous job failed and was removed"
+sev = 2
+regex = '''^Error occurred while executing Async job\((?P<job_name>\w+)\)\. Job with guid = (?P<job_ref>[\w-]+) will be removed!$'''
+examples = [{ msg = "Error occurred while executing Async job(ExampleSummaryJob). Job with guid = 00000000-0000-4000-8000-000000000001 will be removed!", fields = { job_name = "ExampleSummaryJob", job_ref = "00000000-0000-4000-8000-000000000001" } }]
+counter_examples = ["Error occurred while executing Async job(ExampleSummaryJob)."]
+
+[[template]]
+code = "OAS-018"
+class = "error"
+title = "Asynchronous job to modify does not exist"
+sev = 3
+regex = '''^Async job modify error! Job (?P<job_name>\w+) with guid = (?P<job_ref>[\w-]+) does not exist!$'''
+examples = [{ msg = "Async job modify error! Job ExampleJobParam with guid = 00000000-0000-4000-8000-000000000001 does not exist!", fields = { job_name = "ExampleJobParam" } }]
+counter_examples = ["Async job modify ok! Job ExampleJobParam with guid = 1 exists!"]
+
+[[template]]
+code = "OAS-019"
+class = "error"
+title = "Archive dispatcher exception"
+sev = 3
+regex = '''^An exception occurred in ArchiveDispatcher: Exception of type '(?P<exc_type>[^']*)' was thrown\.\. \(HRESULT:(?P<hresult>\w+)\)\.$'''
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [{ msg = "An exception occurred in ArchiveDispatcher: Exception of type 'Example.Common.ExampleException' was thrown.. (HRESULT:0x80131500).", fields = { exc_type = "Example.Common.ExampleException", hresult = "0x80131500" } }]
+counter_examples = ["An exception occurred in ArchiveDispatcher: nothing."]
+
+[[template]]
+code = "OAS-020"
+class = "error"
+title = "Service module failure (NDS, TAS, TES, CMS, AES)"
+sev = 3
+regex = '''^\((?P<module>NDS|TAS|TES|CMS|AES)\) (?P<detail>.*)$'''
+examples = [{ msg = "(NDS) ExampleConfigurator - Failed to configure alarming for discrete signal with gid 1000123. Reason: Failed to add event.", fields = { module = "NDS" } }, { msg = "(TAS) Apply updates failed. Example reason.", fields = { module = "TAS" } }]
+counter_examples = ["(XYZ) Example detail"]
+
+[[template]]
+code = "OAS-021"
+window = 480  # worst case quadratic: see _schema.md, Regex safety
+class = "error"
+title = "Tag or instruction request failed"
+sev = 3
+regex = '''^(?:Failed to get tags for specific signals\.\. Exception: (?P<tag_reason>.*)|Instruction Command: Exception while executing (?P<instruction>[\w ]*?) from (?P<processor>\w+): (?P<instr_reason>.*))$'''
+examples = [{ msg = "Failed to get tags for specific signals.. Exception: Tag actions are not allowed on servers that are not in HOT status.", fields = { tag_reason = "Tag actions are not allowed on servers that are not in HOT status." } }, { msg = "Instruction Command: Exception while executing Create Instruction from ExampleProcessor: Example failure.", fields = { instruction = "Create Instruction", processor = "ExampleProcessor" } }]
+counter_examples = ["Failed to get tags."]
+
+[[template]]
+code = "OAS-022"
+class = "validation"
+title = "Client delta validation removed a property"
+sev = 3
+regex = '''^\[IncidentProcessor_(?P<client>\w+)\] Client delta validation: Uneditable property (?P<property>\w+) removed from \(GID: (?P<gid>\d+)\)\.$'''
+fields = { gid = "int" }
+examples = [{ msg = "[IncidentProcessor_Example] Client delta validation: Uneditable property EXAMPLE_PROPERTY removed from (GID: 1000123).", fields = { client = "Example", property = "EXAMPLE_PROPERTY", gid = 1000123 } }]
+counter_examples = ["[IncidentProcessor_Example] Client delta validation passed."]

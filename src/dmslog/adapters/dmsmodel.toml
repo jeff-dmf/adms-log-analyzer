@@ -1,0 +1,1260 @@
+# Real-time model services (family DMSMODEL): DMS_NetworkModelService, DMS_DynamicsDataService,
+# DMS_ModelManagerService, DMS_ReplicationService, DMS_ScheduleManagementService,
+# DMS_GDAProxyService and DMS_LandBaseService (normal and sensitive streams).
+# Design: docs/notas/rt-templates-desenho.md. Infrastructure lines shared with other real-time
+# families (transactions, replication, PubSub, configuration manager, topology) belong to `_dmsrt`.
+#
+# Codes: DMD-001..049 NetworkModelService, DMD-050..109 DynamicsDataService (+ DMD-S050..S089
+# sensitive), DMD-110..149 ModelManagerService (+ DMD-S110..S119), DMD-150..169 ReplicationService,
+# DMD-170..184 ScheduleManagementService, DMD-185..189 GDAProxyService, DMD-190..199 LandBaseService.
+#
+# Correlation keys: none on purpose. The ids of this family are per element (GIDs of model objects,
+# versions of the model, transaction GUIDs) and repeat in the millions; they stay as fields.
+# Only the exception type of a non-fatal exception is a key (`exc_type`).
+
+schema = 1
+family = "DMSMODEL"
+description = "DMS_NetworkModelService, DMS_DynamicsDataService, DMS_ModelManagerService, DMS_ReplicationService, DMS_ScheduleManagementService, DMS_GDAProxyService and DMS_LandBaseService of the real-time servers"
+extends = ["_dmsrt", "_common"]
+
+# ---------------------------------------------------------------------------------------------
+# NetworkModelService (DMD-001..049)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-001"
+class = "other"
+title = "Separator line"
+sev = 5
+fts = false
+regex = '''^-{20,}$'''
+examples = ["--------------------------------------------------"]
+counter_examples = ["---------- not a separator ----------", "-----"]
+
+[[template]]
+code = "DMD-002"
+class = "statistics"
+title = "GDA statistics of a call by model type or property list"
+sev = 5
+fts = false
+regex = '''^\[GDA Statistics\] \[(?P<call>\w+)\] (?P<scope>DMS Type|Properties): (?P<items>.*), Count: (?P<count>\d{1,9})$'''
+fields = { count = "int" }
+examples = [
+    { msg = "[GDA Statistics] [GetDescendentValues] DMS Type: SECTION, Count: 12", fields = { call = "GetDescendentValues", scope = "DMS Type", items = "SECTION", count = 12 } },
+    "[GDA Statistics] [GetValues] Properties: IDOBJ_NAME, IDOBJ_LID, Count: 7",
+]
+counter_examples = ["[GDA Statistics] [GetValues] Properties: IDOBJ_NAME, Count: x"]
+
+[[template]]
+code = "DMD-003"
+class = "statistics"
+title = "GDA statistics call count"
+sev = 5
+fts = false
+regex = '''^\[GDA Statistics\] (?P<call>\w+) call count: (?P<count>\d+)$'''
+fields = { count = "int" }
+examples = [{ msg = "[GDA Statistics] GetValues call count: 4321", fields = { call = "GetValues", count = 4321 } }]
+counter_examples = ["[GDA Statistics] GetValues call count: many"]
+
+[[template]]
+code = "DMD-004"
+class = "other"
+title = "Full text search over a list of filters"
+sev = 4
+regex = '''^Full text search list on Context with Id = (?P<context_id>\d+)(?: (?P<phase>succeeded|finished))?\. Entity type = (?P<entity>\w+)\. Property = (?P<property>\w+)\. Filter count = (?P<filter_count>\d+)\.$'''
+fields = { context_id = "int", filter_count = "int" }
+examples = [
+    { msg = "Full text search list on Context with Id = 1000123 succeeded. Entity type = EXAMPLETYPE. Property = IDOBJ_CUSTOMID. Filter count = 7.", fields = { context_id = 1000123, phase = "succeeded", entity = "EXAMPLETYPE", filter_count = 7 } },
+    "Full text search list on Context with Id = 1000123. Entity type = EXAMPLETYPE. Property = IDOBJ_CUSTOMID. Filter count = 7.",
+]
+counter_examples = ["Full text search list on Context with Id = x. Entity type = EXAMPLETYPE. Property = IDOBJ_CUSTOMID. Filter count = 7."]
+
+[[template]]
+code = "DMD-005"
+class = "other"
+title = "Full text search with a filter"
+sev = 4
+window = 400
+regex = '''^Full text search on Context with Id = (?P<context_id>\d+)(?: (?P<phase>succeeded))?\. Entity type = (?P<entity>\w+)\. Property = (?P<property>\w+)\. Filter = (?P<filter>.*?)\.(?: Number of AOR groups = (?P<aor_groups>\d+)\.)?(?: Number of results = (?P<results>\d+)\.)?$'''
+fields = { context_id = "int", aor_groups = "int", results = "int" }
+examples = [
+    { msg = "Full text search on Context with Id = 1000123 succeeded. Entity type = EXAMPLETYPE. Property = 0. Filter = ABC-12. Number of AOR groups = 3. Number of results = 41.", fields = { context_id = 1000123, phase = "succeeded", entity = "EXAMPLETYPE", filter = "ABC-12", aor_groups = 3, results = 41 } },
+    "Full text search on Context with Id = 1000123. Entity type = EXAMPLETYPE. Property = IDOBJ_NAME. Filter = example.",
+]
+counter_examples = ["Full text search on Context with Id = x. Entity type = EXAMPLETYPE. Property = 0. Filter = ABC-12."]
+
+[[template]]
+code = "DMD-006"
+class = "other"
+title = "Network view properties request"
+sev = 4
+regex = '''^Get network view properties(?:: (?P<types>[\w,]+))?(?: (?P<phase>finished))?\.(?: Model version (?P<model_version>\d+(?:\.\d+)?) and client model delta counter (?P<delta_counter>\d+(?:\.\d+)?)\.)?$'''
+examples = [
+    { msg = "Get network view properties: FEEDER,AORGROUP. Model version 100.200 and client model delta counter 100.300.", fields = { types = "FEEDER,AORGROUP", model_version = "100.200", delta_counter = "100.300" } },
+    "Get network view properties finished.",
+]
+counter_examples = ["Get network view property finished."]
+
+[[template]]
+code = "DMD-007"
+class = "other"
+title = "Internal elements request or result"
+sev = 4
+regex = '''^Get (?P<scope>all )?internal elements for (?P<gids>\d+) gids, and (?:types (?P<types>[A-Z\d,]*)|(?P<one>[A-Z\d]+) types) ?(?:\.|finished\. Results number: (?P<results>\d+)\.)$'''
+fields = { gids = "int", results = "int" }
+examples = [
+    { msg = "Get internal elements for 89 gids, and types SECTION,FEEDER finished. Results number: 834.", fields = { gids = 89, types = "SECTION,FEEDER", results = 834 } },
+    "Get internal elements for 89 gids, and types .",
+    "Get all internal elements for 1 gids, and ASIGNAL types finished. Results number: 12.",
+]
+counter_examples = ["Get internal elements for x gids, and types SECTION."]
+
+[[template]]
+code = "DMD-008"
+class = "other"
+title = "Line direction request"
+sev = 4
+regex = '''^Get line direction for lines(?= [fw])(?: finished\.| with gids: (?P<gids>[\d,]*)\. Model version (?P<model_version>\d+(?:\.\d+)?) and client model delta counter (?P<delta_counter>\d+(?:\.\d+)?)\.)$'''
+examples = [
+    { msg = "Get line direction for lines with gids: 1000123. Model version 100.200 and client model delta counter 100.300.", fields = { gids = "1000123", model_version = "100.200", delta_counter = "100.300" } },
+    "Get line direction for lines finished.",
+]
+counter_examples = ["Get line direction for lines started."]
+
+[[template]]
+code = "DMD-009"
+class = "other"
+title = "Feeder equipment by circuit"
+sev = 5
+regex = '''^Get feeder equipment by circuit - (?=[sf])(?P<phase>started|finished)\.$'''
+examples = [{ msg = "Get feeder equipment by circuit - started.", fields = { phase = "started" } }, "Get feeder equipment by circuit - finished."]
+counter_examples = ["Get feeder equipment by circuit - failed."]
+
+[[template]]
+code = "DMD-010"
+class = "other"
+title = "Snapshot export step"
+sev = 5
+regex = '''^\[SNAPSHOT\](?:Saving snapshot chunk (?P<chunk>\d+), dmstype (?P<chunk_type>\w+)|Exporting (?P<exporting>\w+) \.|(?P<exported>\w+) exported\. Count (?P<count>\d+)\. Elapsed (?P<elapsed_s>\d+(?:\.\d+)?)s\.)$'''
+fields = { chunk = "int", count = "int", elapsed_s = "float" }
+examples = [
+    { msg = "[SNAPSHOT]Saving snapshot chunk 118, dmstype SECTION", fields = { chunk = 118, chunk_type = "SECTION" } },
+    "[SNAPSHOT]Exporting EXAMPLETYPE .",
+    "[SNAPSHOT]EXAMPLETYPE exported. Count 20. Elapsed 1.5s.",
+]
+counter_examples = ["[SNAPSHOT]Saving snapshot chunk x, dmstype SECTION"]
+
+[[template]]
+code = "DMD-011"
+class = "error"
+title = "LID not found for a GID"
+sev = 3
+regex = '''^\(WARNING\) Failed to retrieve LID for GID = (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16}), because it doesn't exist in GID to LID mappings\.$'''
+fields = { gid = "hex" }
+examples = ["(WARNING) Failed to retrieve LID for GID = 0x4A00B00C00D00E02, because it doesn't exist in GID to LID mappings."]
+counter_examples = ["(WARNING) Failed to retrieve LID for GID = zz, because it doesn't exist in GID to LID mappings."]
+
+[[template]]
+code = "DMD-012"
+class = "error"
+title = "Values of an entity or resource not obtained"
+sev = 2
+regex = '''^(?:\(ERROR\) Failed to get values for entity with GID = (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16})\.|Getting values for resource with ID = (?P<resource>(?:0x)?[0-9A-Fa-f]{1,16}) failed\. {1,2}(?:Failed to retrieve LID for GID = (?P<lid_gid>(?:0x)?[0-9A-Fa-f]{1,16})\.|Message from (?P<service>\w+): Exception of type '(?P<exc_type>[\w.]+)' was thrown\.))$'''
+examples = [
+    { msg = "(ERROR) Failed to get values for entity with GID = 0x4A00B00C00D00E02.", fields = { gid = "0x4A00B00C00D00E02" } },
+    "Getting values for resource with ID = 0x4A00B00C00D00E01 failed.  Failed to retrieve LID for GID = 0x4A00B00C00D00E02.",
+    { msg = "Getting values for resource with ID = 0x4A00B00C00D00E02 failed. Message from EXS: Exception of type 'Example.Common.ExampleException' was thrown.", fields = { service = "EXS", exc_type = "Example.Common.ExampleException" } },
+]
+counter_examples = ["(ERROR) Failed to get values for entity with GID = zz."]
+
+[[template]]
+code = "DMD-013"
+class = "error"
+title = "Query on a context failed or asked for invalid ids"
+sev = 2
+window = 512
+regex = '''^(?:\(ERROR\) (?=F)(?:Failed to get (?P<what>descendent values|descendent values properties) from Context with Id = (?P<context_id>\d+)\.|Failed to get related gids for entities\. Data with invalid IDs requested: (?P<related_ids>[\w,x ]*)\.?)|Getting descendent values(?: properties)? failed\. Sources count = (?P<sources>\d+)\. Association depth = (?P<depth>\d+)\. ?(?:Types count = (?P<types_count>\d+)\.)?Data with invalid IDs requested: (?P<ids>[\w,x ]*)\.?)$'''
+fields = { context_id = "int", sources = "int", depth = "int", types_count = "int" }
+examples = [
+    { msg = "(ERROR) Failed to get descendent values from Context with Id = 1000123.", fields = { what = "descendent values", context_id = 1000123 } },
+    "Getting descendent values failed. Sources count = 2. Association depth = 1.Data with invalid IDs requested: 0x4A00B00C00D00E02.",
+    "Getting descendent values properties failed. Sources count = 2. Association depth = 1. Types count = 3.Data with invalid IDs requested: 0x4A00B00C00D00E02.",
+    "(ERROR) Failed to get related gids for entities. Data with invalid IDs requested: 0x4A00B00C00D00E02.",
+]
+counter_examples = ["(ERROR) Failed to get descendent values from Context with Id = x."]
+
+[[template]]
+code = "DMD-014"
+class = "error"
+title = "Gids or attribute values not obtained for a model version"
+sev = 2
+regex = '''^\(ERROR\) (?=G)(?P<operation>Getting gids for specified types|Get attribute values) failed\. {1,2}Warning: Failed to get model for specified version (?P<model_version>\d+(?:\.\d+)?) and model delta counter (?P<delta_counter>\d+(?:\.\d+)?)\.$'''
+examples = [
+    { msg = "(ERROR) Getting gids for specified types failed. Warning: Failed to get model for specified version 100.200 and model delta counter 100.300.", fields = { operation = "Getting gids for specified types", model_version = "100.200" } },
+    "(ERROR) Get attribute values failed.  Warning: Failed to get model for specified version 100.200 and model delta counter 100.300.",
+]
+counter_examples = ["Getting gids for specified types failed."]
+
+[[template]]
+code = "DMD-015"
+class = "other"
+title = "Extract-transform-load step for the external data export"
+sev = 5
+regex = '''^(?:\[ETL\] (?=[PTG])(?:Prepare data (?:for query with GID: (?P<gid>\d+) started\.|started\. Directory GID: (?P<directory_gid>\d+)|ended\.)|Populate master table \[(?P<table_id>\d+), (?P<dms_type>\w+), (?P<template_kind>[\w ]+)\]\.|Table data for DMS Type \[(?P<table_type>\w+)\] created\.|Getting ETL Directories by external system names (?P<directory_phase>started|ended)\.)|Getting ETL export configuration (?=[fe])(?:for external system names \[(?P<system>\w+)\] started|(?P<config_phase>finished))\.|Release (?P<pool>\w+) - Global: (?P<global_count>\d+), Local: (?P<local_count>\d+)\)\.)$'''
+fields = { table_id = "int", global_count = "int", local_count = "int" }
+examples = [
+    { msg = "[ETL] Populate master table [12, EXAMPLETYPE, Not Template].", fields = { table_id = 12, dms_type = "EXAMPLETYPE", template_kind = "Not Template" } },
+    "[ETL] Prepare data for query with GID: 1000123 started.",
+    "[ETL] Prepare data started. Directory GID: 1000123",
+    "[ETL] Prepare data ended.",
+    "[ETL] Table data for DMS Type [EXAMPLETYPE] created.",
+    "[ETL] Getting ETL Directories by external system names started.",
+    "Getting ETL export configuration for external system names [DA] started.",
+    "Getting ETL export configuration finished.",
+    "Release ETLEntityPool - Global: 10, Local: 2).",
+]
+counter_examples = ["[ETL] Prepare data failed.", "Release ETLEntityPool - Global: x, Local: 2)."]
+
+[[template]]
+code = "DMD-016"
+class = "other"
+title = "Model transaction step of the block model and feeder graphs"
+sev = 5
+regex = '''^(?:Getting (?=[ar])(?P<what>affected|removed) (?P<what_type>Feeders|Transformer Areas) (?P<what_phase>started|ended)\.|(?P<step>Preparing graph data|Feeder graph update|Preparing Transformer Area graph data|Transformer Area graph update|AddInsertedTrAreas|AddUpdatedTrAreas|AddTrAreasInSubsWithRemovedTrAreas|AddTrAreasConnectedWithAffectedFeeders|AddTrAreasConnectedWithRemovedFeeders|Including model changes to context update data|Setting meta tags for blocks in block model|Wait for end of transaction|Applying delta on Block Model) (?P<phase>started|ended|finished)\.?)$'''
+examples = [
+    { msg = "Getting affected Feeders started.", fields = { what = "affected", what_type = "Feeders", what_phase = "started" } },
+    { msg = "Wait for end of transaction finished", fields = { step = "Wait for end of transaction", phase = "finished" } },
+    "Applying delta on Block Model finished.",
+]
+counter_examples = ["Getting affected Feeders failed."]
+
+[[template]]
+code = "DMD-017"
+class = "other"
+title = "Block model delta application"
+sev = 5
+regex = '''^(?:Applying (?P<deltas>\d+) deltas (?P<phase>started|succeeded)\.|Max Number Of Tasks For Apply Delta Parallel is: \[(?P<max_tasks>\d+)\]|Deserialization completed in (?P<deserialize_ms>\d+) ms\.|Total wait time (?P<wait_kind>due to blockWorkers|for data readiness): (?P<wait_ms>\d+) ms\.|(?P<timing>Validation trigers|Apply update on the block model data|Prepare string properties for validation) time: (?P<timing_ms>\d+) ms\.|Memory usage data (?P<when>before|after) (?P<point>\w+):)$'''
+fields = { deltas = "int", max_tasks = "int", deserialize_ms = "int", wait_ms = "int", timing_ms = "int" }
+examples = [
+    { msg = "Applying 3 deltas started.", fields = { deltas = 3, phase = "started" } },
+    "Max Number Of Tasks For Apply Delta Parallel is: [28]",
+    "Deserialization completed in 217 ms.",
+    "Total wait time due to blockWorkers: 29 ms.",
+    "Validation trigers time: 12 ms.",
+    "Memory usage data before ApplyDeltas:",
+]
+counter_examples = ["Applying x deltas started.", "Memory usage data during ApplyDeltas:"]
+
+[[template]]
+code = "DMD-018"
+class = "other"
+title = "Text properties (FTS) update and write lock of the text database"
+sev = 5
+regex = '''^(?:Updating text properties \(FTS\) for version (?P<version>\d+(?:\.\d+)?)(?: (?P<phase>succeeded))? \(private\)\.|Switch version of text properties \(FTS\) from version (?P<from_version>\d+(?:\.\d+)?) to version (?P<to_version>\d+(?:\.\d+)?)(?: (?P<switch_phase>succeeded))?\.|(?P<action>Inserting new values|Updating existing values|Deleting values) for (?P<entities>\d+) entities\.|(?P<lock>Entering|Exiting) write lock to txt db\.|TextPropertyManager created inside transaction scope\. Concurrent access to txt db will be possible after the transaction is finished\.)$'''
+fields = { entities = "int" }
+examples = [
+    { msg = "Updating text properties (FTS) for version 100.200 succeeded (private).", fields = { version = "100.200", phase = "succeeded" } },
+    "Switch version of text properties (FTS) from version 100.200 to version 100.201.",
+    "Inserting new values for 5 entities.",
+    "Entering write lock to txt db.",
+    "TextPropertyManager created inside transaction scope. Concurrent access to txt db will be possible after the transaction is finished.",
+]
+counter_examples = ["Inserting new values for x entities."]
+
+[[template]]
+code = "DMD-019"
+class = "other"
+title = "Text database statement of the FTS table"
+sev = 5
+regex = '''^(?:UPDATE idobj_text_fts SET .+ WHERE rowid = @rowId|Created (?:select query|delete queries)\.|Select query executed\.|Affected (?P<rows>\d+) rows\.|Deleted (?:(?P<deleted>\d+) )?values from (?P<table>FTS|Indexed) table\.)$'''
+fields = { rows = "int", deleted = "int" }
+examples = [
+    { msg = "Deleted 5 values from FTS table.", fields = { deleted = 5, table = "FTS" } },
+    "Deleted values from FTS table.",
+    'UPDATE idobj_text_fts SET "IDOBJ_NAME" =@IDOBJ_NAME WHERE rowid = @rowId',
+    "Created select query.",
+    "Affected 3 rows.",
+]
+counter_examples = ["Affected x rows."]
+
+[[template]]
+code = "DMD-020"
+class = "other"
+title = "Model version switch of the context and transaction completion"
+sev = 5
+sev_field = "outcome"
+sev_map = { Aborted = 2, Committed = 5 }
+regex = '''^(?:Fixing GID to LID map for model version with ID = (?P<version>\d+(?:\.\d+)?)(?: (?P<phase>succeeded))?\.|Updating contexts on version switch \(current context ID = (?P<context_id>\d+)\) (?P<context_phase>started|ended)\.|Transaction completed(?=[:.])(?:: (?P<outcome>Committed|Aborted)\.|\. Concurrent access to txt database is now available\.))$'''
+fields = { context_id = "int" }
+examples = [
+    { msg = "Fixing GID to LID map for model version with ID = 100.200 succeeded.", fields = { version = "100.200", phase = "succeeded" } },
+    "Updating contexts on version switch (current context ID = 1000123) started.",
+    { msg = "Transaction completed: Aborted.", fields = { outcome = "Aborted" } },
+    "Transaction completed: Committed.",
+    "Transaction completed. Concurrent access to txt database is now available.",
+]
+counter_examples = ["Transaction completed: Rolled back."]
+
+[[template]]
+code = "DMD-021"
+class = "other"
+title = "Creation of the portion of a complete context"
+sev = 5
+regex = '''^(?:Creating portion for complete context with ID = (?P<context_id>\d+) (?P<phase>started|ended)\.(?: Number of blocks: (?P<blocks>\d+)\.)?|Counting reference number in block model - (?P<count_phase>start|end)|CompareTransactionalModels (?:started\. Model Version: (?P<model_version>\d+(?:\.\d+)?), MDC old: (?P<old_mdc>\d+(?:\.\d+)?), new MDC (?P<new_mdc>\d+(?:\.\d+)?), Elements count: (?P<elements>\d+)|getting blocks finished\.))$'''
+fields = { context_id = "int", blocks = "int", elements = "int" }
+examples = [
+    { msg = "Creating portion for complete context with ID = 1000123 ended. Number of blocks: 40.", fields = { context_id = 1000123, phase = "ended", blocks = 40 } },
+    "Counting reference number in block model - start",
+    "CompareTransactionalModels started. Model Version: 100.200, MDC old: 100.300, new MDC 100.301, Elements count: 55",
+    "CompareTransactionalModels getting blocks finished.",
+]
+counter_examples = ["Creating portion for complete context with ID = x ended."]
+
+[[template]]
+code = "DMD-022"
+class = "other"
+title = "Connection pool, garbage collection and element listing step"
+sev = 5
+regex = '''^(?:Initializing connection pool (?:started|finished\. Number of active connections: (?P<connections>\d+))\.?|Disposing connection pool\.\.\.|All found elements without filtering - (?P<listing>start|end)|GC Collect (?:called|ended)\.|\[Feeder Segments\] Getting affected blocks (?P<segments_phase>started|finished)\.)$'''
+fields = { connections = "int" }
+examples = [
+    { msg = "Initializing connection pool finished. Number of active connections: 4.", fields = { connections = 4 } },
+    "Initializing connection pool started.",
+    "Disposing connection pool...",
+    "All found elements without filtering - start",
+    "GC Collect called.",
+    "[Feeder Segments] Getting affected blocks started.",
+]
+counter_examples = ["GC Collect failed."]
+
+[[template]]
+code = "DMD-023"
+class = "other"
+title = "Number of operations of a model delta"
+sev = 5
+regex = '''^(?:Number of (?P<kind>insert|update|delete) operations (?P<count>\d+)\.|Operation: (?P<operation>Insert|Update|Delete)\. Count: (?P<operation_count>\d+)|Examine delta with id (?P<delta_id>\d+(?:\.\d+)?)\.|Setting circuit (?:to (?P<entities>\d+) entities started|finished)\.)$'''
+fields = { count = "int", operation_count = "int", entities = "int" }
+examples = [
+    { msg = "Number of insert operations 12.", fields = { kind = "insert", count = 12 } },
+    "Operation: Update. Count: 3",
+    "Examine delta with id 100.200.",
+    "Setting circuit to 5 entities started.",
+    "Setting circuit finished.",
+]
+counter_examples = ["Number of other operations 12."]
+
+[[template]]
+code = "DMD-024"
+class = "validation"
+title = "Validation of update operations started"
+sev = 5
+regex = '''^\[AdditionalModelValidationPlugin\] Validation of Update operations started\. Count of entity: (?P<entities>\d+), validators count (?P<validators>\d+)\.$'''
+fields = { entities = "int", validators = "int" }
+examples = [{ msg = "[AdditionalModelValidationPlugin] Validation of Update operations started. Count of entity: 20, validators count 3.", fields = { entities = 20, validators = 3 } }]
+counter_examples = ["[AdditionalModelValidationPlugin] Validation of Update operations started. Count of entity: x, validators count 3."]
+
+# ---------------------------------------------------------------------------------------------
+# DynamicsDataService, normal stream (DMD-050..109)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-050"
+class = "statistics"
+title = "Rows compressed by the dynamics cache"
+sev = 5
+fts = false
+regex = '''^HDL DynamicsCache Compressed data: there is (?P<rows>\d+) rows in changes$'''
+fields = { rows = "int" }
+examples = [{ msg = "HDL DynamicsCache Compressed data: there is 120 rows in changes", fields = { rows = 120 } }]
+counter_examples = ["HDL DynamicsCache Compressed data: there is x rows in changes"]
+
+[[template]]
+code = "DMD-051"
+class = "error"
+title = "Changeset operation of a trend not found"
+sev = 2
+text = "(ERROR) HDL DynamicsCache Changeset operation and timestamp not found. Using Update as default operation for trend."
+examples = ["(ERROR) HDL DynamicsCache Changeset operation and timestamp not found. Using Update as default operation for trend."]
+counter_examples = ["HDL DynamicsCache Changeset operation and timestamp not found."]
+
+[[template]]
+code = "DMD-052"
+class = "other"
+title = "Historical data library of the dynamics or temporary elements cache"
+sev = 5
+regex = '''^HDL (?=[DT])(?P<cache>DynamicsCache|TemporaryElementsCache) (?:GetValuesWithOperationForInterval (?:called with (?P<gids>\d+) gids, (?P<model_codes>\d+) model codes, time from (?P<from_ts>\S+) to (?P<to_ts>\S+), includePrev (?P<include_prev>True|False), includeNext (?P<include_next>True|False)\.|returned (?P<results>\d+) results for (?P<result_gids>\d+) gids\.)|\[(?P<storage>\w+)\]: Number of deleted (?P<deleted_kind>archived serialized changesets|changesets|elements) with (?:changesets )?ids equal or lower than (?P<changeset_id>\d+) for machineId (?P<machine_id>\d+) and dataset (?P<dataset>\w+) is (?P<deleted>\d+)\.|Connect to file (?P<file>[^,]+), connection readOnly=(?P<read_only>True|False)|DeleteValuesBefore delete file (?P<delete_file>.+) from disk\.)$'''
+fields = { gids = "int", results = "int", deleted = "int" }
+examples = [
+    { msg = "HDL DynamicsCache GetValuesWithOperationForInterval returned 90 results for 1 gids.", fields = { cache = "DynamicsCache", results = 90 } },
+    "HDL DynamicsCache GetValuesWithOperationForInterval called with 1 gids, 2 model codes, time from 2026-01-01T05:00:00.0000000Z to 2026-01-01T06:00:00.0000000Z, includePrev True, includeNext False.",
+    "HDL TemporaryElementsCache [ElementDALSQLite]: Number of deleted elements with changesets ids equal or lower than 1000123 for machineId 5 and dataset exampleDS is 12.",
+    "HDL DynamicsCache [ItemDALSQLite]: Number of deleted changesets with ids equal or lower than 1000123 for machineId 5 and dataset exampleDS is 3.",
+    'HDL DynamicsCache Connect to file C:\Example\data\HDL_Example.db, connection readOnly=False',
+    'HDL DynamicsCache DeleteValuesBefore delete file C:\Example\data\HDL_Example.db from disk.',
+]
+counter_examples = ["HDL DynamicsCache GetValuesWithOperationForInterval returned x results for 1 gids."]
+
+[[template]]
+code = "DMD-053"
+class = "other"
+title = "Roll over delay of the counters expired"
+sev = 5
+fts = false
+text = "(BPE) [DOMCountersRolloverModule] Roll Over delay expired."
+examples = ["(BPE) [DOMCountersRolloverModule] Roll Over delay expired."]
+counter_examples = ["(BPE) [DOMCountersRolloverModule] Roll Over delay started."]
+
+[[template]]
+code = "DMD-054"
+class = "other"
+title = "Statistics roll over and archiving manager"
+sev = 5
+regex = '''^(?:\[StatisticsRolloverModuleBase\] Roll Over (?=[sd])(?P<rollover>skipped on stand by system|delay expired) for processing type: (?P<processing_type>\w+)\.|\(NDS\) Manager - (?=[RS])(?:Remote units and links archive delay expired\.|Removing timeout \(Id: (?P<timeout_id>\d+)\) for statistics archiving\.|Scheduled new statistics archiving timeout with Id: (?P<new_timeout_id>\d+)\.))$'''
+examples = [
+    { msg = "[StatisticsRolloverModuleBase] Roll Over skipped on stand by system for processing type: ExampleRollover.", fields = { rollover = "skipped on stand by system", processing_type = "ExampleRollover" } },
+    "(NDS) Manager - Remote units and links archive delay expired.",
+    "(NDS) Manager - Removing timeout (Id: 7) for statistics archiving.",
+]
+counter_examples = ["[StatisticsRolloverModuleBase] Roll Over started for processing type: ExampleRollover."]
+
+[[template]]
+code = "DMD-055"
+class = "validation"
+title = "Message mapping without a DMS value for a raw value"
+sev = 4  # per-element
+regex = '''^\(NDS\) \[DiscreteSignalMappingModule\] (?:Message mapping (?P<mapping>\w+) does not contain DMS value for raw value (?P<raw_value>-?\d+)\. Raw value will be written in value because specified raw value does not exist in SCADA values for signal with Gid = (?P<signal_gid>\d+)\.|Message mapping is not defined or valid for signal with Gid = (?P<undefined_gid>\d+) and raw value (?P<undefined_raw>-?\d+) will be written to DMS value for that signal\.)$'''
+fields = { raw_value = "int", signal_gid = "int", undefined_gid = "int", undefined_raw = "int" }
+examples = [
+    { msg = "(NDS) [DiscreteSignalMappingModule] Message mapping EXAMPLE_MAP does not contain DMS value for raw value -12. Raw value will be written in value because specified raw value does not exist in SCADA values for signal with Gid = 1000123.", fields = { mapping = "EXAMPLE_MAP", raw_value = -12, signal_gid = 1000123 } },
+    "(NDS) [DiscreteSignalMappingModule] Message mapping is not defined or valid for signal with Gid = 1000123 and raw value 0 will be written to DMS value for that signal.",
+]
+counter_examples = ["(NDS) [DiscreteSignalMappingModule] Message mapping EXAMPLE_MAP does not contain DMS value for raw value x."]
+
+[[template]]
+code = "DMD-056"
+class = "statistics"
+title = "Point validator step duration"
+sev = 5
+regex = '''^\(PSS\) \[PointValidator\] Finished (?=[fAp])(?:filtering missing GIDs against (?P<source>\w+)|AOR groups fetch from NMS|permissions validation for (?P<points>\d+) points and category (?P<category>\w+)) in (?P<elapsed_ms>\d+)ms\.$'''
+fields = { points = "int", elapsed_ms = "int" }
+examples = [
+    { msg = "(PSS) [PointValidator] Finished permissions validation for 3 points and category AllCategories in 12ms.", fields = { points = 3, category = "AllCategories", elapsed_ms = 12 } },
+    "(PSS) [PointValidator] Finished filtering missing GIDs against NMS in 0ms.",
+    "(PSS) [PointValidator] Finished AOR groups fetch from NMS in 4ms.",
+]
+counter_examples = ["(PSS) [PointValidator] Finished filtering missing GIDs against NMS in many ms."]
+
+[[template]]
+code = "DMD-057"
+class = "other"
+title = "Point selection operation (user and console hashed)"
+sev = 4
+regex = '''^\(PSS\) \[BaseOperation\] MethodName: (?P<method>[\w.]+), Operation: (?P<operation>\w+), Insert: [\d,]* Update: [\d,]* Delete: [\d,]* UserName: (?P<user_hash>-?\d+), Console: (?P<console_hash>-?\d*)$'''
+examples = [
+    { msg = "(PSS) [BaseOperation] MethodName: MultipleSelectPoint.Execute, Operation: Select, Insert: 1000123, Update: , Delete: , UserName: -97394, Console: 72619", fields = { method = "MultipleSelectPoint.Execute", operation = "Select", user_hash = "-97394", console_hash = "72619" } },
+]
+counter_examples = ["(PSS) [BaseOperation] MethodName: MultipleSelectPoint.Execute, Operation: Select, Insert: 1000123, Update: , Delete: , UserName: EXAMPLE, Console: 72619"]
+
+[[template]]
+code = "DMD-058"
+class = "req_resp"
+title = "Point select service call"
+sev = 4
+window = 600
+regex = '''^\(PSS\) \[PointSelectService\] (?P<method>\w+) (?:has been called(?:\. Requests count: (?P<requests>\d+)\.| for (?P<for_requests>\d+) requests\.|\. UniqueId: (?P<unique_id>\d+)\.|\. PointId: (?P<point_id>\d+), Category: (?P<category>\w+)\.)|finished with result: \[Lock Succeeded: (?P<lock_ok>True|False), Locked Points: (?P<locked>.*)\])$'''
+fields = { requests = "int", for_requests = "int" }
+examples = [
+    { msg = "(PSS) [PointSelectService] MultipleSelectPoint has been called. Requests count: 3.", fields = { method = "MultipleSelectPoint", requests = 3 } },
+    "(PSS) [PointSelectService] MultipleSelectPointWithCompleteResult has been called for 3 requests.",
+    "(PSS) [PointSelectService] SelectPoint has been called. PointId: 1000123, Category: AllCategories.",
+    "(PSS) [PointSelectService] MultipleSelectPoint finished with result: [Lock Succeeded: True, Locked Points: <gid: 1000123, lockId: 55>, Already Selected Points: N/A]",
+]
+counter_examples = ["(PSS) [PointSelectService] MultipleSelectPoint has been cancelled."]
+
+[[template]]
+code = "DMD-059"
+class = "req_resp"
+title = "Event sent to the alarms and events service"
+sev = 5
+regex = '''^\(CMS\) \[SendEventToAES\] (?=[GSC])(?:Getting AESControlServiceProxy|Swap Identities|Calling aesCommandingProxy\.AddEvent|Call to aesCommandingProxy\.AddEvent executed in (?P<elapsed_ms>\d+)ms)$'''
+fields = { elapsed_ms = "int" }
+examples = [
+    { msg = "(CMS) [SendEventToAES] Call to aesCommandingProxy.AddEvent executed in 12ms", fields = { elapsed_ms = 12 } },
+    "(CMS) [SendEventToAES] Swap Identities",
+]
+counter_examples = ["(CMS) [SendEventToAES] Call to aesCommandingProxy.AddEvent executed in many ms"]
+
+[[template]]
+code = "DMD-060"
+class = "error"
+title = "Alarm state delay context could not be added or removed"
+sev = 2
+regex = '''^(?:\[AlarmDelayProcessor\] \(ERROR\) Failed to add alarm state delay context for Alarm identifier: Element ID: (?P<element_id>\d+), Alarm category: (?P<category>\w+)\.|\[StateDelayManager\] \(ERROR\) Failed to remove alarm state delay context\. Element Id: (?P<remove_id>\d+), Delay processing type: (?P<delay_type>\w+)\.|\[DDelayInhibitProcessor\] Failed to delete alarm state delay context\. Alarm state processing will be continued for Processing type: (?P<inhibit_type>\w+)\.)$'''
+examples = [
+    { msg = "[AlarmDelayProcessor] (ERROR) Failed to add alarm state delay context for Alarm identifier: Element ID: 1000123, Alarm category: ANALOG_SIGNAL_HIGH_LOW.", fields = { element_id = "1000123", category = "ANALOG_SIGNAL_HIGH_LOW" } },
+    "[StateDelayManager] (ERROR) Failed to remove alarm state delay context. Element Id: 1000123, Delay processing type: ExampleDelayProcessing.",
+    "[DDelayInhibitProcessor] Failed to delete alarm state delay context. Alarm state processing will be continued for Processing type: ExampleDelayProcessing.",
+]
+counter_examples = ["[AlarmDelayProcessor] (ERROR) Failed to add alarm state delay context for Alarm identifier: Element ID: x, Alarm category: ANALOG_SIGNAL_HIGH_LOW."]
+
+[[template]]
+code = "DMD-061"
+class = "error"
+title = "Non-fatal exception"
+sev = 3
+keys = ["exc_type"]
+window = 400
+regex = '''^Non Fatal Exception (?P<exc_type>[\w.]+Exception)(?:`\d+)?(?:\[(?P<contract>[^\]]*)\])?:(?: (?P<detail>.*))?$'''
+examples = [
+    { msg = "Non Fatal Exception System.ServiceModel.FaultException`1[Example.Contracts.ExampleFaultContract]: Failed to add event.", fields = { exc_type = "System.ServiceModel.FaultException", contract = "Example.Contracts.ExampleFaultContract", detail = "Failed to add event." } },
+    "Non Fatal Exception System.Exception:",
+]
+counter_examples = ["Non Fatal Warning: Failed to add event."]
+
+[[template]]
+code = "DMD-062"
+class = "other"
+title = "Backend processing manager warning for an entity without a local identifier"
+sev = 4  # per-element
+regex = '''^\(NDS\) \[BackendProcessingManager\] \(WARNING\) Failed to get local identifier for GID: (?P<gid>\d+)\. Entity will be skipped from further processing\.$'''
+fields = { gid = "int" }
+examples = [{ msg = "(NDS) [BackendProcessingManager] (WARNING) Failed to get local identifier for GID: 1000123. Entity will be skipped from further processing.", fields = { gid = 1000123 } }]
+counter_examples = ["(NDS) [BackendProcessingManager] (WARNING) Failed to get local identifier for GID: x. Entity will be skipped from further processing."]
+
+[[template]]
+code = "DMD-063"
+class = "other"
+title = "Configuration processor received a model type"
+sev = 5
+regex = '''^\(NDS\) \[Configuration\] \[(?P<processor>\w+)\] (?:DMSType: \[(?P<dms_type>\w+)\] received for processing\. There are (?P<inserted>\d+) inserted records, (?P<updated>\d+) updated records and (?P<deleted>\d+) deleted records\.|Execute method (?P<phase>called|finished)\.|GetChangedReferences for root class (?P<root_class>\w+) returned (?P<roots>\d+) affected roots\. Execution took (?P<took>[\d:.]+)\.)$'''
+fields = { inserted = "int", updated = "int", deleted = "int", roots = "int" }
+examples = [
+    { msg = "(NDS) [Configuration] [ExampleConfigurationProcessor] DMSType: [EXAMPLETYPE] received for processing. There are 1 inserted records, 2 updated records and 3 deleted records.", fields = { processor = "ExampleConfigurationProcessor", dms_type = "EXAMPLETYPE", inserted = 1, updated = 2, deleted = 3 } },
+    "(NDS) [Configuration] [ExampleConfigurationProcessor] Execute method called.",
+    "(NDS) [Configuration] [ExampleConfigurationProcessor] GetChangedReferences for root class SIGNAL returned 4 affected roots. Execution took 00:00.0120.",
+]
+counter_examples = ["(NDS) [Configuration] [ExampleConfigurationProcessor] DMSType: [EXAMPLETYPE] ignored."]
+
+[[template]]
+code = "DMD-064"
+class = "other"
+title = "Backend processing configuration processor step"
+sev = 5
+regex = '''^\((?P<module>BPE|BPE-Alarming)\) (?P<processor>\w+) - (?:ProcessType: Entity type: (?P<entity_type>\w+)\. Updated entities count:(?P<updated>\d+)|Execute: (?:Searching for signals affected by (?:alarm configuration )?reference changes(?:\.\.\.|\.(?: Reference type: (?P<reference_type>\w+)\.\.\.)?)|Search finished\. Affected (?P<signal_kind>analog|discrete) signals count by reference changes: {1,2}(?P<affected>\d+)\.))$'''
+fields = { updated = "int", affected = "int" }
+examples = [
+    { msg = "(BPE) ExampleConfigurationProcessor - ProcessType: Entity type: EXAMPLETYPE. Updated entities count:3", fields = { module = "BPE", processor = "ExampleConfigurationProcessor", entity_type = "EXAMPLETYPE", updated = 3 } },
+    "(BPE-Alarming) ExampleAlarmProcessor - Execute: Searching for signals affected by alarm configuration reference changes.",
+    "(BPE-Alarming) ExampleAlarmProcessor - Execute: Searching for signals affected by alarm configuration reference changes. Reference type: EXAMPLEREF...",
+    "(BPE) ExampleSignalProcessor - Execute: Searching for signals affected by reference changes...",
+    "(BPE-Alarming) ExampleAlarmProcessor - Execute: Search finished. Affected analog signals count by reference changes:  5.",
+]
+counter_examples = ["(BPE) ExampleConfigurationProcessor - ProcessType: Entity type: EXAMPLETYPE. Updated entities count:x"]
+
+# ---------------------------------------------------------------------------------------------
+# ModelManagerService, normal stream (DMD-110..149)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-110"
+class = "other"
+title = "Active versions requested"
+sev = 5
+fts = false
+text = "Getting active versions."
+examples = ["Getting active versions."]
+counter_examples = ["Getting active versions"]
+
+[[template]]
+code = "DMD-111"
+class = "other"
+title = "Incomplete snapshot deleted"
+sev = 5
+text = "Deleting incomplete snapshot."
+examples = ["Deleting incomplete snapshot."]
+counter_examples = ["Deleting complete snapshot."]
+
+[[template]]
+code = "DMD-112"
+class = "lifecycle"
+title = "Number of services in the model transaction"
+sev = 5
+regex = '''^(?:(?P<action>Decreasing|Increasing|Reset) number of services in transaction: current number = (?P<current>\d+)\.(?: Transaction Guid = (?P<txn_guid>[0-9a-fA-F-]{36})\. Transaction Guid from service = (?P<service_txn_guid>[0-9a-fA-F-]{36}))?|Increasing max IDs in DB\.)$'''
+fields = { current = "int" }
+examples = [
+    { msg = "Decreasing number of services in transaction: current number = 22. Transaction Guid = 00000000-0000-4000-8000-000000000001. Transaction Guid from service = 00000000-0000-4000-8000-000000000002", fields = { action = "Decreasing", current = 22 } },
+    "Increasing number of services in transaction: current number = 1.",
+    "Reset number of services in transaction: current number = 0.",
+    "Increasing max IDs in DB.",
+]
+counter_examples = ["Increasing number of services in transaction: current number = x."]
+
+[[template]]
+code = "DMD-113"
+class = "lifecycle"
+title = "Service completed the prepare or transaction phase"
+sev = 5
+regex = '''^(?P<stage>PrepareCompleted|TransactionCompleted) called from service\. Service name = (?P<service>\w+)\. Transaction GUID from service = (?P<txn_guid>[0-9a-fA-F-]{36})\.$'''
+examples = [{ msg = "TransactionCompleted called from service. Service name = EXS. Transaction GUID from service = 00000000-0000-4000-8000-000000000003.", fields = { stage = "TransactionCompleted", service = "EXS" } }]
+counter_examples = ["TransactionCompleted called from service. Service name = EXS. Transaction GUID from service = not-a-guid."]
+
+[[template]]
+code = "DMD-114"
+class = "req_resp"
+title = "Version pushed to the central repository"
+sev = 4
+regex = '''^(?:Pushing version to central repository(?: (?P<outcome>succeeded))?\. Version ID = (?P<version>\d+(?:\.\d+)?)|Version already exists in central repository\.)$'''
+examples = [
+    { msg = "Pushing version to central repository. Version ID = 100.200", fields = { version = "100.200" } },
+    "Pushing version to central repository succeeded. Version ID = 100.200",
+    "Version already exists in central repository.",
+]
+counter_examples = ["Pushing version to central repository. Version ID = x"]
+
+[[template]]
+code = "DMD-115"
+class = "other"
+title = "Model version stored in the database"
+sev = 5
+regex = '''^(?:Creating (?=[nv])(?P<create>version in database|versions in database|new version \(replicated\))|Updating (?=[vr])(?P<update>version in database|record in production history)|Inserting into production history)(?: (?P<outcome>succeeded))?\.(?: Version IDs? =(?: (?P<version>\d+(?:\.\d+)?))?\.?)?(?: Parent version ID = (?P<parent_version>\d+(?:\.\d+)?)\.)?$'''
+examples = [
+    { msg = "Creating new version (replicated) succeeded. Version ID = 100.200. Parent version ID = 100.100.", fields = { create = "new version (replicated)", outcome = "succeeded", version = "100.200", parent_version = "100.100" } },
+    "Updating version in database. Version ID = 100.200",
+    "Creating versions in database succeeded. Version IDs =",
+    "Inserting into production history.",
+    "Updating record in production history. Version ID = 100.200.",
+]
+counter_examples = ["Updating version in database failed. Version ID = 100.200"]
+
+[[template]]
+code = "DMD-116"
+class = "other"
+title = "Model versions saved to or read from the database"
+sev = 5
+regex = '''^(?:Saving versions and deltas(?: to database)?(?: (?P<outcome>succeeded))?\.|(?P<saved>Deltas|Versions|Snapshots) saved\.?|Getting (?=[ap])(?:all model snapshot infos from database|all model snapshot info\. Source = (?P<source>\w+)|production history from database)\.|(?P<tree_source>Local|Central) model versions collected|Creating model versions tree (?=[f(])(?:for source (?P<tree_for>Local|Central)|\((?P<tree_kind>local|central)\) succeeded)\.)$'''
+examples = [
+    { msg = "Saving versions and deltas to database succeeded.", fields = { outcome = "succeeded" } },
+    "Deltas saved.",
+    "Versions saved",
+    "Getting all model snapshot info. Source = Central.",
+    "Getting production history from database.",
+    "Local model versions collected",
+    "Creating model versions tree for source Local.",
+    "Creating model versions tree (central) succeeded.",
+]
+counter_examples = ["Saving versions and deltas to file."]
+
+[[template]]
+code = "DMD-117"
+class = "req_resp"
+title = "Update of the temporary elements model on a service"
+sev_field = "result"
+sev_map = { Failed = 2, Succeeded = 5 }
+sev = 5
+window = 400
+regex = '''^Applying TE updates (?=[stf])(?:started\. Version = (?P<version>\d+(?:\.\d+)?)\. Context Id = (?P<context_id>\d+)\. Model delta counter = (?P<delta_counter>\d+(?:\.\d+)?)\.|to (?:(?P<service>\w+) )?started(?:\. Version = (?P<service_version>\d+(?:\.\d+)?)\. Context Id = (?P<service_context_id>\d+)\. Address = (?P<address>[\w:/-]+)\.|\.)|to (?P<done_service>\w+) succeeded\. Address = (?P<done_address>[\w:/-]+)\.|finished\. Version = (?P<end_version>\d+(?:\.\d+)?)\. Context Id = (?P<end_context_id>\d+)\. Model delta counter = (?P<end_delta_counter>\d+(?:\.\d+)?)\. Result type = (?P<result>\w+)\.)$'''
+examples = [
+    { msg = "Applying TE updates finished. Version = 100.200. Context Id = 1000123. Model delta counter = 100.300. Result type = Failed.", fields = { result = "Failed", end_context_id = "1000123" } },
+    "Applying TE updates started. Version = 100.200. Context Id = 1000123. Model delta counter = 100.300.",
+    "Applying TE updates to EXS started. Version = 100.200. Context Id = 1000123. Address = shmem://HOST01:9823/ExampleModelUpdateService.",
+    "Applying TE updates to started.",
+    "Applying TE updates to EXS succeeded. Address = shmem://HOST01:9823/ExampleModelUpdateService.",
+]
+counter_examples = ["Applying TE updates cancelled."]
+
+[[template]]
+code = "DMD-118"
+class = "req_resp"
+title = "Switch of the model version on a service"
+sev_field = "result"
+sev_map = { Failed = 2, Succeeded = 5 }
+sev = 5
+window = 500
+regex = '''^(?:(?P<call>Calling|Finished calling) switch version to (?P<service>\w+) from task\. From version = (?P<from_version>\d+(?:\.\d+)?)\. To [Vv]ersion = (?P<to_version>\d+(?:\.\d+)?)\. {1,2}Context ID = (?P<context_id>\d+)\. Address = (?P<address>[\w:/-]+)\.(?: Result = (?P<result>\w+)\.)?|Initializing switch version for (?P<init_service>\w+)\. From version = (?P<init_from>\d+(?:\.\d+)?)\. To version = (?P<init_to>\d+(?:\.\d+)?)\. Context ID = (?P<init_context>\d+)\. Address = (?P<init_address>[\w:/-]+)\.|Preparing switch version on (?P<prepare_service>\w+)(?: (?P<prepare_outcome>succeeded))?\.)$'''
+examples = [
+    { msg = "Finished calling switch version to EXS from task. From version = 100.200. To Version = 100.201.  Context ID = 1000123. Address = shmem://HOST01:9852/ExampleModelUpdateService. Result = Succeeded.", fields = { call = "Finished calling", service = "EXS", result = "Succeeded" } },
+    "Calling switch version to EXS from task. From version = 100.200. To Version = 100.201. Context ID = 1000123. Address = shmem://HOST01:9852/ExampleModelUpdateService.",
+    "Initializing switch version for EXS. From version = 100.200. To version = 100.201. Context ID = 1000123. Address = shmem://HOST01:9822/ExampleModelUpdateService.",
+    "Preparing switch version on EXS succeeded.",
+]
+counter_examples = ["Calling switch version to EXS from thread. From version = 100.200. To Version = 100.201. Context ID = 1000123. Address = shmem://HOST01:9852/X."]
+
+[[template]]
+code = "DMD-119"
+class = "req_resp"
+title = "Apply updates on a service"
+sev_field = "result"
+sev_map = { Failed = 2, Succeeded = 5 }
+sev = 5
+window = 500
+regex = '''^(?:(?P<call>Calling|Finished calling) apply updates to (?P<service>\w+) from task\. Context ID = (?P<context_id>\d+)\. Version = (?P<version>\d+(?:\.\d+)?)\. Address = (?P<address>[\w:/-]+)\.(?: Result = (?P<result>\w+)\.)?|Initializing parallel apply updates for (?P<init_service>\w+)\. Context ID = (?P<init_context>\d+)\. Version = (?P<init_version>\d+(?:\.\d+)?)\. Address = (?P<init_address>[\w:/-]+)\.|Applying updates to (?P<apply_service>\w+) (?:started\. Version = (?P<apply_version>\d+(?:\.\d+)?)|succeeded\.))$'''
+examples = [
+    { msg = "Finished calling apply updates to EXS from task. Context ID = 1000123. Version = 100.200. Address = shmem://HOST01:9863/ExampleModelUpdateService. Result = Succeeded.", fields = { call = "Finished calling", service = "EXS", result = "Succeeded" } },
+    "Calling apply updates to EXS from task. Context ID = 1000123. Version = 100.200. Address = shmem://HOST01:9863/ExampleModelUpdateService.",
+    "Initializing parallel apply updates for EXS. Context ID = 1000123. Version = 100.200. Address = shmem://HOST01:9822/ExampleModelUpdateService.",
+    "Applying updates to EXS started. Version = 100.200",
+    "Applying updates to EXS succeeded.",
+]
+counter_examples = ["Calling apply updates to EXS from thread. Context ID = 1000123."]
+
+[[template]]
+code = "DMD-120"
+class = "lifecycle"
+title = "Transaction of the replicated, apply updates and switch version flows"
+sev = 5
+sev_field = "outcome"
+sev_map = { Aborted = 2, Committed = 5 }
+regex = '''^Transaction \((?=[ars])(?P<transaction>apply updates(?: / low voltage)?|replicated|switch version)\) (?:completed: (?P<outcome>Committed|Aborted)|(?P<step>commit|prepare) (?P<phase>initiated|finished))\.$'''
+examples = [
+    { msg = "Transaction (replicated) completed: Aborted.", fields = { transaction = "replicated", outcome = "Aborted" } },
+    "Transaction (apply updates / low voltage) completed: Committed.",
+    "Transaction (apply updates) prepare initiated.",
+    "Transaction (switch version) commit finished.",
+]
+counter_examples = ["Transaction (replicated) abandoned."]
+
+[[template]]
+code = "DMD-121"
+class = "other"
+title = "Entity and reference number tables updated"
+sev = 5
+regex = '''^(?:(?P<table>Update entity information in table|Update reference number table) - (?P<phase>start|end)|Load (?P<load>entity information blockIds|reference number gids) from (?P<database>db\d+)\.|Getting entity information (?=[bg])(?P<load_kind>blockIds|gids) from (?P<end_database>db\d+) - end)$'''
+examples = [
+    { msg = "Update entity information in table - start", fields = { table = "Update entity information in table", phase = "start" } },
+    "Load entity information blockIds from db3.",
+    "Load reference number gids from db3.",
+    "Getting entity information gids from db3 - end",
+]
+counter_examples = ["Update entity information in table - paused"]
+
+[[template]]
+code = "DMD-122"
+class = "other"
+title = "Search of the path between two model versions"
+sev = 5
+regex = '''^\[VersionsPathFinder\] Find path between versions (?P<from_version>\d+) and (?P<to_version>\d+) (?P<phase>started|finished)\.$'''
+examples = [{ msg = "[VersionsPathFinder] Find path between versions 1000123 and 1000456 started.", fields = { from_version = "1000123", phase = "started" } }]
+counter_examples = ["[VersionsPathFinder] Find path between versions x and 1000456 started."]
+
+[[template]]
+code = "DMD-123"
+class = "lifecycle"
+title = "Connection with another service opened"
+sev = 5
+regex = '''^(?:Opening connection with (?P<opening>\w+)|Connection with (?P<opened>\w+) successfully opened)\.$'''
+examples = [{ msg = "Opening connection with NMS.", fields = { opening = "NMS" } }, "Connection with NMS successfully opened."]
+counter_examples = ["Closing connection with NMS."]
+
+[[template]]
+code = "DMD-124"
+class = "req_resp"
+title = "Replication message received, deserialized and processed"
+sev = 5
+window = 400
+regex = '''^(?:Replication message received\. DatasetId: (?P<dataset>\d+), dataflowId: (?P<dataflow>\d+)\.|Deserializing replication message\. Size = (?P<size>\d+) bytes\.|Replication message (?P<phase>processing started|processed)\.(?: Source system ID = (?P<source_system>\d+)\. Source model delta counter = (?P<delta_counter>\d+(?:\.\d+)?)\. Operation type = (?P<operation_type>\w+)\.)?)$'''
+fields = { size = "int" }
+examples = [
+    { msg = "Replication message received. DatasetId: 2, dataflowId: 6.", fields = { dataset = "2", dataflow = "6" } },
+    "Deserializing replication message. Size = 2048 bytes.",
+    "Replication message processing started. Source system ID = 639. Source model delta counter = 100.300. Operation type = CreateVersion.",
+    "Replication message processed.",
+]
+counter_examples = ["Replication message dropped."]
+
+# ---------------------------------------------------------------------------------------------
+# ReplicationService (DMD-150..169)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-150"
+class = "statistics"
+title = "Unacknowledged replication messages of the message manager"
+sev = 5
+fts = false
+regex = '''^MessageManager: Number of unacknowledged messages is (?P<count>\d+)\.$'''
+fields = { count = "int" }
+examples = [{ msg = "MessageManager: Number of unacknowledged messages is 10.", fields = { count = 10 } }]
+counter_examples = ["MessageManager: Number of unacknowledged messages is many."]
+
+[[template]]
+code = "DMD-151"
+class = "statistics"
+title = "Replication message count table (header and row per cache)"
+sev = 5
+fts = false
+regex = '''^(?:Message count +Total|(?P<service>[A-Z]+): *(?P<cache>\w+): +(?P<queued>\d+) +(?P<total>\d+))$'''
+fields = { queued = "int", total = "int" }
+examples = [
+    { msg = "EXS:                             ExampleCache:                    3                   40", fields = { service = "EXS", cache = "ExampleCache", queued = 3, total = 40 } },
+    "EXS:ExampleModelCache:                    0                   0",
+    "Message count               Total",
+]
+counter_examples = ["EXS: ExampleCache: three 40"]
+
+# ---------------------------------------------------------------------------------------------
+# ScheduleManagementService (DMD-170..184)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-170"
+class = "lifecycle"
+title = "Annual schedule cache transaction phase"
+sev = 5
+regex = '''^\[ASCache\] (?=[EPCRF])(?:(?P<stage>Execute|Prepare|Commit|Rollback) phase in AnnualScheduleCache (?P<phase>started|completed)\.|Cache create transaction completed in (?P<elapsed_ms>\d+) ms\.|Filtering changeSet with supported types completed in (?P<filter_ms>\d+) ms \[Updated - (?P<updated>\d+) Inserted - (?P<inserted>\d+) Deleted - (?P<deleted>\d+)\]\.)$'''
+fields = { elapsed_ms = "int", filter_ms = "int", updated = "int", inserted = "int", deleted = "int" }
+examples = [
+    { msg = "[ASCache] Commit phase in AnnualScheduleCache completed.", fields = { stage = "Commit", phase = "completed" } },
+    "[ASCache] Cache create transaction completed in 12 ms.",
+    "[ASCache] Filtering changeSet with supported types completed in 3 ms [Updated - 1 Inserted - 2 Deleted - 0].",
+]
+counter_examples = ["[ASCache] Commit phase in AnnualScheduleCache failed."]
+
+[[template]]
+code = "DMD-171"
+class = "startup"
+title = "Schedule management service start-up step"
+sev = 5
+window = 400
+regex = '''^(?:\[Configurator\] (?:SCMS service configuration (?:loading\.\.\.|loaded\.)|Arbitration state is changed to (?P<arbitration>TRUE|FALSE)\.)|\[SCMSManager\] (?:SCMS initialization (?:started|done)\.|SCMS starting in (?P<zone>\w+) system zone\.\.|Is RealTime context: (?P<realtime>True|False)\.|Starting SCMS\.\.\.|Started SCMS\.\.\.|Starting Replication client: (?P<replication>True|False)|Replication client started\.)|\[SaveCaseAndPlayback\] \w+ is subscribed for persisting\.|\[CRM\]: Client Request Manager has been initialized\.|\[FRM\]: Pattern Updater Function Results Manager has been initialized\.)$'''
+examples = [
+    { msg = "[Configurator] Arbitration state is changed to TRUE.", fields = { arbitration = "TRUE" } },
+    "[Configurator] SCMS service configuration loading...",
+    "[SCMSManager] SCMS starting in PROD system zone..",
+    "[SCMSManager] Is RealTime context: True.",
+    "[SCMSManager] Starting Replication client: True",
+    "[SaveCaseAndPlayback] ExampleResultsCache is subscribed for persisting.",
+    "[CRM]: Client Request Manager has been initialized.",
+]
+counter_examples = ["[SCMSManager] SCMS initialization failed."]
+
+[[template]]
+code = "DMD-172"
+class = "startup"
+title = "Annual schedule cache and model handler start-up step"
+sev = 5
+window = 400
+regex = '''^(?:\[ASCache\] (?=[ISA])(?:Initialize AnnualScheduleCache\.\.\.|AnnualScheduleCache Initialized\.|Starting AnnualScheduleCache\.\.\.|Started AnnualScheduleCache\.\.\.)|\[AnnualScheduleCacheConfigurator\] Cache\[\w+\] +(?:Configuring|Configured)|Publisher check dead or slow clients worker: initializing publisher \w+\.|\[ModelHandler\] (?=[FG])(?:For (?P<model_type>\w+) collect all "\w+" properties: [\w,]+|Get extent values for "\w+" properties from NMS completed in (?P<elapsed_ms>\d+) ms for (?P<extent_type>\w+) gids count (?P<count>\d+)\.))$'''
+fields = { elapsed_ms = "int", count = "int" }
+examples = [
+    { msg = "[ModelHandler] Get extent values for \"static\" properties from NMS completed in 248 ms for EXAMPLETYPE gids count 399.", fields = { elapsed_ms = 248, extent_type = "EXAMPLETYPE", count = 399 } },
+    "[ASCache] Initialize AnnualScheduleCache...",
+    "[AnnualScheduleCacheConfigurator] Cache[ExampleResultsCache]  Configuring",
+    "Publisher check dead or slow clients worker: initializing publisher ExamplePublisher.",
+    "[ModelHandler] For EXAMPLETYPE collect all \"static\" properties: EXAMPLE_ONE,EXAMPLE_TWO",
+]
+counter_examples = ["[ASCache] Initialize AnnualScheduleCache failed."]
+
+# ---------------------------------------------------------------------------------------------
+# GDAProxyService (DMD-185..189)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-186"
+class = "lifecycle"
+title = "Connection with a query service"
+sev = 4
+regex = '''^(?:Opening connection with (?P<opening>\w+) (?P<opening_kind>Global|Metamodel) Query Service\.|Connection with (?P<opened>\w+) (?P<opened_kind>Global|Metamodel) Query Service successfully opened\.|DMS GDAProxyService is up and running\.)$'''
+examples = [
+    { msg = "Opening connection with EXS Global Query Service. ", fields = { opening = "EXS", opening_kind = "Global" } },
+    "Connection with EXS Metamodel Query Service successfully opened.",
+    "DMS GDAProxyService is up and running.",
+]
+counter_examples = ["Opening connection with EXS Local Query Service."]
+
+[[template]]
+code = "DMD-187"
+class = "error"
+title = "Query service failure (model type code, descendent values or closing a connection)"
+sev = 2
+window = 600
+regex = '''^\(ERROR\) (?=[FG])(?:Failed to get model type code for DMS type: (?P<dms_type>\d+)\. Invalid DMS type|Getting descendent values failed\. Sources count = (?P<sources>\d+)\. Association depth = (?P<depth>\d+)\.Failed to get correct ModelCode from DMSType = (?P<model_dms_type>\d+) by given propertyIDs\. Failed to get model type code for DMS type: (?P<model_code_type>\d+)\. Invalid DMS type|Failed to close connection with (?P<closing>\w+) Global Query Service\. Exception details: (?P<detail>.*))$'''
+examples = [
+    { msg = "(ERROR) Failed to get model type code for DMS type: 7. Invalid DMS type", fields = { dms_type = "7" } },
+    "(ERROR) Getting descendent values failed. Sources count = 1. Association depth = 0.Failed to get correct ModelCode from DMSType = 7 by given propertyIDs. Failed to get model type code for DMS type: 7. Invalid DMS type",
+    "(ERROR) Failed to close connection with EXS Global Query Service. Exception details: The given key was not present in the dictionary.",
+]
+counter_examples = ["(ERROR) Failed to get model type code for DMS type: x. Invalid DMS type"]
+
+# ---------------------------------------------------------------------------------------------
+# LandBaseService (DMD-190..199)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-190"
+class = "req_resp"
+title = "Command executed with parameters (parameters on the continuation lines)"
+sev = 4
+text = "Executing command with parameters:"
+examples = ["Executing command with parameters:"]
+counter_examples = ["Executing command without parameters:"]
+
+[[template]]
+code = "DMD-191"
+class = "startup"
+title = "Land base layers and search index start-up step"
+sev = 5
+window = 400
+regex = '''^(?:LBS configuration:|Loading (?:Earth|Map) layers \.\.\.|Raster layers loaded: (?P<raster>\d+)|Vector layers loaded: (?P<vector>\d+)|StaticRaster: Registered \S+|Starting creation of ALL Point table search\.|Creating FTS Table \(SQLite Version: (?P<sqlite>[\d.]+) \.\.\.|Creating FTS Table created\.|Filling FTS Table with data\.\.\.|FTS Table filled\.|Creating additional info table \.\.\.|Additional info table created\.|Filling additional info table with data \.\.\.|Additional info table filled with data\.|Full text search initialized in (?P<elapsed_s>\d+(?:\.\d+)?)s|Refresh rates:)$'''
+fields = { raster = "int", vector = "int", elapsed_s = "float" }
+examples = [
+    { msg = "Vector layers loaded: 38", fields = { vector = 38 } },
+    "LBS configuration:",
+    "Loading Earth layers ...",
+    "Raster layers loaded: 0",
+    "StaticRaster: Registered C:\\Example\\RasterData\\",
+    "Starting creation of ALL Point table search.",
+    "Creating FTS Table (SQLite Version: 3.32.1 ...",
+    "FTS Table filled.",
+    "Full text search initialized in 19.5s",
+    "Refresh rates:",
+]
+counter_examples = ["Loading Sky layers ..."]
+
+[[template]]
+code = "DMD-192"
+class = "error"
+title = "Service operation threw an unexpected exception or buffer pool cleanup with references out"
+sev = 2
+regex = '''^\(ERROR\) (?=\[)(?:\[Communication(?P<chan>\d+)\] - Service operation (?P<operation>\w+) threw unexpected exception\.|\[Serialization\] \[BufferPool\] CleanUp called while all checked out pool references aren't returned\. Outstanding references: (?P<outstanding>\d+)\. Slab cleanup will be executed, potential memory access violation pending\.)$'''
+fields = { outstanding = "int" }
+examples = [
+    { msg = "(ERROR) [Communication2] - Service operation GetExampleBlocks threw unexpected exception.", fields = { chan = "2", operation = "GetExampleBlocks" } },
+    "(ERROR) [Serialization] [BufferPool] CleanUp called while all checked out pool references aren't returned. Outstanding references: 1. Slab cleanup will be executed, potential memory access violation pending.",
+]
+counter_examples = ["(ERROR) [Communication2] - Service operation GetExampleBlocks finished."]
+
+# ---------------------------------------------------------------------------------------------
+# DynamicsDataService, sensitive stream (DMD-S050..S089) and ModelManagerService (DMD-S110..S119)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-S050"
+class = "other"
+title = "Point selection operation of a user and console"
+sev = 4
+stream = "sensitive"
+regex = '''^\(PSS\) \[BaseOperation\] MethodName: (?P<method>[\w.]+), Operation: (?P<operation>\w+), Insert: [\d,]* Update: [\d,]* Delete: [\d,]* UserName: (?P<user>[^,\s]+), Hashed UserName: (?P<user_hash>-?\d+), Console: (?P<console>[^,\s]*), Hashed console: (?P<console_hash>-?\d+)$'''
+examples = [
+    { msg = '(PSS) [BaseOperation] MethodName: MultipleSelectPoint.Execute, Operation: Select, Insert: 1000123, Update: , Delete: , UserName: EXAMPLE\user01, Hashed UserName: -97394, Console: HOST01, Hashed console: 72619', fields = { method = "MultipleSelectPoint.Execute", operation = "Select", user = 'EXAMPLE\user01', user_hash = "-97394", console = "HOST01", console_hash = "72619" } },
+    '(PSS) [BaseOperation] MethodName: OnPointSelectTimedOut.OnTimeOut, Operation: Deselect, Insert: , Update: , Delete: 1000123, UserName: EXAMPLE\svc01, Hashed UserName: 17577, Console: , Hashed console: 37185',
+]
+counter_examples = ["(PSS) [BaseOperation] MethodName: MultipleSelectPoint.Execute, Operation: Select, Insert: 1000123, Update: , Delete: , UserName: -97394, Console: 72619"]
+
+[[template]]
+code = "DMD-S051"
+class = "other"
+title = "Client host name of a sustained action"
+sev = 4
+stream = "sensitive"
+regex = '''^\(NDS\) \[SustainedActionsManager\] Client host name from thread principal: (?P<client_host>[^;]+); Computer host name from configuration: (?P<computer_host>[^;]+); Console name: (?P<console>.+)$'''
+examples = [{ msg = "(NDS) [SustainedActionsManager] Client host name from thread principal: HOST01; Computer host name from configuration: HOST02; Console name: HOST01", fields = { client_host = "HOST01", computer_host = "HOST02", console = "HOST01" } }]
+counter_examples = ["(NDS) [SustainedActionsManager] Client host name from thread principal: HOST01"]
+
+[[template]]
+code = "DMD-S052"
+class = "lifecycle"
+title = "User logged in or out of the AOR management service"
+sev = 4
+stream = "sensitive"
+regex = '''^(?:\(AMS\) \[AORManagementService\] )?(?:Logging (?P<direction>in|out) user (?P<user>[^,\s]+), hashed user: (?P<user_hash>-?\d+) on machine (?P<machine>[^,\s]+), hashed machine: (?P<machine_hash>-?\d+)|User (?P<user_event>[^,\s]+), hashed user: (?P<event_hash>-?\d+) (?:logged out\.|logged on machine (?P<logged_machine>[^,\s]+), hashed machine: (?P<logged_machine_hash>-?\d+), login method lasts (?P<duration>[\d:.]+) seconds\.))$'''
+examples = [
+    { msg = 'Logging in user EXAMPLE\user01, hashed user: -97394 on machine HOST01, hashed machine: 72619', fields = { direction = "in", user = 'EXAMPLE\user01', machine = "HOST01" } },
+    '(AMS) [AORManagementService] Logging out user EXAMPLE\user01, hashed user: 97394 on machine HOST01, hashed machine: 72619',
+    '(AMS) [AORManagementService] User EXAMPLE\user01, hashed user: 97394 logged out.',
+    'User EXAMPLE\user01, hashed user: 97394 logged on machine HOST01, hashed machine: -72619, login method lasts 00:00:01 seconds.',
+]
+counter_examples = ["(AMS) [AORManagementService] Logging sideways user EXAMPLE, hashed user: 1 on machine HOST01, hashed machine: 2"]
+
+[[template]]
+code = "DMD-S053"
+class = "validation"
+title = "User without permission to control an AOR group"
+sev = 4
+stream = "sensitive"
+regex = '''^\(PSS\) \[PointValidator\] User (?P<user>[^,\s]+), hashed user: (?P<user_hash>-?\d+) does not have permission to control AOR group (?P<aor_group>.+)\.$'''
+examples = [{ msg = '(PSS) [PointValidator] User EXAMPLE\user01, hashed user: -97394 does not have permission to control AOR group Example-Region.', fields = { user = 'EXAMPLE\user01', aor_group = "Example-Region" } }]
+counter_examples = ["(PSS) [PointValidator] User EXAMPLE\\user01 does not have permission to control AOR group Example-Region."]
+
+[[template]]
+code = "DMD-S054"
+class = "lifecycle"
+title = "Inactive user removed by the AOR management worker"
+sev = 4
+stream = "sensitive"
+window = 400
+regex = '''^\(AMS - RemoveInactiveUsersWorker\) User (?P<user>[^,\s]+), hashed username: (?P<user_hash>-?\d+) from console (?P<console>\S+) \[ hashed console: (?P<console_hash>-?\d+) \] will be removed\. Last checkin time (?P<last_checkin>.+)\. Checkin timeout is (?P<timeout_s>\d+) second\(s\)\. CheckinTimeoutMultiplier (?P<multiplier>\d+)\.$'''
+fields = { timeout_s = "int", multiplier = "int" }
+examples = [{ msg = '(AMS - RemoveInactiveUsersWorker) User EXAMPLE\user01, hashed username: 97394 from console host01 [ hashed console: 72619 ] will be removed. Last checkin time 2026 - 01 - 01 10: 00:00.000. Checkin timeout is 10 second(s). CheckinTimeoutMultiplier 2.', fields = { user = 'EXAMPLE\user01', timeout_s = 10, multiplier = 2 } }]
+counter_examples = ["(AMS - RemoveInactiveUsersWorker) User example will not be removed."]
+
+# ---------------------------------------------------------------------------------------------
+# Failures and the remaining frequent lines of the services above
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DMD-025"
+class = "other"
+title = "Queries share one connection, query timeout tracking skipped"
+sev = 5
+text = "All queries are executed over the same connection, tracking the query timeout will be skipped."
+examples = ["All queries are executed over the same connection, tracking the query timeout will be skipped."]
+counter_examples = ["All queries are executed over separate connections."]
+
+[[template]]
+code = "DMD-026"
+class = "error"
+title = "Range of resource description iterators not obtained"
+sev = 2
+regex = '''^\(ERROR\) Failed to get range of ResourceDescription iterators\. index:(?P<index>\d+), count:(?P<count>\d+)$'''
+fields = { index = "int", count = "int" }
+examples = [{ msg = "(ERROR) Failed to get range of ResourceDescription iterators. index:0, count:3", fields = { index = 0, count = 3 } }]
+counter_examples = ["(ERROR) Failed to get range of ResourceDescription iterators. index:x, count:3"]
+
+[[template]]
+code = "DMD-027"
+class = "error"
+title = "Unknown property requested for an entity"
+sev = 2
+regex = '''^\(ERROR\) (?:IteratorGetRange failed\. Iterator ID = (?P<iterator>\d+)\. Resources to fetch count = (?P<fetch_count>\d+)\. Index = (?P<index>\d+)\. )?Unknown property id = (?P<property>\w+) for entity \(GID = (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16}), LID = (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16})\)\.$'''
+fields = { gid = "hex", lid = "hex" }
+examples = [
+    { msg = "(ERROR) Unknown property id = EXAMPLE_PROP for entity (GID = 0x4A00B00C00D00E02, LID = 0x4A00B00C00D00E01).", fields = { property = "EXAMPLE_PROP" } },
+    "(ERROR) IteratorGetRange failed. Iterator ID = 7. Resources to fetch count = 3. Index = 0. Unknown property id = EXAMPLE_PROP for entity (GID = 0x4A00B00C00D00E02, LID = 0x4A00B00C00D00E01).",
+]
+counter_examples = ["(ERROR) Known property id = EXAMPLE_PROP for entity (GID = 0x4A00B00C00D00E02, LID = 0x4A00B00C00D00E01)."]
+
+[[template]]
+code = "DMD-065"
+class = "error"
+title = "Integrity update request failed"
+window = 600
+sev = 2
+regex = '''^Integrity update request failed for topic (?P<topic>[\w.]+)\. Request: originator: (?P<originator>[0-9a-fA-F-]{36}) topics count: (?P<topics>\d+) clients \((?P<clients>\d+)\): (?P<detail>.*)$'''
+fields = { topics = "int", clients = "int" }
+examples = [{ msg = "Integrity update request failed for topic Example.Common.ExampleTopic. Request: originator: 00000000-0000-4000-8000-000000000001 topics count: 20 clients (1): 00000000-0000-4000-8000-000000000001(0). Message Object reference not set to an instance of an object..", fields = { topic = "Example.Common.ExampleTopic", topics = 20, clients = 1 } }]
+counter_examples = ["Integrity update request succeeded for topic Example.Common.ExampleTopic."]
+
+[[template]]
+code = "DMD-066"
+class = "error"
+title = "Historical data of the dynamics cache could not be read, or alarming not configured for a signal"
+sev = 2
+regex = '''^(?:\[HDL DynamicsCache\] \(ERROR\) reading data from DB\. Reason: (?P<reason>.*)|\(ERROR\) \(NDS\) NDSConfigurator - Failed to configure alarming for discrete signal with gid (?P<gid>\d+)\. Reason: (?P<alarm_reason>.*))$'''
+examples = [
+    { msg = "[HDL DynamicsCache] (ERROR) reading data from DB. Reason: Specified cast is not valid.", fields = { reason = "Specified cast is not valid." } },
+    "(ERROR) (NDS) NDSConfigurator - Failed to configure alarming for discrete signal with gid 1000123. Reason: Failed to add event.",
+]
+counter_examples = ["[HDL DynamicsCache] reading data from DB."]
+
+[[template]]
+code = "DMD-067"
+class = "error"
+title = "Temporary element could not be created or validated"
+sev = 2
+window = 700
+regex = '''^(?:\(TES\) ERROR: Unable to validate temporary element\(s\) \[TEs GID\(s\): (?P<gids>[\d, ]+)\]|\(ERROR\) \(TES\) An exception occurred while validation temporary switch: (?P<switch_reason>.*)|\(TES\) An exception occurred while validation of creating temporary element \[GID: (?P<gid>\d+), CustomID: (?P<custom_id>[^\]]*)\]\. Reason: (?P<creation_reason>.*)|Error Creating TE element\. Reason: (?P<te_reason>.*))$'''
+examples = [
+    { msg = "(TES) ERROR: Unable to validate temporary element(s) [TEs GID(s): 1000123, 1000124]", fields = { gids = "1000123, 1000124" } },
+    "(ERROR) (TES) An exception occurred while validation temporary switch: Trying to add temporary switch which switch signal is connected to 0.",
+    "(TES) An exception occurred while validation of creating temporary element [GID: 1000123, CustomID: ]. Reason: Trying to add temporary switch.",
+    "Error Creating TE element. Reason: Validation for temporary element 1000123 creation failed.",
+]
+counter_examples = ["(TES) ERROR: Able to validate temporary element(s) [TEs GID(s): 1000123]"]
+
+[[template]]
+code = "DMD-068"
+class = "validation"
+title = "Temporary element handling by the model update"
+sev = 4
+regex = '''^\(TES\) (?=[RNP])(?:Retrieving invalid temporary elements\.\.\.|No invalid temporary elements received\.|Performing forced model update, failed validations will be ignored\.)$'''
+examples = ["(TES) Retrieving invalid temporary elements...", "(TES) No invalid temporary elements received.", "(TES) Performing forced model update, failed validations will be ignored."]
+counter_examples = ["(TES) Retrieving valid temporary elements..."]
+
+[[template]]
+code = "DMD-069"
+class = "end"
+title = "Execution status of a switching sequence entry published"
+sev = 4
+sev_field = "status"
+sev_map = { Failed = 2, Executed = 4 }
+regex = '''^\(CMS\) Publishing execution status of switching sequence entry ID=\[(?P<entry_id>[0-9a-fA-F-]{36})\] in switching sequence ID=\[(?P<ss_id>[0-9a-fA-F-]{36})\]\. Execution status: (?P<status>\w+)\.$'''
+examples = [{ msg = "(CMS) Publishing execution status of switching sequence entry ID=[00000000-0000-4000-8000-000000000001] in switching sequence ID=[00000000-0000-4000-8000-000000000002]. Execution status: Failed.", fields = { status = "Failed" } }]
+counter_examples = ["(CMS) Publishing execution status of switching sequence entry ID=[not-a-guid] in switching sequence ID=[x]. Execution status: Failed."]
+
+[[template]]
+code = "DMD-070"
+class = "end"
+title = "Placement or removal of a tag or temporary element completed"
+sev = 4
+sev_field = "status"
+sev_map = { Failed = 2, Succeeded = 4 }
+regex = '''^\(CMS\) (?=[\[T])(?:\[SS Id: (?P<ss_id>[0-9a-fA-F-]{36})\] \[SSEntry Id: (?P<entry_id>[0-9a-fA-F-]{36})\] (?P<kind>Tag Placement|Tag Removal)|Temporary Element Placement) completed\. Status : (?P<status>\w+)\.(?: Reason: (?P<reason>.*))?$'''
+examples = [
+    { msg = "(CMS) [SS Id: 00000000-0000-4000-8000-000000000001] [SSEntry Id: 00000000-0000-4000-8000-000000000002] Tag Removal completed. Status : Failed. Reason: Tag does not exists.", fields = { kind = "Tag Removal", status = "Failed", reason = "Tag does not exists." } },
+    "(CMS) Temporary Element Placement completed. Status : Succeeded.",
+]
+counter_examples = ["(CMS) Temporary Element Placement started."]
+
+[[template]]
+code = "DMD-071"
+class = "error"
+title = "Switching sequence suspended or switching command failed"
+sev = 2
+regex = '''^\(CMS\) (?:\[SwitchingSequenceExecuto\] Switching Sequence successfully suspended due to the server internal request\. Reason: (?P<reason>.*)|\[SwitchingCommandDispatcher\] Switching Command \(Id = (?P<command_id>[0-9a-fA-F-]{36}), SS Id = (?P<ss_id>[0-9a-fA-F-]{36})\) failed to be successfully executed\.|(?:\(ERROR\) )?Exception cought while sending command event! Message: (?P<detail>.*))$'''
+examples = [
+    { msg = "(CMS) [SwitchingSequenceExecuto] Switching Sequence successfully suspended due to the server internal request. Reason: Switching command is not validated.", fields = { reason = "Switching command is not validated." } },
+    "(CMS) [SwitchingCommandDispatcher] Switching Command (Id = 00000000-0000-4000-8000-000000000001, SS Id = 00000000-0000-4000-8000-000000000002) failed to be successfully executed.",
+]
+counter_examples = ["(CMS) [SwitchingCommandDispatcher] Switching Command (Id = x, SS Id = y) executed."]
+
+[[template]]
+code = "DMD-072"
+class = "other"
+title = "Signal change seen by the switching command dispatcher"
+sev = 4
+sev_field = "cmd_fail"
+sev_map = { True = 3, False = 4 }
+regex = '''^\(CMS\) \[SwitchingCommandDispatcher\] \[SignalFactory\] CMS got change for discrete signal with ID: (?P<signal_id>\d+), value: (?P<value>-?\d+), CMD in progress: (?P<in_progress>True|False), CMD fail: (?P<cmd_fail>True|False)$'''
+examples = [{ msg = "(CMS) [SwitchingCommandDispatcher] [SignalFactory] CMS got change for discrete signal with ID: 1000123, value: 1, CMD in progress: False, CMD fail: True", fields = { signal_id = "1000123", cmd_fail = "True" } }]
+counter_examples = ["(CMS) [SwitchingCommandDispatcher] [SignalFactory] CMS got change for discrete signal with ID: x, value: 1, CMD in progress: False, CMD fail: True"]
+
+[[template]]
+code = "DMD-073"
+class = "other"
+title = "Dynamic changes processing of the switching dispatcher and executor"
+sev = 5
+regex = '''^\(CMS\) \[(?P<component>SwitchingCommandDispatcher|SwitchingSequenceExecutor)\] ProcessDynamicChanges (?:started\.(?: Publications count (?P<publications>\d+))?|finished\.)$'''
+fields = { publications = "int" }
+examples = [
+    { msg = "(CMS) [SwitchingCommandDispatcher] ProcessDynamicChanges started. Publications count 3", fields = { component = "SwitchingCommandDispatcher", publications = 3 } },
+    "(CMS) [SwitchingSequenceExecutor] ProcessDynamicChanges finished.",
+]
+counter_examples = ["(CMS) [SwitchingSequenceExecutor] ProcessDynamicChanges aborted."]
+
+[[template]]
+code = "DMD-074"
+class = "error"
+title = "Device signal property not read from the dynamics service"
+sev = 3
+regex = '''^\(CMS\) ?\[DeviceSignalGetter\] Failed to read ISREMOTE property from NDS for signals: (?P<signals>[\d, ]+)(?:\. Some of signals does not exists\.)?$'''
+examples = [
+    { msg = "(CMS)[DeviceSignalGetter] Failed to read ISREMOTE property from NDS for signals: 1000123. Some of signals does not exists.", fields = { signals = "1000123" } },
+    "(CMS) [DeviceSignalGetter] Failed to read ISREMOTE property from NDS for signals: 1000123, 1000124",
+]
+counter_examples = ["(CMS) [DeviceSignalGetter] Read ISREMOTE property from NDS for signals: 1000123"]
+
+[[template]]
+code = "DMD-075"
+class = "error"
+title = "Command failed or timed out in the command monitor"
+sev = 2
+window = 600
+regex = '''^\(NDS\) \[Commanding\] \[DiscreteCommandMonitorProcessor\] (?=[CA])(?:Command timeout for signal: (?P<signal>\d+)\. Action: .*|Async notification received that command failed for output signal: (?P<failed_signal>\d+), Status: (?P<status>\w+), Error: (?P<error>\w+), Action: .*)$'''
+examples = [
+    { msg = "(NDS) [Commanding] [DiscreteCommandMonitorProcessor] Command timeout for signal: 1000123. Action: [( ActionDiscrete, GID: 1000123, RequestId: 5 )( Value: 1, CtrlMode: EXECUTE )]", fields = { signal = "1000123" } },
+    "(NDS) [Commanding] [DiscreteCommandMonitorProcessor] Async notification received that command failed for output signal: 1000123, Status: Failed, Error: TimedOut, Action: [( ActionDiscrete, GID: 1000123, RequestId: 5 )( Value: 1, CtrlMode: EXECUTE )]. Notification text.",
+]
+counter_examples = ["(NDS) [Commanding] [DiscreteCommandMonitorProcessor] Command executed for signal: 1000123."]
+
+[[template]]
+code = "DMD-076"
+class = "req_resp"
+title = "Command actions received, validated, sent and executed"
+sev = 4
+regex = '''^\(NDS\) \[Commanding\] (?=\[[DTF])(?:\[DynamicsControl\] Action\(s\) received for execution\. There are (?P<local>\d+) local, (?P<fep>\d+) FEP and (?P<test_mode>\d+) FEP Test Mode action\(s\)\.|\[TagValidationPlugin\] Validation successfully completed for (?P<validated>\d+) action\.|\[FEPActionsExecutor\] (?:Sending (?P<sending>\d+) actions\(s\) for execution on FCS\.|Execution of (?P<executed>\d+) actions\(s\) finished on FCS\.|FEP action\(s\) successfully sent for execution to FCS (?P<fcs>[\w-]+)\. There were (?P<sent>\d+) action\(s\):))$'''
+fields = { local = "int", fep = "int", test_mode = "int", validated = "int" }
+examples = [
+    { msg = "(NDS) [Commanding] [DynamicsControl] Action(s) received for execution. There are 0 local, 1 FEP and 0 FEP Test Mode action(s).", fields = { local = 0, fep = 1, test_mode = 0 } },
+    "(NDS) [Commanding] [TagValidationPlugin] Validation successfully completed for 1 action.",
+    "(NDS) [Commanding] [FEPActionsExecutor] Sending 2 actions(s) for execution on FCS.",
+    "(NDS) [Commanding] [FEPActionsExecutor] Execution of 2 actions(s) finished on FCS.",
+    "(NDS) [Commanding] [FEPActionsExecutor] FEP action(s) successfully sent for execution to FCS example-FrontEnd-Default. There were 1 action(s):",
+]
+counter_examples = ["(NDS) [Commanding] [DynamicsControl] Action(s) rejected."]
+
+[[template]]
+code = "DMD-077"
+class = "other"
+title = "Tags management delta processing"
+sev = 5
+regex = '''^\(TAS\) (?=[\[PSD])(?:\[TagsManagementService\] (?:Applying delta\. (?:Delta after the call preprocessing plugin: )?Inserted (?P<inserted>\d+) \| Updated (?P<updated>\d+) \| Deleted (?P<deleted>\d+)|Items dispatched\. Inserted (?P<dispatched_inserted>\d+) \| Updated (?P<dispatched_updated>\d+) \| Deleted (?P<dispatched_deleted>\d+))|Passing delta to tags dispatcher\.|Processing: (?P<insert_ops>\d+) insert operations, (?P<update_ops>\d+) update operations, (?P<delete_ops>\d+) delete operations|\[TagsUpdateNotifier\] Splitting delta by subscribed semantics\.|Splitting delta by subscribed semantics finished\.|Detecting reapplications (?:started\.|finished\. No tags to reapply\.)|\[NotifySubscribers\] Notifying TagsUpdate subscribers by semantic\. Notifications count: (?P<notifications>\d+))$'''
+fields = { inserted = "int", updated = "int", deleted = "int" }
+examples = [
+    { msg = "(TAS) [TagsManagementService] Applying delta. Inserted 1 | Updated 0 | Deleted 2", fields = { inserted = 1, updated = 0, deleted = 2 } },
+    "(TAS) [TagsManagementService] Applying delta. Delta after the call preprocessing plugin: Inserted 1 | Updated 0 | Deleted 2",
+    "(TAS) [TagsManagementService] Items dispatched. Inserted 1 | Updated 0 | Deleted 2",
+    "(TAS) Passing delta to tags dispatcher.",
+    "(TAS) Processing: 1 insert operations, 0 update operations, 2 delete operations",
+    "(TAS) Detecting reapplications finished. No tags to reapply.",
+    "(TAS) [NotifySubscribers] Notifying TagsUpdate subscribers by semantic. Notifications count: 3",
+]
+counter_examples = ["(TAS) Passing delta to nobody."]
+
+[[template]]
+code = "DMD-078"
+class = "error"
+title = "Tag action refused on a server that is not hot"
+sev = 3  # standby discards
+text = "(TAS) [TagsManagementService] WARNING: Invalid action, tag actions is not allowed on servers that are not in HOT state."
+examples = ["(TAS) [TagsManagementService] WARNING: Invalid action, tag actions is not allowed on servers that are not in HOT state."]
+counter_examples = ["(TAS) [TagsManagementService] Valid action, tag actions are allowed on hot servers."]
+
+[[template]]
+code = "DMD-079"
+class = "other"
+title = "Item cache configuration, unsupported model type, command monitor report and serving cache"
+sev = 4
+regex = '''^(?:\(NDS\) \[ItemCacheHelper\] (?=[CW])(?:Cache configuration: Operation timeout (?P<operation_timeout_ms>\d+)ms, Transaction timeout: (?P<transaction_timeout>\w+)\.|WARNING: Not supported model type '(?P<model_type>\w+)' received in processing\.)|\(NDS\) \[CommandMonitor\] Reporting (?P<what>events|alarms) on async notification or timeout\. (?:Events|Alarms) count (?P<count>\d+)|\[AlarmEventCatalogOverrideProvider\] Alarm catalog override not supproted for default custom id: (?P<custom_id>\w+)\.|\[ServingDataProvider\] Detected graph state changed\. Invalidating serving descriptors cache\.)$'''
+fields = { operation_timeout_ms = "int", count = "int" }
+examples = [
+    { msg = "(NDS) [ItemCacheHelper] Cache configuration: Operation timeout 1200000ms, Transaction timeout: Infinite.", fields = { operation_timeout_ms = 1200000, transaction_timeout = "Infinite" } },
+    "(NDS) [ItemCacheHelper] WARNING: Not supported model type 'EXAMPLE_TYPE' received in processing.",
+    "(NDS) [CommandMonitor] Reporting events on async notification or timeout. Events count 1",
+    "[AlarmEventCatalogOverrideProvider] Alarm catalog override not supproted for default custom id: EXAMPLE_ID.",
+    "[ServingDataProvider] Detected graph state changed. Invalidating serving descriptors cache.",
+]
+counter_examples = ["(NDS) [CommandMonitor] Reporting nothing on async notification or timeout."]
+
+[[template]]
+code = "DMD-125"
+class = "error"
+title = "Update of the temporary elements model failed"
+sev = 2
+regex = '''^Failed to apply TE updates(?:\.| to (?P<service>\w+)\. Address = (?P<address>[\w:/-]+)\.)$'''
+examples = [
+    { msg = "Failed to apply TE updates to EXS. Address = shmem://HOST01:9823/ExampleModelUpdateService.", fields = { service = "EXS" } },
+    "Failed to apply TE updates.",
+]
+counter_examples = ["Applied TE updates."]
+
+[[template]]
+code = "DMD-152"
+class = "other"
+title = "Arbitration state of a service in the publish and subscribe lookup"
+sev = 5
+sev_field = "arb_state"
+sev_map = { FAIL = 3 }
+regex = '''^arb_pubSubLookup: Cache updated with system: (?P<system>[^,]+), service: (?P<service>[^,]+), host: (?P<host>[^,]+), topic: (?P<topic>[^,]+), arb state: (?P<arb_state>\w+)(?:, ps status: (?P<ps_status>\w+))?$'''
+examples = [
+    { msg = "arb_pubSubLookup: Cache updated with system: sys, service: svc, host: HOST01, topic: sys.svc.arb.HOST01.states.state, arb state: FAIL, ps status: OK", fields = { arb_state = "FAIL", ps_status = "OK" } },
+]
+counter_examples = ["arb_pubSubLookup: Cache updated with system: sys, service: svc, host: HOST01, topic: sys.svc.arb.HOST01.states.syncstate, sync state: SYNC_SYNCED"]
+
+[[template]]
+code = "DMD-153"
+class = "statistics"
+title = "Duration of a statistics dump"
+sev = 5
+regex = '''^DumpStatistics lasted: (?P<elapsed_ms>\d+)ms$'''
+fields = { elapsed_ms = "int" }
+examples = [{ msg = "DumpStatistics lasted: 12ms", fields = { elapsed_ms = 12 } }]
+counter_examples = ["DumpStatistics lasted: many"]
+
+[[template]]
+code = "DMD-154"
+class = "error"
+title = "Replication message without a matching callback contract"
+sev = 3
+regex = '''^MessageManager: There is no matching callback contract for message identifier: clientId: (?P<client_id>\d+), serviceId: (?P<service_id>\d+), routeId: (?P<route_id>-?\d+), systemId: (?P<system_id>\d+), processId: (?P<process_id>\d+), messageOrderNumber: (?P<order_number>\d+), dataflow: (?P<dataflow>\d+)\.$'''
+examples = [{ msg = "MessageManager: There is no matching callback contract for message identifier: clientId: 5, serviceId: 6, routeId: -1, systemId: 7, processId: 8, messageOrderNumber: 9, dataflow: 2.", fields = { client_id = "5", dataflow = "2" } }]
+counter_examples = ["MessageManager: There is a matching callback contract for message identifier: clientId: 5."]

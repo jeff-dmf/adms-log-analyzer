@@ -207,3 +207,87 @@ sev = 2
 regex = '''^(?:warm_start +failed to execute for the \w+ service on computer \w+\..*|Failed to perform warm start\.)'''
 examples = ["warm_start failed to execute for the EXAMPLE_SVC service on computer HOST01. Process took more than the timeout of 600 seconds to complete.", "Failed to perform warm start. {E:\\Builds\\1\\Example\\Dna.cpp:100}"]
 counter_examples = ["warm_start executed"]
+
+# --- Real-time server gaps (SVC-020..029).
+
+[[template]]
+code = "SVC-020"
+class = "lifecycle"
+title = "Replication wait complete before asserting"
+sev = 4
+regex = '''^Replication wait complete\. +Continuing with service assert\.'''
+examples = ["Replication wait complete.  Continuing with service assert. {E:\\Builds\\1\\Example\\Arb.cpp:100}", "Replication wait complete. Continuing with service assert."]
+counter_examples = ["Replication wait complete. Not asserting."]
+
+[[template]]
+code = "SVC-021"
+class = "other"
+title = "Arbitration state monitor tracing (pub/sub callbacks and state file writes)"
+sev = 5
+regex = '''^(?:PubSubCallback - (?:Status: '(?P<ps_status>\w+)', Topic: '(?P<topic>[^']*)' received\.|done\.)|ProcessTopic - Topic: '(?P<topic_state>[^']*)' received\. State: '(?P<state>\w+)'\.|WriteToFile - (?:Waiting on mutex(?:\.\.\.| done\.)|Data: .*|Existing file content: .*|done\. File content: .*))'''
+examples = [
+    { msg = "PubSubCallback - Status: 'PS_OK', Topic: 'examplecore.example_svc.arb.host01.states.state' received. {E:\\Builds\\1\\Example\\Monitor.cs:268}", fields = { ps_status = "PS_OK", topic = "examplecore.example_svc.arb.host01.states.state" } },
+    { msg = "ProcessTopic - Topic: 'examplecore.example_svc.arb.host01.states.state' received. State: 'HOT'. {E:\\Builds\\1\\Example\\Monitor.cs:286}", fields = { state = "HOT" } },
+    "PubSubCallback - done. {E:\\Builds\\1\\Example\\Monitor.cs:276}",
+    "WriteToFile - Waiting on mutex... {E:\\Builds\\1\\Example\\Monitor.cs:321}",
+    "WriteToFile - Waiting on mutex done. {E:\\Builds\\1\\Example\\Monitor.cs:325}",
+    "WriteToFile - Data: example_svc,host01,HOT,01/15/2030 10:00:00. {E:\\Builds\\1\\Example\\Monitor.cs:315}",
+    "WriteToFile - Existing file content: example_svc,host01,HOT,01/15/2030 10:00:00;other_svc,host01,HOT,01/15/2030 10:00:01",
+    "WriteToFile - done. File content: example_svc,host01,HOT,01/15/2030 10:00:00",
+]
+counter_examples = ["WriteToFile - failed", "PubSubCallback - started"]
+
+[[template]]
+code = "SVC-022"
+class = "startup"
+title = "Arbitration state monitor start-up"
+sev = 4
+regex = '''^(?:ArbitrationStateMonitor started\.|Arbitration state file: .*|Monitoring\.\.\.|Subscribed to topic: '(?P<subscribed_topic>[^']*)'\.|InitializeSystemInformation - .*)'''
+examples = [
+    "ArbitrationStateMonitor started. {E:\\Builds\\1\\Example\\Program.cs:13}",
+    "Arbitration state file: C:\\Example\\ArbitrationState.txt {E:\\Builds\\1\\Example\\Monitor.cs:60}",
+    "Monitoring... {E:\\Builds\\1\\Example\\Monitor.cs:77}",
+    { msg = "Subscribed to topic: 'examplecore.example_svc.arb.host01.states.state'. {E:\\Builds\\1\\Example\\Monitor.cs:237}", fields = { subscribed_topic = "examplecore.example_svc.arb.host01.states.state" } },
+    "InitializeSystemInformation - Service name: 'example_svc', IsArbitrated: 'True', primaryComputerName: 'host01', secondaryComputerName: 'host02'. {E:\\Builds\\1\\Example\\Monitor.cs:180}",
+]
+counter_examples = ["Monitoring stopped.", "ArbitrationStateMonitor stopped."]
+
+[[template]]
+code = "SVC-023"
+class = "error"
+title = "Peer socket receive failed"
+sev = 3
+regex = '''^Peer '(?P<peer>[^']*)': (?:PSrecv failed\. +This socket has already been closed\.|PSrecvNBytes failing because PSrecv returned failure|RealReceive failed because PSrecvNBytes returned with a failure\.)'''
+examples = [
+    { msg = "Peer 'HOST02': PSrecv failed.  This socket has already been closed. {E:\\Builds\\1\\Example\\Socket.cpp:412}", fields = { peer = "HOST02" } },
+    "Peer 'HOST02': PSrecvNBytes failing because PSrecv returned failure {E:\\Builds\\1\\Example\\Socket.cpp:636}",
+    "Peer 'HOST02': RealReceive failed because PSrecvNBytes returned with a failure. {E:\\Builds\\1\\Example\\Socket.cpp:774}",
+]
+counter_examples = ["Peer 'HOST02': connected."]
+
+[[template]]
+code = "SVC-024"
+class = "lifecycle"
+title = "Service start requested through the service manager"
+sev = 4
+regex = '''^(?:Asking SCM to start the service '(?P<scm_service>[^']*)'|Startup of the (?P<service>\w+)(?: service)? on computer (?P<host>\w+) requested by user (?P<req_user>\S+) at (?P<req_host>[\w.-]+))'''
+examples = [
+    { msg = "Asking SCM to start the service 'Example Common Service'. {E:\\Builds\\1\\Example\\Request.cpp:894}", fields = { scm_service = "Example Common Service" } },
+    { msg = "Startup of the EXAMPLE_SVC service on computer HOST01 requested by user EXAMPLE\\user01 at HOST01.EXAMPLE.local. {E:\\Builds\\1\\Example\\Startup.cpp:125}", fields = { service = "EXAMPLE_SVC", host = "HOST01", req_user = "EXAMPLE\\user01" } },
+    "Startup of the EXAMPLE_SVC on computer HOST02 requested by user EXAMPLE\\user01 at HOST01.EXAMPLE.local ignored as the service is already running. {E:\\Builds\\1\\Example\\Startup.cpp:87}",
+]
+counter_examples = ["Asking SCM to stop the service 'Example Common Service'."]
+
+[[template]]
+code = "SVC-025"
+class = "lifecycle"
+title = "Service start completed or in progress"
+sev = 4
+regex = '''^(?:The (?P<done_service>\w+) service(?: and all dependent services \([^)]*\))? on computer (?P<done_host>\w+) (?:is|are) now started \(as requested by .*\)\.|Starting the (?P<start_service>\w+) service(?: and all dependent services \([^)]*\))? on computer (?P<start_host>\w+) as requested by user .*\.)'''
+examples = [
+    { msg = "The EXAMPLE_SVC service on computer HOST01 is now started (as requested by user EXAMPLE\\user01 at HOST01.EXAMPLE.local). {E:\\Builds\\1\\Example\\Startup.cpp:169}", fields = { done_service = "EXAMPLE_SVC", done_host = "HOST01" } },
+    "The EXAMPLE_SVC service and all dependent services (Common, Arbitration) on computer HOST01 are now started (as requested by user EXAMPLE\\user01 at HOST01.EXAMPLE.local). {E:\\Builds\\1\\Example\\Startup.cpp:155}",
+    { msg = "Starting the EXAMPLE_SVC service on computer HOST01 as requested by user EXAMPLE\\user01 at HOST01.EXAMPLE.local. {E:\\Builds\\1\\Example\\Start.cpp:481}", fields = { start_service = "EXAMPLE_SVC", start_host = "HOST01" } },
+    "Starting the EXAMPLE_SVC service and all dependent services (Arbitration) on computer HOST01 as requested by user EXAMPLE\\user01 at HOST01.EXAMPLE.local. {E:\\Builds\\1\\Example\\Startup.cpp:140}",
+]
+counter_examples = ["The EXAMPLE_SVC service on computer HOST01 is now stopped.", "Starting the EXAMPLE_SVC service on computer HOST01 as requested by the control panel."]

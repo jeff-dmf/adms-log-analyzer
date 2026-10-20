@@ -149,3 +149,39 @@ def test_function_host_job_fails_on_every_explicit_failure_code(catalog):
     op = next(o for o in catalog.families["DMSFH"].operations if o["name"] == "FunctionHostJob")
     for code in ("DFH-190", "DFH-195"):
         assert code in op["fail"]
+
+
+DISCONNECTED = (
+    "[NDSSubscriber] OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = %s. Reason: "
+)
+
+
+@pytest.mark.parametrize(
+    ("family", "msg", "sev"),
+    [
+        ("DMSCORE", "[ASC] Prepare phase in AnnualScheduleCache failed.", None),
+        ("DMSOMS", "[Archive] Query execution failed.", None),
+        ("DMSOMS", "[Archive] : Archived state set.", 5),
+        ("DMSOMS", "Outage Id: 4A00B00C00D00E01. Command failed to execute.", None),
+        (
+            "DMSCORE",
+            DISCONNECTED % "True" + "x",
+            4,
+        ),
+        (
+            "DMSCORE",
+            DISCONNECTED % "False" + "x",
+            2,
+        ),
+        ("DMSOMS", "[WarnExecutionBeforeStartDateCommand] Callback populated with 0 errors.", 4),
+        ("DMSOMS", "[WarnExecutionBeforeStartDateCommand] Callback populated with 2 errors.", 3),
+    ],
+)
+def test_failures_are_not_hidden_as_noise(catalog, family, msg, sev):
+    tm = catalog.for_family(family, sensitive=False).classify_text(msg)
+    got = (
+        None
+        if tm is None or tm.code.startswith(("DCR-037", "DOM-073", "DOM-059", "DOM-110")) and sev is None
+        else tm.sev_hint
+    )
+    assert got == sev
