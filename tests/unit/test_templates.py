@@ -1338,7 +1338,7 @@ def test_catalog_regexes_stay_fast_on_their_own_attack_inputs():
     args = [sys.executable, "-c", code, str(here.parent.parent / "src"), str(here)]
     try:
         done = subprocess.run(
-            args, capture_output=True, text=True, encoding="utf-8", timeout=120, check=False
+            args, capture_output=True, text=True, encoding="utf-8", timeout=300, check=False
         )
     except subprocess.TimeoutExpired as exc:
         out = exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""

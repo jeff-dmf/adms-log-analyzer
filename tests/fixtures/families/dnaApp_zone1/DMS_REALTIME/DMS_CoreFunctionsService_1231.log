@@ -108,7 +108,7 @@
 2030-01-15 10:00:05.350 [PID=1231][TID=0x1a2b] WARNING - WARNING [RouteID:0, Dataset:10, Dataflow:7] RequestIU: No destination info for client with ID: 4 (the client on destination side doesn't propagate it).
 2030-01-15 10:00:05.400 [PID=1231][TID=0x1a2b] DEBUGLOG - TASSubscriber - PublicationHandler: Publication received for signal (gid = 10000123), tagId = 10000124, tagCatalogId = 10000125, tagSemantic = DoNotAutoClose, WarnOnOpen
 2030-01-15 10:00:05.450 [PID=1231][TID=0x1a2b] DEBUGLOG - ControlSequenceTransactionCommand - prepare started
-2030-01-15 10:00:05.500 [PID=1231][TID=0x1a2b] DEBUGLOG - (NDS) Interlocking manager loaded 12 rules.
+2030-01-15 10:00:05.500 [PID=1231][TID=0x1a2b] DEBUGLOG - [ControlSequenceManager] - InitializeCacheData: Cache initialized.
 2030-01-15 10:00:05.550 [PID=1231][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
 2030-01-15 10:00:05.600 [PID=1231][TID=0x1a2b] DEBUGLOG - [NDSSubscriber] RestartSubscriber: Subscriber is restarted.
 2030-01-15 10:00:05.650 [PID=1231][TID=0x1a2b] ERROR - [NDSSubscriber] OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = False. Reason: Subscriber(ExamplePubSub) failed to connect to the service with an exception: 

@@ -1462,16 +1462,12 @@ counter_examples = ["ControlSequenceTransactionCommand - verify started"]
 [[template]]
 code = "DCR-372"
 class = "lifecycle"
-title = "Interlocking rules loaded and control sequence cache initialized"
+title = "Control sequence cache initialized"
 sev = 5
 fts = false
-regex = '''^(?:\(NDS\) Interlocking manager loaded (?P<rules>\d+) rules\.|\[ControlSequenceManager\] - InitializeCacheData: (?:Initializing cache\.\.\.|Cache initialized\.))$'''
-fields = { rules = "int" }
-examples = [
-    { msg = "(NDS) Interlocking manager loaded 12 rules.", fields = { rules = 12 } },
-    "[ControlSequenceManager] - InitializeCacheData: Cache initialized.",
-]
-counter_examples = ["(NDS) Interlocking manager loaded some rules."]
+regex = '''^\[ControlSequenceManager\] - InitializeCacheData: (?:Initializing cache\.\.\.|Cache initialized\.)$'''
+examples = ["[ControlSequenceManager] - InitializeCacheData: Cache initialized.", "[ControlSequenceManager] - InitializeCacheData: Initializing cache..."]
+counter_examples = ["[ControlSequenceManager] - InitializeCacheData: Cache is broken."]
 
 [[template]]
 code = "DCR-373"
