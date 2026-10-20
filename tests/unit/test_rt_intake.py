@@ -78,13 +78,13 @@ def by_member(plan):
 
 def test_the_dms_and_oms_services_of_a_real_time_folder_are_in_the_default_scope(tmp_path):
     sources = by_member(plan_collection(make_zip(tmp_path / rt_name(), RT_MEMBERS)))
-    for name in (
-        "DMS_JobLauncher_1100.log.0",
-        "DMS_JobScheduler_1200.log",
-        "DMS_CoreFunctionsService_1300.log.0",
+    for name, family in (
+        ("DMS_JobLauncher_1100.log.0", "DMSJOB"),
+        ("DMS_JobScheduler_1200.log", "DMSJOB"),
+        ("DMS_CoreFunctionsService_1300.log.0", "DMSCORE"),
+        ("OMS_IncidentManagementService_1400.log", "DMSOMS"),
     ):
-        assert (sources[name].family, sources[name].default_scope) == ("DMSRT", True), name
-    assert sources["OMS_IncidentManagementService_1400.log"].family == "DMSRT"
+        assert (sources[name].family, sources[name].default_scope) == (family, True), name
     launcher = sources["DMS_JobLauncher_1100.log.0"]
     assert (launcher.process, launcher.pid, launcher.service, launcher.rotation) == (
         "DMS_JobLauncher",
@@ -104,7 +104,7 @@ def test_a_service_inside_a_context_subfolder_keeps_its_service_and_pid(tmp_path
         "dnaApp_zone1",
     )
     sensitive = sources["DMS_WorkManagementService_1500.sensitive.log"]
-    assert sensitive.sensitive is True and sensitive.family == "DMSRT"
+    assert sensitive.sensitive is True and sensitive.family == "DMSOMS"
 
 
 def test_a_function_host_number_is_an_instance_not_a_process_id(tmp_path):
@@ -142,3 +142,21 @@ def test_a_windows_path_recorded_in_the_case_keeps_the_server_prefix_on_any_syst
     assert classify_add([primary], "ers_zip", f"/data/{half.file_name}", half).action == ADD_PAIR
     copy = parse_ers_name(name)
     assert classify_add([primary], "ers_zip", f"/other/{name}", copy).action == "same"
+
+
+def test_the_rt_services_are_split_by_what_they_do(tmp_path):
+    from ers_helpers import RT_FAMILY_MEMBERS
+
+    sources = by_member(plan_collection(make_zip(tmp_path / rt_name(), RT_FAMILY_MEMBERS)))
+    families = {name: s.family for name, s in sources.items()}
+    assert families["DMS_JobScheduler_10.log"] == "DMSJOB"
+    assert families["DMS_JobLauncher_11.log"] == "DMSJOB"
+    assert families["DMS_JobManagerService_12.log"] == "DMSJOB"
+    assert families["DMS_CoreFunctionsService_13.log"] == "DMSCORE"
+    assert families["DMS_ModelTopologyService_14.log"] == "DMSCORE"
+    assert families["DMS_NetworkModelService_15.log"] == "DMSMODEL"
+    assert families["DMS_ReplicationService_16.sensitive.log"] == "DMSMODEL"
+    assert families["OMS_IncidentManagementService_17.log"] == "DMSOMS"
+    assert families["DMS_WorkManagementService_18.log"] == "DMSOMS"
+    assert families["DMS_SomethingNewService_19.log"] == "DMSRT"  # any other DMS_* service
+    assert all(s.default_scope for s in sources.values())

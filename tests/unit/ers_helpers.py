@@ -98,3 +98,16 @@ RT_MEMBERS = [
     f"{LOG}/dnaService.DMS_REALTIME.log",
     f"{LOG}/oasErrLog.log",
 ]
+
+RT_FAMILY_MEMBERS = [
+    f"{RT_APP}/DMS_JobScheduler_10.log",
+    f"{RT_APP}/DMS_JobLauncher_11.log",
+    f"{RT_APP}/Context-1/DMS_JobManagerService_12.log",
+    f"{RT_APP}/Context-1/DMS_CoreFunctionsService_13.log",
+    f"{RT_APP}/Context-1/DMS_ModelTopologyService_14.log",
+    f"{RT_APP}/Context-1/DMS_NetworkModelService_15.log",
+    f"{RT_APP}/Context-1/DMS_ReplicationService_16.sensitive.log",
+    f"{RT_APP}/Context-1/OMS_IncidentManagementService_17.log",
+    f"{RT_APP}/Context-1/DMS_WorkManagementService_18.log",
+    f"{RT_APP}/Context-1/DMS_SomethingNewService_19.log",
+]

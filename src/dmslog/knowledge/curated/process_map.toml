@@ -158,6 +158,22 @@ family = "ERS"
 reason = "ERS tool logs, not adapters."
 
 [[out_of_scope]]
+family = "DMSJOB"
+reason = "Job scheduling and launching services of the RT servers. Not adapters."
+
+[[out_of_scope]]
+family = "DMSCORE"
+reason = "Model and calculation infrastructure services of the RT servers. Not adapters."
+
+[[out_of_scope]]
+family = "DMSMODEL"
+reason = "Network model, dynamics data and replication services of the RT servers. Not adapters."
+
+[[out_of_scope]]
+family = "DMSOMS"
+reason = "Outage, incident, crew and work management services of the RT servers. Not adapters."
+
+[[out_of_scope]]
 family = "DMSRT"
 reason = "DMS_* and OMS_* services of the real-time (RT) servers: not adapters; templates come from the RT mining."
 
