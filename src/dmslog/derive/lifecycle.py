@@ -32,6 +32,10 @@ clock           ``clock_jump``      ``ts`` goes backwards by more than 30 min be
                                     consecutive entries (``detail.back_ms``).
 maps            ``map_reload``      ``"X" map closed.`` -> ``New "X" map content:`` (+
                                     items) -> ``"X" map is now open.``
+pid_change      ``restart``         PID of the envelope changes between consecutive entries
+                                    of the stream (families in ``PID_CHANGE_FAMILIES``).
+                                    ``detail``: ``old_pid``, ``new_pid``, ``cause``
+                                    (``"pid_change"``). Policy: see ``_PidChange``.
 service         ``restart``,        ProcessMonitor / dnaService / arb* (family SERVICE,
                 ``service_state``   templates ``SVC-*``).
 ==============  ==================  ====================================================
@@ -80,6 +84,10 @@ STARTUP_HOT_GRACE_MS = 5_000
 STARTUP_MAX_MS = 120_000
 #: ``ts`` going backwards by more than this between two consecutive entries is a clock jump.
 CLOCK_JUMP_MIN_BACK_MS = 30 * 60 * 1000
+#: Families whose process restarts are derived from a change of the envelope PID.
+PID_CHANGE_FAMILIES = frozenset({"DMSFH"})
+#: Retired PIDs remembered per stream (a PID that comes back is not a new restart).
+MAX_RETIRED_PIDS = 64
 #: Caps (bounded memory): overflow is counted in ``detail``.
 MAX_STARTUP_ENTRY_IDS = 50_000
 MAX_STARTUP_URLS = 50
@@ -606,6 +614,70 @@ class _Service:
         ]
 
 
+class _PidChange:
+    """``restart`` when the envelope PID of a stream changes (one stream = one file).
+
+    Policy (no false positives from interleaving or rotation):
+
+    * A stream is one file/instance, so a rotated ``.log.0`` is a different stream and its first
+      entry is never compared with the last entry of the next file.
+    * Entries without a PID are ignored.
+    * A change is only a candidate; it is confirmed when the NEW pid appears in two consecutive
+      entries (with a PID). A single stray record (A-B-A) is therefore not a restart.
+    * A PID already retired earlier in the stream coming back (A-B-B-A) is ignored: it is
+      interleaving, not a new process (PIDs are not recycled that fast).
+    * The event takes the timestamp of the FIRST entry with the new PID.
+    * ``flush`` never confirms a pending candidate (a single record is not proof).
+    """
+
+    def __init__(self) -> None:
+        self.cur: int | None = None
+        self.retired: list[int] = []
+        self.cand: tuple[int, int, int | None, int | None, int] | None = None  # new, old, ts, tid, id
+
+    def feed(self, e: StoredEntry) -> list[Event]:
+        pid = e.pid
+        if pid is None:
+            return []
+        cand = self.cand
+        if cand is not None:
+            if pid == cand[0]:
+                self.cand = None
+                return [self._confirm(cand, e)]
+            self.cand = None  # the candidate did not persist: fall through with the current pid
+        if self.cur is None:
+            self.cur = pid
+            return []
+        if pid == self.cur or pid in self.retired:
+            return []
+        if e.ts is None:
+            return []
+        self.cand = (pid, self.cur, e.ts, e.tid, e.id)
+        return []
+
+    def _confirm(self, cand: tuple[int, int, int | None, int | None, int], e: StoredEntry) -> Event:
+        new, old, ts, tid, first_id = cand
+        self.retired.append(old)
+        del self.retired[:-MAX_RETIRED_PIDS]
+        self.cur = new
+        return Event(
+            kind=KIND_RESTART,
+            tid=tid,
+            ts_start=ts,  # type: ignore[arg-type]
+            ts_end=ts,
+            duration_ms=0,
+            start_entry_id=first_id,
+            end_entry_id=first_id,
+            status=STATUS_OK,
+            sev=e.sev if e.sev is not None else 4,
+            n_entries=1,
+            detail={"old_pid": old, "new_pid": new, "cause": "pid_change"},
+        )
+
+    def watermark(self) -> int | None:
+        return None if self.cand is None else self.cand[4]
+
+
 # ---------------------------------------------------------------------------------------------
 # the deriver
 # ---------------------------------------------------------------------------------------------
@@ -630,6 +702,7 @@ class LifecycleDeriver:
         self._prev_id: int | None = None
         self._prev_ts: int | None = None
         self._maps = _Maps()
+        self._pid = _PidChange() if family in PID_CHANGE_FAMILIES else None
         self._last_id: int | None = None
 
     def feed(self, entry: StoredEntry) -> Iterable[Event]:
@@ -665,6 +738,8 @@ class LifecycleDeriver:
                 out.extend(self._maps.feed(entry))
             if code in _SERVICE_POINT:
                 out.extend(_Service.feed(entry))
+            if self._pid is not None:
+                out.extend(self._pid.feed(entry))
         finally:
             self._last_id = entry.id
         return out
@@ -709,6 +784,7 @@ class LifecycleDeriver:
                 self._startup.watermark(),
                 self._level.watermark(),
                 self._maps.watermark(),
+                None if self._pid is None else self._pid.watermark(),
                 self._last_id,
             )
             if m is not None

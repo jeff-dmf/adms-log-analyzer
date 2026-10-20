@@ -1570,8 +1570,13 @@ class TemplateSet:
         sev = t.sev
         if t.sev_map is not None:
             v = fields.get(t.sev_field)  # type: ignore[arg-type]
-            if isinstance(v, str):
-                sev = t.sev_map.get(v, sev)
+            if isinstance(v, list):
+                # list field: the most severe (lowest) mapped value wins; unmapped values are ignored
+                mapped = [t.sev_map[str(x)] for x in v if str(x) in t.sev_map]
+                if mapped:
+                    sev = min(mapped)
+            elif isinstance(v, (str, int)) and not isinstance(v, bool):
+                sev = t.sev_map.get(str(v), sev)
         keys: list[tuple[str, str]] = []
         for ks in t.keys:
             v = fields.get(ks.field)
