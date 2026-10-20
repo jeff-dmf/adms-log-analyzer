@@ -622,9 +622,10 @@ class _PidChange:
       entries (with a PID). A single stray record (A-B-A) is therefore not a restart.
     * The event takes the timestamp of the FIRST entry with the new PID.
     * ``flush`` never confirms a pending candidate (a single record is not proof).
-    * The state is only (current pid, pending candidate), and both are rebuilt by feeding again from
-      ``watermark()`` = the last entry that carried the current pid, so a resumed run gives the same
-      events as a whole run (no state outside the entries).
+    * The state is only (current pid, pending candidate). A resumed run gets the PID of the entry just
+      before the first one fed (``seed``, supplied by the engine, O(1)); ``watermark()`` = the last
+      entry that carried the current pid keeps a pending candidate re-derivable when this rule holds the
+      checkpoint.
     """
 
     def __init__(self) -> None:
@@ -666,6 +667,11 @@ class _PidChange:
             n_entries=1,
             detail={"old_pid": old, "new_pid": new, "cause": "pid_change"},
         )
+
+    def seed(self, pid: int | None) -> None:
+        """Resume context: PID of the entry just before the first one fed (``cur`` without a watermark)."""
+        if pid is not None and self.cur is None:
+            self.cur = pid
 
     def watermark(self) -> int | None:
         return self.cur_id
@@ -736,6 +742,13 @@ class LifecycleDeriver:
         finally:
             self._last_id = entry.id
         return out
+
+    def seed_previous_pid(self, pid: int | None) -> None:
+        """Called by the engine when it resumes mid-chain: the PID of the entry right before the first
+        one fed. Another rule may hold the checkpoint earlier or later than this rule's own watermark,
+        so the PID state cannot rely on its watermark alone."""
+        if self._pid is not None:
+            self._pid.seed(pid)
 
     def _gap(self, e: StoredEntry, prev_ts: int, silence: int, heartbeat_ms: int) -> Event:
         return Event(

@@ -652,6 +652,15 @@ def _derive_chain(
         ).fetchone()
         if earlier:
             derivers = build_derivers(family, rules, truncated=truncated, stream_start=False)
+            prev_pid = conn.execute(
+                f"SELECT pid FROM entry NOT INDEXED WHERE source_id IN ({marks}) AND id < ?"  # noqa: S608
+                " AND pid IS NOT NULL ORDER BY id DESC LIMIT 1",
+                [*(r[0] for r in ranges), cp],
+            ).fetchone()
+            for d in derivers:
+                seed = getattr(d, "seed_previous_pid", None)
+                if seed is not None:
+                    seed(prev_pid[0] if prev_pid else None)
             stateful = [d for d in derivers if hasattr(d, "export_state") and hasattr(d, "import_state")]
         states = record["states"] if record else {}
         for d in stateful:

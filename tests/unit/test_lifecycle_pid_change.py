@@ -90,6 +90,7 @@ def _resumed(es: list[StoredEntry], cut: int) -> list[tuple[int | None, int]]:
     assert wm is not None
     got = [ev for ev in got if (ev.start_entry_id or 0) < wm]
     d2 = LifecycleDeriver("DMSFH", stream_start=False)
+    d2.seed_previous_pid(next((e.pid for e in reversed(es[: wm - 1]) if e.pid is not None), None))
     for e in es:
         if e.id >= wm:
             got.extend(d2.feed(e))
@@ -121,7 +122,18 @@ def test_resume_with_level_change_before_pending_candidate() -> None:
 
 
 def test_pid_reaches_the_derivers_through_the_sqlite_engine(tmp_path) -> None:
-    pids = [10, 10, 20, 20, 20, 30, 30]
+    _engine_round_trip(tmp_path, [10, 10, 20, 20, 20, 30, 30], {}, [3, 6])
+
+
+def test_engine_resume_with_another_rule_holding_the_checkpoint(tmp_path) -> None:
+    # the level window opened at entry 3 (first entry of the new PID) keeps the checkpoint there while
+    # the restart is already confirmed
+    level = "Debug level changed from Info (5) to Debug (3)."
+    _engine_round_trip(tmp_path, [10, 10, 20, 20, 20, 20, 30, 30], {3: level}, [3, 7])
+    _engine_round_trip(tmp_path, [10, 10, 20, 20, 20], {3: level}, [3])
+
+
+def _engine_round_trip(tmp_path, pids: list[int], msgs: dict[int, str], expected: list[int]) -> None:
 
     def build(name: str):
         conn = create_case_db(tmp_path / name / "case.sqlite")
@@ -141,8 +153,8 @@ def test_pid_reaches_the_derivers_through_the_sqlite_engine(tmp_path) -> None:
         for i in range(lo, hi):
             conn.execute(
                 "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, pid, tid, sev, tpl_id,"
-                " flags, msg) VALUES (?,1,?,?,1,?,?,5,4,0,0,'x')",
-                (i + 1, i + 1, i + 1, T0 + i * 1000, pids[i]),
+                " flags, msg) VALUES (?,1,?,?,1,?,?,5,4,0,0,?)",
+                (i + 1, i + 1, i + 1, T0 + i * 1000, pids[i], msgs.get(i + 1, "x")),
             )
         conn.execute("UPDATE source SET n_entries = ?", (hi,))
         conn.commit()
@@ -153,15 +165,15 @@ def test_pid_reaches_the_derivers_through_the_sqlite_engine(tmp_path) -> None:
         ).fetchall()
 
     cat = load_texts({})
-    conn, sid = build("full")
+    conn, sid = build(f"full{len(pids)}{len(msgs)}")
     add(conn, 0, len(pids))
     derive_stream(conn, sid, cat)
     full = restarts_of(conn)
-    assert [r[0] for r in full] == [3, 6]
+    assert [r[0] for r in full] == expected
     assert json.loads(full[0][1]) == {"old_pid": 10, "new_pid": 20, "cause": "pid_change"}
     conn.close()
     for cut in range(1, len(pids)):
-        conn, sid = build(f"cut{cut}")
+        conn, sid = build(f"cut{len(pids)}{len(msgs)}_{cut}")
         add(conn, 0, cut)
         derive_stream(conn, sid, cat)
         add(conn, cut, len(pids))
