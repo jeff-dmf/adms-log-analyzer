@@ -465,7 +465,7 @@ Q1 e Q4 tocam `msgqueue/` em arquivos diferentes; `__init__.py` é de Q1 (vazio,
 
 **Riscos:**
 - R1. **Par `.db3`/`-wal` inconsistente no ERS** (o ERS copia arquivos em uso): o SQLite só aplica molduras válidas, então o pior caso é um estado mais antigo, nunca inventado; `wal_failed` cai para o checkpoint e avisa. Não detectável além disso.
-- R2. **Horário dos itens** (ticks local × UTC): verificado por script em Q2. Se for UTC, o app continua sem converter fuso (U6): entra uma nota na ARQUITETURA e um aviso fixo no painel ("Queue times may be in UTC"), sem ajuste automático.
+- R2. **Horário dos itens** (ticks local × UTC): **verificado em 2026-10-20** contra os três casos do ERS de exemplo: o `ts` do item, lido como horário local (U6), casa em segundos com o primeiro registro do log com o mesmo `msgid` (14 de 14 itens, diferença máxima de 6 s). É horário local do servidor, como o log: nenhum aviso de fuso na aba e nenhuma conversão.
 - R3. **Cabeçalho de 12 bytes desconhecido** e **dicionário**: outra versão do ADMS pode mudar ambos; o efeito é a prévia com erro claro, a lista continua.
 - R4. **Fidelidade da reconstrução** sem exemplar no caso (log sem nível de payload): ordem e caixa podem divergir; mitigado pelo rótulo, pelas notas e pelo link ao payload logado quando existe.
 - R5. **Disco e tempo no Windows corporativo:** 340 MB temporários por alguns segundos, mais a varredura do antivírus; mitigado por checagem de espaço, `fingerprint` (não relê o mesmo ERS) e progresso visível.

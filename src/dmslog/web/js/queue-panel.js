@@ -111,7 +111,6 @@ export function initQueuePanel(container, {
 
   // ---- body
   const status = statusLine(document, "mq-status");
-  const notice = element("p", "mq-notice", S.mqTimeNotice);
   const confirmBox = element("div", "mq-confirm");
   confirmBox.setAttribute("role", "alertdialog");
   confirmBox.setAttribute("aria-label", S.mqRemoveLabel);
@@ -202,7 +201,7 @@ export function initQueuePanel(container, {
   previewPre.setAttribute("aria-label", S.mqPreviewText);
   previewBox.append(previewHead, actions, formGroup, banner, previewMessage, previewPre);
   main.append(listBox, previewBox);
-  shell.body.append(status, notice, confirmBox, emptyBox, banksBox, main);
+  shell.body.append(status, confirmBox, emptyBox, banksBox, main);
   const moreButton = element("button", "ui-button mq-more", S.mqLoadMore);
   moreButton.type = "button";
   shell.addFoot(moreButton);
@@ -499,7 +498,6 @@ export function initQueuePanel(container, {
     renderEmpty(state, kind);
     renderList(state, hasList);
     renderPreview(state);
-    notice.hidden = !hasList;
     const more = state.next !== null && state.status === "ready";
     moreButton.hidden = !more;
     shell.foot.hidden = !more;
