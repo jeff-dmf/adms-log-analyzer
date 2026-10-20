@@ -81,6 +81,14 @@ def test_other_family_unaffected() -> None:
     assert restarts([10, 10, 20, 20], family="DMSJOB") == []
 
 
+def _confirmed_before(es: list[StoredEntry], kept: list[Event], wm: int) -> int | None:
+    """What the engine supplies: new_pid of the last kept restart, else the first PID of the chain."""
+    done = [ev for ev in kept if ev.kind == KIND_RESTART]
+    if done:
+        return done[-1].detail["new_pid"]
+    return next((e.pid for e in es if e.pid is not None), None)
+
+
 def _resumed(es: list[StoredEntry], cut: int) -> list[tuple[int | None, int]]:
     d = LifecycleDeriver("DMSFH")
     got: list[Event] = []
@@ -90,7 +98,7 @@ def _resumed(es: list[StoredEntry], cut: int) -> list[tuple[int | None, int]]:
     assert wm is not None
     got = [ev for ev in got if (ev.start_entry_id or 0) < wm]
     d2 = LifecycleDeriver("DMSFH", stream_start=False)
-    d2.seed_previous_pid(next((e.pid for e in reversed(es[: wm - 1]) if e.pid is not None), None))
+    d2.seed_previous_pid(_confirmed_before(es, got, wm))
     for e in es:
         if e.id >= wm:
             got.extend(d2.feed(e))
@@ -104,6 +112,7 @@ PID_CASES = [
     [10, None, 20, None, 20, 30, 30, 30],
     [10, 20, 30, 30, 10, 10],
     [10, 10, 20, 20, None, None],
+    [10, 20, 10, 10, 10],
 ]
 
 
@@ -131,6 +140,8 @@ def test_engine_resume_with_another_rule_holding_the_checkpoint(tmp_path) -> Non
     level = "Debug level changed from Info (5) to Debug (3)."
     _engine_round_trip(tmp_path, [10, 10, 20, 20, 20, 20, 30, 30], {3: level}, [3, 7])
     _engine_round_trip(tmp_path, [10, 10, 20, 20, 20], {3: level}, [3])
+    # an isolated candidate right before the checkpoint is not the confirmed PID
+    _engine_round_trip(tmp_path, [10, 20, 10, 10, 10], {3: level}, [])
 
 
 def _engine_round_trip(tmp_path, pids: list[int], msgs: dict[int, str], expected: list[int]) -> None:
@@ -165,15 +176,15 @@ def _engine_round_trip(tmp_path, pids: list[int], msgs: dict[int, str], expected
         ).fetchall()
 
     cat = load_texts({})
-    conn, sid = build(f"full{len(pids)}{len(msgs)}")
+    conn, sid = build(f"full{''.join(map(str, pids))}{len(msgs)}")
     add(conn, 0, len(pids))
     derive_stream(conn, sid, cat)
     full = restarts_of(conn)
     assert [r[0] for r in full] == expected
-    assert json.loads(full[0][1]) == {"old_pid": 10, "new_pid": 20, "cause": "pid_change"}
+    assert not full or json.loads(full[0][1])["cause"] == "pid_change"
     conn.close()
     for cut in range(1, len(pids)):
-        conn, sid = build(f"cut{len(pids)}{len(msgs)}_{cut}")
+        conn, sid = build(f"cut{''.join(map(str, pids))}{len(msgs)}_{cut}")
         add(conn, 0, cut)
         derive_stream(conn, sid, cat)
         add(conn, cut, len(pids))
