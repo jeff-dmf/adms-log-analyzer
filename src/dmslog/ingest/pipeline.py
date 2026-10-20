@@ -225,7 +225,7 @@ def build_plan(path: str | Path, limits: ReadLimits, aliases: Aliases | None = N
     sources = resolve_scope(relax_ratio_violations(sources, limits), explicit=kind == KIND_FILE)
     identity = parse_ers_name(target.name) if kind == KIND_ERS_ZIP else None
     zones = sorted({s.zone for s in sources if s.zone})
-    label = identity.description if identity and identity.description else target.name
+    label = (identity.display_label if identity else "") or target.name
     return CollectionPlan(
         kind=kind,
         path=target,

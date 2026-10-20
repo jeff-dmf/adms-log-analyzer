@@ -70,3 +70,31 @@ def make_folder(root: Path, members: list[str]) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"x\n")
     return root
+
+
+def rt_name(
+    role: str = "Primary",
+    ts: str = "20261008124051",
+    sensitive: bool = False,
+    desc: str = "host1",
+    guid: str = GUID,
+) -> str:
+    """The name of an RT server capture: ERS_<system>_RT_<role>_<GUID>_... (synthetic system and host)."""
+    middle = "Sensitive_Enterprise" if sensitive else "Enterprise"
+    return f"ERS_site_RT_{role}_{guid}_{ts}_{middle}_{desc}.zip"
+
+
+RT_APP = f"{LOG}/dnaApp_zone1/DMS_REALTIME"
+RT_MEMBERS = [
+    f"{RT_APP}/DMS_JobLauncher_1100.log.0",
+    f"{RT_APP}/DMS_JobScheduler_1200.log",
+    f"{RT_APP}/DMS_FunctionHost_7.log",
+    f"{RT_APP}/DMS_FunctionHost_13.log.0",
+    f"{RT_APP}/Context-123456/DMS_CoreFunctionsService_1300.log.0",
+    f"{RT_APP}/Context-123456/OMS_IncidentManagementService_1400.log",
+    f"{RT_APP}/Context-123456/DMS_WorkManagementService_1500.sensitive.log",
+    f"{LOG}/dnaApp_zone1/DMS_INTEGRATION/DMS_ReplicationService_1600.log",
+    f"{LOG}/dnaApp_zone1/DMS_INTEGRATION/Context-9/ToolService_1700.log",
+    f"{LOG}/dnaService.DMS_REALTIME.log",
+    f"{LOG}/oasErrLog.log",
+]
