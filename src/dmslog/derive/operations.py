@@ -163,6 +163,7 @@ class OperationsDeriver:
         self._open: OrderedDict[tuple[int, int | None], _Op] = OrderedDict()
         self._by_tid: dict[int, list[_Op]] = {}
         self._by_pair: dict[tuple[str, str], list[_Op]] = {}  # key-paired operations
+        self._pair_types = tuple(dict.fromkeys(r.pair_key for r in self._rules if r.pair_key))
         self._last_ts = 0
 
     # ---------------------------------------------------------------- Deriver protocol
@@ -179,8 +180,9 @@ class OperationsDeriver:
                 if ops:
                     self._fast_join(ops[-1], entry)
                 if self._by_pair:
-                    for kind, value in entry.keys:
-                        paired = self._by_pair.get((kind, str(value)))
+                    for kind in self._pair_types:
+                        value = _key_of(entry, kind)
+                        paired = None if value is None else self._by_pair.get((kind, value))
                         if paired:
                             self._fast_join(paired[-1], entry)
             except Exception:  # never raise on odd input; counted for diagnostics
@@ -263,8 +265,9 @@ class OperationsDeriver:
                     if self._compatible(op, entry):
                         self._join(op, entry)
             if self._by_pair:
-                for kind, value in entry.keys:
-                    paired = self._by_pair.get((kind, str(value)))
+                for kind in self._pair_types:
+                    value = _key_of(entry, kind)
+                    paired = None if value is None else self._by_pair.get((kind, value))
                     if paired and self._compatible(paired[-1], entry):
                         self._join(paired[-1], entry)
 
@@ -365,8 +368,6 @@ class OperationsDeriver:
             else:
                 key = None
         ts = entry.ts if entry.ts is not None else self._last_ts
-        if pair is not None:
-            key = pair[1]
         op = _Op(rule, entry, name, from_field, key, ts)
         op.slot = slot
         self._open[slot] = op
@@ -461,7 +462,7 @@ class OperationsDeriver:
             kind=self.kind,
             ts_start=op.ts_start,
             name=op.name,
-            key=op.key,
+            key=op.key if op.key is not None else (op.pair[1] if op.pair else None),
             tid=op.tid,
             start_entry_id=op.start_id,
             end_entry_id=end.id if end is not None else None,

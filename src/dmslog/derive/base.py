@@ -64,10 +64,11 @@ class StoredEntry:
 class RowEntry(tuple):  # type: ignore[type-arg]
     """``StoredEntry`` look-alike built straight from a query row (the engine's fast path).
 
-    The row is ``(id, ts, tid, sev, fields_json, msg, tpl_id, cont, keys, tpl_code, tpl_class)``:
-    ``fields_json`` and ``cont`` are empty strings and ``keys`` an empty tuple when absent. ``pid`` and
-    ``level`` are not read by any deriver and are None. ``fields`` is parsed (and cached) only when a
-    deriver asks for it; ``fields_raw`` and ``field(name)`` let a deriver skip that parse. Same attribute
+    The row is ``(id, ts, tid, sev, fields_json, msg, tpl_id, cont, keys, tpl_code, tpl_class[, pid])``:
+    ``fields_json`` and ``cont`` are empty strings and ``keys`` an empty tuple when absent. ``pid`` is the
+    optional 12th cell (None when absent); ``level`` is not read by any deriver and is None. ``fields`` is
+    parsed (and cached) only when a deriver asks for it; ``fields_raw`` and ``field(name)`` let a deriver
+    skip that parse. Same attribute
     names and values as ``StoredEntry``.
     """
 
@@ -81,9 +82,12 @@ class RowEntry(tuple):  # type: ignore[type-arg]
     keys = property(itemgetter(8))
     tpl_code = property(itemgetter(9))
     tpl_class = property(itemgetter(10))
-    pid = None
     level = None
     stream_id = 0
+
+    @property
+    def pid(self) -> int | None:
+        return self[11] if len(self) > 11 else None
 
     def field(self, name: str) -> Any:
         """``fields.get(name)``, skipping the JSON parse when that is provably the same answer.

@@ -86,8 +86,6 @@ STARTUP_MAX_MS = 120_000
 CLOCK_JUMP_MIN_BACK_MS = 30 * 60 * 1000
 #: Families whose process restarts are derived from a change of the envelope PID.
 PID_CHANGE_FAMILIES = frozenset({"DMSFH"})
-#: Retired PIDs remembered per stream (a PID that comes back is not a new restart).
-MAX_RETIRED_PIDS = 64
 #: Caps (bounded memory): overflow is counted in ``detail``.
 MAX_STARTUP_ENTRY_IDS = 50_000
 MAX_STARTUP_URLS = 50
@@ -615,24 +613,23 @@ class _Service:
 
 
 class _PidChange:
-    """``restart`` when the envelope PID of a stream changes (one stream = one file).
+    """``restart`` when the envelope PID of a stream changes (one stream = one chain of files).
 
     Policy (no false positives from interleaving or rotation):
 
-    * A stream is one file/instance, so a rotated ``.log.0`` is a different stream and its first
-      entry is never compared with the last entry of the next file.
     * Entries without a PID are ignored.
     * A change is only a candidate; it is confirmed when the NEW pid appears in two consecutive
       entries (with a PID). A single stray record (A-B-A) is therefore not a restart.
-    * A PID already retired earlier in the stream coming back (A-B-B-A) is ignored: it is
-      interleaving, not a new process (PIDs are not recycled that fast).
     * The event takes the timestamp of the FIRST entry with the new PID.
     * ``flush`` never confirms a pending candidate (a single record is not proof).
+    * The state is only (current pid, pending candidate), and both are rebuilt by feeding again from
+      ``watermark()`` = the last entry that carried the current pid, so a resumed run gives the same
+      events as a whole run (no state outside the entries).
     """
 
     def __init__(self) -> None:
         self.cur: int | None = None
-        self.retired: list[int] = []
+        self.cur_id: int | None = None  # last entry id carrying ``cur``
         self.cand: tuple[int, int, int | None, int | None, int] | None = None  # new, old, ts, tid, id
 
     def feed(self, e: StoredEntry) -> list[Event]:
@@ -641,25 +638,21 @@ class _PidChange:
             return []
         cand = self.cand
         if cand is not None:
+            self.cand = None
             if pid == cand[0]:
-                self.cand = None
+                self.cur, self.cur_id = pid, e.id
                 return [self._confirm(cand, e)]
-            self.cand = None  # the candidate did not persist: fall through with the current pid
-        if self.cur is None:
-            self.cur = pid
-            return []
-        if pid == self.cur or pid in self.retired:
+        if self.cur is None or pid == self.cur:
+            self.cur, self.cur_id = pid, e.id
             return []
         if e.ts is None:
             return []
         self.cand = (pid, self.cur, e.ts, e.tid, e.id)
         return []
 
-    def _confirm(self, cand: tuple[int, int, int | None, int | None, int], e: StoredEntry) -> Event:
+    @staticmethod
+    def _confirm(cand: tuple[int, int, int | None, int | None, int], e: StoredEntry) -> Event:
         new, old, ts, tid, first_id = cand
-        self.retired.append(old)
-        del self.retired[:-MAX_RETIRED_PIDS]
-        self.cur = new
         return Event(
             kind=KIND_RESTART,
             tid=tid,
@@ -675,7 +668,7 @@ class _PidChange:
         )
 
     def watermark(self) -> int | None:
-        return None if self.cand is None else self.cand[4]
+        return self.cur_id
 
 
 # ---------------------------------------------------------------------------------------------

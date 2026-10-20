@@ -63,7 +63,9 @@ _LEVEL_NUM_BY_NAME = {"debug": 3, "debuglog": 3, "warning": 4, "info": 5, "infor
 CONT_CHARS = 65536  # continuation text handed to the derivers (same limit as the FTS)
 
 _FIRST = itemgetter(0)
-_LAST = itemgetter(-1)
+_TPL_ID = itemgetter(6)
+_PID = itemgetter(7)
+_HEAD = itemgetter(slice(0, 7))
 META_PREFIX = "derive."
 _ROTATION_SUFFIX = re.compile(r"\.\d+$")
 
@@ -170,7 +172,7 @@ def _entries(conn: sqlite3.Connection, ranges: list[tuple[int, int, int]], start
         last = max(start, lo) - 1
         while True:
             rows = conn.execute(
-                "SELECT id, ts, tid, sev, coalesce(fields, ''), msg, tpl_id FROM entry NOT INDEXED"
+                "SELECT id, ts, tid, sev, coalesce(fields, ''), msg, tpl_id, pid FROM entry NOT INDEXED"
                 " WHERE id > ? AND id <= ? AND source_id = ? ORDER BY id LIMIT ?",
                 (last, hi, source_id, CHUNK),
             ).fetchall()
@@ -207,15 +209,16 @@ def _entries(conn: sqlite3.Connection, ranges: list[tuple[int, int, int]], start
                     keys[entry_id] = tuple([(g[1], g[2]) for g in group])
             # row + (cont, keys, tpl_code, tpl_class), built with C-level iterators (once per entry)
             ids = list(map(_FIRST, rows))
-            tpls = list(map(_LAST, rows))
+            tpls = list(map(_TPL_ID, rows))
             cells = zip(
                 map(conts.get, ids, repeat("")),
                 map(keys.get, ids, repeat(())),
                 map(tpl_code.get, tpls),
                 map(tpl_class.get, tpls),
+                map(_PID, rows),
                 strict=True,
             )
-            yield from map(RowEntry, map(add, rows, cells))
+            yield from map(RowEntry, map(add, map(_HEAD, rows), cells))
             last = last_id
             if len(rows) < CHUNK:
                 break

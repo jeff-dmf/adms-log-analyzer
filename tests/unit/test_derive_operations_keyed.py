@@ -98,3 +98,31 @@ def test_pair_by_key_evicts_the_oldest(monkeypatch):
     d, events = derive(f)
     assert d.evicted == 1 and d.orphan_ends == 1
     assert (events[0].key, events[0].status, events[0].detail["closed_by"]) == ("1", "truncated", "evicted")
+
+
+def _entry(i, code, *, tid=1, fields=None, keys=()):
+    return StoredEntry(
+        id=i, stream_id=1, ts=i, tid=tid, pid=1, level=4, sev=4, tpl_code=code, tpl_class="other",
+        fields=fields or {}, msg="m", keys=keys,
+    )  # fmt: skip
+
+
+def test_pair_key_and_check_key_are_kept_apart():
+    rules = [{"start": ["JB-1"], "end": ["JB-9"], "pair_by": ["job_id"], "check_key": "request_id"}]
+    keys = (("job_id", "7"), ("request_id", "99"))
+    entries = [_entry(1, "JB-1", keys=keys), _entry(2, "JB-9", keys=keys)]
+    d = OperationsDeriver("EXAMPLE", rules)
+    (ev,) = run_in_memory([d], entries)
+    assert ev.status == "ok" and d.orphan_ends == 0 and ev.key == "99"
+
+
+def test_intermediate_entries_find_the_key_in_fields_too():
+    fields = {"job_id": 7}
+    entries = [
+        _entry(1, "JB-1", tid=1, fields=fields),
+        _entry(2, "X-1", tid=2, fields=fields),
+        _entry(3, "JB-9", tid=3, fields=fields),
+    ]
+    d = OperationsDeriver("EXAMPLE", KEYED)
+    (ev,) = run_in_memory([d], entries)
+    assert ev.entry_ids == [1, 2, 3]
