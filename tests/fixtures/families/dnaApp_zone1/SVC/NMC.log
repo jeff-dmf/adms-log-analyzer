@@ -1,0 +1,13 @@
+﻿2030-01-15 10:00:00.000 [PID=1286][TID=0x1a2b] WARNING - Access denied  {C:\Example\src\Monitor\ExampleCommon.cs:182}
+2030-01-15 10:00:00.050 [PID=1286][TID=0x1a2b] INFO - Access allowed  {C:\Example\src\Monitor\ExampleCommon.cs:182}
+2030-01-15 10:00:00.100 [PID=1286][TID=0x1a2b] INFO - Enabling IgnoreServerUnavailable on ADAMExceptionHelper. Error indication popups won't be displayed for ADAM connectivity issues. {C:\Example\src\Common\ExampleHelper.cs:50}
+2030-01-15 10:00:00.150 [PID=1286][TID=0x1a2b] INFO - Enabling IgnoreServerUnavailable on ExampleHelper.
+2030-01-15 10:00:00.200 [PID=1286][TID=0x1a2b] WARNING - Non Fatal System.ObjectDisposedException: Cannot access a disposed object.
+Object name: 'Example.Node'.
+Managed Code Stack Trace:
+   at Example.Shared.Disposable.Verify()
+2030-01-15 10:00:00.250 [PID=1286][TID=0x1a2b] INFO - Fatal System.ObjectDisposedException: Cannot access a disposed object.
+2030-01-15 10:00:00.300 [PID=1286][TID=0x1a2b] WARNING - Access denied  {C:\Example\src\Monitor\ExampleCommon.cs:182}
+2030-01-15 10:00:00.350 [PID=1286][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.400 [PID=1286][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.450 [PID=1286][TID=0x1a2b] INFO - Qqq synthetic noise without template

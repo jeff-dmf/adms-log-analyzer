@@ -1,0 +1,276 @@
+# ERS.log and ERSEngine.log (family ERS): the error report tool that collects the ERS archive and
+# the engine that launches it. Optional scope, one run per scheduled or manual collection.
+# Design: docs/notas/rt-templates-desenho.md.
+#
+# Codes: ERS-001..029. ERS-001..005 are the engine (ERSEngine.log); the rest are the tool (ERS.log,
+# whose lines carry the level in the header, so the text starts after `INFO:`). Lines per folder or
+# per file of a collection are trace (sev 5) and kept out of the full-text index.
+
+schema = 1
+family = "ERS"
+description = "ERS tool and ERSEngine: collection of the error report archive"
+extends = ["_common"]
+
+# --- Engine (ERSEngine.log) ---------------------------------------------------------------
+
+[[template]]
+code = "ERS-001"
+class = "lifecycle"
+title = "ERS engine started or stopped"
+sev = 4
+regex = '''^\*\*\* Engine (?P<phase>started|stopped) \*\*\*$'''
+examples = ["*** Engine started ***", "*** Engine stopped ***"]
+counter_examples = ["*** Engine paused ***"]
+
+[[template]]
+code = "ERS-002"
+class = "lifecycle"
+title = "ERS tool launched or finished by the engine"
+sev = 4
+regex = '''^(?:Starting ERS tool|ERS tool finished)$'''
+examples = ["Starting ERS tool", "ERS tool finished"]
+counter_examples = ["Starting ERS tools"]
+
+[[template]]
+code = "ERS-003"
+class = "startup"
+title = "Arguments the engine passes to the ERS tool"
+sev = 4
+regex = '''^Passed arguments: "(?P<args>.*)"\.$'''
+examples = [{ msg = "Passed arguments: \"Example.py --Logs -o C:\\Example\\ers\".", fields = { args = "Example.py --Logs -o C:\\Example\\ers" } }]
+counter_examples = ["Passed arguments: none"]
+
+[[template]]
+code = "ERS-004"
+class = "other"
+title = "Engine integrity and signature checks"
+sev = 5
+regex = '''^(?:Checking file integrity|Check authenticode signature|Checking for corrupted files\.)$'''
+examples = ["Checking file integrity", "Check authenticode signature", "Checking for corrupted files."]
+counter_examples = ["Checking file permissions"]
+
+[[template]]
+code = "ERS-005"
+class = "other"
+title = "Engine log is truncated in the archive"
+sev = 5
+text = "Log will be truncated here in ers archive because log fle is copied before engine is finished."
+examples = ["Log will be truncated here in ers archive because log fle is copied before engine is finished."]
+counter_examples = ["Log will be truncated here."]
+
+# --- Tool: run, plugins and report (ERS.log) ----------------------------------------------
+
+[[template]]
+code = "ERS-006"
+class = "end"
+title = "Report generation finished"
+sev = 4
+text = "Report generation finished SUCCESSFULLY!"
+examples = ["Report generation finished SUCCESSFULLY!"]
+counter_examples = ["Report generation finished"]
+
+[[template]]
+code = "ERS-007"
+class = "end"
+title = "Report archive written"
+sev = 4
+regex = '''^ErrorReportTool\.create_report - (?P<kind>Sensitive report|Report) archived to "(?P<path>[^"]+)"\.$'''
+examples = [{ msg = "ErrorReportTool.create_report - Sensitive report archived to \"C:\\Example\\ers\\ERS_Example_Sensitive_Enterprise.zip\".", fields = { kind = "Sensitive report" } }, "ErrorReportTool.create_report - Report archived to \"C:\\Example\\ers\\ERS_Example_Enterprise.zip\"."]
+counter_examples = ["ErrorReportTool.create_report - Report archived."]
+
+[[template]]
+code = "ERS-008"
+class = "other"
+title = "Report collection and archiving steps"
+sev = 5
+regex = '''^ErrorReportTool\.(?:collect_files|create_report) - (?:Loading plugins\.|Waiting for all plugins to finish|Gathering log file paths|All report files collected successfully!|Archiving files\.)$'''
+examples = ["ErrorReportTool.collect_files - Loading plugins.", "ErrorReportTool.collect_files - All report files collected successfully!", "ErrorReportTool.create_report - Archiving files."]
+counter_examples = ["ErrorReportTool.collect_files - Unloading plugins."]
+
+[[template]]
+code = "ERS-009"
+class = "lifecycle"
+title = "Plugin started or finished"
+sev = 5
+regex = '''^Plugin\((?P<plugin>\w+|<ErrorReportTool object at 0x[0-9A-Fa-f]+>)\): (?P<phase>started|finished)(?: (?P<secs>[\d.]+))?$'''
+fields = { secs = "float" }
+fts = false
+examples = [{ msg = "Plugin(ExampleLogsPlugin): started", fields = { plugin = "ExampleLogsPlugin", phase = "started" } }, { msg = "Plugin(ExampleLogsPlugin): finished 0.25", fields = { secs = 0.25 } }, "Plugin(<ErrorReportTool object at 0x000000000000002B>): started"]
+counter_examples = ["Plugin(ExampleLogsPlugin): crashed"]
+
+[[template]]
+code = "ERS-010"
+class = "error"
+title = "Plugin could not list the files to collect"
+sev = 3 # the archive misses that plugin's data; the run goes on
+regex = '''^Plugin\((?P<plugin>\w+)\): Failed to get filenames!$'''
+examples = [{ msg = "Plugin(ExampleLogsPlugin): Failed to get filenames!", fields = { plugin = "ExampleLogsPlugin" } }]
+counter_examples = ["Plugin(ExampleLogsPlugin): started"]
+
+[[template]]
+code = "ERS-011"
+class = "validation"
+title = "Plugin skipped because elevated permissions are required"
+sev = 3 # the archive misses that plugin's data; the run goes on
+regex = '''^(?:Following plugins requires elevated permissions:(?P<plugin_list>.+)\. Skipping\.\.\.|Skipping plugin "(?P<plugin>[^"]+)", elevated permissions required\.|Check if current process is run with elevated permissions)$'''
+examples = ["Following plugins requires elevated permissions:ExampleData. Skipping...", "Skipping plugin \"ExampleData\", elevated permissions required.", "Check if current process is run with elevated permissions"]
+counter_examples = ["Skipping plugin ExampleData"]
+
+[[template]]
+code = "ERS-012"
+class = "other"
+title = "Compression of the report started or finished"
+sev = 5
+regex = '''^Compression of (?P<what>dump files|sensitive reports|non sensitive reports) (?P<phase>started|finished)\.$'''
+examples = [{ msg = "Compression of dump files started.", fields = { what = "dump files", phase = "started" } }, "Compression of non sensitive reports finished."]
+counter_examples = ["Compression of logs started."]
+
+# --- Tool: file operations ----------------------------------------------------------------
+
+[[template]]
+code = "ERS-013"
+class = "error"
+title = "Copy of a helper file failed"
+sev = 3 # known and benign: the tool cannot overwrite its helper library without rights; the copy already there is used
+regex = '''^copyfile(?P<n>\d+): [^!]+! Error: (?P<exc_type>[\w.]+): (?P<exc_msg>.*)$'''
+examples = [{ msg = "copyfile2: C:\\Example\\lib\\zipfile.py -> C:\\Example Files (x86)\\Lib\\zipfile.py failed! Error: System.IO.IOException: Access to the path 'C:\\Example Files (x86)\\Lib\\zipfile.py' is denied. ---> System.UnauthorizedAccessException", fields = { exc_type = "System.IO.IOException" } }]
+counter_examples = ["copyfile2: C:\\Example\\lib\\zipfile.py -> C:\\Example Files (x86)\\Lib\\zipfile.py"]
+
+[[template]]
+code = "ERS-014"
+class = "other"
+title = "File copied"
+sev = 5
+regex = '''^copyfile(?P<n>\d+): [^>]+ -> [^!]+$'''
+window = 640
+fts = false
+examples = ["copyfile2: C:\\Example\\lib\\zipfile.py -> C:\\Example Files (x86)\\Lib\\zipfile.py"]
+counter_examples = ["copyfile2: C:\\Example\\lib\\zipfile.py"]
+
+[[template]]
+code = "ERS-015"
+class = "other"
+title = "Folder copied"
+sev = 5
+regex = '''^copytree: [^>]+ -> .+$'''
+window = 640
+fts = false
+examples = ["copytree: C:\\Example\\temp\\Counters\\Example_01 -> C:\\Example\\data\\Counters\\Example_01"]
+counter_examples = ["copytree: C:\\Example\\temp\\Counters\\Example_01"]
+
+[[template]]
+code = "ERS-016"
+class = "other"
+title = "Folder created or removed"
+sev = 5
+regex = '''^(?P<op>rmtree|mkdir): (?P<path>.+)$'''
+fts = false
+examples = [{ msg = "rmtree: C:\\Example\\temp\\Counters", fields = { op = "rmtree" } }, "mkdir: C:\\Example\\temp\\Counters"]
+counter_examples = ["rmdir: C:\\Example\\temp\\Counters"]
+
+[[template]]
+code = "ERS-017"
+class = "other"
+title = "Collection root folder"
+sev = 5
+regex = '''^Root: (?P<path>.+)$'''
+fts = false
+examples = ["Root: C:\\Example\\temp\\Counters\\Example_01"]
+counter_examples = ["Roots: C:\\Example\\temp"]
+
+[[template]]
+code = "ERS-018"
+class = "other"
+title = "Collection folder listed"
+sev = 5
+regex = '''^Directory: (?P<dir>.+)$'''
+fts = false
+examples = ["Directory: EXAMPLE01_20260101-000001"]
+counter_examples = ["Directories: x"]
+
+[[template]]
+code = "ERS-019"
+class = "other"
+title = "Collected file listed"
+sev = 5
+regex = '''^File: (?P<file>.+)$'''
+fts = false
+examples = ["File: EXAMPLE01_Summary.blg", "File: report.html"]
+counter_examples = ["Files: x"]
+
+[[template]]
+code = "ERS-020"
+class = "other"
+title = "Folder moved into the report"
+sev = 5
+regex = '''^(?:Calling command: .+|Print folder structure: .+|icacls: Successfully processed (?P<ok>\d+) files; Failed processing (?P<failed>\d+) files|Copied .+ source folder into destination and added to report\. Source folder will be deleted\.)$'''
+fts = false
+examples = ["Calling command: 'icacls C:\\Example\\temp /reset /t /c /q'", "Print folder structure: 'C:\\Example\\temp'", { msg = "icacls: Successfully processed 0 files; Failed processing 0 files", fields = { ok = "0", failed = "0" } }, "Copied 'C:\\Example\\temp\\Example_01' source folder into destination and added to report. Source folder will be deleted."]
+counter_examples = ["Calling nothing"]
+
+[[template]]
+code = "ERS-021"
+class = "other"
+title = "Performance data collector set started or stopped"
+sev = 5
+regex = '''^(?:(?P<op>start|stop) '(?P<collector>[^']+)' data collector set|Waiting for collection process to finish is done\.\.\.\.)$'''
+examples = [{ msg = "start 'EXAMPLE_Counters' data collector set", fields = { op = "start", collector = "EXAMPLE_Counters" } }, "stop 'EXAMPLE_Counters' data collector set", "Waiting for collection process to finish is done...."]
+counter_examples = ["pause 'EXAMPLE_Counters' data collector set"]
+
+[[template]]
+code = "ERS-022"
+class = "other"
+title = "Event log export"
+sev = 5
+regex = '''^(?:wevtutil\.exe Finished successfully\. Exit Code: (?P<exit_code>\d+)\.|Execute: .+|Event log created: .+|Type : \S+)$'''
+fts = false
+examples = [{ msg = "wevtutil.exe Finished successfully. Exit Code: 0.", fields = { exit_code = "0" } }, "Execute: C:\\Example\\wevtutil.exe epl System C:\\Example\\System.evtx /ow", "Event log created: C:\\Example\\System.evtx", "Type : Example-Configuration/Administrative"]
+counter_examples = ["Executed: x"]
+
+[[template]]
+code = "ERS-023"
+class = "other"
+title = "Obfuscation of the save cases"
+sev = 5
+regex = '''^(?:Obfuscating savecases started\.|Obfuscating savecase .+\.|Obfuscating table: \w+\.|Table "\w+" successfully obfuscated\.|Executing query: .+|Parsing configuration file from location .+|There is no defined files for obfuscation in configuration file\.|Coping savecases from .+)$'''
+fts = false
+examples = ["Obfuscating savecases started.", "Obfuscating savecase C:\\Example\\save_cases\\example.db3.", "Obfuscating table: EXAMPLE_TABLE.", "Table \"EXAMPLE_TABLE\" successfully obfuscated.", "Executing query: \"UPDATE 'EXAMPLE_TABLE' SET 'X'='xyz'\".", "Parsing configuration file from location \"C:\\Example\\obfuscation_config.xml\"", "There is no defined files for obfuscation in configuration file.", "Coping savecases from \"C:\\Example\\a\" to temporary location \"C:\\Example\\b\"."]
+counter_examples = ["Obfuscating nothing."]
+
+[[template]]
+code = "ERS-024"
+class = "other"
+title = "Process, port and model collection steps"
+sev = 5
+regex = '''^(?:Collecting (?:processes|ports) (?:started\.\.\.|successfully finished\.)|Collecting internal model stream file(?:\.\.\.| is finished\.)|Preparing for execution\.\.\.|There is no web roles installed, collecting web related logs is skipped)$'''
+examples = ["Collecting processes started...", "Collecting ports successfully finished.", "Collecting internal model stream file...", "Collecting internal model stream file is finished.", "Preparing for execution...", "There is no web roles installed, collecting web related logs is skipped"]
+counter_examples = ["Collecting nothing..."]
+
+# --- Tool: failures of external tools -----------------------------------------------------
+
+[[template]]
+code = "ERS-025"
+class = "error"
+title = "Tool not signed with a valid signature, execution skipped"
+sev = 3 # the archive misses the output of that tool; the run goes on
+regex = '''^(?P<path>.+) tool is not signed with a valid authenticode signature\. Skipping execution\.$'''
+examples = [{ msg = "C:\\Example\\bin\\ExampleTool.exe tool is not signed with a valid authenticode signature. Skipping execution.", fields = { path = "C:\\Example\\bin\\ExampleTool.exe" } }]
+counter_examples = ["C:\\Example\\bin\\ExampleTool.exe tool is signed."]
+
+[[template]]
+code = "ERS-026"
+class = "error"
+title = "Signature check output (status code and error text)"
+sev = 3 # detail lines of the record above
+regex = '''^(?:Status code: (?P<status>\d+)|Output:|Error: Get-AuthenticodeSignature : .*)$'''
+examples = [{ msg = "Status code: 1", fields = { status = "1" } }, "Output:", "Error: Get-AuthenticodeSignature : File C:\\Example\\bin\\ExampleTool.exe was not found."]
+counter_examples = ["Status code: ok"]
+
+[[template]]
+code = "ERS-027"
+class = "error"
+title = "File inventory script failed"
+sev = 3 # the archive misses the file inventory; the run goes on
+regex = '''^(?:fileinfo\.py failed! Exception thrown!|Error while running fileinfo\.py script)$'''
+examples = ["fileinfo.py failed! Exception thrown!", "Error while running fileinfo.py script"]
+counter_examples = ["fileinfo.py finished"]

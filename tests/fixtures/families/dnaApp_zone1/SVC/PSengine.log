@@ -1,0 +1,38 @@
+﻿2030-01-15 10:00:00.000 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': PSrecv failed due to recv() failure. (An existing connection was forcibly closed by the remote host. [10054])  {C:\Example\Socket.cpp:474}
+2030-01-15 10:00:00.050 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': PSrecvNBytes failing because PSrecv returned failure {C:\Example\Socket.cpp:636}
+2030-01-15 10:00:00.100 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': RealReceive failed because PSrecvNBytes returned with a failure. {C:\Example\Socket.cpp:774}
+2030-01-15 10:00:00.150 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': RealReceive failing because PSrecvNBytes exited with failure {C:\Example\Socket.cpp:890}
+2030-01-15 10:00:00.200 [PID=1264][TID=0x1a2b] INFO - Peer 'HOST01': PSrecv failed due to recv() failure.
+2030-01-15 10:00:00.250 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': PSPeek failed because PSrecvNBytes returned with a failure. {C:\Example\Socket.cpp:1023}
+2030-01-15 10:00:00.300 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': RealReceive failed.  This socket has already been closed. {C:\Example\Socket.cpp:731}
+2030-01-15 10:00:00.350 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': RealSend failed.  Call timed out (1000 ms) {C:\Example\Socket.cpp:304}
+2030-01-15 10:00:00.400 [PID=1264][TID=0x1a2b] ERROR - TransmitThread 'HOST01': Socket error in send (An existing connection was forcibly closed by the remote host. [10054])  {C:\Example\Socket.cpp:2083}
+2030-01-15 10:00:00.450 [PID=1264][TID=0x1a2b] INFO - Peer 'HOST01': PSrecvNBytes succeeded.
+2030-01-15 10:00:00.500 [PID=1264][TID=0x1a2b] ERROR - Machine 192.0.2.10:5053 declared dead (Socket error) {C:\Example\Receiver.cpp:100}
+2030-01-15 10:00:00.550 [PID=1264][TID=0x1a2b] ERROR - Failed to write to the sender queue from local machine to peer 192.0.2.10:5053, disconnecting comm channel. Queue has likely filled (currently has 99999 messages). Configure a larger PUBSUB_PEER_SENDER_QUEUE_SIZE to avoid disconnecting. {C:\Example\Broker.cpp:300}
+2030-01-15 10:00:00.600 [PID=1264][TID=0x1a2b] ERROR - Peer 192.0.2.10:5053 in wrong state to transition; cannot change from Stopping to Processing Messages. {C:\Example\Broker.cpp:225}
+2030-01-15 10:00:00.650 [PID=1264][TID=0x1a2b] WARNING - Disconnecting peer 192.0.2.10:5053 due to SetChannel in wrong state (expected=Stopped, was=Processing Messages). {C:\Example\Peer.cpp:170}
+2030-01-15 10:00:00.700 [PID=1264][TID=0x1a2b] INFO - Peer 'HOST01': RealReceive succeeded.
+2030-01-15 10:00:00.750 [PID=1264][TID=0x1a2b] INFO - New peer recognized 192.0.2.10:5053. {C:\Example\Broker.cpp:295}
+2030-01-15 10:00:00.800 [PID=1264][TID=0x1a2b] DEBUGLOG - Starting receiver for a connected peer 192.0.2.10:5053 {C:\Example\Broker.cpp:161}
+2030-01-15 10:00:00.850 [PID=1264][TID=0x1a2b] ERROR - Connection from user 'EXAMPLE\HOST01$' to 'PSengine_1234' rejected as this user is not a member of the 'DNA Permission - View' group. {C:\Example\Unixnt.cpp:1127}
+2030-01-15 10:00:00.900 [PID=1264][TID=0x1a2b] ERROR - Failed to create proper type of SecureSocket instance (Host: HOST01.example.local, Process: ExampleClient, PID: 4242) {C:\Example\Init.cpp:204}
+2030-01-15 10:00:00.950 [PID=1264][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:01.000 [PID=1264][TID=0x1a2b] ERROR - TSecureSocketFactory: Unrecognized header received on socket.  {C:\Example\Factory.cpp:536}
+2030-01-15 10:00:01.050 [PID=1264][TID=0x1a2b] ALWAYS - Using 192.0.2.10:5053 for NIC Address. {C:\Example\Delivery.cpp:131}
+2030-01-15 10:00:01.100 [PID=1264][TID=0x1a2b] ALWAYS - NDL Peer receive timeout set to 10000 {C:\Example\Peer.cpp:70}
+2030-01-15 10:00:01.150 [PID=1264][TID=0x1a2b] ALWAYS - Creating "OASyS DNA PubSub Engine" Performance Object and counters:  {C:\Example\Counters.cpp:218}
+2030-01-15 10:00:01.200 [PID=1264][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:01.250 [PID=1264][TID=0x1a2b] ALWAYS - Topic Tree Nodes {C:\Example\Counters.cpp:232}
+2030-01-15 10:00:01.300 [PID=1264][TID=0x1a2b] ERROR - Peer '192.0.2.10': PSrecv failed due to recv() failure. (An existing connection was forcibly closed by the remote host. [10054])
+2030-01-15 10:00:01.350 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': RealReceive failing because PSrecvNBytes returned with failure {C:\Example\Socket.cpp:835}
+2030-01-15 10:00:01.400 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': RealSend failed.  This socket has already been closed.
+2030-01-15 10:00:01.450 [PID=1264][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:01.500 [PID=1264][TID=0x1a2b] ERROR - Peer 'HOST01': PSrecv failed.  This socket has already been closed.
+2030-01-15 10:00:01.550 [PID=1264][TID=0x1a2b] ERROR - TransmitThread 'HOST02': Socket error in send (An established connection was aborted by the software in your host machine. [10053])
+2030-01-15 10:00:01.600 [PID=1264][TID=0x1a2b] DEBUGLOG - Starting sender for a connected peer 192.0.2.10:5053
+2030-01-15 10:00:01.650 [PID=1264][TID=0x1a2b] ERROR - Failed to create proper type of SecureSocket instance (Host: HOST01, Process: Example Console, PID: 7)
+2030-01-15 10:00:01.700 [PID=1264][TID=0x1a2b] ALWAYS - NDL Peer connect timeout set to 5000
+2030-01-15 10:00:01.750 [PID=1264][TID=0x1a2b] ALWAYS - Removing "OASyS DNA PubSub Engine" Performance Object and counters {C:\Example\Counters.cpp:293}
+2030-01-15 10:00:01.800 [PID=1264][TID=0x1a2b] ALWAYS - Subscription Requests/sec w/Integrity
+2030-01-15 10:00:01.850 [PID=1264][TID=0x1a2b] ALWAYS - NDL Messages Sent/sec

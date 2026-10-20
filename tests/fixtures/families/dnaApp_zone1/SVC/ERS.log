@@ -1,0 +1,70 @@
+﻿2030-01-15 10:00:00.000 [PID=1297][TID=0x1a2b] INFO - *** Engine started ***
+2030-01-15 10:00:00.050 [PID=1297][TID=0x1a2b] INFO - Starting ERS tool
+2030-01-15 10:00:00.100 [PID=1297][TID=0x1a2b] ALWAYS - Passed arguments: "Example.py --Logs -o C:\Example\ers".
+2030-01-15 10:00:00.150 [PID=1297][TID=0x1a2b] DEBUGLOG - Checking file integrity
+2030-01-15 10:00:00.200 [PID=1297][TID=0x1a2b] DEBUGLOG - Log will be truncated here in ers archive because log fle is copied before engine is finished.
+2030-01-15 10:00:00.250 [PID=1297][TID=0x1a2b] INFO - Report generation finished SUCCESSFULLY!
+2030-01-15 10:00:00.300 [PID=1297][TID=0x1a2b] INFO - ErrorReportTool.create_report - Sensitive report archived to "C:\Example\ers\ERS_Example_Sensitive_Enterprise.zip".
+2030-01-15 10:00:00.350 [PID=1297][TID=0x1a2b] DEBUGLOG - ErrorReportTool.collect_files - Loading plugins.
+2030-01-15 10:00:00.400 [PID=1297][TID=0x1a2b] DEBUGLOG - Plugin(ExampleLogsPlugin): started
+2030-01-15 10:00:00.450 [PID=1297][TID=0x1a2b] INFO - *** Engine paused ***
+2030-01-15 10:00:00.500 [PID=1297][TID=0x1a2b] WARNING - Plugin(ExampleLogsPlugin): Failed to get filenames!
+2030-01-15 10:00:00.550 [PID=1297][TID=0x1a2b] WARNING - Following plugins requires elevated permissions:ExampleData. Skipping...
+2030-01-15 10:00:00.600 [PID=1297][TID=0x1a2b] DEBUGLOG - Compression of dump files started.
+2030-01-15 10:00:00.650 [PID=1297][TID=0x1a2b] WARNING - copyfile2: C:\Example\lib\zipfile.py -> C:\Example Files (x86)\Lib\zipfile.py failed! Error: System.IO.IOException: Access to the path 'C:\Example Files (x86)\Lib\zipfile.py' is denied. ---> System.UnauthorizedAccessException
+2030-01-15 10:00:00.700 [PID=1297][TID=0x1a2b] DEBUGLOG - copyfile2: C:\Example\lib\zipfile.py -> C:\Example Files (x86)\Lib\zipfile.py
+2030-01-15 10:00:00.750 [PID=1297][TID=0x1a2b] DEBUGLOG - copytree: C:\Example\temp\Counters\Example_01 -> C:\Example\data\Counters\Example_01
+2030-01-15 10:00:00.800 [PID=1297][TID=0x1a2b] DEBUGLOG - rmtree: C:\Example\temp\Counters
+2030-01-15 10:00:00.850 [PID=1297][TID=0x1a2b] DEBUGLOG - Root: C:\Example\temp\Counters\Example_01
+2030-01-15 10:00:00.900 [PID=1297][TID=0x1a2b] DEBUGLOG - Directory: EXAMPLE01_20260101-000001
+2030-01-15 10:00:00.950 [PID=1297][TID=0x1a2b] INFO - Starting ERS tools
+2030-01-15 10:00:01.000 [PID=1297][TID=0x1a2b] DEBUGLOG - File: EXAMPLE01_Summary.blg
+2030-01-15 10:00:01.050 [PID=1297][TID=0x1a2b] DEBUGLOG - Calling command: 'icacls C:\Example\temp /reset /t /c /q'
+2030-01-15 10:00:01.100 [PID=1297][TID=0x1a2b] DEBUGLOG - start 'EXAMPLE_Counters' data collector set
+2030-01-15 10:00:01.150 [PID=1297][TID=0x1a2b] DEBUGLOG - wevtutil.exe Finished successfully. Exit Code: 0.
+2030-01-15 10:00:01.200 [PID=1297][TID=0x1a2b] DEBUGLOG - Obfuscating savecases started.
+2030-01-15 10:00:01.250 [PID=1297][TID=0x1a2b] DEBUGLOG - Collecting processes started...
+2030-01-15 10:00:01.300 [PID=1297][TID=0x1a2b] WARNING - C:\Example\bin\ExampleTool.exe tool is not signed with a valid authenticode signature. Skipping execution.
+2030-01-15 10:00:01.350 [PID=1297][TID=0x1a2b] WARNING - Status code: 1
+2030-01-15 10:00:01.400 [PID=1297][TID=0x1a2b] WARNING - fileinfo.py failed! Exception thrown!
+2030-01-15 10:00:01.450 [PID=1297][TID=0x1a2b] INFO - Passed arguments: none
+2030-01-15 10:00:01.500 [PID=1297][TID=0x1a2b] INFO - *** Engine stopped ***
+2030-01-15 10:00:01.550 [PID=1297][TID=0x1a2b] INFO - ERS tool finished
+2030-01-15 10:00:01.600 [PID=1297][TID=0x1a2b] DEBUGLOG - Check authenticode signature
+2030-01-15 10:00:01.650 [PID=1297][TID=0x1a2b] DEBUGLOG - Checking for corrupted files.
+2030-01-15 10:00:01.700 [PID=1297][TID=0x1a2b] INFO - ErrorReportTool.create_report - Report archived to "C:\Example\ers\ERS_Example_Enterprise.zip".
+2030-01-15 10:00:01.750 [PID=1297][TID=0x1a2b] DEBUGLOG - ErrorReportTool.collect_files - All report files collected successfully!
+2030-01-15 10:00:01.800 [PID=1297][TID=0x1a2b] DEBUGLOG - ErrorReportTool.create_report - Archiving files.
+2030-01-15 10:00:01.850 [PID=1297][TID=0x1a2b] DEBUGLOG - Plugin(ExampleLogsPlugin): finished 0.25
+2030-01-15 10:00:01.900 [PID=1297][TID=0x1a2b] DEBUGLOG - Plugin(<ErrorReportTool object at 0x00000000B>): started
+2030-01-15 10:00:01.950 [PID=1297][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:02.000 [PID=1297][TID=0x1a2b] WARNING - Skipping plugin "ExampleData", elevated permissions required.
+2030-01-15 10:00:02.050 [PID=1297][TID=0x1a2b] WARNING - Check if current process is run with elevated permissions
+2030-01-15 10:00:02.100 [PID=1297][TID=0x1a2b] DEBUGLOG - Compression of non sensitive reports finished.
+2030-01-15 10:00:02.150 [PID=1297][TID=0x1a2b] DEBUGLOG - mkdir: C:\Example\temp\Counters
+2030-01-15 10:00:02.200 [PID=1297][TID=0x1a2b] DEBUGLOG - File: report.html
+2030-01-15 10:00:02.250 [PID=1297][TID=0x1a2b] DEBUGLOG - Print folder structure: 'C:\Example\temp'
+2030-01-15 10:00:02.300 [PID=1297][TID=0x1a2b] DEBUGLOG - icacls: Successfully processed 0 files; Failed processing 0 files
+2030-01-15 10:00:02.350 [PID=1297][TID=0x1a2b] DEBUGLOG - Copied 'C:\Example\temp\Example_01' source folder into destination and added to report. Source folder will be deleted.
+2030-01-15 10:00:02.400 [PID=1297][TID=0x1a2b] DEBUGLOG - stop 'EXAMPLE_Counters' data collector set
+2030-01-15 10:00:02.450 [PID=1297][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:02.500 [PID=1297][TID=0x1a2b] DEBUGLOG - Waiting for collection process to finish is done....
+2030-01-15 10:00:02.550 [PID=1297][TID=0x1a2b] DEBUGLOG - Execute: C:\Example\wevtutil.exe epl System C:\Example\System.evtx /ow
+2030-01-15 10:00:02.600 [PID=1297][TID=0x1a2b] DEBUGLOG - Event log created: C:\Example\System.evtx
+2030-01-15 10:00:02.650 [PID=1297][TID=0x1a2b] DEBUGLOG - Type : Example-Configuration/Administrative
+2030-01-15 10:00:02.700 [PID=1297][TID=0x1a2b] DEBUGLOG - Obfuscating savecase C:\Example\save_cases\example.db3.
+2030-01-15 10:00:02.750 [PID=1297][TID=0x1a2b] DEBUGLOG - Obfuscating table: EXAMPLE_TABLE.
+2030-01-15 10:00:02.800 [PID=1297][TID=0x1a2b] DEBUGLOG - Table "EXAMPLE_TABLE" successfully obfuscated.
+2030-01-15 10:00:02.850 [PID=1297][TID=0x1a2b] DEBUGLOG - Executing query: "UPDATE 'EXAMPLE_TABLE' SET 'X'='xyz'".
+2030-01-15 10:00:02.900 [PID=1297][TID=0x1a2b] DEBUGLOG - Parsing configuration file from location "C:\Example\obfuscation_config.xml"
+2030-01-15 10:00:02.950 [PID=1297][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:03.000 [PID=1297][TID=0x1a2b] DEBUGLOG - There is no defined files for obfuscation in configuration file.
+2030-01-15 10:00:03.050 [PID=1297][TID=0x1a2b] DEBUGLOG - Coping savecases from "C:\Example\a" to temporary location "C:\Example\b".
+2030-01-15 10:00:03.100 [PID=1297][TID=0x1a2b] DEBUGLOG - Collecting ports successfully finished.
+2030-01-15 10:00:03.150 [PID=1297][TID=0x1a2b] DEBUGLOG - Collecting internal model stream file...
+2030-01-15 10:00:03.200 [PID=1297][TID=0x1a2b] DEBUGLOG - Collecting internal model stream file is finished.
+2030-01-15 10:00:03.250 [PID=1297][TID=0x1a2b] DEBUGLOG - Preparing for execution...
+2030-01-15 10:00:03.300 [PID=1297][TID=0x1a2b] DEBUGLOG - There is no web roles installed, collecting web related logs is skipped
+2030-01-15 10:00:03.350 [PID=1297][TID=0x1a2b] WARNING - Output:
+2030-01-15 10:00:03.400 [PID=1297][TID=0x1a2b] WARNING - Error: Get-AuthenticodeSignature : File C:\Example\bin\ExampleTool.exe was not found.
+2030-01-15 10:00:03.450 [PID=1297][TID=0x1a2b] WARNING - Error while running fileinfo.py script

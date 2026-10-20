@@ -1,0 +1,278 @@
+# PSengine.log: the publish/subscribe engine of the machine (family PSENGINE, process `PSengine`).
+# Design: docs/notas/rt-templates-desenho.md. Codes PSE-001..049.
+#
+# Almost every line ends with the source location of the logger (` {C:\...\File.cpp:123}`), which is
+# part of the message: the optional tail below absorbs it. The volume is dominated by loops of peer
+# connection failures (one forcibly closed connection repeats three or four lines for every retry),
+# so every failure line carries sev 2 and the loop shows up as repeated records of one template.
+# Peer names are hosts or IP addresses and stay as fields (never keys).
+
+schema = 1
+family = "PSENGINE"
+description = "PSengine: publish/subscribe engine, peer connections and its performance counters"
+extends = ["_common"]
+
+# --- Peer socket failure loop (the bulk of the file) ---
+
+[[template]]
+code = "PSE-001"
+class = "error"
+title = "Peer receive failed with a socket error"
+sev = 2
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+regex = '''^Peer '(?P<peer>[^']*)': PSrecv failed due to recv\(\) failure\. \((?P<reason>[^()\[]+) \[(?P<errno>\d+)\]\)(?: +\{[^{}]*\})?$'''
+fields = { errno = "int" }
+fts = false
+examples = [
+    { msg = "Peer 'HOST01': PSrecv failed due to recv() failure. (An existing connection was forcibly closed by the remote host. [10054])  {C:\\Example\\Socket.cpp:474}", fields = { peer = "HOST01", errno = 10054 } },
+    "Peer '192.0.2.10': PSrecv failed due to recv() failure. (An existing connection was forcibly closed by the remote host. [10054])",
+]
+counter_examples = ["Peer 'HOST01': PSrecv failed due to recv() failure."]
+
+[[template]]
+code = "PSE-002"
+class = "error"
+title = "Peer receive of N bytes failing"
+sev = 2
+regex = '''^Peer '(?P<peer>[^']*)': PSrecvNBytes failing because PSrecv returned failure(?: +\{[^{}]*\})?$'''
+fts = false
+examples = [
+    { msg = "Peer 'HOST01': PSrecvNBytes failing because PSrecv returned failure {C:\\Example\\Socket.cpp:636}", fields = { peer = "HOST01" } },
+]
+counter_examples = ["Peer 'HOST01': PSrecvNBytes succeeded."]
+
+[[template]]
+code = "PSE-003"
+class = "error"
+title = "Peer real receive failed"
+sev = 2
+regex = '''^Peer '(?P<peer>[^']*)': RealReceive failed because PSrecvNBytes returned with a failure\.(?: +\{[^{}]*\})?$'''
+fts = false
+examples = [
+    { msg = "Peer 'HOST01': RealReceive failed because PSrecvNBytes returned with a failure. {C:\\Example\\Socket.cpp:774}", fields = { peer = "HOST01" } },
+]
+counter_examples = ["Peer 'HOST01': RealReceive succeeded."]
+
+[[template]]
+code = "PSE-004"
+class = "error"
+title = "Peer real receive failing after a receive failure"
+sev = 2
+regex = '''^Peer '(?P<peer>[^']*)': RealReceive failing because PSrecvNBytes (?:exited with|returned with) failure(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Peer 'HOST01': RealReceive failing because PSrecvNBytes exited with failure {C:\\Example\\Socket.cpp:890}", fields = { peer = "HOST01" } },
+    "Peer 'HOST01': RealReceive failing because PSrecvNBytes returned with failure {C:\\Example\\Socket.cpp:835}",
+]
+counter_examples = ["Peer 'HOST01': RealReceive failing because of a timeout"]
+
+[[template]]
+code = "PSE-005"
+class = "error"
+title = "Peer peek failed"
+sev = 2
+regex = '''^Peer '(?P<peer>[^']*)': PSPeek failed because PSrecvNBytes returned with a failure\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Peer 'HOST01': PSPeek failed because PSrecvNBytes returned with a failure. {C:\\Example\\Socket.cpp:1023}", fields = { peer = "HOST01" } },
+]
+counter_examples = ["Peer 'HOST01': PSPeek succeeded."]
+
+[[template]]
+code = "PSE-006"
+class = "error"
+title = "Peer operation on a socket that is already closed"
+sev = 2
+regex = '''^Peer '(?P<peer>[^']*)': (?P<op>RealReceive|RealSend|PSrecv) failed\.  This socket has already been closed\.(?: +\{[^{}]*\})?$'''
+fts = false
+examples = [
+    { msg = "Peer 'HOST01': RealReceive failed.  This socket has already been closed. {C:\\Example\\Socket.cpp:731}", fields = { peer = "HOST01", op = "RealReceive" } },
+    "Peer 'HOST01': RealSend failed.  This socket has already been closed.",
+    "Peer 'HOST01': PSrecv failed.  This socket has already been closed.",
+]
+counter_examples = ["Peer 'HOST01': RealReceive failed.  Call timed out (1000 ms)"]
+
+[[template]]
+code = "PSE-007"
+class = "error"
+title = "Peer send timed out"
+sev = 2
+regex = '''^Peer '(?P<peer>[^']*)': RealSend failed\.  Call timed out \((?P<timeout_ms>\d+) ms\)(?: +\{[^{}]*\})?$'''
+fields = { timeout_ms = "int" }
+examples = [
+    { msg = "Peer 'HOST01': RealSend failed.  Call timed out (1000 ms) {C:\\Example\\Socket.cpp:304}", fields = { peer = "HOST01", timeout_ms = 1000 } },
+]
+counter_examples = ["Peer 'HOST01': RealSend failed.  Call timed out"]
+
+[[template]]
+code = "PSE-008"
+class = "error"
+title = "Transmit thread socket error in send"
+sev = 2
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+regex = '''^TransmitThread '(?P<peer>[^']*)': Socket error in send \((?P<reason>[^()\[]+) \[(?P<errno>\d+)\]\)(?: +\{[^{}]*\})?$'''
+fields = { errno = "int" }
+examples = [
+    { msg = "TransmitThread 'HOST01': Socket error in send (An existing connection was forcibly closed by the remote host. [10054])  {C:\\Example\\Socket.cpp:2083}", fields = { peer = "HOST01", errno = 10054 } },
+    "TransmitThread 'HOST02': Socket error in send (An established connection was aborted by the software in your host machine. [10053])",
+]
+counter_examples = ["TransmitThread 'HOST01': Socket send ok"]
+
+# --- Peer (network delivery) life cycle ---
+
+[[template]]
+code = "PSE-010"
+class = "lifecycle"
+title = "Machine declared dead after a socket error"
+sev = 2
+regex = '''^Machine (?P<peer>[\d.]+:\d+) declared dead \((?P<reason>[^()]+)\)(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Machine 192.0.2.10:5053 declared dead (Socket error) {C:\\Example\\Receiver.cpp:100}", fields = { peer = "192.0.2.10:5053", reason = "Socket error" } },
+]
+counter_examples = ["Machine 192.0.2.10:5053 declared alive"]
+
+[[template]]
+code = "PSE-011"
+class = "error"
+title = "Sender queue to a peer is full, channel disconnected"
+sev = 2
+regex = '''^Failed to write to the sender queue from local machine to peer (?P<peer>[\d.]+:\d+), disconnecting comm channel\. Queue has likely filled \(currently has (?P<queued>\d+) messages\)\. Configure a larger PUBSUB_PEER_SENDER_QUEUE_SIZE to avoid disconnecting\.(?: +\{[^{}]*\})?$'''
+fields = { queued = "int" }
+examples = [
+    { msg = "Failed to write to the sender queue from local machine to peer 192.0.2.10:5053, disconnecting comm channel. Queue has likely filled (currently has 99999 messages). Configure a larger PUBSUB_PEER_SENDER_QUEUE_SIZE to avoid disconnecting. {C:\\Example\\Broker.cpp:300}", fields = { peer = "192.0.2.10:5053", queued = 99999 } },
+]
+counter_examples = ["Failed to write to the sender queue from local machine to peer x, disconnecting comm channel."]
+
+[[template]]
+code = "PSE-012"
+class = "error"
+title = "Peer in the wrong state to transition"
+sev = 2
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+regex = '''^Peer (?P<peer>[\d.]+:\d+) in wrong state to transition; cannot change from (?P<from_state>[A-Za-z ]+) to (?P<to_state>[A-Za-z ]+)\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Peer 192.0.2.10:5053 in wrong state to transition; cannot change from Stopping to Processing Messages. {C:\\Example\\Broker.cpp:225}", fields = { peer = "192.0.2.10:5053", to_state = "Processing Messages" } },
+]
+counter_examples = ["Peer 192.0.2.10:5053 in state Stopping."]
+
+[[template]]
+code = "PSE-013"
+class = "lifecycle"
+title = "Peer disconnected: channel set in the wrong state"
+sev = 3  # the peer reconnects on its own
+regex = '''^Disconnecting peer (?P<peer>[\d.]+:\d+) due to SetChannel in wrong state \(expected=(?P<expected>[A-Za-z ]+), was=(?P<actual>[A-Za-z ]+)\)\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Disconnecting peer 192.0.2.10:5053 due to SetChannel in wrong state (expected=Stopped, was=Processing Messages). {C:\\Example\\Peer.cpp:170}", fields = { peer = "192.0.2.10:5053", expected = "Stopped", actual = "Processing Messages" } },
+]
+counter_examples = ["Disconnecting peer 192.0.2.10:5053 on request."]
+
+[[template]]
+code = "PSE-014"
+class = "lifecycle"
+title = "New peer recognized"
+sev = 4
+regex = '''^New peer recognized (?P<peer>[\d.]+:\d+)\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "New peer recognized 192.0.2.10:5053. {C:\\Example\\Broker.cpp:295}", fields = { peer = "192.0.2.10:5053" } },
+]
+counter_examples = ["New peer recognized"]
+
+[[template]]
+code = "PSE-015"
+class = "lifecycle"
+title = "Receiver or sender thread started for a connected peer"
+sev = 5
+fts = false
+regex = '''^Starting (?P<role>receiver|sender) for a connected peer (?P<peer>[\d.]+:\d+)(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Starting receiver for a connected peer 192.0.2.10:5053 {C:\\Example\\Broker.cpp:161}", fields = { role = "receiver", peer = "192.0.2.10:5053" } },
+    "Starting sender for a connected peer 192.0.2.10:5053",
+]
+counter_examples = ["Starting listener for a connected peer 192.0.2.10:5053"]
+
+# --- Local clients and secure sockets ---
+
+[[template]]
+code = "PSE-020"
+class = "error"
+title = "Connection rejected: user lacks the View permission"
+sev = 2
+regex = '''^Connection from user '(?P<user>[^']*)' to '(?P<target>[^']*)' rejected as this user is not a member of the '(?P<group>[^']*)' group\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Connection from user 'EXAMPLE\\HOST01$' to 'PSengine_1234' rejected as this user is not a member of the 'DNA Permission - View' group. {C:\\Example\\Unixnt.cpp:1127}", fields = { user = "EXAMPLE\\HOST01$", group = "DNA Permission - View" } },
+]
+counter_examples = ["Connection from user 'EXAMPLE\\HOST01$' to 'PSengine_1234' accepted."]
+
+[[template]]
+code = "PSE-021"
+class = "error"
+title = "Secure socket instance could not be created for a local client"
+sev = 2
+regex = '''^Failed to create proper type of SecureSocket instance \(Host: (?P<host>[^,]+), Process: (?P<client>[^,]+), PID: (?P<client_pid>\d+)\)(?: +\{[^{}]*\})?$'''
+fields = { client_pid = "int" }
+examples = [
+    { msg = "Failed to create proper type of SecureSocket instance (Host: HOST01.example.local, Process: ExampleClient, PID: 4242) {C:\\Example\\Init.cpp:204}", fields = { host = "HOST01.example.local", client = "ExampleClient", client_pid = 4242 } },
+    "Failed to create proper type of SecureSocket instance (Host: HOST01, Process: Example Console, PID: 7)",
+]
+counter_examples = ["Failed to create proper type of SecureSocket instance"]
+
+[[template]]
+code = "PSE-022"
+class = "error"
+title = "Secure socket factory received an unrecognized header"
+sev = 2
+regex = '''^TSecureSocketFactory: Unrecognized header received on socket\.(?: +\{[^{}]*\})?$'''
+examples = [
+    "TSecureSocketFactory: Unrecognized header received on socket.  {C:\\Example\\Factory.cpp:536}",
+]
+counter_examples = ["TSecureSocketFactory: header recognized."]
+
+# --- Startup: network delivery settings and performance counters ---
+
+[[template]]
+code = "PSE-030"
+class = "startup"
+title = "NIC address used by the network delivery"
+sev = 5
+regex = '''^Using (?P<address>[\d.]+:\d+) for NIC Address\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Using 192.0.2.10:5053 for NIC Address. {C:\\Example\\Delivery.cpp:131}", fields = { address = "192.0.2.10:5053" } },
+]
+counter_examples = ["Using the default NIC Address."]
+
+[[template]]
+code = "PSE-031"
+class = "startup"
+title = "Network delivery peer timeout setting"
+sev = 5
+regex = '''^NDL Peer (?P<timeout_kind>receive|connect) timeout set to (?P<timeout_ms>\d+)(?: +\{[^{}]*\})?$'''
+fields = { timeout_ms = "int" }
+examples = [
+    { msg = "NDL Peer receive timeout set to 10000 {C:\\Example\\Peer.cpp:70}", fields = { timeout_kind = "receive", timeout_ms = 10000 } },
+    "NDL Peer connect timeout set to 5000",
+]
+counter_examples = ["NDL Peer idle timeout set to 10000"]
+
+[[template]]
+code = "PSE-032"
+class = "startup"
+title = "Performance object and counters created or removed"
+sev = 5
+regex = '''^(?P<action>Creating|Removing) "OASyS DNA PubSub Engine" Performance Object and counters:?(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Creating \"OASyS DNA PubSub Engine\" Performance Object and counters:  {C:\\Example\\Counters.cpp:218}", fields = { action = "Creating" } },
+    "Removing \"OASyS DNA PubSub Engine\" Performance Object and counters {C:\\Example\\Counters.cpp:293}",
+]
+counter_examples = ["Creating \"Other Engine\" Performance Object and counters"]
+
+[[template]]
+code = "PSE-033"
+class = "startup"
+title = "Performance counter name listed"
+sev = 5
+fts = false
+regex = '''^(?P<counter>Applications|Connections/sec|Disconnections/sec|Publication Topics|Subscription Topics|Topic Tree Nodes|Subscription Requests/sec(?: w/Integrity)?|Persistence Subscription Requests/sec|Unsubscribe Requests/sec|Publications Received/sec|Persistence Publications Received/sec|Publications Sent/sec|Application Message Send Queue|Application Messages Sent/sec|Application Messages Received/sec|NDL Messages Received/sec|NDL Messages Sent/sec)(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Topic Tree Nodes {C:\\Example\\Counters.cpp:232}", fields = { counter = "Topic Tree Nodes" } },
+    "Subscription Requests/sec w/Integrity",
+    "NDL Messages Sent/sec",
+]
+counter_examples = ["Topic Tree Edges"]
