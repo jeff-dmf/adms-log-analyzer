@@ -203,10 +203,10 @@ code = "ERS-020"
 class = "other"
 title = "Folder moved into the report"
 sev = 5
-regex = '''^(?:Calling command: .+|Print folder structure: .+|icacls: Successfully processed (?P<ok>\d+) files; Failed processing (?P<failed>\d+) files|Copied .+ source folder into destination and added to report\. Source folder will be deleted\.)$'''
+regex = '''^(?:Calling command: .+|Print folder structure: .+|Copied .+ source folder into destination and added to report\. Source folder will be deleted\.)$'''
 fts = false
-examples = ["Calling command: 'icacls C:\\Example\\temp /reset /t /c /q'", "Print folder structure: 'C:\\Example\\temp'", { msg = "icacls: Successfully processed 0 files; Failed processing 0 files", fields = { ok = "0", failed = "0" } }, "Copied 'C:\\Example\\temp\\Example_01' source folder into destination and added to report. Source folder will be deleted."]
-counter_examples = ["Calling nothing"]
+examples = ["Calling command: 'icacls C:\\Example\\temp /reset /t /c /q'", "Print folder structure: 'C:\\Example\\temp'", "Copied 'C:\\Example\\temp\\Example_01' source folder into destination and added to report. Source folder will be deleted."]
+counter_examples = ["Calling nothing", "icacls: Successfully processed 2 files; Failed processing 0 files"]
 
 [[template]]
 code = "ERS-021"
@@ -274,3 +274,24 @@ sev = 3 # the archive misses the file inventory; the run goes on
 regex = '''^(?:fileinfo\.py failed! Exception thrown!|Error while running fileinfo\.py script)$'''
 examples = ["fileinfo.py failed! Exception thrown!", "Error while running fileinfo.py script"]
 counter_examples = ["fileinfo.py finished"]
+
+[[template]]
+code = "ERS-028"
+class = "other"
+title = "Permissions reset finished without failures"
+sev = 5
+fts = false
+regex = '''^icacls: Successfully processed (?P<ok>\d+) files; Failed processing 0 files$'''
+fields = { ok = "int" }
+examples = [{ msg = "icacls: Successfully processed 2 files; Failed processing 0 files", fields = { ok = 2 } }]
+counter_examples = ["icacls: Successfully processed 2 files; Failed processing 7 files"]
+
+[[template]]
+code = "ERS-029"
+class = "error"
+title = "Permissions reset failed on some files"
+sev = 3  # the report is still produced; the files keep their previous permissions
+regex = '''^icacls: Successfully processed (?P<ok>\d+) files; Failed processing (?P<failed>[1-9]\d*) files$'''
+fields = { ok = "int", failed = "int" }
+examples = [{ msg = "icacls: Successfully processed 2 files; Failed processing 7 files", fields = { ok = 2, failed = 7 } }]
+counter_examples = ["icacls: Successfully processed 2 files; Failed processing 0 files"]

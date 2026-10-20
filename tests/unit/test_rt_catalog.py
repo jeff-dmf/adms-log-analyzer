@@ -200,3 +200,11 @@ def test_plugin_not_found_without_default_is_not_noise(catalog):
     )
     assert (miss.code, miss.sev_hint) == ("RTL-085", 3)
     assert tset.classify_text("Plugin not found for Example.Service.ModelConverter.").code == "RTL-076"
+
+
+def test_permissions_reset_failures_are_not_noise(catalog):
+    tset = catalog.for_family("ERS", sensitive=False)
+    ok = tset.classify_text("icacls: Successfully processed 2 files; Failed processing 0 files")
+    bad = tset.classify_text("icacls: Successfully processed 2 files; Failed processing 7 files")
+    assert (ok.code, ok.sev_hint) == ("ERS-028", 5)
+    assert (bad.code, bad.sev_hint) == ("ERS-029", 3)
