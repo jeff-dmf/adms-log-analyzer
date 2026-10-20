@@ -9,7 +9,9 @@ of mappings is accepted too, for unit tests). Keys understood:
                            ``unsuccessfully``; ``end_ok``: ok)
 ``end_fail``               codes that close it as ``fail``
 ``fail``                   codes that mark the open operation of the same TID as ``fail``
-``pair_by``                accepted for documentation; pairing is always by TID
+``pair_by``                ``["tid"]`` (default): one open operation per ``(rule, tid)``. A key type
+                           other than ``tid`` (``["job_id"]``): one open operation per
+                           ``(rule, value of that key)``, whatever the thread (see below)
 ``check_key``              key type (``request_id``, ``msgid``, ...) that must agree between the
                            start and the end (an end with another value does not close it)
 ``business_error``         codes that must ALL be seen inside the operation (for example the
@@ -22,6 +24,11 @@ Pairing and policies
 * One open operation per ``(rule, tid)``. A new start while one is open closes the older as
   ``truncated`` (``fail`` if a fail code was seen; ``detail.closed_by = "new_start"``). The replacement is
   not counted on the new operation: a resumed pass does not see the operation closed in an earlier pass.
+* Pairing by key (``pair_by = ["job_id"]``): the open state is ``(rule, key value)``. The value is read
+  from the entry keys, else from the field of the same name. A start without the key is ignored and
+  counted in ``keyless_starts``; an end/fail pairs by the key value of its own entry (without the key it
+  is an orphan). ``entry_ids`` = the start, the end and the entries in between that carry the same key
+  value (any thread). A new start with the same value, ``MAX_OPEN`` and the EOF flush behave as for TID.
 * An end/fail without an open operation (or with another key or name) is ignored and counted in
   ``orphan_ends`` / ``orphan_fails``.
 * Status: ``fail`` (a fail code seen, an ``end_fail`` end, or a failing end text) beats
@@ -77,7 +84,7 @@ def _codes(value: Any) -> tuple[str, ...]:
 
 
 class _Rule:
-    __slots__ = ("business", "check_key", "idx", "name", "name_field")
+    __slots__ = ("business", "check_key", "idx", "name", "name_field", "pair_key")
 
     def __init__(self, idx: int, raw: Mapping[str, Any]) -> None:
         self.idx = idx
@@ -85,6 +92,8 @@ class _Rule:
         self.name_field: str | None = raw.get("name_field")
         self.check_key: str | None = raw.get("check_key")
         self.business = frozenset(_codes(raw.get("business_error")))
+        # first pair_by entry that is not "tid": the key type that pairs the operation (None = by TID)
+        self.pair_key: str | None = next((k for k in _codes(raw.get("pair_by")) if k != "tid"), None)
 
 
 class _Op:
@@ -106,6 +115,8 @@ class _Op:
         self.name_from_field = from_field
         self.key = key
         self.tid = entry.tid
+        self.slot: tuple[int, Any] = (rule.idx, entry.tid)
+        self.pair: tuple[str, str] | None = None  # (key type, value) of a key-paired operation
         self.start_id = entry.id
         self.ts_start = ts
         self.ids: list[int] = []
@@ -138,6 +149,7 @@ class OperationsDeriver:
         self.orphan_ends = 0
         self.orphan_fails = 0
         self.overlaps = 0
+        self.keyless_starts = 0
         self.evicted = 0
         self.errors = 0
         self._rules: list[_Rule] = []
@@ -150,6 +162,8 @@ class OperationsDeriver:
                     self._by_code.setdefault(code, []).append((rule, role))
         self._open: OrderedDict[tuple[int, int | None], _Op] = OrderedDict()
         self._by_tid: dict[int, list[_Op]] = {}
+        self._by_pair: dict[tuple[str, str], list[_Op]] = {}  # key-paired operations
+        self._pair_types = tuple(dict.fromkeys(r.pair_key for r in self._rules if r.pair_key))
         self._last_ts = 0
 
     # ---------------------------------------------------------------- Deriver protocol
@@ -162,26 +176,15 @@ class OperationsDeriver:
             # No rule names this code: it can only join the open operation of its TID (if any). This is
             # the hottest path (most entries), so ``_join`` is inlined here.
             ops = self._by_tid.get(entry.tid)  # type: ignore[arg-type]  # None never is a key
-            if not ops:
-                return ()
             try:
-                op = ops[-1]
-                check = op.rule.check_key
-                if check is not None and op.key is not None:
-                    other = _key_of(entry, check)
-                    if other is not None and other != op.key:
-                        return ()
-                op.n += 1
-                ids = op.ids
-                if len(ids) < MAX_ENTRY_IDS:
-                    ids.append(entry.id)
-                else:
-                    op.dropped += 1
-                if op.rule.business and entry.tpl_code in op.rule.business:
-                    self._join_code(op, entry)
-                raw = entry.fields_raw
-                if raw is None or (raw and ('"codes"' in raw or '"exc_type"' in raw)):
-                    self._join_fields(op, entry.fields)
+                if ops:
+                    self._fast_join(ops[-1], entry)
+                if self._by_pair:
+                    for kind in self._pair_types:
+                        value = _key_of(entry, kind)
+                        paired = None if value is None else self._by_pair.get((kind, value))
+                        if paired:
+                            self._fast_join(paired[-1], entry)
             except Exception:  # never raise on odd input; counted for diagnostics
                 self.errors += 1
             return ()
@@ -191,6 +194,24 @@ class OperationsDeriver:
         except Exception:  # never raise on odd input; counted for diagnostics
             self.errors += 1
         return out
+
+    def _fast_join(self, op: _Op, entry: StoredEntry) -> None:
+        check = op.rule.check_key
+        if check is not None and op.key is not None:
+            other = _key_of(entry, check)
+            if other is not None and other != op.key:
+                return
+        op.n += 1
+        ids = op.ids
+        if len(ids) < MAX_ENTRY_IDS:
+            ids.append(entry.id)
+        else:
+            op.dropped += 1
+        if op.rule.business and entry.tpl_code in op.rule.business:
+            self._join_code(op, entry)
+        raw = entry.fields_raw
+        if raw is None or (raw and ('"codes"' in raw or '"exc_type"' in raw)):
+            self._join_fields(op, entry.fields)
 
     def flush(self, *, eof: bool) -> Iterable[Event]:
         out: list[Event] = []
@@ -205,6 +226,7 @@ class OperationsDeriver:
                 out.append(self._event(op, status, None, closed_by="eof"))
             self._open.clear()
             self._by_tid.clear()
+            self._by_pair.clear()
         return out
 
     def low_watermark(self) -> int | None:
@@ -219,8 +241,7 @@ class OperationsDeriver:
         listed_end = listed_fail = hit_end = hit_fail = False
         for rule, role in self._by_code.get(entry.tpl_code or "", ()):
             if role == _START:
-                self._start(rule, entry, out)
-                joined = True
+                joined |= self._start(rule, entry, out)
             elif role == _FAIL:
                 listed_fail = True
                 hit = self._fail(rule, entry)
@@ -236,12 +257,19 @@ class OperationsDeriver:
             self.orphan_ends += 1
         if listed_fail and not hit_fail:
             self.orphan_fails += 1
-        if not joined and entry.tid is not None:
-            ops = self._by_tid.get(entry.tid)
-            if ops:
-                op = ops[-1]
-                if self._compatible(op, entry):
-                    self._join(op, entry)
+        if not joined:
+            if entry.tid is not None:
+                ops = self._by_tid.get(entry.tid)
+                if ops:
+                    op = ops[-1]
+                    if self._compatible(op, entry):
+                        self._join(op, entry)
+            if self._by_pair:
+                for kind in self._pair_types:
+                    value = _key_of(entry, kind)
+                    paired = None if value is None else self._by_pair.get((kind, value))
+                    if paired and self._compatible(paired[-1], entry):
+                        self._join(paired[-1], entry)
 
     @staticmethod
     def _compatible(op: _Op, entry: StoredEntry) -> bool:
@@ -285,6 +313,16 @@ class OperationsDeriver:
             op.exc = text.split("\n", 1)[0][:MAX_TEXT]
 
     def _unregister(self, op: _Op) -> None:
+        if op.pair is not None:
+            paired = self._by_pair.get(op.pair)
+            if paired is not None:
+                try:
+                    paired.remove(op)
+                except ValueError:
+                    pass
+                if not paired:
+                    del self._by_pair[op.pair]
+            return
         if op.tid is None:
             return
         ops = self._by_tid.get(op.tid)
@@ -296,8 +334,17 @@ class OperationsDeriver:
             if not ops:
                 del self._by_tid[op.tid]
 
-    def _start(self, rule: _Rule, entry: StoredEntry, out: list[Event]) -> None:
-        slot = (rule.idx, entry.tid)
+    def _start(self, rule: _Rule, entry: StoredEntry, out: list[Event]) -> bool:
+        pair: tuple[str, str] | None = None
+        if rule.pair_key:
+            value = _key_of(entry, rule.pair_key)
+            if value is None:
+                self.keyless_starts += 1
+                return False
+            pair = (rule.pair_key, value)
+            slot: tuple[int, Any] = (rule.idx, value)
+        else:
+            slot = (rule.idx, entry.tid)
         old = self._open.pop(slot, None)
         if old is not None:
             self._unregister(old)
@@ -322,8 +369,12 @@ class OperationsDeriver:
                 key = None
         ts = entry.ts if entry.ts is not None else self._last_ts
         op = _Op(rule, entry, name, from_field, key, ts)
+        op.slot = slot
         self._open[slot] = op
-        if entry.tid is not None:
+        if pair is not None:
+            op.pair = pair
+            self._by_pair.setdefault(pair, []).append(op)
+        elif entry.tid is not None:
             self._by_tid.setdefault(entry.tid, []).append(op)
         self._join(op, entry)
         while len(self._open) > MAX_OPEN:
@@ -331,9 +382,14 @@ class OperationsDeriver:
             self._unregister(oldest)
             self.evicted += 1
             out.append(self._event(oldest, STATUS_TRUNCATED, None, closed_by="evicted"))
+        return True
 
     def _match(self, rule: _Rule, entry: StoredEntry) -> _Op | None:
-        op = self._open.get((rule.idx, entry.tid))
+        if rule.pair_key:
+            value = _key_of(entry, rule.pair_key)
+            op = None if value is None else self._open.get((rule.idx, value))
+        else:
+            op = self._open.get((rule.idx, entry.tid))
         if op is None:
             return None
         if rule.check_key and op.key is not None:
@@ -362,7 +418,7 @@ class OperationsDeriver:
         if op is None:
             return False
         self._join(op, entry)
-        del self._open[(rule.idx, entry.tid)]
+        del self._open[op.slot]
         self._unregister(op)
         how = None
         if role == _END_FAIL:
@@ -406,7 +462,7 @@ class OperationsDeriver:
             kind=self.kind,
             ts_start=op.ts_start,
             name=op.name,
-            key=op.key,
+            key=op.key if op.key is not None else (op.pair[1] if op.pair else None),
             tid=op.tid,
             start_entry_id=op.start_id,
             end_entry_id=end.id if end is not None else None,

@@ -1157,3 +1157,22 @@ a = "DJB-047"
 b = "DJB-049"
 key = "fh_pid"
 max_dt_ms = 60000
+
+# Operations paired by `job_id` (a job crosses threads, so the TID cannot pair it). Scheduler: the job
+# sent to a Launcher -> its final status. A single final status goes through `end` (a "Failed" text
+# fails it; DoneWithError and Aborted alone stay ok, the status is not visible to the deriver); the
+# status lists with an error (DJB-145) fail it. Measured on the RT ERS: no orphan, no overlap.
+[[operation]]
+name = "SchedulerJob"
+start = ["DJB-003"]
+end = ["DJB-006"]
+end_ok = ["DJB-007", "DJB-144"]
+end_fail = ["DJB-145"]
+pair_by = ["job_id"]
+
+# Launcher: new job received -> last function result received from a FunctionHost.
+[[operation]]
+name = "LauncherJob"
+start = ["DJB-051"]
+end = ["DJB-054"]
+pair_by = ["job_id"]
