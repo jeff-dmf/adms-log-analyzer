@@ -743,6 +743,7 @@ export const S = {
     callback: "callback",
     retry: "retry",
     response: "response",
+    handoff: "handoff",
     same_key: "same key",
   },
   lnkConfidenceNames: { 3: "key", 2: "ts+TID", 1: "second", 0: "window (heuristic)" },

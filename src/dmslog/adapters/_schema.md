@@ -36,17 +36,17 @@ must be equal), `max_dt_ms` (default 1000: the sensitive record is the next one 
 this far after the normal one, in order), optional `key` (field name present on both templates; when
 equal on both sides the link has confidence 3).
 
-`[[link_rule]]`: `kind` (`callback`, `retry` or `response`), `a` and `b` (a code or a list of codes:
+`[[link_rule]]`: `kind` (`callback`, `retry`, `response` or `handoff`), `a` and `b` (a code or a list of codes:
 the first and the later record), `key` (an `entry_key` type or a field name that must be equal on
 both sides; required for `callback`, `retry` and `response`, except when `window_only = true`),
-`scope` (`stream`, the default, or `group`: normal and sensitive streams of the same process),
+`scope` (`stream`, the default, `group`: normal and sensitive streams of the same process, or `collection`: every stream of the collection group, `handoff` only),
 `max_dt_ms` (default 60000), `window_only` (`true` = no shared key: heuristic by time window,
 stored with confidence 0) and `origin` (`record`, the default, or `operation`: keyed `callback`/`response`
 rules only, with disjoint `a` and `b`; the link starts at the start record of the single operation that
 holds every `a` record of the key value, with confidence 2, and nothing is linked when that operation is
 not unique; with `window_only = true` and no `key`, the `a` codes are operation starts anchored at the end of
 their operation, and a `b` is linked with confidence 0 only when the match is unique both ways within
-`max_dt_ms`; see `derive/links.py`). Rules of one family never link records of another family.
+`max_dt_ms`; see `derive/links.py`). `handoff` (passing a job between processes; needs `key` and `scope = "collection"`, no `window_only` or `origin`, disjoint `a` and `b`) links an `a` to a `b` only when the match is unique both ways within `max_dt_ms`; optional `families` (list of families, never libraries, whose records may be the `b`; their codes are visible to `b`) and `pid_field` (a field of every `a` template, compared with the envelope PID of the `b`: a known mismatch links nothing). Other kinds never link records of another family; `handoff` links only the family of the rule and `families`, and never across collection groups.
 
 Families without a file (`UNKNOWN`, service logs, ...) get the `_common` library.
 
@@ -169,9 +169,12 @@ Regex fields win over continuation fields with the same name. Parsers read at mo
 | `kv_tab` | none | `items` | map dumps (`\t<key> - <value>`): counts, never keeps the pairs |
 | `kv_colon` | `max_items` (32) | `kv` (table), `n_items` | `Key: value` lines; stops at the first line starting with `<` |
 | `kv_dash` | `max_items` (32) | `kv`, `n_items` | `Key - value` lines; stops at `<` |
+| `kv_at` | `allow` (required table `"LogName" = "type:field"`, 1..32), `window` (256..4096, default 4096) | `n_items`, `kv_rejected`, `kv_cut`, plus the `allow` fields | `@Name = value` dump (AlarmsEvents sensitive): only allow-listed names leave the text, with closed types `int`, `bool`, `token`, `gid`; values are never kept |
 | `line_regex` | `regex` (required), `line` (1..20, default 1) | the regex groups | fields on a given continuation line (`Callback received:` + `<Type> GID: <gid>, ...`) |
 
 Field types in `fields` also apply to `line_regex` outputs.
+
+`kv_at` rules: an item starts with `@Name =` at the window start or after whitespace; its value runs to the next item. An allow-listed name seen more than once (an item injected inside a free-text value) drops every occurrence and counts them in `kv_rejected`, as does a value outside its type; an empty value just leaves the field absent. If the continuation is longer than `window`, the last item of the window is not read and `kv_cut` is set. Types: `int` (`-?` up to 18 ASCII digits), `bool` (`true`/`false`, any case), `token` (`[A-Za-z][A-Za-z0-9_]{0,31}`), `gid` (up to 20 digits, not `0`; above 2^63-1 it stays decimal text). `allow` fields cannot be redeclared in `fields` nor collide with regex groups.
 
 ### Payload (`payload`)
 

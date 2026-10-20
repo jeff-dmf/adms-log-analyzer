@@ -9,6 +9,7 @@
 2030-01-15 10:00:00.400 [PID=1253][TID=0x1a2b] INFO - User: EXAMPLE\user01. Auto mode canceled.
 2030-01-15 10:00:00.450 [PID=1253][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
 2030-01-15 10:00:00.500 [PID=1253][TID=0x1a2b] INFO - (AES) [EventReporting] [RecordQueues] of eventRecord. EnqueueEvent: Event log =>
+@time = 2026-01-01 00:00:00  @type = Alarm  @message = Example text @severity = 3  @alarmCategory = 12  @isSTGZone = False
 2030-01-15 10:00:00.550 [PID=1253][TID=0x1a2b] INFO - Qqq synthetic noise without template
 2030-01-15 10:00:00.600 [PID=1253][TID=0x1a2b] INFO - Old ETR: 10/18/2026 4:09:15 AM in Incident (GID: 1000123) is sent through client delta. 'EtrIsManuallySet' flag is set to false. User: EXAMPLE\user02.
 2030-01-15 10:00:00.650 [PID=1253][TID=0x1a2b] INFO - Outage time in Incident (GID: 1000123) is updated to: 10/1/2026 7:37:22 PM. Outage time update user: EXAMPLE\user02.
