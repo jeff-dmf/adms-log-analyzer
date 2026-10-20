@@ -88,6 +88,11 @@ PROCESSES: dict[str, tuple[str, str]] = {
     "DMSCORE": ("rt", "DMS_CoreFunctionsService"),
     "DMSMODEL": ("rt", "DMS_NetworkModelService"),
     "DMSOMS": ("rt", "OMS_IncidentManagementService"),
+    # Optional ERS logs (PSengine, arbIP, NMC, ERS): one fixture per family.
+    "PSENGINE": ("single", "PSengine"),
+    "ARBIP": ("adapter", "arbIP"),
+    "NMC": ("single", "NMC"),
+    "ERS": ("single", "ERS"),
 }
 # Family the discovery rules give to each file (for the tests).
 EXPECTED_FAMILY = {fam: LIBRARY_FAMILY.get(fam, fam) for fam in PROCESSES}

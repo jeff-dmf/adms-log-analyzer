@@ -11,7 +11,7 @@ import pytest
 
 from dmslog.parse.templates import load_catalog
 
-RT_PREFIXES = ("DFH", "DJB", "DCR", "DMD", "DOM", "RTL")
+RT_PREFIXES = ("DFH", "DJB", "DCR", "DMD", "DOM", "RTL", "PSE", "ARB", "NMC", "ERS")
 RT_FILES = (
     "_dmsrt.toml",
     "dmsrt.toml",
@@ -20,7 +20,13 @@ RT_FILES = (
     "dmscore.toml",
     "dmsmodel.toml",
     "dmsoms.toml",
+    "psengine.toml",
+    "arbip.toml",
+    "nmc.toml",
+    "ers.toml",
 )
+# optional ERS logs: not DMS_* services, they do not extend the RT library
+STANDALONE = {"PSENGINE", "ARBIP", "NMC", "ERS"}
 GUID_RE = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 SYNTHETIC_GUID_RE = re.compile(
     r"^(?:0{8}-0{4}-4000-8000-0{9}[0-9a-f]{3}|([0-9a-f])\1{7}-\1{4}-\1{4}-\1{4}-\1{12})$", re.I
@@ -97,7 +103,7 @@ def test_every_rt_template_has_the_conventional_fields(catalog):
 
 def test_the_rt_families_extend_the_rt_library_first(catalog):
     for family in rt_families(catalog):
-        if family.family.startswith("_"):
+        if family.family.startswith("_") or family.family in STANDALONE:
             continue
         assert tuple(family.extends[:2]) == ("_dmsrt", "_common"), family.family
 
@@ -194,3 +200,11 @@ def test_plugin_not_found_without_default_is_not_noise(catalog):
     )
     assert (miss.code, miss.sev_hint) == ("RTL-085", 3)
     assert tset.classify_text("Plugin not found for Example.Service.ModelConverter.").code == "RTL-076"
+
+
+def test_permissions_reset_failures_are_not_noise(catalog):
+    tset = catalog.for_family("ERS", sensitive=False)
+    ok = tset.classify_text("icacls: Successfully processed 2 files; Failed processing 0 files")
+    bad = tset.classify_text("icacls: Successfully processed 2 files; Failed processing 7 files")
+    assert (ok.code, ok.sev_hint) == ("ERS-028", 5)
+    assert (bad.code, bad.sev_hint) == ("ERS-029", 3)

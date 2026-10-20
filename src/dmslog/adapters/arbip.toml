@@ -1,0 +1,193 @@
+# arbIP_<pid>.log: the floating-IP arbitration monitor (family ARBIP, process `arbIP`). Design:
+# docs/notas/rt-templates-desenho.md. Codes ARB-001..049.
+#
+# One file per arbIP run. It assigns and deletes the virtual IP address of each hot service,
+# detects "duels" (two machines claiming the same address) and logs NDIS driver errors when the
+# adapter cannot be opened. Lines end with the source location of the logger (` {C:\...\File.cpp:1}`),
+# absorbed by the optional tail. Virtual host names and addresses are fields, never keys.
+
+schema = 1
+family = "ARBIP"
+description = "arbIP: floating IP address assignment, duels and network adapter errors"
+extends = ["_common"]
+
+# --- Assignment and monitoring of the virtual IP address ---
+
+[[template]]
+code = "ARB-001"
+class = "lifecycle"
+title = "Virtual IP address assigned to the adapter"
+sev = 4
+regex = '''^Succeeded in assigning IP Address (?P<vhost>[^/ ]+)/(?P<address>[\d.]+) for service (?P<service>[\w-]+) to the ADMS adapter \[(?P<adapter>[^\]]+)\](?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Succeeded in assigning IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service to the ADMS adapter [Example Network Adapter] {C:\\Example\\Monitor.cpp:515}", fields = { vhost = "exampleDMS_Service", address = "192.0.2.10", service = "DMS_Service", adapter = "Example Network Adapter" } },
+]
+counter_examples = ["Succeeded in assigning IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service"]
+
+[[template]]
+code = "ARB-002"
+class = "lifecycle"
+title = "Virtual IP address deleted"
+sev = 4
+regex = '''^Deleting the IP Address (?P<vhost>[^/ ]+)/(?P<address>[\d.]+) for service (?P<service>[\w-]+)(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Deleting the IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service {C:\\Example\\Monitor.cpp:559}", fields = { vhost = "exampleDMS_Service", address = "192.0.2.10", service = "DMS_Service" } },
+]
+counter_examples = ["Deleting the IP Address exampleDMS_Service for service DMS_Service"]
+
+[[template]]
+code = "ARB-003"
+class = "startup"
+title = "Floating IP monitoring enabled for a service"
+sev = 4
+regex = '''^Arbitration Floating IP Monitoring enabled for Service (?P<service>[\w-]+) is as follows: Virtual Host: (?P<vhost>\S+) (?P<address>[\d.]+) mask (?P<mask_name>\S+) (?P<mask>[\d.]+)(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Arbitration Floating IP Monitoring enabled for Service DMS_Service is as follows: Virtual Host: exampleDMS_Service 192.0.2.10 mask exampleMask 192.0.2.255 {C:\\Example\\Monitor.cpp:317}", fields = { service = "DMS_Service", vhost = "exampleDMS_Service", address = "192.0.2.10", mask = "192.0.2.255" } },
+]
+counter_examples = ["Arbitration Floating IP Monitoring disabled for Service DMS_Service"]
+
+[[template]]
+code = "ARB-004"
+class = "startup"
+title = "Cloud deployment override not set in the registry"
+sev = 5
+fts = false
+regex = '''^AzureDeployment configuration override for service (?P<service>[\w-]+) not set in registry\. Setting default value to '(?P<value>[^']*)'\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "AzureDeployment configuration override for service DMS_Service not set in registry. Setting default value to 'False'. {C:\\Example\\Monitor.cpp:212}", fields = { service = "DMS_Service", value = "False" } },
+]
+counter_examples = ["AzureDeployment configuration override for service DMS_Service is set."]
+
+[[template]]
+code = "ARB-005"
+class = "error"
+title = "Virtual IP address assignment failed, retrying"
+sev = 3  # retry scheduled
+regex = '''^Failed to assign IP Address (?P<vhost>[^/ ]+)/(?P<address>[\d.]+) for service (?P<service>[\w-]+)\.  Retrying\.\.\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Failed to assign IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service.  Retrying... {C:\\Example\\Monitor.cpp:544}", fields = { vhost = "exampleDMS_Service", address = "192.0.2.10", service = "DMS_Service" } },
+]
+counter_examples = ["Failed to assign IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service. Giving up."]
+
+# --- Network interruption and duels ---
+
+[[template]]
+code = "ARB-010"
+class = "error"
+title = "Possible network interruption for an IP address"
+sev = 3
+regex = '''^IP Address Issue Detected: A possible network interruption for IP address '(?P<address>[\d.]+)' for Service '(?P<service>[^']+)' has been identified\.  A refresh of the IP will be performed as required\.  Messages will be printed to the log when this problem is resolved\.(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "IP Address Issue Detected: A possible network interruption for IP address '192.0.2.10' for Service 'EXAMPLE' has been identified.  A refresh of the IP will be performed as required.  Messages will be printed to the log when this problem is resolved. {C:\\Example\\Monitor.cpp:936}", fields = { address = "192.0.2.10", service = "EXAMPLE" } },
+]
+counter_examples = ["IP Address Issue Detected: nothing to report."]
+
+[[template]]
+code = "ARB-011"
+class = "lifecycle"
+title = "IP address issue resolved"
+sev = 4
+regex = '''^IP Address Issue Resolved: (?:Reasserting IP Address (?P<vhost>[^/ ]+)/(?P<address>[\d.]+) for service (?P<service>[\w-]+)\.|For IP (?P<vhost_off>[^/ ]+)/(?P<address_off>[\d.]+) as service (?P<service_off>[\w-]+) is no longer HOT\.)(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "IP Address Issue Resolved: Reasserting IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service. {C:\\Example\\Monitor.cpp:965}", fields = { vhost = "exampleDMS_Service", address = "192.0.2.10", service = "DMS_Service" } },
+    { msg = "IP Address Issue Resolved: For IP exampleDMS_Service/192.0.2.10 as service DMS_Service is no longer HOT. {C:\\Example\\Monitor.cpp:974}", fields = { address_off = "192.0.2.10", service_off = "DMS_Service" } },
+]
+counter_examples = ["IP Address Issue Resolved: nothing to do."]
+
+[[template]]
+code = "ARB-012"
+class = "validation"
+title = "Duel in progress: the main thread waits"
+sev = 3
+regex = '''^ServiceIPMonitor: Duel in progress\. Main thread sleeping for (?P<seconds>\d+) seconds\.(?: +\{[^{}]*\})?$'''
+fields = { seconds = "int" }
+examples = [
+    { msg = "ServiceIPMonitor: Duel in progress. Main thread sleeping for 10 seconds. {C:\\Example\\Monitor.cpp:363}", fields = { seconds = 10 } },
+]
+counter_examples = ["ServiceIPMonitor: Duel in progress."]
+
+[[template]]
+code = "ARB-013"
+class = "validation"
+title = "Dueling stabilization period"
+sev = 4
+regex = '''^ServiceIPMonitor: Dueling stabilization (?:is in progress \(timespan of (?P<seconds>\d+) seconds\)\.\.\.|finished \(timespan of (?P<seconds_done>\d+) seconds has expired\)\.)(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "ServiceIPMonitor: Dueling stabilization is in progress (timespan of 15 seconds)... {C:\\Example\\Monitor.cpp:454}", fields = { seconds = "15" } },
+    { msg = "ServiceIPMonitor: Dueling stabilization finished (timespan of 15 seconds has expired). {C:\\Example\\Monitor.cpp:424}", fields = { seconds_done = "15" } },
+]
+counter_examples = ["ServiceIPMonitor: Dueling stabilization cancelled."]
+
+[[template]]
+code = "ARB-014"
+class = "validation"
+title = "Duel detected by the event log monitor"
+sev = 3
+regex = '''^EventLogMonitor: Duel detected for IP (?P<address>[\d.]+), notifying ServiceIPMonitor for this IP(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "EventLogMonitor: Duel detected for IP 192.0.2.10, notifying ServiceIPMonitor for this IP {C:\\Example\\EventLog.cpp:453}", fields = { address = "192.0.2.10" } },
+]
+counter_examples = ["EventLogMonitor: No duel detected for IP 192.0.2.10"]
+
+[[template]]
+code = "ARB-015"
+class = "error"
+title = "Duplicate address detection found an IP address conflict"
+sev = 2
+regex = '''^Duplicate address detection has detected an IP address conflict for (?P<address>[\d.]+)(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Duplicate address detection has detected an IP address conflict for 192.0.2.10 {C:\\Example\\Card.cpp:743}", fields = { address = "192.0.2.10" } },
+]
+counter_examples = ["Duplicate address detection found no conflict for 192.0.2.10"]
+
+# --- Network adapter (NDIS) and event log errors ---
+
+[[template]]
+code = "ARB-020"
+class = "error"
+title = "Network card not found through the NDIS driver"
+sev = 2
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+regex = '''^Couldn't find network card (?P<adapter>[\w -]+) using this NDIS driver(?: +\{[^{}]*\})?$'''
+examples = [
+    { msg = "Couldn't find network card EXAMPLE NETWORK ADAPTER using this NDIS driver {C:\\Example\\Ndis.cpp:242}", fields = { adapter = "EXAMPLE NETWORK ADAPTER" } },
+]
+counter_examples = ["Found network card EXAMPLE using this NDIS driver"]
+
+[[template]]
+code = "ARB-021"
+class = "error"
+title = "Network device could not be opened"
+sev = 2
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+regex = '''^Failed to open Network device +- +\((?P<reason>[^()\[]+) \[(?P<errno>\d+)\]\)(?: +\{[^{}]*\})?$'''
+fields = { errno = "int" }
+examples = [
+    { msg = "Failed to open Network device  -  (The system cannot find the file specified. [2])  {C:\\Example\\Ndis.cpp:281}", fields = { reason = "The system cannot find the file specified.", errno = 2 } },
+]
+counter_examples = ["Failed to open Network device"]
+
+[[template]]
+code = "ARB-022"
+class = "error"
+title = "Gratuitous ARP not sent: network device failed to open"
+sev = 2
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+regex = '''^Unable to send gratuitous ARP because device +- +failed to open(?: +\{[^{}]*\})?$'''
+examples = [
+    "Unable to send gratuitous ARP because device  -  failed to open {C:\\Example\\Ndis.cpp:315}",
+]
+counter_examples = ["Unable to send gratuitous ARP because the device is busy"]
+
+[[template]]
+code = "ARB-023"
+class = "error"
+title = "Event log could not be read"
+sev = 2
+window = 320  # worst case quadratic: see _schema.md, Regex safety
+regex = '''^Failed to read event log \((?P<reason>[^()\[]+) \[(?P<errno>\d+)\]\)(?: +\{[^{}]*\})?$'''
+fields = { errno = "int" }
+examples = [
+    { msg = "Failed to read event log (The interface is unknown. [1717])  {C:\\Example\\EventLog.cpp:311}", fields = { reason = "The interface is unknown.", errno = 1717 } },
+]
+counter_examples = ["Failed to read event log"]

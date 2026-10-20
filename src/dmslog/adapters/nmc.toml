@@ -1,0 +1,41 @@
+# NMC.log (family NMC): the network management console (health monitor / WMI extensions of the
+# admin tools). Optional scope, very low volume. Design: docs/notas/rt-templates-desenho.md.
+#
+# Codes: NMC-001..049. Every line ends in a source location `{<build path>:<line>}` written by the
+# logger; it is matched but not kept (a build path says nothing about the case).
+
+schema = 1
+family = "NMC"
+description = "NMC: network management console, health monitor access and connectivity messages"
+extends = ["_common"]
+
+[[template]]
+code = "NMC-001"
+class = "error"
+title = "WMI health monitor access denied"
+sev = 3 # recurring and benign: the console runs without rights on a monitored host; the monitor goes on
+regex = '''^Access denied +\{[^}]+:\d+\}$'''
+window = 512
+examples = ["Access denied  {C:\\Example\\src\\Monitor\\ExampleCommon.cs:182}"]
+counter_examples = ["Access allowed  {C:\\Example\\src\\Monitor\\ExampleCommon.cs:182}"]
+
+[[template]]
+code = "NMC-002"
+class = "other"
+title = "ADAM connectivity error popups disabled"
+sev = 4
+regex = '''^Enabling IgnoreServerUnavailable on ADAMExceptionHelper\. Error indication popups won't be displayed for ADAM connectivity issues\. +\{[^}]+:\d+\}$'''
+window = 512
+examples = ["Enabling IgnoreServerUnavailable on ADAMExceptionHelper. Error indication popups won't be displayed for ADAM connectivity issues. {C:\\Example\\src\\Common\\ExampleHelper.cs:50}"]
+counter_examples = ["Enabling IgnoreServerUnavailable on ExampleHelper."]
+
+[[template]]
+code = "NMC-003"
+class = "error"
+title = "Non fatal exception reported by the console"
+sev = 3 # reported as non fatal by the console itself
+regex = '''^Non Fatal (?P<exc_type>[\w.`+]*Exception)(?:: (?P<exc_msg>.*))?$'''
+cont = "dotnet_stack"
+keys = [{ field = "exc_type", type = "exc_type" }]
+examples = [{ msg = "Non Fatal System.ObjectDisposedException: Cannot access a disposed object.", cont = "Object name: 'Example.Node'.\nManaged Code Stack Trace:\n   at Example.Shared.Disposable.Verify()\n", fields = { exc_type = "System.ObjectDisposedException", exc_msg = "Cannot access a disposed object." } }]
+counter_examples = ["Fatal System.ObjectDisposedException: Cannot access a disposed object."]

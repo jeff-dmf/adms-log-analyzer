@@ -1,0 +1,23 @@
+﻿2030-01-15 10:00:00.000 [PID=1275][TID=0x1a2b] INFO - Succeeded in assigning IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service to the ADMS adapter [Example Network Adapter] {C:\Example\Monitor.cpp:515}
+2030-01-15 10:00:00.050 [PID=1275][TID=0x1a2b] INFO - Deleting the IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service {C:\Example\Monitor.cpp:559}
+2030-01-15 10:00:00.100 [PID=1275][TID=0x1a2b] INFO - Succeeded in assigning IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service
+2030-01-15 10:00:00.150 [PID=1275][TID=0x1a2b] ALWAYS - Arbitration Floating IP Monitoring enabled for Service DMS_Service is as follows: Virtual Host: exampleDMS_Service 192.0.2.10 mask exampleMask 192.0.2.255 {C:\Example\Monitor.cpp:317}
+2030-01-15 10:00:00.200 [PID=1275][TID=0x1a2b] ALWAYS - AzureDeployment configuration override for service DMS_Service not set in registry. Setting default value to 'False'. {C:\Example\Monitor.cpp:212}
+2030-01-15 10:00:00.250 [PID=1275][TID=0x1a2b] INFO - Deleting the IP Address exampleDMS_Service for service DMS_Service
+2030-01-15 10:00:00.300 [PID=1275][TID=0x1a2b] WARNING - Failed to assign IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service.  Retrying... {C:\Example\Monitor.cpp:544}
+2030-01-15 10:00:00.350 [PID=1275][TID=0x1a2b] WARNING - IP Address Issue Detected: A possible network interruption for IP address '192.0.2.10' for Service 'EXAMPLE' has been identified.  A refresh of the IP will be performed as required.  Messages will be printed to the log when this problem is resolved. {C:\Example\Monitor.cpp:936}
+2030-01-15 10:00:00.400 [PID=1275][TID=0x1a2b] INFO - Arbitration Floating IP Monitoring disabled for Service DMS_Service
+2030-01-15 10:00:00.450 [PID=1275][TID=0x1a2b] INFO - IP Address Issue Resolved: Reasserting IP Address exampleDMS_Service/192.0.2.10 for service DMS_Service. {C:\Example\Monitor.cpp:965}
+2030-01-15 10:00:00.500 [PID=1275][TID=0x1a2b] WARNING - ServiceIPMonitor: Duel in progress. Main thread sleeping for 10 seconds. {C:\Example\Monitor.cpp:363}
+2030-01-15 10:00:00.550 [PID=1275][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:00.600 [PID=1275][TID=0x1a2b] INFO - ServiceIPMonitor: Dueling stabilization is in progress (timespan of 15 seconds)... {C:\Example\Monitor.cpp:454}
+2030-01-15 10:00:00.650 [PID=1275][TID=0x1a2b] WARNING - EventLogMonitor: Duel detected for IP 192.0.2.10, notifying ServiceIPMonitor for this IP {C:\Example\EventLog.cpp:453}
+2030-01-15 10:00:00.700 [PID=1275][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:00.750 [PID=1275][TID=0x1a2b] ERROR - Duplicate address detection has detected an IP address conflict for 192.0.2.10 {C:\Example\Card.cpp:743}
+2030-01-15 10:00:00.800 [PID=1275][TID=0x1a2b] ERROR - Couldn't find network card EXAMPLE NETWORK ADAPTER using this NDIS driver {C:\Example\Ndis.cpp:242}
+2030-01-15 10:00:00.850 [PID=1275][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:00.900 [PID=1275][TID=0x1a2b] ERROR - Failed to open Network device  -  (The system cannot find the file specified. [2])  {C:\Example\Ndis.cpp:281}
+2030-01-15 10:00:00.950 [PID=1275][TID=0x1a2b] ERROR - Unable to send gratuitous ARP because device  -  failed to open {C:\Example\Ndis.cpp:315}
+2030-01-15 10:00:01.000 [PID=1275][TID=0x1a2b] ERROR - Failed to read event log (The interface is unknown. [1717])  {C:\Example\EventLog.cpp:311}
+2030-01-15 10:00:01.050 [PID=1275][TID=0x1a2b] INFO - IP Address Issue Resolved: For IP exampleDMS_Service/192.0.2.10 as service DMS_Service is no longer HOT. {C:\Example\Monitor.cpp:974}
+2030-01-15 10:00:01.100 [PID=1275][TID=0x1a2b] INFO - ServiceIPMonitor: Dueling stabilization finished (timespan of 15 seconds has expired). {C:\Example\Monitor.cpp:424}
