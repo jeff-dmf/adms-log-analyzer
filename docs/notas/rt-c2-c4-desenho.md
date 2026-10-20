@@ -50,11 +50,11 @@ max_dt_ms = 60000
 - **`kind = "handoff"`**: exige `key` e `scope = "collection"`; não aceita `window_only` nem `origin`; `a` e `b` disjuntos. `scope = "collection"` só é aceito com `kind = "handoff"` nesta entrega.
 - **`pid_field`** (opcional): nome de campo presente em todos os templates de `a`; comparado com `entry.pid` (PID do envelope) do `b`.
 - **Regra de ligação: única nos dois sentidos, sem desempate por ordem.**
-  - Candidatos do `b` (ts `t`, valor `v`): os `a` com valor `v` e ts em `[t − max_dt_ms, t]`. Com `pid_field`, sai o `a` cujo campo e o PID do `b` são ambos conhecidos e diferentes.
-  - 0 candidatos: `pid_mismatch` se havia candidato antes do filtro de PID; senão `unmatched` se `t` está dentro da cobertura do lado `a` (1.3), senão `out_of_coverage`.
-  - 2 ou mais candidatos: `ambiguous`, sem ligação.
-  - 1 candidato: o `b` fica pendente nesse `a`.
-  - Quando a varredura passa de `a.ts + max_dt_ms`, o `a` é decidido: 1 `b` pendente gera a ligação; 2 ou mais geram `ambiguous` para cada um, sem ligação; nenhum conta `unanswered` (só se o `a` está dentro da cobertura do lado `b`).
+  - Compatibilidade (função só de `(ts, valor, pid)`): `a` e `b` são compatíveis quando têm o mesmo valor `v`, `a.ts` está em `[b.ts - max_dt_ms, b.ts]` e, com `pid_field`, o campo do `a` e o PID do `b` não são ambos conhecidos e diferentes.
+  - Grau de cada ponta: `grau(b)` = número de `a` compatíveis; `grau(a)` = número de `b` compatíveis. Os ambíguos contam: um `b` ambíguo continua sendo candidato dos `a` com que é compatível.
+  - **Há ligação `a -> b` se e somente se `grau(a) = 1` e `grau(b) = 1`** (os dois se escolhem mutuamente). Contraexemplo que a regra cobre: janela de 10 ms, mesma chave e PID, `a1@0`, `a2@5`, `b1@6`, `b2@11`: `b1` é compatível com `a1` e `a2` (`grau(b1) = 2`), `b2` só com `a2` (`grau(b2) = 1`), `a1` só com `b1` (`grau(a1) = 1`) e `a2` com `b1` e `b2` (`grau(a2) = 2`); nenhum par tem grau 1 nas duas pontas, então não há ligação e `ambiguous` é registrado para os pares com grau maior que 1.
+  - Classificação do que não liga: `grau(b) = 0` gera `pid_mismatch` se havia candidato antes do filtro de PID, senão `unmatched` se `b.ts` está dentro da cobertura do lado `a` (1.3), senão `out_of_coverage`; `grau(b) >= 2` ou `grau(a) >= 2` gera `ambiguous`; `grau(a) = 0` gera `unanswered` (só se o `a` está dentro da cobertura do lado `b`).
+  - A varredura decide um `a` quando passa de `a.ts + max_dt_ms` (todos os `b` compatíveis já foram vistos) e um `b` quando todos os `a` compatíveis (`b.ts - max_dt_ms ..= b.ts`) já foram vistos; o resultado é o mesmo da definição acima, por isso independe da ordem de indexação.
 - **Confiança**: 3 quando não há `pid_field` ou os dois PIDs são conhecidos e iguais; 2 quando há `pid_field` e um dos lados não tem o valor. PID divergente **não liga** (o desenho anterior dava 2; a medição não tem nenhum caso e uma divergência indica outro FH ou PID reciclado; ver pergunta P3).
 - A ligação vai de `a` para `b` (`link(a_entry_id, b_entry_id, 'handoff', conf)`), então a cadeia aparece nos dois registros pela consulta bidirecional já existente (`store/keys.links_of`).
 
