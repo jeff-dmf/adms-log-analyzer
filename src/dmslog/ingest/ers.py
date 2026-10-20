@@ -20,8 +20,13 @@ from dmslog import messages
 from dmslog.aliases import Aliases
 from dmslog.ingest.discover import SourceInfo, discover
 
+# ERS_<prefix>_<GUID>_<yyyymmddHHMMSS>_[Sensitive_]<product>[_<description>].zip
+# The prefix is "CL" in the integration (INT) captures and "<system>_<function>_<role>" in the others (for
+# example the real-time servers of a cluster: system, "RT", "Primary" or "Secondary").
+# The GUID is the cluster's: two servers of one cluster share it.
 _NAME = re.compile(
-    r"^ERS_CL_(?P<guid>[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})"
+    r"^ERS_(?P<prefix>[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*?)_"
+    r"(?P<guid>[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})"
     r"_(?P<ts>\d{14})_(?P<sensitive>Sensitive_)?(?P<product>[A-Za-z]+)(?:_(?P<desc>.*))?\.zip$",
     re.IGNORECASE,
 )
@@ -57,15 +62,39 @@ class ErsIdentity:
     product: str  # "Enterprise" in every sample
     description: str
     file_name: str
+    prefix: str = "CL"  # what comes between "ERS_" and the GUID: "CL", or "<system>_<function>_<role>"
+
+    @property
+    def server(self) -> tuple[str, str, str] | None:
+        """(system, function, role) of a name with a server prefix, else None ("CL" and unknown shapes)."""
+        parts = self.prefix.split("_")
+        if self.prefix.upper() == "CL" or len(parts) < 2:
+            return None
+        return parts[0], parts[1], "_".join(parts[2:])
+
+    @property
+    def display_label(self) -> str:
+        """The label of the collection: the description, led by the function and role of a server capture."""
+        server = self.server
+        if server is None:
+            return self.description
+        lead = " ".join(part for part in server[1:] if part)
+        return f"{lead} {self.description}".strip()
 
     @property
     def captured_at(self) -> datetime:
         return datetime.strptime(self.timestamp, "%Y%m%d%H%M%S")
 
     @property
-    def group_key(self) -> tuple[str, str]:
-        """Both halves of one capture share this key (stored as the same `ers_group`)."""
-        return (self.guid, self.timestamp)
+    def group_key(self) -> tuple[str, ...]:
+        """Both halves of one capture share this key (stored as the same `ers_group`).
+
+        A server prefix is part of it: the servers of one cluster share the GUID, and two of them captured in
+        the same second are still two captures.
+        """
+        if self.server is None:
+            return (self.guid, self.timestamp)
+        return (self.guid, self.timestamp, self.prefix.lower())
 
 
 def parse_ers_name(name: str | os.PathLike[str]) -> ErsIdentity | None:
@@ -86,6 +115,7 @@ def parse_ers_name(name: str | os.PathLike[str]) -> ErsIdentity | None:
         product=match["product"],
         description=match["desc"] or "",
         file_name=base,
+        prefix=match["prefix"],
     )
 
 
@@ -123,7 +153,14 @@ def held_identity(
     """The ERS identity stored in a ``collection`` row (None for folders, files and non-ERS zips)."""
     if kind != KIND_ERS_ZIP or not guid or not stamp:
         return None
-    return ErsIdentity(guid, stamp, variant or VARIANT_ENTERPRISE, "Enterprise", label or "", Path(path).name)
+    # The recorded path may be a Windows path read on another system: split it on both separators.
+    file_name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+    named = parse_ers_name(file_name)  # the server prefix is not stored: it comes back from the file name
+    same_capture_name = named is not None and (named.guid, named.timestamp) == (guid.upper(), stamp)
+    prefix = named.prefix if named is not None and same_capture_name else "CL"
+    return ErsIdentity(
+        guid, stamp, variant or VARIANT_ENTERPRISE, "Enterprise", label or "", file_name, prefix
+    )
 
 
 def classify_add(
@@ -186,7 +223,7 @@ def refuse_duplicate(held: Sequence[HeldCollection], decision: AddDecision, path
 
 def ers_group_for(identity: ErsIdentity) -> str:
     """Stable textual key of the pair, usable to derive the numeric `ers_group`."""
-    return f"{identity.guid}_{identity.timestamp}"
+    return "_".join(identity.group_key)
 
 
 @dataclass(frozen=True)
@@ -249,7 +286,7 @@ def plan_collection(path: str | os.PathLike[str], aliases: Aliases | None = None
     identity = parse_ers_name(target.name) if kind == KIND_ERS_ZIP else None
     accounts = sorted({s.zone for s in sources if s.zone})
     system = accounts[0] if len(accounts) == 1 else None
-    label = identity.description if identity and identity.description else target.name
+    label = (identity.display_label if identity else "") or target.name
     return CollectionPlan(
         kind=kind,
         path=target,

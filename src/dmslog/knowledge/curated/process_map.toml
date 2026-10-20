@@ -158,6 +158,14 @@ family = "ERS"
 reason = "ERS tool logs, not adapters."
 
 [[out_of_scope]]
+family = "DMSRT"
+reason = "DMS_* and OMS_* services of the real-time (RT) servers: not adapters; templates come from the RT mining."
+
+[[out_of_scope]]
+family = "DMSFH"
+reason = "DMS_FunctionHost_<n> instances of the real-time job pool: not adapters; templates come from the RT mining."
+
+[[out_of_scope]]
 family = "PROCESS"
 reason = "Generic process logs; adapters outside the 1.0 scope are not mapped here."
 

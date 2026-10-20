@@ -238,11 +238,26 @@ pattern = '(?:^|/)(?P<process>ERS|ERSEngine)\.log(?:\.(?P<rotation>\d+))?$'
 envelope = "adms"
 scope = "optional"
 
+# Real-time (RT) servers: the DMS_* and OMS_* services of any DMS_* service folder other than the integration one
+# (DMS_REALTIME, ...), in the default scope. Some of them sit in a subfolder of the service folder (Context-<id>/).
+# DMS_FunctionHost_<n> numbers an instance of the pool, it is not a process id: the number stays in the process name.
+[[rule]]
+family = "DMSFH"
+pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>(?!DMS_INTEGRATION/)DMS_[A-Za-z0-9_]+)/(?:[^/]+/)*(?P<process>DMS_FunctionHost_\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "default"
+
+[[rule]]
+family = "DMSRT"
+pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>(?!DMS_INTEGRATION/)DMS_[A-Za-z0-9_]+)/(?:[^/]+/)*(?P<process>(?:DMS|OMS)_[A-Za-z][A-Za-z0-9]*)_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "default"
+
 # Process logs under dnaApp_<account>/<service>/ that are not an adapter of the scope
-# (DMS_ReplicationService, NDSProxy, adapters outside the 1.0 scope, ...).
+# (DMS_ReplicationService, NDSProxy, adapters outside the 1.0 scope, ...), also in a subfolder of the service folder.
 [[rule]]
 family = "PROCESS"
-pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>[^/]+)/(?P<process>[A-Za-z][A-Za-z0-9_]*?)_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>[^/]+)/(?:[^/]+/)*(?P<process>[A-Za-z][A-Za-z0-9_]*?)_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
 envelope = "adms"
 scope = "optional"
 
