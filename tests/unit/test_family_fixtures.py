@@ -125,11 +125,14 @@ def test_all_logs_ingested_in_their_family(ingested):
         )
     }
     assert set(got) == set(LOGS)
-    by_process = {proc: fam for fam, (_, proc) in mff.PROCESSES.items()}
+    owner = {  # file name -> the family of PROCESSES that wrote it (the process name is ambiguous for RT)
+        mff._file_name(fam, 1000 + n * 11, sens): fam
+        for n, fam in enumerate(mff.PROCESSES)
+        for sens in (False, True)
+    }
     for rel, (family, sensitive) in got.items():
         name = rel.rsplit("/", 1)[-1]
-        proc = re.split(r"[._]", name)[0]
-        assert family == mff.EXPECTED_FAMILY[by_process[proc]], rel
+        assert family == mff.EXPECTED_FAMILY[owner[rel]], rel
         assert sensitive == (1 if ".sensitive." in name else 0), rel
 
 
