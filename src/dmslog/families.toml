@@ -239,11 +239,40 @@ envelope = "adms"
 scope = "optional"
 
 # Real-time (RT) servers: the DMS_* and OMS_* services of any DMS_* service folder other than the integration one
-# (DMS_REALTIME, ...), in the default scope. Some of them sit in a subfolder of the service folder (Context-<id>/).
+# (DMS_REALTIME, ...), in the default scope. DMSFH: the instances of the job pool. Some of them sit in a subfolder of the service folder (Context-<id>/).
 # DMS_FunctionHost_<n> numbers an instance of the pool, it is not a process id: the number stays in the process name.
 [[rule]]
 family = "DMSFH"
 pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>(?!DMS_INTEGRATION/)DMS_[A-Za-z0-9_]+)/(?:[^/]+/)*(?P<process>DMS_FunctionHost_\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "default"
+
+# The services of the RT servers, by what they do (one family, one template file each). Anything else called
+# DMS_* or OMS_* falls into DMSRT below. Jobs: scheduling and launching of the calculation jobs.
+[[rule]]
+family = "DMSJOB"
+pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>(?!DMS_INTEGRATION/)DMS_[A-Za-z0-9_]+)/(?:[^/]+/)*(?P<process>(?:DMS_JobScheduler|DMS_JobLauncher|DMS_JobManagerService))_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "default"
+
+# Model and calculation infrastructure: operational model, changesets, context, forecast, export.
+[[rule]]
+family = "DMSCORE"
+pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>(?!DMS_INTEGRATION/)DMS_[A-Za-z0-9_]+)/(?:[^/]+/)*(?P<process>(?:DMS_CoreFunctionsService|DMS_ModelTopologyService|DMS_ChangesetRepositoryService|DMS_ModelPromotionService|DMS_GraphicalModelService|DMS_GenericCalculationService|DMS_LoadForecastService|DMS_LocalContextManager|DMS_ContextCoordinatorService|DMS_ExportService|DMS_ControlSequenceManagementService))_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "default"
+
+# Network model, dynamics data, replication and the proxies to the data sources.
+[[rule]]
+family = "DMSMODEL"
+pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>(?!DMS_INTEGRATION/)DMS_[A-Za-z0-9_]+)/(?:[^/]+/)*(?P<process>(?:DMS_NetworkModelService|DMS_ModelManagerService|DMS_DynamicsDataService|DMS_ReplicationService|DMS_GDAProxyService|DMS_LandBaseService|DMS_ScheduleManagementService))_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
+envelope = "adms"
+scope = "default"
+
+# Outage, incident, crew and work management, major events, smart meters and alarms and events.
+[[rule]]
+family = "DMSOMS"
+pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>(?!DMS_INTEGRATION/)DMS_[A-Za-z0-9_]+)/(?:[^/]+/)*(?P<process>(?:OMS_IncidentManagementService|OMS_CrewManagementService|DMS_OutageProcessingService|DMS_WorkManagementService|DMS_MajorEventService|DMS_SmartMeterManagementService|DMS_AlarmsEventsService))_(?P<pid>\d+)(?P<sensitive>\.sensitive)?\.log(?:\.(?P<rotation>\d+))?$'
 envelope = "adms"
 scope = "default"
 
