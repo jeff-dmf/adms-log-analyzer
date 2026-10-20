@@ -129,72 +129,72 @@
 2030-01-15 10:00:06.400 [PID=1253][TID=0x1a2b] INFO - Breaker: 4A00B00C00D00E01. In exclusion list: True.
 2030-01-15 10:00:06.450 [PID=1253][TID=0x1a2b] ERROR - Unhandled exception occurred during MEM job execution, exception info: System.ServiceModel.FaultException`1[Example.Fault]: Tag actions are not allowed on servers that are not in HOT status.
 2030-01-15 10:00:06.500 [PID=1253][TID=0x1a2b] INFO - Request for enlistment received.
-2030-01-15 10:00:06.550 [PID=1253][TID=0x1a2b] DEBUGLOG - ApplyDelta Inserted: 0x61A:3, 0x61B:3; Updated: 0x44:12;
-2030-01-15 10:00:06.600 [PID=1253][TID=0x1a2b] DEBUGLOG - ApplyDelta Updated: 0x44:12; Deleted: 0x45:2, 0x46:2;
-2030-01-15 10:00:06.650 [PID=1253][TID=0x1a2b] DEBUGLOG - HQE: method BulkInsert finished.
-2030-01-15 10:00:06.700 [PID=1253][TID=0x1a2b] DEBUGLOG - HQE: method ProcedureInsert started for INCIDENT: 1000123.
-2030-01-15 10:00:06.750 [PID=1253][TID=0x1a2b] DEBUGLOG - HQE: method SetFeederDynamicData updating 25 from 649 feeders.
-2030-01-15 10:00:06.800 [PID=1253][TID=0x1a2b] DEBUGLOG - IMS replication: Processed requests: 2-Approved-AcknowledgedByPrimary.
-2030-01-15 10:00:06.850 [PID=1253][TID=0x1a2b] DEBUGLOG - IMS replication: Skipping primary cache command. Handler not registered.
-2030-01-15 10:00:06.900 [PID=1253][TID=0x1a2b] DEBUGLOG - IMS replication: Replication IU finished.
+2030-01-15 10:00:06.550 [PID=1253][TID=0x1a2b] WARNING - [WarnExecutionBeforeStartDateCommand] Callback populated with 0 errors.
+2030-01-15 10:00:06.600 [PID=1253][TID=0x1a2b] DEBUGLOG - ApplyDelta Inserted: 0x61A:3, 0x61B:3; Updated: 0x44:12;
+2030-01-15 10:00:06.650 [PID=1253][TID=0x1a2b] DEBUGLOG - ApplyDelta Updated: 0x44:12; Deleted: 0x45:2, 0x46:2;
+2030-01-15 10:00:06.700 [PID=1253][TID=0x1a2b] DEBUGLOG - HQE: method BulkInsert finished.
+2030-01-15 10:00:06.750 [PID=1253][TID=0x1a2b] DEBUGLOG - HQE: method ProcedureInsert started for INCIDENT: 1000123.
+2030-01-15 10:00:06.800 [PID=1253][TID=0x1a2b] DEBUGLOG - HQE: method SetFeederDynamicData updating 25 from 649 feeders.
+2030-01-15 10:00:06.850 [PID=1253][TID=0x1a2b] DEBUGLOG - IMS replication: Processed requests: 2-Approved-AcknowledgedByPrimary.
+2030-01-15 10:00:06.900 [PID=1253][TID=0x1a2b] DEBUGLOG - IMS replication: Skipping primary cache command. Handler not registered.
 2030-01-15 10:00:06.950 [PID=1253][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
-2030-01-15 10:00:07.000 [PID=1253][TID=0x1a2b] DEBUGLOG - [TR Publication]: Status - count: TA_ENERGIZED - 12
-2030-01-15 10:00:07.050 [PID=1253][TID=0x1a2b] DEBUGLOG - [SDP Publications]: Disconnected: 1000123
-2030-01-15 10:00:07.100 [PID=1253][TID=0x1a2b] INFO - [ProblemStatusTransitionValidator] Validation of transition from status 1000001 to status 1000002 for entity 1000124 started.
-2030-01-15 10:00:07.150 [PID=1253][TID=0x1a2b] INFO - [ProblemStatusTransitionValidator] Validation of status transition for entity 1000124 finished.
-2030-01-15 10:00:07.200 [PID=1253][TID=0x1a2b] DEBUGLOG - [IncidentStatusTransitionValidator_Example] Incident (GID: 1000123) has no load shedding outages.
-2030-01-15 10:00:07.250 [PID=1253][TID=0x1a2b] DEBUGLOG - [IncidentStatusTransitionValidator_Example] There are no FLISR/LAR outages in Automatic mode for Incident (GID: 1000123).
-2030-01-15 10:00:07.300 [PID=1253][TID=0x1a2b] INFO - Updating incident ownership status for incidents: 1000123, 1000124.
-2030-01-15 10:00:07.350 [PID=1253][TID=0x1a2b] INFO - Processed 5 trouble event(s).
-2030-01-15 10:00:07.400 [PID=1253][TID=0x1a2b] INFO - Processed 5 trouble event(s) out of which 2 are priority ones.
-2030-01-15 10:00:07.450 [PID=1253][TID=0x1a2b] INFO - Joined 4 trouble event(s) to incident(s).
-2030-01-15 10:00:07.500 [PID=1253][TID=0x1a2b] DEBUGLOG - Preparing NDS (DMSType.DSIGNAL) instruction's based on NDS publication's for devices: [1000123 - Open].
-2030-01-15 10:00:07.550 [PID=1253][TID=0x1a2b] DEBUGLOG - Preparing to create/update NDS(TAG) instruction for device: 1000123, affected incident(s): 1000124.
-2030-01-15 10:00:07.600 [PID=1253][TID=0x1a2b] DEBUGLOG - Affected incidents not match any devices: 1000123 for create/update NDS(TAG) instruction's.
-2030-01-15 10:00:07.650 [PID=1253][TID=0x1a2b] INFO - Assigning crews: 1000001, 1000002 to OMS work plans: 1000124.
-2030-01-15 10:00:07.700 [PID=1253][TID=0x1a2b] INFO - Creating incident crews: 1000001.
-2030-01-15 10:00:07.750 [PID=1253][TID=0x1a2b] INFO - Deassigning crews: 1000001 from OMS work plans: 1000124.
-2030-01-15 10:00:07.800 [PID=1253][TID=0x1a2b] INFO - Deassigned crews: 1000001 from incidents: 1000123.
-2030-01-15 10:00:07.850 [PID=1253][TID=0x1a2b] INFO - Deassigning 2 crew assignments.
-2030-01-15 10:00:07.900 [PID=1253][TID=0x1a2b] INFO - Deleting crew 1000001 instruction for incident 1000123.
-2030-01-15 10:00:07.950 [PID=1253][TID=0x1a2b] INFO - Adding crew 1000001 instruction for incident 1000123. Devices: 1000200.
-2030-01-15 10:00:08.000 [PID=1253][TID=0x1a2b] INFO - Deassign crew 1000001 from incident 1000123.
-2030-01-15 10:00:08.050 [PID=1253][TID=0x1a2b] INFO - Assign crews 1000001 to OMS work plan 1000124.
-2030-01-15 10:00:08.100 [PID=1253][TID=0x1a2b] INFO - Crew 1000001 to Incident (GID: 1000123) set to invisible.
-2030-01-15 10:00:08.150 [PID=1253][TID=0x1a2b] INFO - Setting assignments from Incident (GID: 1000123) to invisible.
-2030-01-15 10:00:08.200 [PID=1253][TID=0x1a2b] DEBUGLOG - [CalculateMunicipalityFromDeviceCommand]: CalculateMunicipalityFromDeviceCommand succesfuly updated municipality field : EXAMPLE CITY for incident : 1000123.
-2030-01-15 10:00:08.250 [PID=1253][TID=0x1a2b] DEBUGLOG - [UpdateIncidentDeviceCommand]: UpdateIncidentDeviceCommand finished for incident: 1000123.
-2030-01-15 10:00:08.300 [PID=1253][TID=0x1a2b] DEBUGLOG - CalculateProtectiveDevicesWorker SynchronizedPhase found valid incident: 1000123
+2030-01-15 10:00:07.000 [PID=1253][TID=0x1a2b] DEBUGLOG - IMS replication: Replication IU finished.
+2030-01-15 10:00:07.050 [PID=1253][TID=0x1a2b] DEBUGLOG - [TR Publication]: Status - count: TA_ENERGIZED - 12
+2030-01-15 10:00:07.100 [PID=1253][TID=0x1a2b] DEBUGLOG - [SDP Publications]: Disconnected: 1000123
+2030-01-15 10:00:07.150 [PID=1253][TID=0x1a2b] INFO - [ProblemStatusTransitionValidator] Validation of transition from status 1000001 to status 1000002 for entity 1000124 started.
+2030-01-15 10:00:07.200 [PID=1253][TID=0x1a2b] INFO - [ProblemStatusTransitionValidator] Validation of status transition for entity 1000124 finished.
+2030-01-15 10:00:07.250 [PID=1253][TID=0x1a2b] DEBUGLOG - [IncidentStatusTransitionValidator_Example] Incident (GID: 1000123) has no load shedding outages.
+2030-01-15 10:00:07.300 [PID=1253][TID=0x1a2b] DEBUGLOG - [IncidentStatusTransitionValidator_Example] There are no FLISR/LAR outages in Automatic mode for Incident (GID: 1000123).
+2030-01-15 10:00:07.350 [PID=1253][TID=0x1a2b] INFO - Updating incident ownership status for incidents: 1000123, 1000124.
+2030-01-15 10:00:07.400 [PID=1253][TID=0x1a2b] INFO - Processed 5 trouble event(s).
+2030-01-15 10:00:07.450 [PID=1253][TID=0x1a2b] INFO - Processed 5 trouble event(s) out of which 2 are priority ones.
+2030-01-15 10:00:07.500 [PID=1253][TID=0x1a2b] INFO - Joined 4 trouble event(s) to incident(s).
+2030-01-15 10:00:07.550 [PID=1253][TID=0x1a2b] DEBUGLOG - Preparing NDS (DMSType.DSIGNAL) instruction's based on NDS publication's for devices: [1000123 - Open].
+2030-01-15 10:00:07.600 [PID=1253][TID=0x1a2b] DEBUGLOG - Preparing to create/update NDS(TAG) instruction for device: 1000123, affected incident(s): 1000124.
+2030-01-15 10:00:07.650 [PID=1253][TID=0x1a2b] DEBUGLOG - Affected incidents not match any devices: 1000123 for create/update NDS(TAG) instruction's.
+2030-01-15 10:00:07.700 [PID=1253][TID=0x1a2b] INFO - Assigning crews: 1000001, 1000002 to OMS work plans: 1000124.
+2030-01-15 10:00:07.750 [PID=1253][TID=0x1a2b] INFO - Creating incident crews: 1000001.
+2030-01-15 10:00:07.800 [PID=1253][TID=0x1a2b] INFO - Deassigning crews: 1000001 from OMS work plans: 1000124.
+2030-01-15 10:00:07.850 [PID=1253][TID=0x1a2b] INFO - Deassigned crews: 1000001 from incidents: 1000123.
+2030-01-15 10:00:07.900 [PID=1253][TID=0x1a2b] INFO - Deassigning 2 crew assignments.
+2030-01-15 10:00:07.950 [PID=1253][TID=0x1a2b] INFO - Deleting crew 1000001 instruction for incident 1000123.
+2030-01-15 10:00:08.000 [PID=1253][TID=0x1a2b] INFO - Adding crew 1000001 instruction for incident 1000123. Devices: 1000200.
+2030-01-15 10:00:08.050 [PID=1253][TID=0x1a2b] INFO - Deassign crew 1000001 from incident 1000123.
+2030-01-15 10:00:08.100 [PID=1253][TID=0x1a2b] INFO - Assign crews 1000001 to OMS work plan 1000124.
+2030-01-15 10:00:08.150 [PID=1253][TID=0x1a2b] INFO - Crew 1000001 to Incident (GID: 1000123) set to invisible.
+2030-01-15 10:00:08.200 [PID=1253][TID=0x1a2b] INFO - Setting assignments from Incident (GID: 1000123) to invisible.
+2030-01-15 10:00:08.250 [PID=1253][TID=0x1a2b] DEBUGLOG - [CalculateMunicipalityFromDeviceCommand]: CalculateMunicipalityFromDeviceCommand succesfuly updated municipality field : EXAMPLE CITY for incident : 1000123.
+2030-01-15 10:00:08.300 [PID=1253][TID=0x1a2b] DEBUGLOG - [UpdateIncidentDeviceCommand]: UpdateIncidentDeviceCommand finished for incident: 1000123.
 2030-01-15 10:00:08.350 [PID=1253][TID=0x1a2b] INFO - Qqq synthetic noise without template
-2030-01-15 10:00:08.400 [PID=1253][TID=0x1a2b] INFO - Actual restoration time (ART) of incident(GID:1000123) set to 10/19/2026 1:00:00 PM.
-2030-01-15 10:00:08.450 [PID=1253][TID=0x1a2b] INFO - Old ETR: 10/18/2026 4:09:15 AM in Incident (GID: 1000123) is sent through client delta. 'EtrIsManuallySet' flag is set to false.
-2030-01-15 10:00:08.500 [PID=1253][TID=0x1a2b] INFO - Successfully created new incident with GID: 1000123 and custom id: INC 1000124 on device: .
-2030-01-15 10:00:08.550 [PID=1253][TID=0x1a2b] INFO - Creation of new Incident (GID: 1000123) finished successfully.
-2030-01-15 10:00:08.600 [PID=1253][TID=0x1a2b] INFO - Started creating new incidents below feeder (GID:1000200).
-2030-01-15 10:00:08.650 [PID=1253][TID=0x1a2b] INFO - Creation of 2 new incidents below feeder (GID:1000200) from 3 trouble event(s) is finished.
-2030-01-15 10:00:08.700 [PID=1253][TID=0x1a2b] INFO - Created 4 single call incident(s).
-2030-01-15 10:00:08.750 [PID=1253][TID=0x1a2b] INFO - Creating Incident (GID: 1000123) from Potential Incident (GID: 1000124).
-2030-01-15 10:00:08.800 [PID=1253][TID=0x1a2b] INFO - Archiving Incident (GID: 1000123) async started.
-2030-01-15 10:00:08.850 [PID=1253][TID=0x1a2b] INFO - Incident (GID: 1000123) has switched to ready for archiving state. Setting ready to archive time stamp...
-2030-01-15 10:00:08.900 [PID=1253][TID=0x1a2b] INFO - Incident auto archive thread found Incident (GID: 1000123) to archive. Incident is not already in archived status.
-2030-01-15 10:00:08.950 [PID=1253][TID=0x1a2b] INFO - Incident (GID: 1000123) is already archiving.
-2030-01-15 10:00:09.000 [PID=1253][TID=0x1a2b] INFO - Archive 1000123 to DB finished.
-2030-01-15 10:00:09.050 [PID=1253][TID=0x1a2b] INFO - Trying to automatically close momentary Incident (GID: 1000123).
-2030-01-15 10:00:09.100 [PID=1253][TID=0x1a2b] INFO - Incident (GID: 1000123) updated to sustained.
-2030-01-15 10:00:09.150 [PID=1253][TID=0x1a2b] INFO - Incident 1000123 has no status with Final semantic to go to.
-2030-01-15 10:00:09.200 [PID=1253][TID=0x1a2b] INFO - Work plan 1000124, state 1000126 updated for incident 1000123.Oms complete state with GID: 1000125 set
-2030-01-15 10:00:09.250 [PID=1253][TID=0x1a2b] INFO - Work Plan state for Work Plan 1000124 is already set as OMS completed. GID: 1000125
-2030-01-15 10:00:09.300 [PID=1253][TID=0x1a2b] INFO - Getting restoration devices for instructions of work plan : 1000124.
-2030-01-15 10:00:09.350 [PID=1253][TID=0x1a2b] DEBUGLOG - Calling 'ExampleFunction' for 5 SDP-s under feeder (GID:1000200).
-2030-01-15 10:00:09.400 [PID=1253][TID=0x1a2b] DEBUGLOG - Successfully added 7 new SDP-s to delta.
-2030-01-15 10:00:09.450 [PID=1253][TID=0x1a2b] DEBUGLOG - Updating customer info for incidents: 1000123, 1000124.
-2030-01-15 10:00:09.500 [PID=1253][TID=0x1a2b] DEBUGLOG - Updating energization for 4 transformers.
-2030-01-15 10:00:09.550 [PID=1253][TID=0x1a2b] DEBUGLOG - Updating customer energization statistics finished. Next update iteration will be in 15 minutes.
-2030-01-15 10:00:09.600 [PID=1253][TID=0x1a2b] DEBUGLOG - GetAdditionSdpsForTroubleEventsAndFeedbacks returned SDPs .
-2030-01-15 10:00:09.650 [PID=1253][TID=0x1a2b] DEBUGLOG - Fetching 12 updated network elements
-2030-01-15 10:00:09.700 [PID=1253][TID=0x1a2b] DEBUGLOG - Got 12 network elements from NMS
-2030-01-15 10:00:09.750 [PID=1253][TID=0x1a2b] INFO - PredictionFunction execution finished. JobID: 1000123. JobRequestStatus: DoneWithSuccess. ResultsPartOrdinalNumber: 1. TotalNumberOfResultsParts: 1.
-2030-01-15 10:00:09.800 [PID=1253][TID=0x1a2b] INFO - PredictionFunction failed. JobID: 1000123. JobRequestStatus: DoneWithError. ResultsPartOrdinalNumber: 1. TotalNumberOfResultsParts: 1.
-2030-01-15 10:00:09.850 [PID=1253][TID=0x1a2b] ERROR - (ERROR) Field Complete must be after the first trouble call event time.
-2030-01-15 10:00:09.900 [PID=1253][TID=0x1a2b] DEBUGLOG - [DynamicFeederSynchronizer][ExampleCache] Refresh feeders for entities 1000123, 1000124 started.
-2030-01-15 10:00:09.950 [PID=1253][TID=0x1a2b] INFO - Successfully updated Incident Note (GID: 1000125).
+2030-01-15 10:00:08.400 [PID=1253][TID=0x1a2b] DEBUGLOG - CalculateProtectiveDevicesWorker SynchronizedPhase found valid incident: 1000123
+2030-01-15 10:00:08.450 [PID=1253][TID=0x1a2b] INFO - Actual restoration time (ART) of incident(GID:1000123) set to 10/19/2026 1:00:00 PM.
+2030-01-15 10:00:08.500 [PID=1253][TID=0x1a2b] INFO - Old ETR: 10/18/2026 4:09:15 AM in Incident (GID: 1000123) is sent through client delta. 'EtrIsManuallySet' flag is set to false.
+2030-01-15 10:00:08.550 [PID=1253][TID=0x1a2b] INFO - Successfully created new incident with GID: 1000123 and custom id: INC 1000124 on device: .
+2030-01-15 10:00:08.600 [PID=1253][TID=0x1a2b] INFO - Creation of new Incident (GID: 1000123) finished successfully.
+2030-01-15 10:00:08.650 [PID=1253][TID=0x1a2b] INFO - Started creating new incidents below feeder (GID:1000200).
+2030-01-15 10:00:08.700 [PID=1253][TID=0x1a2b] INFO - Creation of 2 new incidents below feeder (GID:1000200) from 3 trouble event(s) is finished.
+2030-01-15 10:00:08.750 [PID=1253][TID=0x1a2b] INFO - Created 4 single call incident(s).
+2030-01-15 10:00:08.800 [PID=1253][TID=0x1a2b] INFO - Creating Incident (GID: 1000123) from Potential Incident (GID: 1000124).
+2030-01-15 10:00:08.850 [PID=1253][TID=0x1a2b] INFO - Archiving Incident (GID: 1000123) async started.
+2030-01-15 10:00:08.900 [PID=1253][TID=0x1a2b] INFO - Incident (GID: 1000123) has switched to ready for archiving state. Setting ready to archive time stamp...
+2030-01-15 10:00:08.950 [PID=1253][TID=0x1a2b] INFO - Incident auto archive thread found Incident (GID: 1000123) to archive. Incident is not already in archived status.
+2030-01-15 10:00:09.000 [PID=1253][TID=0x1a2b] INFO - Incident (GID: 1000123) is already archiving.
+2030-01-15 10:00:09.050 [PID=1253][TID=0x1a2b] INFO - Archive 1000123 to DB finished.
+2030-01-15 10:00:09.100 [PID=1253][TID=0x1a2b] INFO - Trying to automatically close momentary Incident (GID: 1000123).
+2030-01-15 10:00:09.150 [PID=1253][TID=0x1a2b] INFO - Incident (GID: 1000123) updated to sustained.
+2030-01-15 10:00:09.200 [PID=1253][TID=0x1a2b] INFO - Incident 1000123 has no status with Final semantic to go to.
+2030-01-15 10:00:09.250 [PID=1253][TID=0x1a2b] INFO - Work plan 1000124, state 1000126 updated for incident 1000123.Oms complete state with GID: 1000125 set
+2030-01-15 10:00:09.300 [PID=1253][TID=0x1a2b] INFO - Work Plan state for Work Plan 1000124 is already set as OMS completed. GID: 1000125
+2030-01-15 10:00:09.350 [PID=1253][TID=0x1a2b] INFO - Getting restoration devices for instructions of work plan : 1000124.
+2030-01-15 10:00:09.400 [PID=1253][TID=0x1a2b] DEBUGLOG - Calling 'ExampleFunction' for 5 SDP-s under feeder (GID:1000200).
+2030-01-15 10:00:09.450 [PID=1253][TID=0x1a2b] DEBUGLOG - Successfully added 7 new SDP-s to delta.
+2030-01-15 10:00:09.500 [PID=1253][TID=0x1a2b] DEBUGLOG - Updating customer info for incidents: 1000123, 1000124.
+2030-01-15 10:00:09.550 [PID=1253][TID=0x1a2b] DEBUGLOG - Updating energization for 4 transformers.
+2030-01-15 10:00:09.600 [PID=1253][TID=0x1a2b] DEBUGLOG - Updating customer energization statistics finished. Next update iteration will be in 15 minutes.
+2030-01-15 10:00:09.650 [PID=1253][TID=0x1a2b] DEBUGLOG - GetAdditionSdpsForTroubleEventsAndFeedbacks returned SDPs .
+2030-01-15 10:00:09.700 [PID=1253][TID=0x1a2b] DEBUGLOG - Fetching 12 updated network elements
+2030-01-15 10:00:09.750 [PID=1253][TID=0x1a2b] DEBUGLOG - Got 12 network elements from NMS
+2030-01-15 10:00:09.800 [PID=1253][TID=0x1a2b] INFO - PredictionFunction execution finished. JobID: 1000123. JobRequestStatus: DoneWithSuccess. ResultsPartOrdinalNumber: 1. TotalNumberOfResultsParts: 1.
+2030-01-15 10:00:09.850 [PID=1253][TID=0x1a2b] INFO - PredictionFunction failed. JobID: 1000123. JobRequestStatus: DoneWithError. ResultsPartOrdinalNumber: 1. TotalNumberOfResultsParts: 1.
+2030-01-15 10:00:09.900 [PID=1253][TID=0x1a2b] ERROR - (ERROR) Field Complete must be after the first trouble call event time.
+2030-01-15 10:00:09.950 [PID=1253][TID=0x1a2b] DEBUGLOG - [DynamicFeederSynchronizer][ExampleCache] Refresh feeders for entities 1000123, 1000124 started.

@@ -889,14 +889,15 @@ class = "other"
 title = "Outage detail (signal values, voltage control, reclosing, commands, isolation)"
 sev = 5
 fts = false
-regex = '''^Outage [Ii]d: (?P<outage>(?:0x)?[0-9A-Fa-f]{1,16})\. (?!Auto (?:FLISR|LAR) |Function '|Latest function |Removing outage started|Outage removed|Outage closed)(?P<detail>.+)$'''
+window = 400
+regex = '''^Outage [Ii]d: (?P<outage>(?:0x)?[0-9A-Fa-f]{1,16})\. (?!Auto (?:FLISR|LAR) |Function '|Latest function |Removing outage started|Outage removed|Outage closed)(?!.*(?:[Ff]ail|[Ee]rror|[Ee]xception))(?P<detail>.+)$'''
 fields = { outage = "hex" }
 examples = [
     { msg = "Outage Id: 4A00B00C00D00E01. Signal 4A00B00C00D00E02. Last not zero value: 2. Quality: ValidityGood.", fields = { detail = "Signal 4A00B00C00D00E02. Last not zero value: 2. Quality: ValidityGood." } },
     "Outage id: 4A00B00C00D00E01. Mark LV candidates started...",
     "Outage Id: 4A00B00C00D00E01. Command to change Switch Status to Open is sent.",
 ]
-counter_examples = ["Outage Id: 4A00B00C00D00E01. Auto FLISR State: From: NotAuto To: CheckingTriggers."]
+counter_examples = ["Outage Id: 4A00B00C00D00E01. Auto FLISR State: From: NotAuto To: CheckingTriggers.", "Outage Id: 4A00B00C00D00E01. Command failed to execute."]
 
 [[template]]
 code = "DOM-111"
@@ -1104,12 +1105,13 @@ class = "other"
 title = "Document command step (inputs, actions, transition command)"
 sev = 5
 fts = false
-regex = '''^\[WMS => (?P<command>[^\s\]]+) (?P<account>[^\s\]]+)\] \[(?P<component>GenericDocumentCommand|CommandFactory)\] ?: (?!(?:Condition|Prepare|Post execute) error creating)(?P<detail>.+)$'''
+window = 400
+regex = '''^\[WMS => (?P<command>[^\s\]]+) (?P<account>[^\s\]]+)\] \[(?P<component>GenericDocumentCommand|CommandFactory)\] ?: (?!(?:Condition|Prepare|Post execute) error creating)(?!.*(?:[Ff]ail|[Ee]rror|[Ee]xception))(?P<detail>.+)$'''
 examples = [
     { msg = "[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [GenericDocumentCommand] : Condition inputs are created.", fields = { component = "GenericDocumentCommand" } },
     "[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [CommandFactory] : Creating transition command for entity [0x44E0191000023|1000123|system:1102|type:WORK_PLAN] in context Transition.",
 ]
-counter_examples = ["[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [GenericDocumentCommand] : Condition error creating..."]
+counter_examples = ["[WMS => GenericDocumentCommand:WORK_PLAN_(T)_260309 EXAMPLE\\user01] [GenericDocumentCommand] : Condition error creating...", "[WMS => GenericDocumentCommand:X EXAMPLE\\user01] [CommandFactory] : Failed to create command."]
 
 [[template]]
 code = "DOM-060"
@@ -1288,7 +1290,8 @@ class = "other"
 title = "Work management step (archive, events, notifications, commands, outage statistics, simulation)"
 sev = 5
 fts = false
-regex = '''^\[(?P<component>Archive|DBHelper|AsyncCommandProcessor|GenerateEvents|DynamicFeedersHandler|OutageStatisticsFunctionHelper|WMSSimulationService|ArchivingTool|SendOutageReportHelper|NetworkViewDataRepository|CRExecuter|CR - Transfer|Final|WMSNotificationService|SafetyDocumentValidation)\] ?:? (?!Function error code )(?P<detail>.+)$'''
+window = 400
+regex = '''^\[(?P<component>Archive|DBHelper|AsyncCommandProcessor|GenerateEvents|DynamicFeedersHandler|OutageStatisticsFunctionHelper|WMSSimulationService|ArchivingTool|SendOutageReportHelper|NetworkViewDataRepository|CRExecuter|CR - Transfer|Final|WMSNotificationService|SafetyDocumentValidation)\] ?:? (?!Function error code )(?!.*(?:[Ff]ail|[Ee]rror|[Ee]xception))(?P<detail>.+)$'''
 examples = [
     { msg = "[Archive] : Archived state set for [0x44E0191000023|1000123|system:1102|type:WORK_PLAN]", fields = { component = "Archive" } },
     "[GenerateEvents] : Start with GenerateUpdateEvent...",
@@ -1296,7 +1299,7 @@ examples = [
     "[Final] : CloseIncident for SP [1000123] execution call started...",
     "[SafetyDocumentValidation] Electrical isolation point: 1000123",
 ]
-counter_examples = ["[Unknown] : nothing"]
+counter_examples = ["[Unknown] : nothing", "[Archive] Query execution failed."]
 
 [[template]]
 code = "DOM-074"
@@ -1329,11 +1332,24 @@ title = "Work plan execution before its start time or model update with errors"
 sev = 3
 sev_field = "errors"
 sev_map = { 0 = 4 }
-regex = '''^(?:\[WMS => ModelUpdateCommand\]: Async method (?P<method>\w+)\(\) finished with (?P<errors>\d+) errors|\[WarnExecutionBeforeStartDateCommand\] Callback populated with (?P<callback_errors>\d+) errors|\[ExecutionDateTimeChecker\] Work plan start date time is greater than execution time\. Throw (?P<warning>\w+) error with type Warning)\.$'''
+regex = '''^(?:\[WMS => ModelUpdateCommand\]: Async method (?P<method>\w+)\(\) finished with (?P<errors>\d+) errors|\[ExecutionDateTimeChecker\] Work plan start date time is greater than execution time\. Throw (?P<warning>\w+) error with type Warning)\.$'''
 examples = [
     { msg = "[WMS => ModelUpdateCommand]: Async method HandleModelUpdateAsync() finished with 0 errors.", fields = { method = "HandleModelUpdateAsync", errors = "0" } },
-    "[WarnExecutionBeforeStartDateCommand] Callback populated with 1 errors.",
     "[ExecutionDateTimeChecker] Work plan start date time is greater than execution time. Throw WMS_EXAMPLE_WARNING error with type Warning.",
+]
+counter_examples = ["[WarnExecutionBeforeStartDateCommand] Callback populated with 1 errors."]
+
+[[template]]
+code = "DOM-194"
+class = "validation"
+title = "Work plan execution before its start time: callback error count"
+sev = 3
+sev_field = "callback_errors"
+sev_map = { 0 = 4 }
+regex = '''^\[WarnExecutionBeforeStartDateCommand\] Callback populated with (?P<callback_errors>\d+) errors\.$'''
+examples = [
+    { msg = "[WarnExecutionBeforeStartDateCommand] Callback populated with 0 errors.", fields = { callback_errors = "0" } },
+    "[WarnExecutionBeforeStartDateCommand] Callback populated with 1 errors.",
 ]
 counter_examples = ["[WarnExecutionBeforeStartDateCommand] Callback populated."]
 

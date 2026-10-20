@@ -381,13 +381,14 @@ class = "lifecycle"
 title = "Model update participant phase (annual schedule, contingency analysis, power apps caches)"
 sev = 5
 fts = false
-regex = '''^\[(?:ASC|ECC|CPC)\]:? (?P<detail>.+)$'''
+window = 400
+regex = '''^\[(?:ASC|ECC|CPC)\]:? (?!.*(?:[Ff]ail|[Ee]rror|[Ee]xception))(?P<detail>.+)$'''
 examples = [
     { msg = "[ASC] Prepare phase in AnnualScheduleCache started.", fields = { detail = "Prepare phase in AnnualScheduleCache started." } },
     "[ECC]: Commit method of model update procedure has been succeeded.",
     "[CPC]: Prepare for model update",
 ]
-counter_examples = ["[ABC] Prepare phase in AnnualScheduleCache started."]
+counter_examples = ["[ABC] Prepare phase in AnnualScheduleCache started.", "[ASC] Prepare phase in AnnualScheduleCache failed."]
 
 [[template]]
 code = "DCR-038"
@@ -1487,8 +1488,13 @@ code = "DCR-374"
 class = "error"
 title = "Subscriber disconnected because the publisher could not be reached"
 sev = 2
+sev_field = "on_demand"
+sev_map = { True = 4, False = 2 }
 regex = '''^(?:\[NDSSubscriber\]|TASSubscriber -) OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = (?P<on_demand>True|False)\. Reason: (?P<reason>.*)$'''
-examples = [{ msg = "[NDSSubscriber] OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = False. Reason: Subscriber(ExamplePubSub) failed to connect to the service with an exception: ", fields = { on_demand = "False" } }]
+examples = [
+    { msg = "[NDSSubscriber] OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = False. Reason: Subscriber(ExamplePubSub) failed to connect to the service with an exception: ", fields = { on_demand = "False" } },
+    "[NDSSubscriber] OnSubscriberDisconnected: Subscriber disconnected, onUserDemand = True. Reason: User requested disconnect",
+]
 counter_examples = ["[NDSSubscriber] OnSubscriberConnected: Subscriber connected."]
 
 [[template]]
