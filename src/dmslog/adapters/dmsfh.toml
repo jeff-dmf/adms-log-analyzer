@@ -1113,14 +1113,22 @@ class = "end"
 title = "State estimation or model readiness function finished"
 sev = 5
 sev_field = "result"
-sev_map = { success = 5, warning = 3, error = 2 }
-regex = '''^(?:\[SE\] State Estimation|\[MR\] Model Readiness) function finished with (?P<result>success|warning|error)\.$'''
+sev_map = { success = 5, warning = 3 }
+regex = '''^(?:\[SE\] State Estimation|\[MR\] Model Readiness) function finished with (?P<result>success|warning)\.$'''
 examples = [
     { msg = "[SE] State Estimation function finished with success.", fields = { result = "success" } },
     "[SE] State Estimation function finished with warning.",
-    "[MR] Model Readiness function finished with error.",
 ]
-counter_examples = ["[SE] State Estimation function finished with delay."]
+counter_examples = ["[SE] State Estimation function finished with delay.", "[SE] State Estimation function finished with error."]
+
+[[template]]
+code = "DFH-195"
+class = "error"
+title = "State estimation or model readiness function failed"
+sev = 2
+regex = '''^(?:\[SE\] State Estimation|\[MR\] Model Readiness) function finished with error\.$'''
+examples = ["[SE] State Estimation function finished with error.", "[MR] Model Readiness function finished with error."]
+counter_examples = ["[SE] State Estimation function finished with success."]
 
 [[template]]
 code = "DFH-193"
@@ -1157,6 +1165,6 @@ counter_examples = ["Measurement indicating energization, analog GID 1, continue
 name = "FunctionHostJob"
 start = ["DFH-002"]
 end_ok = ["DFH-023"]
-fail = ["DFH-071", "DFH-072", "DFH-088", "DFH-089"]
+fail = ["DFH-071", "DFH-072", "DFH-088", "DFH-089", "DFH-190", "DFH-195"]
 pair_by = ["tid"]
 check_key = "job_id"

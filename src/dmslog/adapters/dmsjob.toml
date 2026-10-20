@@ -130,10 +130,32 @@ code = "DJB-007"
 class = "end"
 title = "Scheduler received a list of job statuses"
 sev = 4
-regex = '''^\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: (?P<status>\w+, [\w, ]+)\.$'''
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted|DoneWithWarning|Cancelled)\b)\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: (?P<status>\w+, [\w, ]+)\.$'''
 fields = { job_id = "int", status = "list" }
 keys = ["job_id"]
-examples = [{ msg = "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithWarning, DoneWithSuccess, DoneWithSuccess.", fields = { job_id = 1000123, status = ["DoneWithWarning", "DoneWithSuccess", "DoneWithSuccess"] } }]
+examples = [{ msg = "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithSuccess, DoneWithSuccess.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithSuccess", "DoneWithSuccess"] } }]
+counter_examples = ["[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess."]
+
+[[template]]
+code = "DJB-144"
+class = "end"
+title = "Scheduler received a list of job statuses (with a warning)"
+sev = 3
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted)\b)(?=.*\b(?:DoneWithWarning|Cancelled)\b)\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithWarning.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithWarning"] } }]
+counter_examples = ["[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess."]
+
+[[template]]
+code = "DJB-145"
+class = "end"
+title = "Scheduler received a list of job statuses (with an error)"
+sev = 2
+regex = '''^(?=.*\b(?:DoneWithError|Failed|Aborted)\b)\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithError.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithError"] } }]
 counter_examples = ["[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess."]
 
 [[template]]
@@ -154,10 +176,32 @@ code = "DJB-009"
 class = "req_resp"
 title = "Scheduler sends a list of job statuses"
 sev = 4
-regex = '''^Sending job status\. JobID: (?P<job_id>\d+), status (?P<status>\w+, [\w, ]+)\.$'''
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted|DoneWithWarning|Cancelled)\b)Sending job status\. JobID: (?P<job_id>\d+), status (?P<status>\w+, [\w, ]+)\.$'''
 fields = { job_id = "int", status = "list" }
 keys = ["job_id"]
 examples = [{ msg = "Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithSuccess.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithSuccess"] } }]
+counter_examples = ["Sending job status. JobID: 1000123, status DoneWithSuccess."]
+
+[[template]]
+code = "DJB-146"
+class = "req_resp"
+title = "Scheduler sends a list of job statuses (with a warning)"
+sev = 3
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted)\b)(?=.*\b(?:DoneWithWarning|Cancelled)\b)Sending job status\. JobID: (?P<job_id>\d+), status (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithWarning.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithWarning"] } }]
+counter_examples = ["Sending job status. JobID: 1000123, status DoneWithSuccess."]
+
+[[template]]
+code = "DJB-147"
+class = "req_resp"
+title = "Scheduler sends a list of job statuses (with an error)"
+sev = 2
+regex = '''^(?=.*\b(?:DoneWithError|Failed|Aborted)\b)Sending job status\. JobID: (?P<job_id>\d+), status (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithError.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithError"] } }]
 counter_examples = ["Sending job status. JobID: 1000123, status DoneWithSuccess."]
 
 [[template]]
@@ -279,11 +323,35 @@ class = "req_resp"
 title = "Launcher sends a list of job statuses to the Scheduler"
 sev = 4
 fts = false
-regex = '''^Sending job status to JS\. JobID: (?P<job_id>\d+), Status: (?P<status>\w+, [\w, ]+)$'''
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted|DoneWithWarning|Cancelled)\b)Sending job status to JS\. JobID: (?P<job_id>\d+), Status: (?P<status>\w+, [\w, ]+)$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithSuccess", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithSuccess"] } }]
+counter_examples = ["Sending job status to JS. JobID: 1000123, Status: Running"]
+
+[[template]]
+code = "DJB-148"
+class = "req_resp"
+title = "Launcher sends a list of job statuses to the Scheduler (with a warning)"
+sev = 3
+fts = false
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted)\b)(?=.*\b(?:DoneWithWarning|Cancelled)\b)Sending job status to JS\. JobID: (?P<job_id>\d+), Status: (?P<status>\w+, [\w, ]+)$'''
 fields = { job_id = "int", status = "list" }
 keys = ["job_id"]
 examples = [{ msg = "Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithWarning", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithWarning"] } }]
-counter_examples = ["Sending job status to JS. JobID: 1000123, Status: Running"]
+counter_examples = ["Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess"]
+
+[[template]]
+code = "DJB-149"
+class = "req_resp"
+title = "Launcher sends a list of job statuses to the Scheduler (with an error)"
+sev = 2
+fts = false
+regex = '''^(?=.*\b(?:DoneWithError|Failed|Aborted)\b)Sending job status to JS\. JobID: (?P<job_id>\d+), Status: (?P<status>\w+, [\w, ]+)$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithError", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithError"] } }]
+counter_examples = ["Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess"]
 
 [[template]]
 code = "DJB-042"
@@ -1078,7 +1146,7 @@ max_dt_ms = 60000
 [[link_rule]]
 kind = "response"
 a = "DJB-003"
-b = ["DJB-006", "DJB-007"]
+b = ["DJB-006", "DJB-007", "DJB-144", "DJB-145"]
 key = "job_id"
 max_dt_ms = 60000
 
