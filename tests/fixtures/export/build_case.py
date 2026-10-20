@@ -55,7 +55,11 @@ def build_export_case(path: Path) -> Path:
     with conn:
         conn.executemany(
             "INSERT INTO meta(key, value) VALUES (?, ?)",
-            [("case_id", "export-fixture"), ("name", "ACME SUBALPHA outage"), ("pack_version", "test-pack")],
+            [
+                ("case_id", "export-fixture"),
+                ("name", "ACME SUBALPHA zxqvaultn"),
+                ("pack_version", "test-pack"),
+            ],
         )
         conn.executemany(
             "INSERT INTO collection(id, kind, path, ers_guid, ers_ts, ers_variant, ers_group, machine,"
