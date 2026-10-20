@@ -100,3 +100,52 @@ def test_the_rt_families_extend_the_rt_library_first(catalog):
         if family.family.startswith("_"):
             continue
         assert tuple(family.extends[:2]) == ("_dmsrt", "_common"), family.family
+
+
+@pytest.mark.parametrize(
+    ("family", "msg", "code", "sev"),
+    [
+        (
+            "DMSJOB",
+            "[Scheduler] JobID: 7 received its status. Job status: DoneWithSuccess, DoneWithSuccess.",
+            "DJB-007",
+            4,
+        ),
+        (
+            "DMSJOB",
+            "[Scheduler] JobID: 7 received its status. Job status: DoneWithSuccess, DoneWithWarning.",
+            "DJB-144",
+            3,
+        ),
+        (
+            "DMSJOB",
+            "[Scheduler] JobID: 7 received its status. Job status: DoneWithError, DoneWithSuccess.",
+            "DJB-145",
+            2,
+        ),
+        (
+            "DMSJOB",
+            "[Scheduler] JobID: 7 received its status. Job status: DoneWithWarning, DoneWithError.",
+            "DJB-145",
+            2,
+        ),
+        ("DMSJOB", "Sending job status. JobID: 7, status DoneWithSuccess, DoneWithError.", "DJB-147", 2),
+        (
+            "DMSJOB",
+            "Sending job status to JS. JobID: 7, Status: DoneWithSuccess, DoneWithWarning",
+            "DJB-148",
+            3,
+        ),
+        ("DMSJOB", "Sending job status to JS. JobID: 7, Status: DoneWithError, DoneWithError", "DJB-149", 2),
+    ],
+)
+def test_status_list_severity_is_the_worst_status(catalog, family, msg, code, sev):
+    tm = catalog.for_family(family, sensitive=False).classify_text(msg)
+    assert tm is not None
+    assert (tm.code, tm.sev_hint) == (code, sev)
+
+
+def test_function_host_job_fails_on_every_explicit_failure_code(catalog):
+    op = next(o for o in catalog.families["DMSFH"].operations if o["name"] == "FunctionHostJob")
+    for code in ("DFH-190", "DFH-195"):
+        assert code in op["fail"]

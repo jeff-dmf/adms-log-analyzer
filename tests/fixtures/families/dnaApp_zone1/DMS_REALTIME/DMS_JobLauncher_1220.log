@@ -1,0 +1,124 @@
+﻿2030-01-15 10:00:00.000 [PID=1220][TID=0x1a2b] INFO - New job request identifier is generated. JobID: 1000123
+2030-01-15 10:00:00.050 [PID=1220][TID=0x1a2b] INFO - New job is received. JobID: 1000123 Function: StateEstimation
+2030-01-15 10:00:00.100 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending JobID: 1000123 Function: LoadFlow to Job Launcher ID: 00000000-0000-4000-8000-0000a0000001. Channel index: 2
+2030-01-15 10:00:00.150 [PID=1220][TID=0x1a2b] DEBUGLOG - JobID: 1000123 Function: LoadFlow is sent to Job Launcher ID: 00000000-0000-4000-8000-0000a0000001.
+2030-01-15 10:00:00.200 [PID=1220][TID=0x1a2b] DEBUGLOG - [Scheduler] JobID: 1000123 received its status. Job status: Running.
+2030-01-15 10:00:00.250 [PID=1220][TID=0x1a2b] INFO - [Scheduler] JobID: 1000123 received its status. Job status: DoneWithError.
+2030-01-15 10:00:00.300 [PID=1220][TID=0x1a2b] INFO - [Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithSuccess, DoneWithSuccess.
+2030-01-15 10:00:00.350 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending job status. JobID: 1000123, status DoneWithWarning.
+2030-01-15 10:00:00.400 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithSuccess.
+2030-01-15 10:00:00.450 [PID=1220][TID=0x1a2b] DEBUGLOG - Scheduler - DoesJobStatusMatchesInfoLevel: returned: False for JobID: 1000123 and InfoLevel TaskFinished .
+2030-01-15 10:00:00.500 [PID=1220][TID=0x1a2b] DEBUGLOG - [Scheduler] Job status does not match info level.
+2030-01-15 10:00:00.550 [PID=1220][TID=0x1a2b] DEBUGLOG - [Scheduler] Scheduler - SetJobStatus: job status callback notification is being enqueued; JobID: 1000123
+2030-01-15 10:00:00.600 [PID=1220][TID=0x1a2b] DEBUGLOG - [Scheduler] Scheduler - CancelRequestReceived: Processing cancel request; JobID: 1000123, isWaiting=False, isRunning=True, isRetrying=False, isPreparing=False, isCanceling=False.
+2030-01-15 10:00:00.650 [PID=1220][TID=0x1a2b] DEBUGLOG - [Scheduler] Scheduler - CancelRequestReceived: Job cancel processed; JobID: 1000123, code=OK
+2030-01-15 10:00:00.700 [PID=1220][TID=0x1a2b] DEBUGLOG - JobRequestDispatcherChannel - CancelJob: Sending job cancel; JobID: 1000123
+2030-01-15 10:00:00.750 [PID=1220][TID=0x1a2b] DEBUGLOG - SubmitJobContract - SelectiveCancelJobRequest: Job cancel succeeded. JobID: 1000123.
+2030-01-15 10:00:00.800 [PID=1220][TID=0x1a2b] INFO - New job request identifier is generated. JobID: x
+2030-01-15 10:00:00.850 [PID=1220][TID=0x1a2b] DEBUGLOG - Cancel JobID 1000123 received.
+2030-01-15 10:00:00.900 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending job status to JS. JobID: 1000123, Status: Running
+2030-01-15 10:00:00.950 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithSuccess
+2030-01-15 10:00:01.000 [PID=1220][TID=0x1a2b] DEBUGLOG - [JobProcessArray][AddJob] Job with JobID: 1000123 added to JobProcess array at index: 3. jobSlotIsNull = True, jobIdCurrentlyInSlot = NotApplicable, processSlotIsNull = False, processIsRestarting = False, totalSlots = 8, isSecondLap = False
+2030-01-15 10:00:01.050 [PID=1220][TID=0x1a2b] DEBUGLOG - [JobProcessArray][RemoveJob] Job with JobID: 1000123 on index: 3 removed from JobProcess array.
+2030-01-15 10:00:01.100 [PID=1220][TID=0x1a2b] INFO - [JobProcessArray][AddProcess] New FH process 4242 is added to jobProcess array at index: 3.
+2030-01-15 10:00:01.150 [PID=1220][TID=0x1a2b] DEBUGLOG - Memory leak green level. ProcessID: 4242
+2030-01-15 10:00:01.200 [PID=1220][TID=0x1a2b] ERROR - Memory leak red level! ProcessID: 4242
+2030-01-15 10:00:01.250 [PID=1220][TID=0x1a2b] ERROR - [Launcher][MemoryLeakCheck] Memory leak red status detected for process with ProcessID: 4242.
+2030-01-15 10:00:01.300 [PID=1220][TID=0x1a2b] WARNING - [Launcher][MemoryLeakCheck] Shutdown of FunctionHost process with ProcessID 4242, because memory leak is detected. Process will be restarted.
+2030-01-15 10:00:01.350 [PID=1220][TID=0x1a2b] WARNING - [Launcher][MemoryLeakCheck] FunctionHost process is restarted because memory leak is occurred. Old FH ProcessID: 4242, new FH ProcessID: 4343.
+2030-01-15 10:00:01.400 [PID=1220][TID=0x1a2b] DEBUGLOG - [Launcher] [ExecuteJob] Sending Execute command to FH ProcessID: 4242 | SlotID: 3 | JobID: 1000123 | Function: StateEstimation
+2030-01-15 10:00:01.450 [PID=1220][TID=0x1a2b] INFO - New job received. JobID: 1000123 Function: StateEstimation
+2030-01-15 10:00:01.500 [PID=1220][TID=0x1a2b] INFO - [Launcher] [ExecuteJob] DMS function execution started. JobID: 1000123 | Function: LoadFlow | ProcessID: 4242 | SlotID: 3
+2030-01-15 10:00:01.550 [PID=1220][TID=0x1a2b] DEBUGLOG - Result received: DoneWithWarning from ProcessID: 4242 | SlotID: 3 | JobID: 1000123 | Function: StateEstimation. Is last job result: False.
+2030-01-15 10:00:01.600 [PID=1220][TID=0x1a2b] INFO - Result received: DoneWithError from ProcessID: 4242 | SlotID: 3 | JobID: 1000123 | Function: ModelReadiness. Is last job result: True.
+2030-01-15 10:00:01.650 [PID=1220][TID=0x1a2b] INFO - Sending JobID: 1000123 Function: LoadFlow to Job Launcher ID: none. Channel index: 2
+2030-01-15 10:00:01.700 [PID=1220][TID=0x1a2b] INFO - (LauncherCommmUnit) CloseProxy: Closing FH proxy. ProcessID: 4242.
+2030-01-15 10:00:01.750 [PID=1220][TID=0x1a2b] WARNING - [Launcher][OnFunctionHostMonitorEvent] Handling FunctionHostMonitor event. Message: ProcessCrashAlarm, ProcessID: 4242
+2030-01-15 10:00:01.800 [PID=1220][TID=0x1a2b] WARNING - [Launcher][OnFunctionHostMonitorEvent] FunctionHost with ProcessID 4242 will be cleaned up, because of ProcessCrashAlarm
+2030-01-15 10:00:01.850 [PID=1220][TID=0x1a2b] WARNING - [Launcher][OnFunctionHostMonitorEvent] (WARNING) FunctionHost ProcessID 4242 is different from internal ProcessID 4343. Notification is ignored.
+2030-01-15 10:00:01.900 [PID=1220][TID=0x1a2b] WARNING - [Launcher][ShutdownFunctionHost] Trying to kill FH; ProcesID: 4242
+2030-01-15 10:00:01.950 [PID=1220][TID=0x1a2b] INFO - [Launcher][CreateNewHostProcess] Starting a new FH process with parameters: hostPath=Example_Host.exe, absolutePath=C:\Example\bin\Example_Host.exe, workingDirectory=C:\Example\bin,
+2030-01-15 10:00:02.000 [PID=1220][TID=0x1a2b] INFO - [Launcher][CreateNewHostProcess] New process with processID: 4343 is created.
+2030-01-15 10:00:02.050 [PID=1220][TID=0x1a2b] DEBUGLOG - JobReceiver - CancelJob: CancelJob called for job with jobId: 1000123.
+2030-01-15 10:00:02.100 [PID=1220][TID=0x1a2b] DEBUGLOG - LauncherJobInfo - HandleJobMsg: Handling job message; JobID: 1000123, message: Cancel, jobState=DoneWithSuccess.
+2030-01-15 10:00:02.150 [PID=1220][TID=0x1a2b] WARNING - [Launcher] Launcher - CancelJob: FH will be shutdown because of job cancel request; FHindex=3, ProcessID=4242, requestId=77
+2030-01-15 10:00:02.200 [PID=1220][TID=0x1a2b] WARNING - [Launcher][OnFunctionHostMonitorEvent] FunctionHost process is restarted because ProcessCrashAlarm is occurred. Old FH ProcessID: 4242, new FH ProcessID: 4343.
+2030-01-15 10:00:02.250 [PID=1220][TID=0x1a2b] DEBUGLOG - (JMS) [EventJobStateHandler] Job 00000000-0000-4000-8000-0000a0000011 switched state from FetchData to Idle
+2030-01-15 10:00:02.300 [PID=1220][TID=0x1a2b] DEBUGLOG - EventDataProvider rows returned: 120; time elapsed:15,5 ms
+2030-01-15 10:00:02.350 [PID=1220][TID=0x1a2b] DEBUGLOG - (JMS) [DataStorage] [StorageSubscriberReaderBase] [ExampleSubscriberReader] RefreshReaderCache Finished processing model update change: Old: 10 New: 11 Cache count: 500. Storage Count: 501
+2030-01-15 10:00:02.400 [PID=1220][TID=0x1a2b] WARNING - (JMS) [DataStorage] [StorageReader] [ExampleSubscriberReader] RefreshReadersCache Detected that reader would read inconsistent data. Retrying reading after model update is finished
+2030-01-15 10:00:02.450 [PID=1220][TID=0x1a2b] DEBUGLOG - (JMS) [DataStorage] [StorageSubscriberReaderBase] [ExampleSubscriberReader] Subscribe: Subscriber Id: 7 Push data on subscribe finished in 0:00:01.5.
+2030-01-15 10:00:02.500 [PID=1220][TID=0x1a2b] INFO - JobID: 1000123 Function: LoadFlow is queued for Job Launcher ID: 00000000-0000-4000-8000-0000a0000001.
+2030-01-15 10:00:02.550 [PID=1220][TID=0x1a2b] INFO - [ExampleSummaryJob].[SendResult] EntireDBSearched: False, Cancelled: False, LastDaysLimitExceeded: True, Records:25, JobGuid:00000000-0000-4000-8000-0000a0000012
+2030-01-15 10:00:02.600 [PID=1220][TID=0x1a2b] INFO - Start async job(ExampleBrowserJob) called for job with guid 00000000-0000-4000-8000-0000a0000013 Jobs count: 4 Client session id: 00000000-0000-4000-8000-0000a0000014.
+2030-01-15 10:00:02.650 [PID=1220][TID=0x1a2b] INFO - Modify async job(ExampleBrowserJobParam) called for job with guid 00000000-0000-4000-8000-0000a0000013.
+2030-01-15 10:00:02.700 [PID=1220][TID=0x1a2b] INFO - Terminate async job(ExampleBrowserJob) called for job with guid 00000000-0000-4000-8000-0000a0000013.
+2030-01-15 10:00:02.750 [PID=1220][TID=0x1a2b] INFO - Terminate ExampleReportJob, with GUID 00000000-0000-4000-8000-0000a0000015.
+2030-01-15 10:00:02.800 [PID=1220][TID=0x1a2b] INFO - Modify ExampleLogbookJob, GUID 00000000-0000-4000-8000-0000a0000016, Param: GetExample.
+2030-01-15 10:00:02.850 [PID=1220][TID=0x1a2b] INFO - OperationsLogbookJob result ready.
+2030-01-15 10:00:02.900 [PID=1220][TID=0x1a2b] INFO - Execute sync job called for job ExampleJob - Detail. Jobs count: 3.
+2030-01-15 10:00:02.950 [PID=1220][TID=0x1a2b] INFO - Result created for sync job ExampleJob - Detail. Init took 2 ms, executed in 15 ms. Jobs left 1.
+2030-01-15 10:00:03.000 [PID=1220][TID=0x1a2b] DEBUGLOG - JobService.AliveTimerTick: Started.
+2030-01-15 10:00:03.050 [PID=1220][TID=0x1a2b] DEBUGLOG - Started PrepareReportData at 10:20:30.123. Execution time for PopulateCrewData: 5 ms, PopulateExtensibilityPropertiesValues: 6 ms, PopulateExtendedValues: 7 ms, SortByOptimalIndex: 8 ms
+2030-01-15 10:00:03.100 [PID=1220][TID=0x1a2b] WARNING - Async job termination error! Job with guid = 00000000-0000-4000-8000-0000a0000027 does not exist!
+2030-01-15 10:00:03.150 [PID=1220][TID=0x1a2b] ALWAYS - Try to open conections to ExecutableService.
+2030-01-15 10:00:03.200 [PID=1220][TID=0x1a2b] DEBUGLOG - (JMS) [ExampleReportJobParam] Data: Job Guid: 00000000-0000-4000-8000-0000a0000017, Request id: 5, ApplyAutoRefresh: False, AutoRefreshInterval: 30, ElementsPerPage: 50, PageNumber: 1, Filters: STRING Name = example, AdditionalFilters: 
+2030-01-15 10:00:03.250 [PID=1220][TID=0x1a2b] INFO - ExampleGenericJob with Guid: 00000000-0000-4000-8000-0000a0000018 - Terminated
+2030-01-15 10:00:03.300 [PID=1220][TID=0x1a2b] INFO - CrewPermissionHelper - job guid=00000000-0000-4000-8000-0000a0000019
+2030-01-15 10:00:03.350 [PID=1220][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:03.400 [PID=1220][TID=0x1a2b] DEBUGLOG - CollectionsCreatorWithPool - IncreaseCollectionCapacity 00000000-0000-4000-8000-0000a0000020 ExampleRecord collection capacity replaced with 2000
+2030-01-15 10:00:03.450 [PID=1220][TID=0x1a2b] INFO - Example Validation job part 1 of 2 completed with status: DoneWithWarning! JobId: 1000123, Internal JobId: 1000124
+2030-01-15 10:00:03.500 [PID=1220][TID=0x1a2b] INFO - Example Validation job terminated successfully guid=1000127.
+2030-01-15 10:00:03.550 [PID=1220][TID=0x1a2b] INFO - Work Plan Validation completed successfully!
+2030-01-15 10:00:03.600 [PID=1220][TID=0x1a2b] DEBUGLOG - Calling UI callback from ExampleSaveJob job 00000000-0000-4000-8000-0000a0000022.
+2030-01-15 10:00:03.650 [PID=1220][TID=0x1a2b] INFO - (JMS) [ExampleStatusJob] successfully modified
+2030-01-15 10:00:03.700 [PID=1220][TID=0x1a2b] ALWAYS - [JobDateTimeFormatProvider], Job Guid: 00000000-0000-4000-8000-0000a0000023, SetJobCultureInfo => Culture name: Example (Land), TimeFormat: Second, TimePattern: HH:mm:ss
+2030-01-15 10:00:03.750 [PID=1220][TID=0x1a2b] DEBUGLOG - FillGroupAreasMapping - elapsed 12
+2030-01-15 10:00:03.800 [PID=1220][TID=0x1a2b] INFO - (JMS) [ExampleSummaryJob] GUID: 00000000-0000-4000-8000-0000a0000024 Modify: Received priority param ExampleSummaryJobParam change.
+2030-01-15 10:00:03.850 [PID=1220][TID=0x1a2b] DEBUGLOG - Number of converted SDP Gids Count 12 to CustomID is 10
+2030-01-15 10:00:03.900 [PID=1220][TID=0x1a2b] INFO - AsyncDispatcher Dispatcher started: ExampleJob_3.
+2030-01-15 10:00:03.950 [PID=1220][TID=0x1a2b] INFO - ExampleConfigAsyncJob Started 00000000-0000-4000-8000-0000a0000025
+2030-01-15 10:00:04.000 [PID=1220][TID=0x1a2b] ERROR - UIConfigCache failed updating configuration 'ExampleConfig'.
+2030-01-15 10:00:04.050 [PID=1220][TID=0x1a2b] INFO - Start Example Trace job: 00000000-0000-4000-8000-0000a0000026
+2030-01-15 10:00:04.100 [PID=1220][TID=0x1a2b] INFO - CustomerIntegratedSearchJob is started. Job parameters are search terms: example and maximum number of result records: 7.
+2030-01-15 10:00:04.150 [PID=1220][TID=0x1a2b] INFO - CustomerIntegratedSearchJob is finished. Found 7 results for search terms: example.
+2030-01-15 10:00:04.200 [PID=1220][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:04.250 [PID=1220][TID=0x1a2b] DEBUGLOG - Call in GetExampleRows() for 10 customers to customerDataBase.GetExampleData returned 9 items.
+2030-01-15 10:00:04.300 [PID=1220][TID=0x1a2b] DEBUGLOG - [TimeSeriesReader] Created 12 raw series.
+2030-01-15 10:00:04.350 [PID=1220][TID=0x1a2b] DEBUGLOG - JobExecutor: It took 15 ms to execute JobStartCommand for async job (ExampleReportJob) with guid 00000000-0000-4000-8000-0000a0000028.
+2030-01-15 10:00:04.400 [PID=1220][TID=0x1a2b] DEBUGLOG - Getting CustomerSDP details for 12 sdpGids.
+2030-01-15 10:00:04.450 [PID=1220][TID=0x1a2b] INFO - Start ExampleLogbookJob, GUID 00000000-0000-4000-8000-0000a0000016, Param: .
+2030-01-15 10:00:04.500 [PID=1220][TID=0x1a2b] INFO - Causes job 00000000-0000-4000-8000-0000a0000029 completed successfully!
+2030-01-15 10:00:04.550 [PID=1220][TID=0x1a2b] DEBUGLOG - (JMS) [KPICommunicationManager] ModelChangePublicationHandler entered.
+2030-01-15 10:00:04.600 [PID=1220][TID=0x1a2b] WARNING - [Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithWarning.
+2030-01-15 10:00:04.650 [PID=1220][TID=0x1a2b] ERROR - [Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithError.
+2030-01-15 10:00:04.700 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithWarning.
+2030-01-15 10:00:04.750 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithError.
+2030-01-15 10:00:04.800 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithWarning
+2030-01-15 10:00:04.850 [PID=1220][TID=0x1a2b] DEBUGLOG - Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithError
+2030-01-15 10:00:04.900 [PID=1220][TID=0x1a2b] INFO - [Scheduler] JobID: 1000124 received its status. Job status: Cancelled.
+2030-01-15 10:00:04.950 [PID=1220][TID=0x1a2b] DEBUGLOG - [Scheduler] Scheduler - SetJobStatus: job status callback notification enqueued; JobID: 1000123
+2030-01-15 10:00:05.000 [PID=1220][TID=0x1a2b] DEBUGLOG - JobRequestDispatcherChannel - CancelJob: Job cancel sent; JobID: 1000123
+2030-01-15 10:00:05.050 [PID=1220][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:05.100 [PID=1220][TID=0x1a2b] INFO - [JobProcessArray][RemoveProcess] ProcessID: 4242 on index: 3 removed from JobProcess array.
+2030-01-15 10:00:05.150 [PID=1220][TID=0x1a2b] DEBUGLOG - Memory leak yellow level. ProcessID: 4242
+2030-01-15 10:00:05.200 [PID=1220][TID=0x1a2b] INFO - (LauncherCommmUnit) CloseProxy: FH proxy is closed. ProcessID: 4242.
+2030-01-15 10:00:05.250 [PID=1220][TID=0x1a2b] WARNING - [Launcher][OnFunctionHostMonitorEvent] FunctionHost with ProcessID 4242 is cleaned up, because of ProcessCrashAlarm
+2030-01-15 10:00:05.300 [PID=1220][TID=0x1a2b] WARNING - [Launcher][ShutdownFunctionHost] FH killed; ProcessID: 4242
+2030-01-15 10:00:05.350 [PID=1220][TID=0x1a2b] DEBUGLOG - [Launcher][OnCancelRequestEvent] Cancel request accepted. Request: 77
+2030-01-15 10:00:05.400 [PID=1220][TID=0x1a2b] DEBUGLOG - [Launcher][DelayJobCancellation] Launcher - DelayJobCancellation: Job ID=1000123 cancel try number 1 out of maximum 5.
+2030-01-15 10:00:05.450 [PID=1220][TID=0x1a2b] DEBUGLOG - [Launcher][DelayJobCancellation] Launcher - DelayJobCancellation: JobID: 1000123 cancel submitted.
+2030-01-15 10:00:05.500 [PID=1220][TID=0x1a2b] DEBUGLOG - LauncherJobInfo - HandleJobMsg: New state transition=SendCancelJob
+2030-01-15 10:00:05.550 [PID=1220][TID=0x1a2b] INFO - Start ExampleReportJob, type GET_EXAMPLE, with GUID 00000000-0000-4000-8000-0000a0000015.
+2030-01-15 10:00:05.600 [PID=1220][TID=0x1a2b] WARNING - Async job modification error! Job with guid = 00000000-0000-4000-8000-0000a0000027 does not exist!
+2030-01-15 10:00:05.650 [PID=1220][TID=0x1a2b] INFO - ExampleTrace job 00000000-0000-4000-8000-0000a0000021, part 1 of 1 completed with status: DoneWithSuccess! JobId: 1000125, Internal JobId: 1000126
+2030-01-15 10:00:05.700 [PID=1220][TID=0x1a2b] DEBUGLOG - Calling UI callback from ExampleTraceJob job {0}.00000000-0000-4000-8000-0000a0000022
+2030-01-15 10:00:05.750 [PID=1220][TID=0x1a2b] INFO - (JMS) [ExampleStatusJob] successfully started.
+2030-01-15 10:00:05.800 [PID=1220][TID=0x1a2b] INFO - AsyncDispatcher Waiting for dispatcher: ExampleJob_3 to stop.
+2030-01-15 10:00:05.850 [PID=1220][TID=0x1a2b] INFO - ExampleConfigAsyncJob Terminated 00000000-0000-4000-8000-0000a0000025
+2030-01-15 10:00:05.900 [PID=1220][TID=0x1a2b] INFO - Start Example Validation job with guid = 00000000-0000-4000-8000-0000a0000026
+2030-01-15 10:00:05.950 [PID=1220][TID=0x1a2b] DEBUGLOG - Call in ConvertExample() to customerDataBase.GetExampleTypes returned 3 items, and customerDataBase.GetExampleSchedule returned 0 items.
+2030-01-15 10:00:06.000 [PID=1220][TID=0x1a2b] DEBUGLOG - Getting CustomerSDP details for 12 sdpGids returned 10 objects.
+2030-01-15 10:00:06.050 [PID=1220][TID=0x1a2b] INFO - Start ExampleLogbookJob, GUID 00000000-0000-4000-8000-0000a0000016, Param: GetExample.
+2030-01-15 10:00:06.100 [PID=1220][TID=0x1a2b] INFO - Terminate Causes Job job : 00000000-0000-4000-8000-0000a0000029
+2030-01-15 10:00:06.150 [PID=1220][TID=0x1a2b] DEBUGLOG - (JMS) [KPICommunicationManager] ModelChangePublicationHandler finished.

@@ -1,0 +1,1159 @@
+# Real-time job services (family DMSJOB): DMS_JobScheduler, DMS_JobLauncher and
+# DMS_JobManagerService (normal and sensitive streams). Design: docs/notas/rt-templates-desenho.md.
+#
+# Codes: DJB-001..039 Scheduler, DJB-040..079 Launcher, DJB-100..169 JobManagerService normal,
+# DJB-S100..S129 JobManagerService sensitive. Correlation keys: `job_id` (the calculation job that
+# crosses Scheduler, Launcher, FunctionHost and CoreFunctions), `jms_job` (the asynchronous client
+# job of the JobManagerService, not the same number space), `fh_pid` / `new_pid` (FunctionHost
+# life-cycle lines only). Infrastructure lines shared with other real-time families belong to
+# `_dmsrt`, not to this file.
+#
+# Job status (section 3.3 of the design note): a line with ONE status maps the severity through
+# `sev_map`; a line with a LIST of statuses keeps sev 4 (the failure shows on the single-status line
+# of the same `job_id`).
+
+schema = 1
+family = "DMSJOB"
+description = "DMS_JobScheduler, DMS_JobLauncher and DMS_JobManagerService: scheduling, launching and client jobs of the real-time servers"
+extends = ["_dmsrt", "_common"]
+
+# ---------------------------------------------------------------------------------------------
+# JobManagerService, sensitive stream (DJB-S100..S129). First in the file: the dispatch tries the
+# templates of a key in file order, and these two carry almost all of the stream.
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DJB-S100"
+class = "start"
+title = "Asynchronous client job started (with the client workstation)"
+sev = 4
+stream = "sensitive"
+regex = '''^Start async job\((?P<job_type>[^)]+)\) called for job with guid (?P<jms_job>[0-9a-fA-F-]{36}) Jobs count: (?P<jobs>\d+) Client session id: (?P<session>[0-9a-fA-F-]{36})\. Hostname: (?P<host>\S+) Endpoint: (?P<endpoint>\S+)$'''
+fields = { jms_job = "guid", jobs = "int", session = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "Start async job(ExampleBrowserJob) called for job with guid 00000000-0000-4000-8000-000000000013 Jobs count: 4 Client session id: 00000000-0000-4000-8000-000000000014. Hostname: HOST01 Endpoint: 192.0.2.10", fields = { job_type = "ExampleBrowserJob", jms_job = "00000000-0000-4000-8000-000000000013", jobs = 4, host = "HOST01", endpoint = "192.0.2.10" } }]
+counter_examples = ["Start async job(ExampleBrowserJob) called for job with guid 00000000-0000-4000-8000-000000000013 Jobs count: 4 Client session id: 00000000-0000-4000-8000-000000000014."]
+
+[[template]]
+code = "DJB-S101"
+class = "lifecycle"
+title = "Concurrent job execution of a user started or completed"
+sev = 4
+stream = "sensitive"
+regex = '''^\[ConcurrentJobExecutionManager:(?P<job_type>\w+)\] (?P<phase>Started new job|Job completed) for {1,2}principal(?:: (?P<user>[^,\s]+) ?)?, concurrent jobs for pri(?:n|ni)cipal: (?P<concurrent>\d+), total jobs running: (?P<running>\d+)\.$'''
+fields = { concurrent = "int", running = "int" }
+examples = [
+    { msg = "[ConcurrentJobExecutionManager:ExampleSummaryJob] Started new job for  principal: EXAMPLE\\user01 , concurrent jobs for principal: 1, total jobs running: 3.", fields = { job_type = "ExampleSummaryJob", phase = "Started new job", user = "EXAMPLE\\user01", concurrent = 1, running = 3 } },
+    "[ConcurrentJobExecutionManager:ExampleSummaryJob] Job completed for principal: EXAMPLE\\user01, concurrent jobs for principal: 0, total jobs running: 2.",
+    "[ConcurrentJobExecutionManager:ExampleSummaryJob] Started new job for principal, concurrent jobs for prinicipal: 2, total jobs running: 4.",
+]
+counter_examples = ["[ConcurrentJobExecutionManager:ExampleSummaryJob] Job queued for principal: EXAMPLE\\user01, concurrent jobs for principal: 0, total jobs running: 2."]
+
+# ---------------------------------------------------------------------------------------------
+# JobScheduler (DJB-001..039)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DJB-001"
+class = "start"
+title = "New job request identifier generated"
+sev = 4
+regex = '''^New job request identifier is generated\. JobID: (?P<job_id>\d+)$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "New job request identifier is generated. JobID: 1000123", fields = { job_id = 1000123 } }]
+counter_examples = ["New job request identifier is generated. JobID: x"]
+
+[[template]]
+code = "DJB-002"
+class = "start"
+title = "Scheduler received a new job"
+sev = 4
+regex = '''^New job is received\. JobID: (?P<job_id>\d+) Function: (?P<function>\w+)$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "New job is received. JobID: 1000123 Function: StateEstimation", fields = { job_id = 1000123, function = "StateEstimation" } }]
+counter_examples = ["New job received. JobID: 1000123 Function: StateEstimation"]
+
+[[template]]
+code = "DJB-003"
+class = "req_resp"
+title = "Job sent to a Job Launcher (channel)"
+sev = 4
+regex = '''^Sending JobID: (?P<job_id>\d+) Function: (?P<function>\w+) to Job Launcher ID: (?P<launcher>[0-9a-fA-F-]{36})\. Channel index: (?P<channel>\d+)$'''
+fields = { job_id = "int", launcher = "guid", channel = "int" }
+keys = ["job_id"]
+examples = [{ msg = "Sending JobID: 1000123 Function: LoadFlow to Job Launcher ID: 00000000-0000-4000-8000-000000000001. Channel index: 2", fields = { job_id = 1000123, function = "LoadFlow", channel = 2 } }]
+counter_examples = ["Sending JobID: 1000123 Function: LoadFlow to Job Launcher ID: none. Channel index: 2"]
+
+[[template]]
+code = "DJB-004"
+class = "req_resp"
+title = "Job sent to a Job Launcher (confirmation)"
+sev = 4
+regex = '''^JobID: (?P<job_id>\d+) Function: (?P<function>\w+) is sent to Job Launcher ID: (?P<launcher>[0-9a-fA-F-]{36})\.$'''
+fields = { job_id = "int", launcher = "guid" }
+keys = ["job_id"]
+examples = [{ msg = "JobID: 1000123 Function: LoadFlow is sent to Job Launcher ID: 00000000-0000-4000-8000-000000000001.", fields = { job_id = 1000123, function = "LoadFlow" } }]
+counter_examples = ["JobID: 1000123 Function: LoadFlow is queued for Job Launcher ID: 00000000-0000-4000-8000-000000000001."]
+
+[[template]]
+code = "DJB-005"
+class = "lifecycle"
+title = "Scheduler received a job status: Running"
+sev = 5
+fts = false
+regex = '''^\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: Running\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "[Scheduler] JobID: 1000123 received its status. Job status: Running.", fields = { job_id = 1000123 } }]
+counter_examples = ["[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess."]
+
+[[template]]
+code = "DJB-006"
+class = "end"
+title = "Scheduler received a final job status"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4 }
+regex = '''^\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: (?P<status>(?!Running\.)\w+)\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithError.", fields = { job_id = 1000123, status = "DoneWithError" } },
+    "[Scheduler] JobID: 1000124 received its status. Job status: Cancelled.",
+]
+counter_examples = ["[Scheduler] JobID: 1000123 received its status. Job status: Running.", "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithSuccess."]
+
+[[template]]
+code = "DJB-007"
+class = "end"
+title = "Scheduler received a list of job statuses"
+sev = 4
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted|DoneWithWarning|Cancelled)\b)\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithSuccess, DoneWithSuccess.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithSuccess", "DoneWithSuccess"] } }]
+counter_examples = ["[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess."]
+
+[[template]]
+code = "DJB-144"
+class = "end"
+title = "Scheduler received a list of job statuses (with a warning)"
+sev = 3
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted)\b)(?=.*\b(?:DoneWithWarning|Cancelled)\b)\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithWarning.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithWarning"] } }]
+counter_examples = ["[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess."]
+
+[[template]]
+code = "DJB-145"
+class = "end"
+title = "Scheduler received a list of job statuses (with an error)"
+sev = 2
+regex = '''^(?=.*\b(?:DoneWithError|Failed|Aborted)\b)\[Scheduler\] JobID: (?P<job_id>\d+) received its status\. Job status: (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess, DoneWithError.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithError"] } }]
+counter_examples = ["[Scheduler] JobID: 1000123 received its status. Job status: DoneWithSuccess."]
+
+[[template]]
+code = "DJB-008"
+class = "req_resp"
+title = "Scheduler sends one job status"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4, Running = 5 }
+regex = '''^Sending job status\. JobID: (?P<job_id>\d+), status (?P<status>\w+)\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status. JobID: 1000123, status DoneWithWarning.", fields = { job_id = 1000123, status = "DoneWithWarning" } }]
+counter_examples = ["Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithSuccess."]
+
+[[template]]
+code = "DJB-009"
+class = "req_resp"
+title = "Scheduler sends a list of job statuses"
+sev = 4
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted|DoneWithWarning|Cancelled)\b)Sending job status\. JobID: (?P<job_id>\d+), status (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithSuccess.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithSuccess"] } }]
+counter_examples = ["Sending job status. JobID: 1000123, status DoneWithSuccess."]
+
+[[template]]
+code = "DJB-146"
+class = "req_resp"
+title = "Scheduler sends a list of job statuses (with a warning)"
+sev = 3
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted)\b)(?=.*\b(?:DoneWithWarning|Cancelled)\b)Sending job status\. JobID: (?P<job_id>\d+), status (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithWarning.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithWarning"] } }]
+counter_examples = ["Sending job status. JobID: 1000123, status DoneWithSuccess."]
+
+[[template]]
+code = "DJB-147"
+class = "req_resp"
+title = "Scheduler sends a list of job statuses (with an error)"
+sev = 2
+regex = '''^(?=.*\b(?:DoneWithError|Failed|Aborted)\b)Sending job status\. JobID: (?P<job_id>\d+), status (?P<status>\w+, [\w, ]+)\.$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status. JobID: 1000123, status DoneWithSuccess, DoneWithError.", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithError"] } }]
+counter_examples = ["Sending job status. JobID: 1000123, status DoneWithSuccess."]
+
+[[template]]
+code = "DJB-010"
+class = "other"
+title = "Job status checked against the info level"
+sev = 5
+fts = false
+regex = '''^Scheduler - DoesJobStatusMatchesInfoLevel: returned: (?P<matches>True|False) for JobID: (?P<job_id>\d+) and InfoLevel (?P<info_level>\w+) \.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "Scheduler - DoesJobStatusMatchesInfoLevel: returned: False for JobID: 1000123 and InfoLevel TaskFinished .", fields = { job_id = 1000123, matches = "False", info_level = "TaskFinished" } }]
+counter_examples = ["Scheduler - DoesJobStatusMatchesInfoLevel: returned: Maybe for JobID: 1000123 and InfoLevel TaskFinished ."]
+
+[[template]]
+code = "DJB-011"
+class = "other"
+title = "Job status does not match the info level"
+sev = 5
+fts = false
+text = "[Scheduler] Job status does not match info level."
+examples = ["[Scheduler] Job status does not match info level."]
+counter_examples = ["[Scheduler] Job status matches info level."]
+
+[[template]]
+code = "DJB-012"
+class = "other"
+title = "Job status callback notification queued"
+sev = 5
+fts = false
+regex = '''^\[Scheduler\] Scheduler - SetJobStatus: job status callback notification (?P<phase>is being enqueued|enqueued); JobID: (?P<job_id>\d+)$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "[Scheduler] Scheduler - SetJobStatus: job status callback notification is being enqueued; JobID: 1000123", fields = { job_id = 1000123, phase = "is being enqueued" } },
+    "[Scheduler] Scheduler - SetJobStatus: job status callback notification enqueued; JobID: 1000123",
+]
+counter_examples = ["[Scheduler] Scheduler - SetJobStatus: job status callback notification dropped; JobID: 1000123"]
+
+[[template]]
+code = "DJB-013"
+class = "req_resp"
+title = "Cancel request received by the Scheduler"
+sev = 4
+regex = '''^\[Scheduler\] Scheduler - CancelRequestReceived: Processing cancel request; JobID: (?P<job_id>\d+), isWaiting=(?P<is_waiting>\w+), isRunning=(?P<is_running>\w+), isRetrying=(?P<is_retrying>\w+), isPreparing=(?P<is_preparing>\w+), isCanceling=(?P<is_canceling>\w+)\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "[Scheduler] Scheduler - CancelRequestReceived: Processing cancel request; JobID: 1000123, isWaiting=False, isRunning=True, isRetrying=False, isPreparing=False, isCanceling=False.", fields = { job_id = 1000123, is_running = "True" } }]
+counter_examples = ["[Scheduler] Scheduler - CancelRequestReceived: Processing cancel request; JobID: x, isWaiting=False, isRunning=True, isRetrying=False, isPreparing=False, isCanceling=False."]
+
+[[template]]
+code = "DJB-014"
+class = "req_resp"
+title = "Job cancel processed by the Scheduler"
+sev = 4
+regex = '''^\[Scheduler\] Scheduler - CancelRequestReceived: Job cancel processed; JobID: (?P<job_id>\d+), code=(?P<result>\w+)$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "[Scheduler] Scheduler - CancelRequestReceived: Job cancel processed; JobID: 1000123, code=OK", fields = { job_id = 1000123, result = "OK" } }]
+counter_examples = ["[Scheduler] Scheduler - CancelRequestReceived: Job cancel pending; JobID: 1000123, code=OK"]
+
+[[template]]
+code = "DJB-015"
+class = "req_resp"
+title = "Job cancel sent through the dispatcher channel"
+sev = 4
+regex = '''^JobRequestDispatcherChannel - CancelJob: Job cancel (?P<phase>sent); JobID: (?P<job_id>\d+)$|^JobRequestDispatcherChannel - CancelJob: Sending job cancel; JobID: (?P<job_id2>\d+)$'''
+fields = { job_id = "int", job_id2 = "int" }
+keys = ["job_id", { field = "job_id2", type = "job_id" }]
+examples = [
+    { msg = "JobRequestDispatcherChannel - CancelJob: Sending job cancel; JobID: 1000123", fields = { job_id2 = 1000123 } },
+    { msg = "JobRequestDispatcherChannel - CancelJob: Job cancel sent; JobID: 1000123", fields = { job_id = 1000123 } },
+]
+counter_examples = ["JobRequestDispatcherChannel - CancelJob: Job cancel failed; JobID: 1000123"]
+
+[[template]]
+code = "DJB-016"
+class = "req_resp"
+title = "Cancel request from a client succeeded"
+sev = 4
+regex = '''^SubmitJobContract - SelectiveCancelJobRequest: Job cancel succeeded\. JobID: (?P<job_id>\d+)\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "SubmitJobContract - SelectiveCancelJobRequest: Job cancel succeeded. JobID: 1000123.", fields = { job_id = 1000123 } }]
+counter_examples = ["SubmitJobContract - SelectiveCancelJobRequest: Job cancel succeeded. JobID: x."]
+
+[[template]]
+code = "DJB-017"
+class = "req_resp"
+title = "Cancel request received"
+sev = 4
+regex = '''^Cancel JobID (?P<job_id>\d+) received\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "Cancel JobID 1000123 received.", fields = { job_id = 1000123 } }]
+counter_examples = ["Cancel JobID x received."]
+
+# ---------------------------------------------------------------------------------------------
+# JobLauncher (DJB-040..079)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DJB-040"
+class = "req_resp"
+title = "Launcher sends one job status to the Scheduler"
+sev = 4
+fts = false
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4, Running = 5 }
+regex = '''^Sending job status to JS\. JobID: (?P<job_id>\d+), Status: (?P<status>\w+)$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status to JS. JobID: 1000123, Status: Running", fields = { job_id = 1000123, status = "Running" } }]
+counter_examples = ["Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithSuccess"]
+
+[[template]]
+code = "DJB-041"
+class = "req_resp"
+title = "Launcher sends a list of job statuses to the Scheduler"
+sev = 4
+fts = false
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted|DoneWithWarning|Cancelled)\b)Sending job status to JS\. JobID: (?P<job_id>\d+), Status: (?P<status>\w+, [\w, ]+)$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithSuccess", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithSuccess"] } }]
+counter_examples = ["Sending job status to JS. JobID: 1000123, Status: Running"]
+
+[[template]]
+code = "DJB-148"
+class = "req_resp"
+title = "Launcher sends a list of job statuses to the Scheduler (with a warning)"
+sev = 3
+fts = false
+regex = '''^(?!.*\b(?:DoneWithError|Failed|Aborted)\b)(?=.*\b(?:DoneWithWarning|Cancelled)\b)Sending job status to JS\. JobID: (?P<job_id>\d+), Status: (?P<status>\w+, [\w, ]+)$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithWarning", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithWarning"] } }]
+counter_examples = ["Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess"]
+
+[[template]]
+code = "DJB-149"
+class = "req_resp"
+title = "Launcher sends a list of job statuses to the Scheduler (with an error)"
+sev = 2
+fts = false
+regex = '''^(?=.*\b(?:DoneWithError|Failed|Aborted)\b)Sending job status to JS\. JobID: (?P<job_id>\d+), Status: (?P<status>\w+, [\w, ]+)$'''
+fields = { job_id = "int", status = "list" }
+keys = ["job_id"]
+examples = [{ msg = "Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess, DoneWithError", fields = { job_id = 1000123, status = ["DoneWithSuccess", "DoneWithError"] } }]
+counter_examples = ["Sending job status to JS. JobID: 1000123, Status: DoneWithSuccess"]
+
+[[template]]
+code = "DJB-042"
+class = "other"
+title = "Job added to the job-process array"
+sev = 5
+fts = false
+regex = '''^\[JobProcessArray\]\[AddJob\] Job with JobID: (?P<job_id>\d+) added to JobProcess array at index: (?P<index>\d+)\. .*$'''
+fields = { job_id = "int", index = "int" }
+keys = ["job_id"]
+examples = [{ msg = "[JobProcessArray][AddJob] Job with JobID: 1000123 added to JobProcess array at index: 3. jobSlotIsNull = True, jobIdCurrentlyInSlot = NotApplicable, processSlotIsNull = False, processIsRestarting = False, totalSlots = 8, isSecondLap = False", fields = { job_id = 1000123, index = 3 } }]
+counter_examples = ["[JobProcessArray][AddJob] Job with JobID: x added to JobProcess array at index: 3. jobSlotIsNull = True"]
+
+[[template]]
+code = "DJB-043"
+class = "other"
+title = "Job removed from the job-process array"
+sev = 5
+fts = false
+regex = '''^\[JobProcessArray\]\[RemoveJob\] Job with JobID: (?P<job_id>\d+) on index: (?P<index>\d+) removed from JobProcess array\.$'''
+fields = { job_id = "int", index = "int" }
+keys = ["job_id"]
+examples = [{ msg = "[JobProcessArray][RemoveJob] Job with JobID: 1000123 on index: 3 removed from JobProcess array.", fields = { job_id = 1000123, index = 3 } }]
+counter_examples = ["[JobProcessArray][RemoveJob] Job with JobID: 1000123 on index: x removed from JobProcess array."]
+
+[[template]]
+code = "DJB-044"
+class = "lifecycle"
+title = "FunctionHost process added to or removed from the job-process array"
+sev = 4
+regex = '''^\[JobProcessArray\]\[(?P<action>AddProcess|RemoveProcess)\] (?:New FH process (?P<fh_pid>\d+) is added to jobProcess array|ProcessID: (?P<fh_pid2>\d+) on index: (?P<index2>\d+) removed from JobProcess array)(?: at index: (?P<index>\d+))?\.$'''
+fields = { fh_pid = "int", fh_pid2 = "int", index = "int", index2 = "int" }
+keys = ["fh_pid", { field = "fh_pid2", type = "fh_pid" }]
+examples = [
+    { msg = "[JobProcessArray][AddProcess] New FH process 4242 is added to jobProcess array at index: 3.", fields = { action = "AddProcess", fh_pid = 4242, index = 3 } },
+    { msg = "[JobProcessArray][RemoveProcess] ProcessID: 4242 on index: 3 removed from JobProcess array.", fields = { action = "RemoveProcess", fh_pid2 = 4242, index2 = 3 } },
+]
+counter_examples = ["[JobProcessArray][AddProcess] New FH process x is added to jobProcess array at index: 3."]
+
+[[template]]
+code = "DJB-045"
+class = "statistics"
+title = "FunctionHost memory heartbeat (green or yellow)"
+sev = 5
+fts = false
+sev_field = "level"
+sev_map = { yellow = 3, green = 5 }
+regex = '''^Memory leak (?P<level>green|yellow) level\. ProcessID: (?P<fh_pid>\d+)$'''
+fields = { fh_pid = "int" }
+examples = [
+    { msg = "Memory leak green level. ProcessID: 4242", fields = { level = "green", fh_pid = 4242 } },
+    "Memory leak yellow level. ProcessID: 4242",
+]
+counter_examples = ["Memory leak red level! ProcessID: 4242"]
+
+[[template]]
+code = "DJB-046"
+class = "error"
+title = "FunctionHost memory at the red level"
+sev = 2
+regex = '''^Memory leak red level! ProcessID: (?P<fh_pid>\d+)$'''
+fields = { fh_pid = "int" }
+keys = ["fh_pid"]
+examples = [{ msg = "Memory leak red level! ProcessID: 4242", fields = { fh_pid = 4242 } }]
+counter_examples = ["Memory leak red level. ProcessID: 4242"]
+
+[[template]]
+code = "DJB-050"
+class = "req_resp"
+title = "Execute command sent to a FunctionHost"
+sev = 4
+fts = false
+regex = '''^\[Launcher\] \[ExecuteJob\] Sending Execute command to FH ProcessID: (?P<fh_pid>\d+) \| SlotID: (?P<slot>\d+) \| JobID: (?P<job_id>\d+) \| Function: (?P<function>\w+)$'''
+fields = { fh_pid = "int", slot = "int", job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "[Launcher] [ExecuteJob] Sending Execute command to FH ProcessID: 4242 | SlotID: 3 | JobID: 1000123 | Function: StateEstimation", fields = { fh_pid = 4242, slot = 3, job_id = 1000123, function = "StateEstimation" } }]
+counter_examples = ["[Launcher] [ExecuteJob] Sending Execute command to FH ProcessID: x | SlotID: 3 | JobID: 1000123 | Function: StateEstimation"]
+
+[[template]]
+code = "DJB-052"
+class = "start"
+title = "Function execution started in the FunctionHost"
+sev = 4
+fts = false
+regex = '''^\[Launcher\] \[ExecuteJob\] DMS function execution started\. JobID: (?P<job_id>\d+) \| Function: (?P<function>\w+) \| ProcessID: (?P<fh_pid>\d+) \| SlotID: (?P<slot>\d+)$'''
+fields = { fh_pid = "int", slot = "int", job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "[Launcher] [ExecuteJob] DMS function execution started. JobID: 1000123 | Function: LoadFlow | ProcessID: 4242 | SlotID: 3", fields = { fh_pid = 4242, slot = 3, job_id = 1000123, function = "LoadFlow" } }]
+counter_examples = ["[Launcher] [ExecuteJob] DMS function execution started. JobID: x | Function: LoadFlow | ProcessID: 4242 | SlotID: 3"]
+
+[[template]]
+code = "DJB-047"
+class = "lifecycle"
+title = "Red memory status detected for a FunctionHost"
+sev = 2
+regex = '''^\[Launcher\]\[MemoryLeakCheck\] Memory leak red status detected for process with ProcessID: (?P<fh_pid>\d+)\.$'''
+fields = { fh_pid = "int" }
+keys = ["fh_pid"]
+examples = [{ msg = "[Launcher][MemoryLeakCheck] Memory leak red status detected for process with ProcessID: 4242.", fields = { fh_pid = 4242 } }]
+counter_examples = ["[Launcher][MemoryLeakCheck] Memory leak yellow status detected for process with ProcessID: 4242."]
+
+[[template]]
+code = "DJB-048"
+class = "lifecycle"
+title = "FunctionHost shutdown because of a memory leak"
+sev = 3
+regex = '''^\[Launcher\]\[MemoryLeakCheck\] Shutdown of FunctionHost process with ProcessID (?P<fh_pid>\d+), because memory leak is detected\. Process will be restarted\.$'''
+fields = { fh_pid = "int" }
+keys = ["fh_pid"]
+examples = [{ msg = "[Launcher][MemoryLeakCheck] Shutdown of FunctionHost process with ProcessID 4242, because memory leak is detected. Process will be restarted.", fields = { fh_pid = 4242 } }]
+counter_examples = ["[Launcher][MemoryLeakCheck] Shutdown of FunctionHost process with ProcessID x, because memory leak is detected. Process will be restarted."]
+
+[[template]]
+code = "DJB-049"
+class = "lifecycle"
+title = "FunctionHost restarted after a memory leak"
+sev = 3
+regex = '''^\[Launcher\]\[MemoryLeakCheck\] FunctionHost process is restarted because memory leak is occurred\. Old FH ProcessID: (?P<fh_pid>\d+), new FH ProcessID: (?P<new_pid>\d+)\.$'''
+fields = { fh_pid = "int", new_pid = "int" }
+keys = ["fh_pid", "new_pid"]
+examples = [{ msg = "[Launcher][MemoryLeakCheck] FunctionHost process is restarted because memory leak is occurred. Old FH ProcessID: 4242, new FH ProcessID: 4343.", fields = { fh_pid = 4242, new_pid = 4343 } }]
+counter_examples = ["[Launcher][MemoryLeakCheck] FunctionHost process is restarted because memory leak is occurred. Old FH ProcessID: x, new FH ProcessID: 4343."]
+
+[[template]]
+code = "DJB-051"
+class = "start"
+title = "Launcher received a new job"
+sev = 4
+fts = false
+regex = '''^New job received\. JobID: (?P<job_id>\d+) Function: (?P<function>\w+)$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "New job received. JobID: 1000123 Function: StateEstimation", fields = { job_id = 1000123, function = "StateEstimation" } }]
+counter_examples = ["New job is received. JobID: 1000123 Function: StateEstimation"]
+
+[[template]]
+code = "DJB-053"
+class = "req_resp"
+title = "Intermediate function result received from a FunctionHost"
+sev = 4
+fts = false
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4, Running = 5 }
+regex = '''^Result received: (?P<status>\w+) from ProcessID: (?P<fh_pid>\d+) \| SlotID: (?P<slot>\d+) \| JobID: (?P<job_id>\d+) \| Function: (?P<function>\w+)\. Is last job result: False\.$'''
+fields = { fh_pid = "int", slot = "int", job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "Result received: DoneWithWarning from ProcessID: 4242 | SlotID: 3 | JobID: 1000123 | Function: StateEstimation. Is last job result: False.", fields = { status = "DoneWithWarning", fh_pid = 4242, slot = 3, job_id = 1000123, function = "StateEstimation" } }]
+counter_examples = ["Result received: DoneWithSuccess from ProcessID: x | SlotID: 3 | JobID: 1 | Function: LoadFlow. Is last job result: False."]
+
+[[template]]
+code = "DJB-054"
+class = "end"
+title = "Last function result received from a FunctionHost"
+sev = 4
+fts = false
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4, Running = 5 }
+regex = '''^Result received: (?P<status>\w+) from ProcessID: (?P<fh_pid>\d+) \| SlotID: (?P<slot>\d+) \| JobID: (?P<job_id>\d+) \| Function: (?P<function>\w+)\. Is last job result: True\.$'''
+fields = { fh_pid = "int", slot = "int", job_id = "int" }
+keys = ["job_id"]
+examples = [{ msg = "Result received: DoneWithError from ProcessID: 4242 | SlotID: 3 | JobID: 1000123 | Function: ModelReadiness. Is last job result: True.", fields = { status = "DoneWithError", fh_pid = 4242, slot = 3, job_id = 1000123, function = "ModelReadiness" } }]
+counter_examples = ["Result received: DoneWithSuccess from ProcessID: x | SlotID: 3 | JobID: 1 | Function: LoadFlow. Is last job result: True."]
+
+[[template]]
+code = "DJB-055"
+class = "lifecycle"
+title = "FunctionHost proxy closing or closed"
+sev = 4
+regex = '''^\(LauncherCommmUnit\)\s+CloseProxy: (?P<phase>Closing FH proxy|FH proxy is closed)\. ProcessID: (?P<fh_pid>\d+)\.$'''
+fields = { fh_pid = "int" }
+keys = ["fh_pid"]
+examples = [{ msg = "(LauncherCommmUnit) CloseProxy: Closing FH proxy. ProcessID: 4242.", fields = { phase = "Closing FH proxy", fh_pid = 4242 } }, "(LauncherCommmUnit) CloseProxy: FH proxy is closed. ProcessID: 4242."]
+counter_examples = ["(LauncherCommmUnit) CloseProxy: FH proxy is open. ProcessID: 4242."]
+
+[[template]]
+code = "DJB-056"
+class = "lifecycle"
+title = "FunctionHost monitor event handled"
+sev = 3
+regex = '''^\[Launcher\]\[OnFunctionHostMonitorEvent\] Handling FunctionHostMonitor event\. Message: (?P<event>\w+), ProcessID: (?P<fh_pid>\d+)$'''
+fields = { fh_pid = "int" }
+keys = ["fh_pid"]
+examples = [{ msg = "[Launcher][OnFunctionHostMonitorEvent] Handling FunctionHostMonitor event. Message: ProcessCrashAlarm, ProcessID: 4242", fields = { event = "ProcessCrashAlarm", fh_pid = 4242 } }]
+counter_examples = ["[Launcher][OnFunctionHostMonitorEvent] Handling FunctionHostMonitor event. Message: ProcessCrashAlarm, ProcessID: x"]
+
+[[template]]
+code = "DJB-057"
+class = "lifecycle"
+title = "FunctionHost cleaned up after a crash alarm"
+sev = 3
+regex = '''^\[Launcher\]\[OnFunctionHostMonitorEvent\] FunctionHost with ProcessID (?P<fh_pid>\d+) (?:will be|is) cleaned up, because of (?P<event>\w+)$'''
+fields = { fh_pid = "int" }
+keys = ["fh_pid"]
+examples = [{ msg = "[Launcher][OnFunctionHostMonitorEvent] FunctionHost with ProcessID 4242 will be cleaned up, because of ProcessCrashAlarm", fields = { fh_pid = 4242, event = "ProcessCrashAlarm" } }, "[Launcher][OnFunctionHostMonitorEvent] FunctionHost with ProcessID 4242 is cleaned up, because of ProcessCrashAlarm"]
+counter_examples = ["[Launcher][OnFunctionHostMonitorEvent] FunctionHost with ProcessID x is cleaned up, because of ProcessCrashAlarm"]
+
+[[template]]
+code = "DJB-058"
+class = "lifecycle"
+title = "FunctionHost monitor notification ignored (process id differs)"
+sev = 3
+regex = '''^\[Launcher\]\[OnFunctionHostMonitorEvent\] \(WARNING\) FunctionHost ProcessID (?P<fh_pid>\d+) is different from internal ProcessID (?P<internal_pid>\d+)\. Notification is ignored\.$'''
+fields = { fh_pid = "int", internal_pid = "int" }
+keys = ["fh_pid"]
+examples = [{ msg = "[Launcher][OnFunctionHostMonitorEvent] (WARNING) FunctionHost ProcessID 4242 is different from internal ProcessID 4343. Notification is ignored.", fields = { fh_pid = 4242, internal_pid = 4343 } }]
+counter_examples = ["[Launcher][OnFunctionHostMonitorEvent] (WARNING) FunctionHost ProcessID x is different from internal ProcessID 4343. Notification is ignored."]
+
+[[template]]
+code = "DJB-059"
+class = "lifecycle"
+title = "FunctionHost kill attempted or done"
+sev = 3
+regex = '''^\[Launcher\]\[ShutdownFunctionHost\] (?P<phase>Trying to kill FH|FH killed); ProcesID: (?P<fh_pid>\d+)$|^\[Launcher\]\[ShutdownFunctionHost\] (?P<phase2>FH killed); ProcessID: (?P<fh_pid2>\d+)$'''
+fields = { fh_pid = "int", fh_pid2 = "int" }
+keys = ["fh_pid", { field = "fh_pid2", type = "fh_pid" }]
+examples = [{ msg = "[Launcher][ShutdownFunctionHost] Trying to kill FH; ProcesID: 4242", fields = { fh_pid = 4242 } }, { msg = "[Launcher][ShutdownFunctionHost] FH killed; ProcessID: 4242", fields = { fh_pid2 = 4242 } }]
+counter_examples = ["[Launcher][ShutdownFunctionHost] FH alive; ProcessID: 4242"]
+
+[[template]]
+code = "DJB-060"
+class = "lifecycle"
+title = "New FunctionHost process starting"
+sev = 4
+regex = '''^\[Launcher\]\[CreateNewHostProcess\] Starting a new FH process with parameters: hostPath=(?P<host_path>[^,]+), .*$'''
+examples = [{ msg = "[Launcher][CreateNewHostProcess] Starting a new FH process with parameters: hostPath=Example_Host.exe, absolutePath=C:\\Example\\bin\\Example_Host.exe, workingDirectory=C:\\Example\\bin,", fields = { host_path = "Example_Host.exe" } }]
+counter_examples = ["[Launcher][CreateNewHostProcess] Stopping the FH process"]
+
+[[template]]
+code = "DJB-061"
+class = "lifecycle"
+title = "New FunctionHost process created"
+sev = 4
+regex = '''^\[Launcher\]\[CreateNewHostProcess\] New process with processID: (?P<new_pid>\d+) is created\.$'''
+fields = { new_pid = "int" }
+keys = ["new_pid"]
+examples = [{ msg = "[Launcher][CreateNewHostProcess] New process with processID: 4343 is created.", fields = { new_pid = 4343 } }]
+counter_examples = ["[Launcher][CreateNewHostProcess] New process with processID: x is created."]
+
+[[template]]
+code = "DJB-062"
+class = "req_resp"
+title = "Job cancel handled by the Launcher"
+sev = 4
+regex = '''^JobReceiver - CancelJob: CancelJob called for job with jobId: (?P<job_id>\d+)\.$|^\[Launcher\]\[OnCancelRequestEvent\] Cancel request accepted\. Request: (?P<request_id>\d+)$|^\[Launcher\]\[DelayJobCancellation\] Launcher - DelayJobCancellation: (?:Job ID=(?P<job_id2>\d+) cancel try number \d+ out of maximum \d+|JobID: (?P<job_id3>\d+) cancel submitted)\.$'''
+fields = { job_id = "int", job_id2 = "int", job_id3 = "int", request_id = "int" }
+keys = ["job_id", { field = "job_id2", type = "job_id" }, { field = "job_id3", type = "job_id" }]
+examples = [
+    { msg = "JobReceiver - CancelJob: CancelJob called for job with jobId: 1000123.", fields = { job_id = 1000123 } },
+    { msg = "[Launcher][OnCancelRequestEvent] Cancel request accepted. Request: 77", fields = { request_id = 77 } },
+    { msg = "[Launcher][DelayJobCancellation] Launcher - DelayJobCancellation: Job ID=1000123 cancel try number 1 out of maximum 5.", fields = { job_id2 = 1000123 } },
+    { msg = "[Launcher][DelayJobCancellation] Launcher - DelayJobCancellation: JobID: 1000123 cancel submitted.", fields = { job_id3 = 1000123 } },
+]
+counter_examples = ["JobReceiver - CancelJob: CancelJob ignored for job with jobId: 1000123."]
+
+[[template]]
+code = "DJB-063"
+class = "req_resp"
+title = "Job message handled by the Launcher job info"
+sev = 4
+regex = '''^LauncherJobInfo - HandleJobMsg: (?:Handling job message; JobID: (?P<job_id>\d+), message: (?P<message>\w+), jobState=(?P<job_state>\w+)\.|New state transition=(?P<transition>\w+))$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "LauncherJobInfo - HandleJobMsg: Handling job message; JobID: 1000123, message: Cancel, jobState=DoneWithSuccess.", fields = { job_id = 1000123, message = "Cancel" } },
+    { msg = "LauncherJobInfo - HandleJobMsg: New state transition=SendCancelJob", fields = { transition = "SendCancelJob" } },
+]
+counter_examples = ["LauncherJobInfo - HandleJobMsg: Ignoring job message"]
+
+[[template]]
+code = "DJB-064"
+class = "lifecycle"
+title = "FunctionHost shut down because of a job cancel"
+sev = 3
+regex = '''^\[Launcher\] Launcher - CancelJob: FH will be shutdown because of job cancel request; FHindex=(?P<fh_index>\d+), ProcessID=(?P<fh_pid>\d+), requestId=(?P<request_id>\d+)$'''
+fields = { fh_index = "int", fh_pid = "int", request_id = "int" }
+keys = ["fh_pid"]
+examples = [{ msg = "[Launcher] Launcher - CancelJob: FH will be shutdown because of job cancel request; FHindex=3, ProcessID=4242, requestId=77", fields = { fh_index = 3, fh_pid = 4242, request_id = 77 } }]
+counter_examples = ["[Launcher] Launcher - CancelJob: FH stays up because of job cancel request; FHindex=3, ProcessID=4242, requestId=77"]
+
+[[template]]
+code = "DJB-065"
+class = "lifecycle"
+title = "FunctionHost restarted after a crash alarm"
+sev = 3
+regex = '''^\[Launcher\]\[OnFunctionHostMonitorEvent\] FunctionHost process is restarted because ProcessCrashAlarm is occurred\. Old FH ProcessID: (?P<fh_pid>\d+), new FH ProcessID: (?P<new_pid>\d+)\.$'''
+fields = { fh_pid = "int", new_pid = "int" }
+keys = ["fh_pid", "new_pid"]
+examples = [{ msg = "[Launcher][OnFunctionHostMonitorEvent] FunctionHost process is restarted because ProcessCrashAlarm is occurred. Old FH ProcessID: 4242, new FH ProcessID: 4343.", fields = { fh_pid = 4242, new_pid = 4343 } }]
+counter_examples = ["[Launcher][OnFunctionHostMonitorEvent] FunctionHost process is restarted because ProcessCrashAlarm is occurred. Old FH ProcessID: x, new FH ProcessID: 4343."]
+
+# ---------------------------------------------------------------------------------------------
+# JobManagerService, normal stream (DJB-100..169)
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DJB-100"
+class = "lifecycle"
+title = "Event job changed state"
+sev = 5
+fts = false
+regex = '''^\(JMS\) \[EventJobStateHandler\] Job (?P<jms_job>[0-9a-fA-F-]{36}) switched state from (?P<from_state>\w+) to (?P<to_state>\w+)$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "(JMS) [EventJobStateHandler] Job 00000000-0000-4000-8000-000000000011 switched state from FetchData to Idle", fields = { jms_job = "00000000-0000-4000-8000-000000000011", from_state = "FetchData", to_state = "Idle" } }]
+counter_examples = ["(JMS) [EventJobStateHandler] Job 00000000-0000-4000-8000-000000000011 kept state Idle"]
+
+[[template]]
+code = "DJB-101"
+class = "statistics"
+title = "Event data provider returned rows"
+sev = 5
+fts = false
+regex = '''^EventDataProvider rows returned: (?P<rows>\d+); time elapsed:(?P<elapsed>[\d,.]+) ms$'''
+fields = { rows = "int" }
+examples = [{ msg = "EventDataProvider rows returned: 120; time elapsed:15,5 ms", fields = { rows = 120, elapsed = "15,5" } }]
+counter_examples = ["EventDataProvider rows returned: many; time elapsed:15,5 ms"]
+
+[[template]]
+code = "DJB-102"
+class = "statistics"
+title = "Alarms reader cache refreshed after a model update"
+sev = 5
+fts = false
+regex = '''^\(JMS\) \[DataStorage\] \[StorageSubscriberReaderBase\] \[(?P<reader>\w+)\] RefreshReaderCache Finished processing model update change: Old: (?P<old>\d+) New: (?P<new>\d+) Cache count: (?P<cache_count>\d+)\. Storage Count: (?P<storage_count>\d+)$'''
+fields = { old = "int", new = "int", cache_count = "int", storage_count = "int" }
+examples = [{ msg = "(JMS) [DataStorage] [StorageSubscriberReaderBase] [ExampleSubscriberReader] RefreshReaderCache Finished processing model update change: Old: 10 New: 11 Cache count: 500. Storage Count: 501", fields = { reader = "ExampleSubscriberReader", old = 10, new = 11, cache_count = 500, storage_count = 501 } }]
+counter_examples = ["(JMS) [DataStorage] [StorageSubscriberReaderBase] [ExampleSubscriberReader] RefreshReaderCache Started processing model update change: Old: 10 New: 11 Cache count: 500. Storage Count: 501"]
+
+[[template]]
+code = "DJB-103"
+class = "other"
+title = "Alarms reader retries after an inconsistent read"
+sev = 3  # retry scheduled
+regex = '''^\(JMS\) \[DataStorage\] \[StorageReader\] \[(?P<reader>\w+)\] RefreshReadersCache Detected that reader would read inconsistent data\. Retrying reading after model update is finished$'''
+examples = [{ msg = "(JMS) [DataStorage] [StorageReader] [ExampleSubscriberReader] RefreshReadersCache Detected that reader would read inconsistent data. Retrying reading after model update is finished", fields = { reader = "ExampleSubscriberReader" } }]
+counter_examples = ["(JMS) [DataStorage] [StorageReader] [ExampleSubscriberReader] RefreshReadersCache Reader data is consistent"]
+
+[[template]]
+code = "DJB-104"
+class = "statistics"
+title = "Subscriber received its initial data"
+sev = 5
+regex = '''^\(JMS\) \[DataStorage\] \[StorageSubscriberReaderBase\] \[(?P<reader>\w+)\] Subscribe: Subscriber Id: (?P<subscriber_id>\d+) Push data on subscribe finished in (?P<elapsed>[\d:.]+)\.$'''
+fields = { subscriber_id = "int" }
+examples = [{ msg = "(JMS) [DataStorage] [StorageSubscriberReaderBase] [ExampleSubscriberReader] Subscribe: Subscriber Id: 7 Push data on subscribe finished in 0:00:01.5.", fields = { reader = "ExampleSubscriberReader", subscriber_id = 7 } }]
+counter_examples = ["(JMS) [DataStorage] [StorageSubscriberReaderBase] [ExampleSubscriberReader] Subscribe: Subscriber Id: x Push data on subscribe finished in 0:00:01.5."]
+
+[[template]]
+code = "DJB-105"
+class = "end"
+title = "Event summary result sent"
+sev = 4
+fts = false
+regex = '''^\[(?P<job_type>\w+)\]\.\[SendResult\] EntireDBSearched: (?P<entire_db>True|False), Cancelled: (?P<cancelled>True|False), LastDaysLimitExceeded: (?P<days_limit>True|False), Records:(?P<records>\d+), JobGuid:(?P<jms_job>[0-9a-fA-F-]{36})$'''
+fields = { records = "int", jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "[ExampleSummaryJob].[SendResult] EntireDBSearched: False, Cancelled: False, LastDaysLimitExceeded: True, Records:25, JobGuid:00000000-0000-4000-8000-000000000012", fields = { job_type = "ExampleSummaryJob", records = 25, jms_job = "00000000-0000-4000-8000-000000000012" } }]
+counter_examples = ["[ExampleSummaryJob].[SendResult] EntireDBSearched: Maybe, Cancelled: False, LastDaysLimitExceeded: True, Records:25, JobGuid:00000000-0000-4000-8000-000000000012"]
+
+[[template]]
+code = "DJB-106"
+class = "start"
+title = "Asynchronous client job started"
+sev = 4
+stream = "normal"
+regex = '''^Start async job\((?P<job_type>[^)]+)\) called for job with guid (?P<jms_job>[0-9a-fA-F-]{36}) Jobs count: (?P<jobs>\d+) Client session id: (?P<session>[0-9a-fA-F-]{36})\.$'''
+fields = { jms_job = "guid", jobs = "int", session = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "Start async job(ExampleBrowserJob) called for job with guid 00000000-0000-4000-8000-000000000013 Jobs count: 4 Client session id: 00000000-0000-4000-8000-000000000014.", fields = { job_type = "ExampleBrowserJob", jms_job = "00000000-0000-4000-8000-000000000013", jobs = 4 } }]
+counter_examples = ["Start async job(ExampleBrowserJob) called for job with guid x Jobs count: 4 Client session id: y."]
+
+[[template]]
+code = "DJB-107"
+class = "lifecycle"
+title = "Asynchronous client job modified"
+sev = 4
+regex = '''^Modify async job\((?P<job_type>[^)]+)\) called for job with guid (?P<jms_job>[0-9a-fA-F-]{36})\.$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "Modify async job(ExampleBrowserJobParam) called for job with guid 00000000-0000-4000-8000-000000000013.", fields = { job_type = "ExampleBrowserJobParam", jms_job = "00000000-0000-4000-8000-000000000013" } }]
+counter_examples = ["Modify async job(ExampleBrowserJobParam) called for job with guid x."]
+
+[[template]]
+code = "DJB-108"
+class = "end"
+title = "Asynchronous client job terminated"
+sev = 4
+regex = '''^Terminate async job\((?P<job_type>[^)]+)\) called for job with guid (?P<jms_job>[0-9a-fA-F-]{36})\.$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "Terminate async job(ExampleBrowserJob) called for job with guid 00000000-0000-4000-8000-000000000013.", fields = { job_type = "ExampleBrowserJob", jms_job = "00000000-0000-4000-8000-000000000013" } }]
+counter_examples = ["Terminate async job(ExampleBrowserJob) called for job with guid x."]
+
+[[template]]
+code = "DJB-109"
+class = "lifecycle"
+title = "Client job step with its GUID"
+sev = 4
+regex = '''^(?P<verb>Start|Modify|Terminate) (?P<job_type>\w+)(?:, type (?P<request_type>\w+))?, with GUID (?P<jms_job>[0-9a-fA-F-]{36})\.$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [
+    { msg = "Terminate ExampleReportJob, with GUID 00000000-0000-4000-8000-000000000015.", fields = { verb = "Terminate", job_type = "ExampleReportJob", jms_job = "00000000-0000-4000-8000-000000000015" } },
+    { msg = "Start ExampleReportJob, type GET_EXAMPLE, with GUID 00000000-0000-4000-8000-000000000015.", fields = { request_type = "GET_EXAMPLE" } },
+]
+counter_examples = ["Stop ExampleReportJob, with GUID 00000000-0000-4000-8000-000000000015."]
+
+[[template]]
+code = "DJB-110"
+class = "lifecycle"
+title = "Logbook job modified with a parameter"
+sev = 4
+regex = '''^Modify (?P<job_type>\w+), GUID (?P<jms_job>[0-9a-fA-F-]{36}), Param: (?P<param>\w+)\.$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "Modify ExampleLogbookJob, GUID 00000000-0000-4000-8000-000000000016, Param: GetExample.", fields = { job_type = "ExampleLogbookJob", jms_job = "00000000-0000-4000-8000-000000000016", param = "GetExample" } }]
+counter_examples = ["Modify ExampleLogbookJob, GUID 00000000-0000-4000-8000-000000000016."]
+
+[[template]]
+code = "DJB-111"
+class = "end"
+title = "Logbook job result ready"
+sev = 4
+text = "OperationsLogbookJob result ready."
+examples = ["OperationsLogbookJob result ready."]
+counter_examples = ["OperationsLogbookJob result pending."]
+
+[[template]]
+code = "DJB-112"
+class = "start"
+title = "Synchronous client job executing"
+sev = 4
+regex = '''^Execute sync job called for job (?P<job_name>[\w -]+)\. Jobs count: (?P<jobs>\d+)\.$'''
+fields = { jobs = "int" }
+examples = [{ msg = "Execute sync job called for job ExampleJob - Detail. Jobs count: 3.", fields = { job_name = "ExampleJob - Detail", jobs = 3 } }]
+counter_examples = ["Execute sync job called for job ExampleJob. Jobs count: x."]
+
+[[template]]
+code = "DJB-113"
+class = "end"
+title = "Synchronous client job result created"
+sev = 4
+regex = '''^Result created for sync job (?P<job_name>[\w -]+)\. Init took (?P<init_ms>\d+) ms, executed in (?P<exec_ms>\d+) ms\. Jobs left (?P<jobs_left>\d+)\.$'''
+fields = { init_ms = "int", exec_ms = "int", jobs_left = "int" }
+examples = [{ msg = "Result created for sync job ExampleJob - Detail. Init took 2 ms, executed in 15 ms. Jobs left 1.", fields = { job_name = "ExampleJob - Detail", init_ms = 2, exec_ms = 15, jobs_left = 1 } }]
+counter_examples = ["Result created for sync job ExampleJob. Init took x ms, executed in 15 ms. Jobs left 1."]
+
+[[template]]
+code = "DJB-114"
+class = "other"
+title = "Job service alive timer tick"
+sev = 5
+fts = false
+text = "JobService.AliveTimerTick: Started."
+examples = ["JobService.AliveTimerTick: Started."]
+counter_examples = ["JobService.AliveTimerTick: Stopped."]
+
+[[template]]
+code = "DJB-115"
+class = "statistics"
+title = "Report data preparation timings"
+sev = 5
+regex = '''^Started PrepareReportData at (?P<started_at>\d+:\d+:\d+(?:\.\d+)?)\. Execution time for PopulateCrewData: (?P<crew_ms>\d+) ms, PopulateExtensibilityPropertiesValues: (?P<ext_ms>\d+) ms, PopulateExtendedValues: (?P<extended_ms>\d+) ms, SortByOptimalIndex: (?P<sort_ms>\d+) ms$'''
+fields = { crew_ms = "int", ext_ms = "int", extended_ms = "int", sort_ms = "int" }
+examples = [{ msg = "Started PrepareReportData at 10:20:30.123. Execution time for PopulateCrewData: 5 ms, PopulateExtensibilityPropertiesValues: 6 ms, PopulateExtendedValues: 7 ms, SortByOptimalIndex: 8 ms", fields = { crew_ms = 5, sort_ms = 8 } }]
+counter_examples = ["Started PrepareReportData at 10:20:30.123. Execution time for PopulateCrewData: x ms"]
+
+[[template]]
+code = "DJB-116"
+class = "error"
+title = "Client job operation on a job that does not exist"
+sev = 3  # cleanup of something absent
+regex = '''^Async job (?P<op>\w+) error! Job with guid = (?P<jms_job>[0-9a-fA-F-]{36}) does not exist!$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "Async job termination error! Job with guid = 00000000-0000-4000-8000-000000000027 does not exist!", fields = { op = "termination", jms_job = "00000000-0000-4000-8000-000000000027" } }, "Async job modification error! Job with guid = 00000000-0000-4000-8000-000000000027 does not exist!"]
+counter_examples = ["Async job termination error! Job with guid = x does not exist!"]
+
+[[template]]
+code = "DJB-117"
+class = "startup"
+title = "Opening connections to the executable service"
+sev = 4
+text = "Try to open conections to ExecutableService."
+examples = ["Try to open conections to ExecutableService."]
+counter_examples = ["Try to close connections to ExecutableService."]
+
+[[template]]
+code = "DJB-118"
+class = "req_resp"
+title = "Report job parameters received"
+sev = 4
+fts = false
+regex = '''^\(JMS\) \[(?P<job_type>\w+)\] Data: Job Guid: (?P<jms_job>[0-9a-fA-F-]{36}), Request id: (?P<request_id>\d+), ApplyAutoRefresh: (?P<auto_refresh>True|False), AutoRefreshInterval: (?P<refresh_interval>\d+), ElementsPerPage: (?P<per_page>\d+), PageNumber: (?P<page>\d+), Filters: .*$'''
+fields = { jms_job = "guid", request_id = "int", refresh_interval = "int", per_page = "int", page = "int" }
+keys = ["jms_job"]
+examples = [{ msg = "(JMS) [ExampleReportJobParam] Data: Job Guid: 00000000-0000-4000-8000-000000000017, Request id: 5, ApplyAutoRefresh: False, AutoRefreshInterval: 30, ElementsPerPage: 50, PageNumber: 1, Filters: STRING Name = example, AdditionalFilters: ", fields = { job_type = "ExampleReportJobParam", jms_job = "00000000-0000-4000-8000-000000000017", request_id = 5, page = 1 } }]
+counter_examples = ["(JMS) [ExampleReportJobParam] Data: Job Guid: x, Request id: 5, ApplyAutoRefresh: False"]
+
+[[template]]
+code = "DJB-119"
+class = "end"
+title = "Job terminated (with its GUID)"
+sev = 4
+regex = '''^\[?(?P<job_type>\w+)\]? with Guid: (?P<jms_job>[0-9a-fA-F-]{36}) - Terminated$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "ExampleGenericJob with Guid: 00000000-0000-4000-8000-000000000018 - Terminated", fields = { job_type = "ExampleGenericJob", jms_job = "00000000-0000-4000-8000-000000000018" } }]
+counter_examples = ["ExampleGenericJob with Guid: x - Terminated"]
+
+[[template]]
+code = "DJB-120"
+class = "lifecycle"
+title = "Crew permission helper of a job"
+sev = 4
+regex = '''^CrewPermissionHelper - job guid=(?P<jms_job>[0-9a-fA-F-]{36})$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "CrewPermissionHelper - job guid=00000000-0000-4000-8000-000000000019", fields = { jms_job = "00000000-0000-4000-8000-000000000019" } }]
+counter_examples = ["CrewPermissionHelper - job guid=x"]
+
+[[template]]
+code = "DJB-121"
+class = "statistics"
+title = "Collection pool capacity changed"
+sev = 5
+regex = '''^CollectionsCreatorWithPool - (?P<action>IncreaseCollectionCapacity|CheckCollectionsCopyCapacity) (?P<pool>[0-9a-fA-F-]{36}) (?P<collection>\w+) collection capacity (?P<detail>.*)$'''
+fields = { pool = "guid" }
+examples = [{ msg = "CollectionsCreatorWithPool - IncreaseCollectionCapacity 00000000-0000-4000-8000-000000000020 ExampleRecord collection capacity replaced with 2000", fields = { action = "IncreaseCollectionCapacity", collection = "ExampleRecord" } }]
+counter_examples = ["CollectionsCreatorWithPool - ReleaseCollection 00000000-0000-4000-8000-000000000020 ExampleRecord collection capacity replaced with 2000"]
+
+[[template]]
+code = "DJB-122"
+class = "end"
+title = "Validation job part completed"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4 }
+regex = '''^(?P<job_name>[\w ]+?) job (?:(?P<jms_job>[0-9a-fA-F-]{36}), )?part (?P<part>\d+) of (?P<parts>\d+) completed with status: (?P<status>\w+)! JobId: (?P<job_id>\d+), Internal JobId: (?P<internal_job_id>\d+)$'''
+window = 320
+fields = { jms_job = "guid", part = "int", parts = "int", job_id = "int", internal_job_id = "int" }
+keys = ["jms_job", "job_id"]
+examples = [{ msg = "Example Validation job part 1 of 2 completed with status: DoneWithWarning! JobId: 1000123, Internal JobId: 1000124", fields = { job_name = "Example Validation", part = 1, parts = 2, status = "DoneWithWarning", job_id = 1000123, internal_job_id = 1000124 } }, "ExampleTrace job 00000000-0000-4000-8000-000000000021, part 1 of 1 completed with status: DoneWithSuccess! JobId: 1000125, Internal JobId: 1000126"]
+counter_examples = ["Example Validation job part x of 2 completed with status: DoneWithWarning! JobId: 1000123, Internal JobId: 1000124"]
+
+[[template]]
+code = "DJB-123"
+class = "end"
+title = "Validation job terminated successfully"
+sev = 4
+regex = '''^(?P<job_name>[\w ]+?) job terminated successfully guid=(?P<job_number>\d+)\.$'''
+window = 320
+fields = { job_number = "int" }
+examples = [{ msg = "Example Validation job terminated successfully guid=1000127.", fields = { job_name = "Example Validation", job_number = 1000127 } }]
+counter_examples = ["Example Validation job terminated successfully guid=x."]
+
+[[template]]
+code = "DJB-124"
+class = "end"
+title = "Work plan validation completed"
+sev = 4
+text = "Work Plan Validation completed successfully!"
+examples = ["Work Plan Validation completed successfully!"]
+counter_examples = ["Work Plan Validation completed with errors!"]
+
+[[template]]
+code = "DJB-125"
+class = "req_resp"
+title = "UI callback called from a client job"
+sev = 4
+regex = '''^Calling UI callback from\s+(?P<job_type>\w+) job (?:\{\d+\}\.)?(?P<jms_job>[0-9a-fA-F-]{36})\.?$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [
+    { msg = "Calling UI callback from ExampleSaveJob job 00000000-0000-4000-8000-000000000022.", fields = { job_type = "ExampleSaveJob", jms_job = "00000000-0000-4000-8000-000000000022" } },
+    "Calling UI callback from ExampleTraceJob job {0}.00000000-0000-4000-8000-000000000022",
+]
+counter_examples = ["Calling UI callback from ExampleSaveJob job x."]
+
+[[template]]
+code = "DJB-126"
+class = "lifecycle"
+title = "Job service reports a job state change"
+sev = 4
+regex = '''^\(JMS\) \[(?P<job_type>\w+)\] successfully (?P<action>modified|started|terminated)\.?$'''
+examples = [{ msg = "(JMS) [ExampleStatusJob] successfully modified", fields = { job_type = "ExampleStatusJob", action = "modified" } }, "(JMS) [ExampleStatusJob] successfully started."]
+counter_examples = ["(JMS) [ExampleStatusJob] successfully ignored"]
+
+[[template]]
+code = "DJB-127"
+class = "startup"
+title = "Job date and time format set from the client culture"
+sev = 5
+regex = '''^\[JobDateTimeFormatProvider\], Job Guid: (?P<jms_job>[0-9a-fA-F-]{36}), SetJobCultureInfo => Culture name: (?P<culture>[^,]+), TimeFormat: (?P<time_format>\w+), TimePattern: (?P<time_pattern>.+)$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "[JobDateTimeFormatProvider], Job Guid: 00000000-0000-4000-8000-000000000023, SetJobCultureInfo => Culture name: Example (Land), TimeFormat: Second, TimePattern: HH:mm:ss", fields = { jms_job = "00000000-0000-4000-8000-000000000023", time_format = "Second" } }]
+counter_examples = ["[JobDateTimeFormatProvider], Job Guid: x, SetJobCultureInfo => Culture name: Example (Land), TimeFormat: Second, TimePattern: HH:mm:ss"]
+
+[[template]]
+code = "DJB-128"
+class = "statistics"
+title = "Group areas mapping filled"
+sev = 5
+regex = '''^FillGroupAreasMapping - elapsed (?P<elapsed>\d+)$'''
+fields = { elapsed = "int" }
+examples = [{ msg = "FillGroupAreasMapping - elapsed 12", fields = { elapsed = 12 } }]
+counter_examples = ["FillGroupAreasMapping - elapsed x"]
+
+[[template]]
+code = "DJB-129"
+class = "lifecycle"
+title = "Priority parameter change received by a job"
+sev = 4
+regex = '''^\(JMS\) \[(?P<job_type>\w+)\] GUID: (?P<jms_job>[0-9a-fA-F-]{36}) Modify: Received priority param (?P<param>\w+) change\.$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "(JMS) [ExampleSummaryJob] GUID: 00000000-0000-4000-8000-000000000024 Modify: Received priority param ExampleSummaryJobParam change.", fields = { job_type = "ExampleSummaryJob", param = "ExampleSummaryJobParam" } }]
+counter_examples = ["(JMS) [ExampleSummaryJob] GUID: x Modify: Received priority param ExampleSummaryJobParam change."]
+
+[[template]]
+code = "DJB-130"
+class = "statistics"
+title = "SDP gids converted to custom ids"
+sev = 5
+regex = '''^Number of converted SDP Gids Count (?P<gids>\d+) to CustomID is (?P<custom_ids>\d+)$'''
+fields = { gids = "int", custom_ids = "int" }
+examples = [{ msg = "Number of converted SDP Gids Count 12 to CustomID is 10", fields = { gids = 12, custom_ids = 10 } }]
+counter_examples = ["Number of converted SDP Gids Count x to CustomID is 10"]
+
+[[template]]
+code = "DJB-131"
+class = "lifecycle"
+title = "Job async dispatcher state"
+sev = 4
+regex = '''^AsyncDispatcher (?:(?P<phase>Dispatcher started|Starting dispatcher|Dispatcher finished): (?P<dispatcher>\w+)\.|Waiting for dispatcher: (?P<dispatcher2>\w+) to stop\.)$'''
+examples = [
+    { msg = "AsyncDispatcher Dispatcher started: ExampleJob_3.", fields = { phase = "Dispatcher started", dispatcher = "ExampleJob_3" } },
+    { msg = "AsyncDispatcher Waiting for dispatcher: ExampleJob_3 to stop.", fields = { dispatcher2 = "ExampleJob_3" } },
+]
+counter_examples = ["AsyncDispatcher Dispatcher paused: ExampleJob_3."]
+
+[[template]]
+code = "DJB-132"
+class = "lifecycle"
+title = "UI config objects job started or terminated"
+sev = 4
+regex = '''^(?P<job_type>\w+) (?P<phase>Started|Terminated) (?P<jms_job>[0-9a-fA-F-]{36})$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "ExampleConfigAsyncJob Started 00000000-0000-4000-8000-000000000025", fields = { job_type = "ExampleConfigAsyncJob", phase = "Started", jms_job = "00000000-0000-4000-8000-000000000025" } }, "ExampleConfigAsyncJob Terminated 00000000-0000-4000-8000-000000000025"]
+counter_examples = ["ExampleConfigAsyncJob Paused 00000000-0000-4000-8000-000000000025"]
+
+[[template]]
+code = "DJB-133"
+class = "error"
+title = "UI config cache failed to update a configuration"
+sev = 2
+regex = '''^UIConfigCache failed updating configuration (?P<config>.+)$'''
+examples = [{ msg = "UIConfigCache failed updating configuration 'ExampleConfig'.", fields = { config = "'ExampleConfig'." } }]
+counter_examples = ["UIConfigCache updated configuration 'ExampleConfig'."]
+
+[[template]]
+code = "DJB-134"
+class = "start"
+title = "Named client job started"
+sev = 4
+regex = '''^Start (?P<job_name>[\w ]+?) job(?::| with guid =) (?P<jms_job>[0-9a-fA-F-]{36})$'''
+window = 320
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [
+    { msg = "Start Example Trace job: 00000000-0000-4000-8000-000000000026", fields = { job_name = "Example Trace", jms_job = "00000000-0000-4000-8000-000000000026" } },
+    "Start Example Validation job with guid = 00000000-0000-4000-8000-000000000026",
+]
+counter_examples = ["Start Example Trace job: x"]
+
+[[template]]
+code = "DJB-135"
+class = "start"
+title = "Customer integrated search started"
+sev = 4
+regex = '''^CustomerIntegratedSearchJob is started\. Job parameters are search terms: .* and maximum number of result records: (?P<max_records>\d+)\.$'''
+window = 320
+fields = { max_records = "int" }
+examples = [{ msg = "CustomerIntegratedSearchJob is started. Job parameters are search terms: example and maximum number of result records: 7.", fields = { max_records = 7 } }]
+counter_examples = ["CustomerIntegratedSearchJob is stopped. Job parameters are search terms: example and maximum number of result records: 7."]
+
+[[template]]
+code = "DJB-136"
+class = "end"
+title = "Customer integrated search finished"
+sev = 4
+regex = '''^CustomerIntegratedSearchJob is finished\. Found (?P<results>\d+) results for search terms: .*$'''
+fields = { results = "int" }
+examples = [{ msg = "CustomerIntegratedSearchJob is finished. Found 7 results for search terms: example.", fields = { results = 7 } }]
+counter_examples = ["CustomerIntegratedSearchJob is finished. Found none for search terms: example."]
+
+[[template]]
+code = "DJB-137"
+class = "statistics"
+title = "Customer database call returned items"
+sev = 5
+regex = '''^Call in (?P<method>\w+)\(\) (?:for (?P<customers>\d+) customers )?to customerDataBase\.(?P<db_call>\w+) returned (?P<items>\d+) items(?:, and customerDataBase\.\w+ returned (?P<items2>\d+) items)?\.$'''
+fields = { customers = "int", items = "int", items2 = "int" }
+examples = [
+    { msg = "Call in GetExampleRows() for 10 customers to customerDataBase.GetExampleData returned 9 items.", fields = { method = "GetExampleRows", customers = 10, items = 9 } },
+    { msg = "Call in ConvertExample() to customerDataBase.GetExampleTypes returned 3 items, and customerDataBase.GetExampleSchedule returned 0 items.", fields = { items = 3, items2 = 0 } },
+]
+counter_examples = ["Call in GetExampleRows() for x customers to customerDataBase.GetExampleData returned 9 items."]
+
+[[template]]
+code = "DJB-138"
+class = "statistics"
+title = "Time series reader created raw series"
+sev = 5
+regex = '''^\[TimeSeriesReader\] Created (?P<series>\d+) raw series\.$'''
+fields = { series = "int" }
+examples = [{ msg = "[TimeSeriesReader] Created 12 raw series.", fields = { series = 12 } }]
+counter_examples = ["[TimeSeriesReader] Created x raw series."]
+
+[[template]]
+code = "DJB-139"
+class = "statistics"
+title = "Job start command executed"
+sev = 5
+regex = '''^JobExecutor: It took (?P<elapsed_ms>\d+) ms to execute JobStartCommand for async job \((?P<job_type>[^)]+)\) with guid (?P<jms_job>[0-9a-fA-F-]{36})\.$'''
+fields = { elapsed_ms = "int", jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "JobExecutor: It took 15 ms to execute JobStartCommand for async job (ExampleReportJob) with guid 00000000-0000-4000-8000-000000000028.", fields = { elapsed_ms = 15, job_type = "ExampleReportJob", jms_job = "00000000-0000-4000-8000-000000000028" } }]
+counter_examples = ["JobExecutor: It took x ms to execute JobStartCommand for async job (ExampleReportJob) with guid y."]
+
+[[template]]
+code = "DJB-140"
+class = "statistics"
+title = "Customer SDP details requested"
+sev = 5
+regex = '''^Getting CustomerSDP details for (?P<sdps>\d+) sdpGids(?: returned (?P<objects>\d+) objects)?\.$'''
+fields = { sdps = "int", objects = "int" }
+examples = [{ msg = "Getting CustomerSDP details for 12 sdpGids.", fields = { sdps = 12 } }, { msg = "Getting CustomerSDP details for 12 sdpGids returned 10 objects.", fields = { sdps = 12, objects = 10 } }]
+counter_examples = ["Getting CustomerSDP details for x sdpGids."]
+
+[[template]]
+code = "DJB-141"
+class = "start"
+title = "Logbook job started with a parameter"
+sev = 4
+regex = '''^Start (?P<job_type>\w+), GUID (?P<jms_job>[0-9a-fA-F-]{36}), Param: (?P<param>\w*)\.$'''
+fields = { jms_job = "guid" }
+keys = ["jms_job"]
+examples = [{ msg = "Start ExampleLogbookJob, GUID 00000000-0000-4000-8000-000000000016, Param: .", fields = { job_type = "ExampleLogbookJob", param = "" } }, "Start ExampleLogbookJob, GUID 00000000-0000-4000-8000-000000000016, Param: GetExample."]
+counter_examples = ["Start ExampleLogbookJob, GUID 00000000-0000-4000-8000-000000000016."]
+
+[[template]]
+code = "DJB-142"
+class = "end"
+title = "Causes job completed or terminated"
+sev = 4
+regex = '''^(?:Causes job (?P<jms_job>[0-9a-fA-F-]{36}) completed successfully!|Terminate Causes Job job : (?P<jms_job2>[0-9a-fA-F-]{36}))$'''
+fields = { jms_job = "guid", jms_job2 = "guid" }
+keys = ["jms_job", { field = "jms_job2", type = "jms_job" }]
+examples = [
+    { msg = "Causes job 00000000-0000-4000-8000-000000000029 completed successfully!", fields = { jms_job = "00000000-0000-4000-8000-000000000029" } },
+    { msg = "Terminate Causes Job job : 00000000-0000-4000-8000-000000000029", fields = { jms_job2 = "00000000-0000-4000-8000-000000000029" } },
+]
+counter_examples = ["Causes job x completed successfully!"]
+
+[[template]]
+code = "DJB-143"
+class = "statistics"
+title = "KPI model change publication handler"
+sev = 5
+regex = '''^\(JMS\) \[KPICommunicationManager\] ModelChangePublicationHandler (?P<phase>entered|finished)\.$'''
+examples = [{ msg = "(JMS) [KPICommunicationManager] ModelChangePublicationHandler entered.", fields = { phase = "entered" } }, "(JMS) [KPICommunicationManager] ModelChangePublicationHandler finished."]
+counter_examples = ["(JMS) [KPICommunicationManager] ModelChangePublicationHandler failed."]
+
+
+# ---------------------------------------------------------------------------------------------
+# Link rules (section 5.1 of the design note). Keyed by `job_id`, never by thread: in the Launcher
+# the start and the end of a job are on different threads and the Scheduler interleaves its jobs.
+# ---------------------------------------------------------------------------------------------
+
+# Launcher: the Execute command sent to a FunctionHost -> the last result of that job.
+[[link_rule]]
+kind = "response"
+a = "DJB-050"
+b = "DJB-054"
+key = "job_id"
+max_dt_ms = 60000
+
+# Scheduler: the job sent to a Launcher -> its final status (single or list; "Running" is DJB-005).
+[[link_rule]]
+kind = "response"
+a = "DJB-003"
+b = ["DJB-006", "DJB-007", "DJB-144", "DJB-145"]
+key = "job_id"
+max_dt_ms = 60000
+
+# Launcher: red memory status detected -> the FunctionHost restarted (old PID is `fh_pid` in both).
+[[link_rule]]
+kind = "response"
+a = "DJB-047"
+b = "DJB-049"
+key = "fh_pid"
+max_dt_ms = 60000

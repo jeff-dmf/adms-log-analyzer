@@ -115,7 +115,7 @@ def test_profile_from_the_data_dir_is_used(data_dir, capsysbinary):
 def test_stdout_gets_the_report_bytes(data_dir, capsysbinary):
     assert run(data_dir, "--ids", "3", "--no-anonymize") == 0
     raw = capsysbinary.readouterr().out
-    assert raw.startswith(b"dmslog report - ACME SUBALPHA outage\r\n")
+    assert raw.startswith(b"dmslog report - ACME SUBALPHA zxqvaultn\r\n")
     assert b"Redaction: OFF" in raw and b"jsilva" in raw
 
 

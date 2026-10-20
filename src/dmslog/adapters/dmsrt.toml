@@ -1,0 +1,9 @@
+# Real-time (RT) servers: the family of any DMS_* / OMS_* service without a more specific family
+# (UNKNOWN services of the RT folders). It has no templates of its own: it only receives the RT
+# library, so an unclassified RT service still gets the product infrastructure lines. The specific
+# RT families (DMSFH, DMSJOB, DMSCORE, DMSMODEL, DMSOMS) extend the same library.
+
+schema = 1
+family = "DMSRT"
+description = "Real-time server services without a specific family: RT library only"
+extends = ["_dmsrt", "_common"]

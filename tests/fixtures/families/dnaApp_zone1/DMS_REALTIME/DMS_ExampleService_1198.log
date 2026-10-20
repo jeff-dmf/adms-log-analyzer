@@ -1,0 +1,147 @@
+﻿2030-01-15 10:00:00.000 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionResourceManager] Transaction enters commit phase.
+2030-01-15 10:00:00.050 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionResourceManager] Transaction GUID = 00000000-0000-4000-8000-0000a0000001.
+2030-01-15 10:00:00.100 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionResourceManager] Command: ExampleCacheCommand enters prepare phase.
+2030-01-15 10:00:00.150 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor] Prepare completed notification start.
+2030-01-15 10:00:00.200 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor] Operation: ModelUpdate
+2030-01-15 10:00:00.250 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor] PrepareCompleted (EXA) (2/5) Services left: [EXB|EXC|EXD]
+2030-01-15 10:00:00.300 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor] [RE] ModelUpdate (3) Services participating in transaction : [EXA|EXB|EXC]
+2030-01-15 10:00:00.350 [PID=1198][TID=0x1a2b] DEBUGLOG - Size of the object [1000123_res_20001] written into the shared memory is: 12.5 MB.
+2030-01-15 10:00:00.400 [PID=1198][TID=0x1a2b] DEBUGLOG - ClientMessageDelivery [ClientID = 52]: Number of unprocessed replication messages is 100.
+2030-01-15 10:00:00.450 [PID=1198][TID=0x1a2b] INFO - Indexed message hasn't been found for signalGid= 1306888, value = -224084
+2030-01-15 10:00:00.500 [PID=1198][TID=0x1a2b] DEBUGLOG - DMS root 4A00B00C will be processed as a source of Island, contains flag 320
+2030-01-15 10:00:00.550 [PID=1198][TID=0x1a2b] DEBUGLOG - UpdateRootTopology firstRoot Id :4A00B00C has flag 387
+2030-01-15 10:00:00.600 [PID=1198][TID=0x1a2b] DEBUGLOG - Topology is skipped because roots is empty = Yes or processRoots = No
+2030-01-15 10:00:00.650 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: End process topology for DMS model. Topology performed for 0.125 sec.
+2030-01-15 10:00:00.700 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Root 4A00B00C is meshed with master root 4A00B00D
+2030-01-15 10:00:00.750 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Finished publishing changes. Number of blocks: 12, EMS blocks: 3, publishing performed for DMS: 0.5 sec, EMS: 0.25 sec, all: 0.75 sec.
+2030-01-15 10:00:00.800 [PID=1198][TID=0x1a2b] DEBUGLOG - Start Time in State Model is 1/2/2000 4:00:00 AM:
+2030-01-15 10:00:00.850 [PID=1198][TID=0x1a2b] DEBUGLOG - ReplicationProxyCallback: SyncStateControlReplicationMessage received. All staleDataCallbacks triggered.
+2030-01-15 10:00:00.900 [PID=1198][TID=0x1a2b] DEBUGLOG - ReplicationProxyCallback: [ClientID = 7] IUStateControlReplicationMessage processing started. Datasets 1 2 3. MessageIdentifier: clientId: 7, serviceId: 1
+2030-01-15 10:00:00.950 [PID=1198][TID=0x1a2b] DEBUGLOG - SMDCs Replication queue status: Queue is empty.
+2030-01-15 10:00:01.000 [PID=1198][TID=0x1a2b] INFO - [TransactionResourceManager] Transaction enters abort phase.
+2030-01-15 10:00:01.050 [PID=1198][TID=0x1a2b] DEBUGLOG - [RouteID:0, Dataset:1, Dataflow:6] RequestIU: Requesting IU.
+2030-01-15 10:00:01.100 [PID=1198][TID=0x1a2b] DEBUGLOG - [RouteID:0, Dataset:1, Dataflow:6] ExampleCache (2) finished sending IU. Bytes sent: 314. Remaining clients: OtherCache (0), ThirdCache (1).
+2030-01-15 10:00:01.150 [PID=1198][TID=0x1a2b] DEBUGLOG - (REPLICATION_INFO) Cache[ExampleCache] IU message for Dataset: 1, Dataflow: 6, RouteID: 0, ProcessID: 4242, SystemID: 2, Message order number: 15
+2030-01-15 10:00:01.200 [PID=1198][TID=0x1a2b] DEBUGLOG - (REPLICATION_INFO) Cache[ExampleCache] Replication queue size: 12.
+2030-01-15 10:00:01.250 [PID=1198][TID=0x1a2b] INFO - PubSub(ExamplePubSub) client connected: Session id is 00000000-0000-4000-8000-0000a0000001.
+2030-01-15 10:00:01.300 [PID=1198][TID=0x1a2b] INFO - PubSub(ExamplePubSub) client connection terminated: Session id is 00000000-0000-4000-8000-0000a0000001.
+2030-01-15 10:00:01.350 [PID=1198][TID=0x1a2b] ERROR - PubSub(ExamplePubSub) failed to publish messages to a client with an id 00000000-0000-4000-8000-0000a0000001, exception was
+2030-01-15 10:00:01.400 [PID=1198][TID=0x1a2b] ALWAYS - PubSub(ExamplePubSub) initialized. IU enabled : True; DelayedPublishInterval: 0; CheckIn interval: 1800000; Check dead or slow clients interval:60000; Trend queue capacity: 5; Trend ratio: 20
+2030-01-15 10:00:01.450 [PID=1198][TID=0x1a2b] ALWAYS - Subscriber manager (ExamplePubSub) is connected to the service.
+2030-01-15 10:00:01.500 [PID=1198][TID=0x1a2b] INFO - Switching version from ID = 10.200 to ID = 11.300 succeeded.
+2030-01-15 10:00:01.550 [PID=1198][TID=0x1a2b] INFO - Switching version on EXA from ID = 10.200 to ID = 11.300 started. Address = net.tcp://HOST01:8000/Example
+2030-01-15 10:00:01.600 [PID=1198][TID=0x1a2b] INFO - Switching version on ExampleContext, from Version ID = 10.200, to Version ID = 10.201
+2030-01-15 10:00:01.650 [PID=1198][TID=0x1a2b] DEBUGLOG - Model update enlist phase started.
+2030-01-15 10:00:01.700 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager] Fetching NMS Data for inserted EXAMPLEKIND1 entities finished. Entities count: 7
+2030-01-15 10:00:01.750 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager]ExampleConfigurationProcessor Started process type: EXAMPLEKIND1
+2030-01-15 10:00:01.800 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager] SetData - from version ID: 1000001, to version ID: 1000002, MDC: 1000003, SMDC: 0.
+2030-01-15 10:00:01.850 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ReferenceGraphBuilder] Applying changes for class: EXAMPLEKIND1, inserted nodes: 11, updated nodes: 0, deleted nodes: 6
+2030-01-15 10:00:01.900 [PID=1198][TID=0x1a2b] DEBUGLOG - [BlockFetcher] Fetching specific blocks count: 20, tasks: 4, blocks per task: 5.
+2030-01-15 10:00:01.950 [PID=1198][TID=0x1a2b] DEBUGLOG - [SmartCacheConfigurator] Purge timer triggered.
+2030-01-15 10:00:02.000 [PID=1198][TID=0x1a2b] DEBUGLOG - [PublisherIntegrityUpdateHandler] New integrity update request merged with executing request. New request: originator: 00000000-0000-4000-8000-0000a0000001 topics count: 1 clients (1): 00000000-0000-4000-8000-0000a0000002(0), executing request originator: 00000000-0000-4000-8000-0000a0000003
+2030-01-15 10:00:02.050 [PID=1198][TID=0x1a2b] INFO - [TransactionResourceManager] Transaction GUID = not-a-guid.
+2030-01-15 10:00:02.100 [PID=1198][TID=0x1a2b] DEBUGLOG - [CircularQueueReplicator] Destination Head: 68, Tail: 70, Queue: 2
+2030-01-15 10:00:02.150 [PID=1198][TID=0x1a2b] INFO - [CircularQueueReplicator] Starting QueueReplicator.
+2030-01-15 10:00:02.200 [PID=1198][TID=0x1a2b] ALWAYS - Queue "exampleQueue" capacity limit is 1048576 bytes.
+2030-01-15 10:00:02.250 [PID=1198][TID=0x1a2b] DEBUGLOG - [ProxyPool] Acquiring ExampleServiceProxy.
+2030-01-15 10:00:02.300 [PID=1198][TID=0x1a2b] ALWAYS - Assembly successfully added to catalog
+2030-01-15 10:00:02.350 [PID=1198][TID=0x1a2b] ERROR - [Communication2] - An error occurred while calling service operation.
+2030-01-15 10:00:02.400 [PID=1198][TID=0x1a2b] ERROR - [Communication2] - System.ObjectDisposedException:
+   at Example.Service.Call() in F:\PD\1234567\1\Example\Service.cs:line 10
+2030-01-15 10:00:02.450 [PID=1198][TID=0x1a2b] DEBUGLOG - [UI Config Provider] - Getting all private UI config objects of type "ExampleOptions" for principal "EXAMPLE\\user01" started...
+2030-01-15 10:00:02.500 [PID=1198][TID=0x1a2b] ALWAYS - [GlobalLicenseProvider] ExampleFunction is not licensed.
+2030-01-15 10:00:02.550 [PID=1198][TID=0x1a2b] ALWAYS - HDL Max number of files is set to: Unlimited
+2030-01-15 10:00:02.600 [PID=1198][TID=0x1a2b] INFO - (SavecaseAndPlaybackService): Saving case with name: 12345...
+2030-01-15 10:00:02.650 [PID=1198][TID=0x1a2b] ALWAYS - Starting Replication client: True
+2030-01-15 10:00:02.700 [PID=1198][TID=0x1a2b] ALWAYS - [SM] MaxBufferPoolSize is 4194304
+2030-01-15 10:00:02.750 [PID=1198][TID=0x1a2b] ALWAYS - Publisher check dead or slow clients worker started.
+2030-01-15 10:00:02.800 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Removed tag: Yes, tag GID: 1000001 from element with LID: 0x4A00B00C, GID: 1000002. Flag: TF_NONE.
+2030-01-15 10:00:02.850 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Seting tag GID: 1000001, to element with lid: 0x4A00B00C, gid: 1000002. Flag: TF_SPG.
+2030-01-15 10:00:02.900 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: The publication timestamp is: 2000-01-02 03:04:05.678 -03:00
+2030-01-15 10:00:02.950 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Block type: 5, affected blocks (size: 3): 1893, 1837, 1865
+2030-01-15 10:00:03.000 [PID=1198][TID=0x1a2b] INFO - MTS: Not existing root 4A00B00C in rootIsland map .
+2030-01-15 10:00:03.050 [PID=1198][TID=0x1a2b] ALWAYS - [Configuration] [ExampleFlag]: [True]. Type: [ConfigurationBehavior]
+2030-01-15 10:00:03.100 [PID=1198][TID=0x1a2b] INFO - [TransactionResourceManager] Command: ExampleCacheCommand enters abort phase.
+2030-01-15 10:00:03.150 [PID=1198][TID=0x1a2b] DEBUGLOG - Apply model update started.
+2030-01-15 10:00:03.200 [PID=1198][TID=0x1a2b] DEBUGLOG - Utils ProcessBlockAttributes method (blockIDS count: 1, number of parallel: 2, property count: 3, class count: 4) Total time: 0.0002733s, on the NMS : 0.0002373s, on local: 1.07E-05s.
+2030-01-15 10:00:03.250 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionResourceManager] Resource manager commands parallel execution finished.
+2030-01-15 10:00:03.300 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionResourceManager] Transaction is successfully rolled back.
+2030-01-15 10:00:03.350 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionResourceManager] Command: ExampleCacheCommand is successfully executed.
+2030-01-15 10:00:03.400 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionResourceManager] Command: ExampleCommand (ExampleCache) enters execute phase.
+2030-01-15 10:00:03.450 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor] Prepare finished notification end
+2030-01-15 10:00:03.500 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor] Prepare finished notification start..
+2030-01-15 10:00:03.550 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor] Replication operation: SwitchVersion
+2030-01-15 10:00:03.600 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor] [RE] TransactionCompleted (EXB) (5/5)
+2030-01-15 10:00:03.650 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor]  TransactionCompleted (EXB) (5/5)
+2030-01-15 10:00:03.700 [PID=1198][TID=0x1a2b] DEBUGLOG - [TransactionMonitor]  TEUpdate (3) Services participating in transaction : [EXA|EXB|EXC]
+2030-01-15 10:00:03.750 [PID=1198][TID=0x1a2b] DEBUGLOG - Size of the object [1000123_job_20002] written into the shared memory is: 0.004 MB.
+2030-01-15 10:00:03.800 [PID=1198][TID=0x1a2b] INFO - Indexed message hasn't been found for signalGid= 1306889, value = 17
+2030-01-15 10:00:03.850 [PID=1198][TID=0x1a2b] DEBUGLOG - DMS root 4A00B00C00D00E01 will be processed as a source of Island, contains flag 7
+2030-01-15 10:00:03.900 [PID=1198][TID=0x1a2b] DEBUGLOG - UpdateRootTopology started again for meshed roots - startRoot Id :4A00B00C00D00E02 has flag 9
+2030-01-15 10:00:03.950 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Begin update topology.
+2030-01-15 10:00:04.000 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Begin update quick topology
+2030-01-15 10:00:04.050 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Start update island topology for EMS model.
+2030-01-15 10:00:04.100 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: UpdateRootTopology started again for meshed root 4A00B00C
+2030-01-15 10:00:04.150 [PID=1198][TID=0x1a2b] INFO - Zzz unmatched synthetic record alpha
+2030-01-15 10:00:04.200 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Passive Root 4A00B00C found as meshed with Active.
+2030-01-15 10:00:04.250 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Meshed substation 4A00B00C
+2030-01-15 10:00:04.300 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Publishing changes.
+2030-01-15 10:00:04.350 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: signal(s) change, columns <LID, GID, Device LID, Device GID, New value, Value of flags, TimeStamp>
+2030-01-15 10:00:04.400 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: ModelProcessor: Delete old model completed.
+2030-01-15 10:00:04.450 [PID=1198][TID=0x1a2b] DEBUGLOG - End Time in State Model is 1/2/2000 4:30:00 PM:
+2030-01-15 10:00:04.500 [PID=1198][TID=0x1a2b] DEBUGLOG - ReplicationProxyCallback: All clients finished IUStateCallback. Acknowledging reception of IUStateControlReplicationMessage.
+2030-01-15 10:00:04.550 [PID=1198][TID=0x1a2b] DEBUGLOG - ReplicationProxyCallback: [ClientID = 7] IUStateControlReplicationMessage processing completed.
+2030-01-15 10:00:04.600 [PID=1198][TID=0x1a2b] DEBUGLOG - SMDCs Replication queue status:
+2030-01-15 10:00:04.650 [PID=1198][TID=0x1a2b] DEBUGLOG - Queue for tracing is empty.
+2030-01-15 10:00:04.700 [PID=1198][TID=0x1a2b] DEBUGLOG - [RouteID:0, Dataset:1, Dataflow:6] RequestIU: invocation of IU callbacks finished.
+2030-01-15 10:00:04.750 [PID=1198][TID=0x1a2b] DEBUGLOG - [RouteID:0, Dataset:1, Dataflow:6] ExampleCache (2) requested to send IU data.
+2030-01-15 10:00:04.800 [PID=1198][TID=0x1a2b] DEBUGLOG - (REPLICATION_INFO) Cache[ExampleCache] Sent 1024 bytes (compressed size) during IU.
+2030-01-15 10:00:04.850 [PID=1198][TID=0x1a2b] INFO - PubSub(ExamplePubSub) client connected:  Name: 'EXAMPLE\user01', Host: 'PID = 1234', Session id is 00000000-0000-4000-8000-0000a0000002.
+2030-01-15 10:00:04.900 [PID=1198][TID=0x1a2b] INFO - PubSub(ExamplePubSub) client disconnected. Session id is 00000000-0000-4000-8000-0000a0000001.
+2030-01-15 10:00:04.950 [PID=1198][TID=0x1a2b] INFO - PubSub(ExamplePubSub) Async Session 00000000-0000-4000-8000-0000a0000001 cleanup finished.
+2030-01-15 10:00:05.000 [PID=1198][TID=0x1a2b] INFO - Switching version from ID = 10.200 to ID = 11.300. Model delta counter = 10.100.
+2030-01-15 10:00:05.050 [PID=1198][TID=0x1a2b] INFO - Switching version from ID = 10.200 to ID = 11.300.
+2030-01-15 10:00:05.100 [PID=1198][TID=0x1a2b] INFO - Switching version on EXB from ID = 10.200 to ID = 11.300 succeeded. Context ID = 3. Address = net.tcp://HOST01:8000/Example
+2030-01-15 10:00:05.150 [PID=1198][TID=0x1a2b] INFO - Switching version transaction commited.
+2030-01-15 10:00:05.200 [PID=1198][TID=0x1a2b] INFO - Zzz unmatched synthetic record beta
+2030-01-15 10:00:05.250 [PID=1198][TID=0x1a2b] DEBUGLOG - Model update enlist phase completed.
+2030-01-15 10:00:05.300 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager] Fetching old NMS Data for updated EXAMPLEKIND2 entities started.
+2030-01-15 10:00:05.350 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager] Fetching NMS data for affected entities started.
+2030-01-15 10:00:05.400 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager]ExampleConfigurationProcessor Finished execute phase
+2030-01-15 10:00:05.450 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager] Prepare method called...
+2030-01-15 10:00:05.500 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager] [ExampleProcessor] Add additional entities started.
+2030-01-15 10:00:05.550 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ConfigurationManager] Applying changes to reference graph builder finished.
+2030-01-15 10:00:05.600 [PID=1198][TID=0x1a2b] DEBUGLOG - [Configuration] [ReferenceGraphBuilder] Finished Applying changes for class: EXAMPLEKIND1.
+2030-01-15 10:00:05.650 [PID=1198][TID=0x1a2b] DEBUGLOG - [BlockFetcher] Splitting block list, delta segment size (0 = all blocks in one segment): 200, block count 267
+2030-01-15 10:00:05.700 [PID=1198][TID=0x1a2b] DEBUGLOG - [BlockFetcher] Block ID list released
+2030-01-15 10:00:05.750 [PID=1198][TID=0x1a2b] DEBUGLOG - [BlockFetcher] Initializing block list for model update
+2030-01-15 10:00:05.800 [PID=1198][TID=0x1a2b] DEBUGLOG - [SmartCacheConfigurator] Cache[ExampleCache] Configured
+2030-01-15 10:00:05.850 [PID=1198][TID=0x1a2b] DEBUGLOG - [CircularQueueReplicator] Sending BulkEnqueue message. Uncompressed message size: 2048, Number of elements: 9.
+2030-01-15 10:00:05.900 [PID=1198][TID=0x1a2b] DEBUGLOG - [CircularQueueReplicator] Queue with type: 3 applied BulkEnqueue command. Number of elements: 9.
+2030-01-15 10:00:05.950 [PID=1198][TID=0x1a2b] DEBUGLOG - [CircularQueueReplicator] Destination and source queue of type 1 are same.
+2030-01-15 10:00:06.000 [PID=1198][TID=0x1a2b] INFO - [CircularQueueReplicator]Raising IUSourceStarted event.
+2030-01-15 10:00:06.050 [PID=1198][TID=0x1a2b] INFO - [CircularQueueReplicator] Partner machine exists (service: DMS_EXAMPLE) and its state is HOT.
+2030-01-15 10:00:06.100 [PID=1198][TID=0x1a2b] ALWAYS - Queue "exampleQueue" is successfully created. Number of pages: 4. Page size [byte]: 65536. Time to live [ms]: 600000. Number of rewind pages: 2
+2030-01-15 10:00:06.150 [PID=1198][TID=0x1a2b] DEBUGLOG - [ProxyPool] ExampleServiceProxy released.
+2030-01-15 10:00:06.200 [PID=1198][TID=0x1a2b] ERROR - (ERROR) [Communication3] - An error occurred while calling service operation.
+2030-01-15 10:00:06.250 [PID=1198][TID=0x1a2b] INFO - Qqq synthetic noise without template
+2030-01-15 10:00:06.300 [PID=1198][TID=0x1a2b] ERROR - (ERROR) [Communication2] - Example.Platform.ServiceModel.ServiceOperationException:
+2030-01-15 10:00:06.350 [PID=1198][TID=0x1a2b] DEBUGLOG - [UI Config Provider] - Update of UI config object named "ExampleName" for principal "EXAMPLE\\user01" on "HOST01" computer completed.
+2030-01-15 10:00:06.400 [PID=1198][TID=0x1a2b] ALWAYS - [GlobalLicenseProvider] ExampleFunction is licensed.
+2030-01-15 10:00:06.450 [PID=1198][TID=0x1a2b] ALWAYS - [GlobalLicenseProvider] Loading licensing information.
+2030-01-15 10:00:06.500 [PID=1198][TID=0x1a2b] ALWAYS - HDL ConnectionString: Data Source=HOST01;Initial Catalog=Example;Integrated Security=True
+2030-01-15 10:00:06.550 [PID=1198][TID=0x1a2b] ALWAYS - HDL Connection Monitor: Starting connection monitor (interval 5000 ms) with connection string Data Source=HOST01;Initial Catalog=Example
+2030-01-15 10:00:06.600 [PID=1198][TID=0x1a2b] ALWAYS - PersistentStoreLibrary created with connection string: Data Source=HOST01;Initial Catalog=Example;Integrated Security=True
+2030-01-15 10:00:06.650 [PID=1198][TID=0x1a2b] INFO - (SavecaseAndPlaybackService): Saving case with name: 12345 succeeded.
+2030-01-15 10:00:06.700 [PID=1198][TID=0x1a2b] INFO - (SavecaseAndPlaybackService): Started.
+2030-01-15 10:00:06.750 [PID=1198][TID=0x1a2b] INFO - (SavecaseAndPlaybackService): Operation DeleteCase completed.
+2030-01-15 10:00:06.800 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: 21 signal changes was written into transactional model
+2030-01-15 10:00:06.850 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache commit compact finished. Execution took 00:00.0261.
+2030-01-15 10:00:06.900 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache prepare phase started
+2030-01-15 10:00:06.950 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Cache commit compact started.
+2030-01-15 10:00:07.000 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Filter Update Blocks for optimized transaction stopped.
+2030-01-15 10:00:07.050 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Internal model size: 6103901 bytes
+2030-01-15 10:00:07.100 [PID=1198][TID=0x1a2b] DEBUGLOG - MTS: Creating a transaction model has finished.
+2030-01-15 10:00:07.150 [PID=1198][TID=0x1a2b] INFO - MTS: Requested element doesn't exist in InternalModel, element id: 0x4A00B00D
+2030-01-15 10:00:07.200 [PID=1198][TID=0x1a2b] INFO - MTS: Root for given element could not be retrieved, element id: 4A00B00E
+2030-01-15 10:00:07.250 [PID=1198][TID=0x1a2b] INFO - MTS: Cut already exists in internalModel

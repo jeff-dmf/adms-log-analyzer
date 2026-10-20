@@ -1,0 +1,1170 @@
+# DMS FunctionHost (DMS_FunctionHost_<n>.log): one process per pool slot, the same content in every instance.
+# Real-time calculation functions run here (state estimation, load flow, model readiness, ...).
+# Ranges (see docs/notas/rt-templates-desenho.md, 1.3): 001-049 host and job, 050-099 model build
+# ([EMSBUILD], [EMSCH], [EMSSE], [EMSPI], [EMSRRM], [EMSFC], [EMSBC]), 100-149 [SE],
+# 150-189 [LF], [MR], [PU], [SF], [SSV] and other functions, 190-199 generic failures.
+# Infrastructure lines shared with other real-time processes live in the _dmsrt library.
+# Trace templates ("... trace line") take the rest of a bracket prefix that carries no field worth
+# extracting: they refuse any line with a failure marker, so those lines stay for the templates
+# that give them a severity (or for the unknown-signature panel).
+
+schema = 1
+family = "DMSFH"
+description = "DMS FunctionHost: real-time function execution (jobs, model build, state estimation, load flow, ...)"
+extends = ["_dmsrt", "_common"]
+
+# ---------------------------------------------------------------------------------------------
+# 001-049: host and job
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DFH-001"
+class = "start"
+title = "Job received for execution"
+sev = 4
+regex = '''^New job received for execution\. JobID: (?P<job_id>\d+)\. Size of the real-time sequence: (?P<sequence_size>\d+)$'''
+fields = { job_id = "int", sequence_size = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "New job received for execution. JobID: 1000123. Size of the real-time sequence: 3", fields = { job_id = 1000123, sequence_size = 3 } },
+]
+counter_examples = ["New job received for execution. JobID: x. Size of the real-time sequence: 3"]
+
+[[template]]
+code = "DFH-002"
+class = "start"
+title = "Execution thread started the functions of a job"
+sev = 5
+fts = false
+regex = '''^\[FunctionHostPublisher\]\[ExecutionThreadMethod\] Function execution started for JobID: (?P<job_id>\d+)\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "[FunctionHostPublisher][ExecutionThreadMethod] Function execution started for JobID: 1000123.", fields = { job_id = 1000123 } },
+]
+counter_examples = ["[FunctionHostPublisher][ExecutionThreadMethod] Function execution thread is started."]
+
+[[template]]
+code = "DFH-023"
+class = "end"
+title = "Execution thread finished the functions of a job"
+sev = 5
+fts = false
+regex = '''^\[FunctionHostPublisher\]\[ExecutionThreadMethod\] Function execution finished for JobID: (?P<job_id>\d+)\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "[FunctionHostPublisher][ExecutionThreadMethod] Function execution finished for JobID: 1000124.", fields = { job_id = 1000124 } },
+]
+counter_examples = ["[FunctionHostPublisher][ExecutionThreadMethod] Function execution finished for JobID: x."]
+
+[[template]]
+code = "DFH-003"
+class = "lifecycle"
+title = "Function of the real-time sequence executed"
+sev = 5
+fts = false
+regex = '''^\[FunctionHostPublisher\]\[ExecutionThreadMethod\] Function (?P<function>\w+) is executed\. JobID: (?P<job_id>\d+)\. Index in real-time sequence: (?P<index>\d+)$'''
+fields = { job_id = "int", index = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "[FunctionHostPublisher][ExecutionThreadMethod] Function StateEstimation is executed. JobID: 1000123. Index in real-time sequence: 2", fields = { function = "StateEstimation", job_id = 1000123, index = 2 } },
+]
+counter_examples = ["[FunctionHostPublisher][ExecutionThreadMethod] Function StateEstimation is executed. JobID: x. Index in real-time sequence: 2"]
+
+[[template]]
+code = "DFH-004"
+class = "other"
+title = "Input builder preparation"
+sev = 5
+fts = false
+regex = '''^Input builder preparation (?P<phase>started\.\.\.|completed)$'''
+examples = [
+    { msg = "Input builder preparation started...", fields = { phase = "started..." } },
+    "Input builder preparation completed",
+]
+counter_examples = ["Input builder preparation failed"]
+
+[[template]]
+code = "DFH-005"
+class = "end"
+title = "Job execution finished and result sent"
+sev = 4
+sev_field = "status"
+sev_map = { DoneWithError = 2, Failed = 2, Aborted = 2, Cancelled = 3, DoneWithWarning = 3, DoneWithSuccess = 4 }
+regex = '''^Job execution finished successfully\. Callback result sent\. JobID: (?P<job_id>\d+)\. Status: (?P<status>\w+)\.$'''
+fields = { job_id = "int" }
+keys = ["job_id"]
+examples = [
+    { msg = "Job execution finished successfully. Callback result sent. JobID: 1000123. Status: DoneWithWarning.", fields = { job_id = 1000123, status = "DoneWithWarning" } },
+    "Job execution finished successfully. Callback result sent. JobID: 1000124. Status: DoneWithError.",
+]
+counter_examples = ["Job execution finished successfully. Callback result sent. JobID: x. Status: DoneWithSuccess."]
+
+[[template]]
+code = "DFH-006"
+class = "other"
+title = "Function library loaded"
+sev = 5
+fts = false
+regex = '''^Loading library (?P<library>[\w.]+) (?P<phase>started \.\.\.|successfully completed\.)$'''
+examples = [
+    { msg = "Loading library Example.Common.StateEstimationBuilder.dll started ...", fields = { library = "Example.Common.StateEstimationBuilder.dll", phase = "started ..." } },
+    "Loading library Example.Common.StateEstimationBuilder.dll successfully completed.",
+]
+counter_examples = ["Loading library Example.Common.StateEstimationBuilder.dll failed."]
+
+[[template]]
+code = "DFH-007"
+class = "other"
+title = "Context timestamp of the job"
+sev = 5
+fts = false
+regex = '''^Context timestamp is (?P<timestamp>[\d/:]+ [\d:]+(?: [AP]M)?)$'''
+examples = [
+    { msg = "Context timestamp is 1/2/2030 3:04:05 PM", fields = { timestamp = "1/2/2030 3:04:05 PM" } },
+]
+counter_examples = ["Context timestamp is unknown"]
+
+[[template]]
+code = "DFH-008"
+class = "other"
+title = "Function return codes reported"
+sev = 5  # routine report of the return codes of every function execution, no failure by itself
+fts = false
+regex = '''^(?:Error codes successfully handled\.|\[MR\] (?:Error codes successfully handled|Model Readiness function returned error codes)\.|\[EMSBC\]: (?:Function returned error codes|Error codes successfully handled)\.)$'''
+examples = [
+    "Error codes successfully handled.",
+    "[MR] Error codes successfully handled.",
+    "[MR] Model Readiness function returned error codes.",
+    "[EMSBC]: Function returned error codes.",
+    "[EMSBC]: Error codes successfully handled.",
+]
+counter_examples = ["[MR] Model Readiness function returned errors."]
+
+[[template]]
+code = "DFH-009"
+class = "other"
+title = "Function results handled"
+sev = 5  # routine report of every function execution, no failure by itself
+fts = false
+regex = '''^(?P<count>\d+) (?:function returned error codes|results successfully handled)\.$'''
+fields = { count = "int" }
+examples = [
+    { msg = "2 results successfully handled.", fields = { count = 2 } },
+    { msg = "2 function returned error codes.", fields = { count = 2 } },
+]
+counter_examples = ["x results successfully handled.", "Results successfully handled."]
+
+[[template]]
+code = "DFH-020"
+class = "other"
+title = "Trace function results handled"
+sev = 5  # routine report of every function execution, no failure by itself
+fts = false
+text = "Trace results successfully handled."
+examples = ["Trace results successfully handled."]
+counter_examples = ["Trace results unsuccessfully handled."]
+
+[[template]]
+code = "DFH-021"
+class = "other"
+title = "Prediction function results handled"
+sev = 5
+fts = false
+text = "PF results successfully handled!"
+examples = ["PF results successfully handled!"]
+counter_examples = ["PF results successfully handled."]
+
+[[template]]
+code = "DFH-022"
+class = "other"
+title = "Switching validation results handled"
+sev = 5
+fts = false
+text = "SSV results successfully handled."
+examples = ["SSV results successfully handled."]
+counter_examples = ["SSV results successfully handled!"]
+
+[[template]]
+code = "DFH-010"
+class = "error"
+title = "Function returned errors"
+sev = 3
+regex = '''^(?:Function|Prediction Function) returned errors\. Number of errors: (?P<count>\d+)$'''
+fields = { count = "int" }
+examples = [
+    { msg = "Function returned errors. Number of errors: 2", fields = { count = 2 } },
+    "Prediction Function returned errors. Number of errors: 1",
+]
+counter_examples = ["Function returned errors. Number of errors: x"]
+
+[[template]]
+code = "DFH-011"
+class = "error"
+title = "Error reported by a function or a result builder"
+sev = 3
+regex = '''^(?:Error occured in function (?P<function>\w+)|PF ResultBuilderLog: Error code: (?P<code>\d+))\.?$'''
+examples = [
+    { msg = "Error occured in function IsCommandExample.", fields = { function = "IsCommandExample" } },
+    { msg = "PF ResultBuilderLog: Error code: 7", fields = { code = "7" } },
+]
+counter_examples = ["PF ResultBuilderLog: results successfully handled."]
+
+[[template]]
+code = "DFH-012"
+class = "validation"
+title = "Project extension assembly not found"
+sev = 3
+regex = '''^\(WARNING\) Cannot load extension (?P<kind>function builder|results builder) assembly, expected: (?P<assembly>[\w.]+), Reason: File not found\.$'''
+examples = [
+    { msg = "(WARNING) Cannot load extension results builder assembly, expected: Example.ResultsBuilderXX_PROJECT.dll, Reason: File not found.", fields = { kind = "results builder", assembly = "Example.ResultsBuilderXX_PROJECT.dll" } },
+]
+counter_examples = ["(WARNING) Cannot load extension results builder assembly, expected: Example.dll, Reason: Access denied."]
+
+[[template]]
+code = "DFH-013"
+class = "other"
+title = "Trace function step"
+sev = 5
+fts = false
+regex = '''^(?:Trace Function (?P<step>called for DMS part of network\.\.\.|started\.\.\.|finished successfully\.\.\.)|Check for project specific trace subroutine started\.|No associated extern custom Trace function was found\.)$'''
+examples = [
+    { msg = "Trace Function started...", fields = { step = "started..." } },
+    "Trace Function finished successfully...",
+    "No associated extern custom Trace function was found.",
+]
+counter_examples = ["Trace Function is called for element with LID 4A00B00C00D00E01"]
+
+[[template]]
+code = "DFH-014"
+class = "other"
+title = "Trace options listing"
+sev = 5
+fts = false
+regex = '''^(?:Trace Options:|Trace Property :|Specified types:|CustomType GIDs:|Boundary GIDs:|Input phases : \S+|Type of [Tt]race(?: is | : )TRACE_[A-Z_]+\.?)$'''
+examples = [
+    "Trace Options:",
+    "Input phases : PHASE_ABC",
+    "Type of Trace is TRACE_DOWN.",
+    "Type of trace : TRACE_UP",
+]
+counter_examples = ["Trace Options"]
+
+[[template]]
+code = "DFH-015"
+class = "other"
+title = "Trace element line"
+sev = 5
+regex = '''^Trace Function is called for element with LID (?P<element>(?:0x)?[0-9A-Fa-f]{1,16})\.?$'''
+fields = { element = "hex" }
+examples = [
+    "Trace Function is called for element with LID 4A00B00C00D00E02.",
+    "Trace Function is called for element with LID 12345678",
+]
+counter_examples = ["Trace Function is called for element with LID"]
+
+[[template]]
+code = "DFH-016"
+class = "other"
+title = "Bare list item line"
+sev = 5
+fts = false
+regex = '''^(?:[0-9A-Fa-f]{1,16}|BREAKER|DISCONNECTOR|FUSE|LOADBREAKER|COMPSWITCH|SECTIONALIZER|RECLOSER|TRACE_[A-Z_]+)$'''
+examples = [
+    "4A00B00C00D00E01",
+    "TRACE_FOLLOW_LOOP",
+    "BREAKER",
+]
+counter_examples = ["Summary", "abc def"]
+
+[[template]]
+code = "DFH-017"
+class = "validation"
+title = "Tap changer hunting"
+sev = 3
+regex = '''^DH: TapChanger: (?P<element>(?:0x)?[0-9A-Fa-f]{1,16}) has hunted from position: (?P<from_pos>-?\d+) to position: (?P<to_pos>-?\d+)\.$'''
+fields = { element = "hex", from_pos = "int", to_pos = "int" }
+examples = [
+    { msg = "DH: TapChanger: 4A00B00C00D00E01 has hunted from position: -3 to position: 4.", fields = { from_pos = -3, to_pos = 4 } },
+]
+counter_examples = ["DH: TapChanger: 4A00B00C00D00E01 has moved from position: 1 to position: 2."]
+
+[[template]]
+code = "DFH-018"
+class = "other"
+title = "Prediction function trace line"
+sev = 5
+regex = '''^(?:Switch have been added to predicted devices list|Predicted device(?:s,| affected phases)|Predicted \dnd topo device|PF_(?:AutoRollUp |PrintParentChild|StormPrediction)|PF Statistics:|Device(?: GID |, GID )|BayEnd GID |Start trace BayEnd|Trace Up \(|Incident predicted device).*$'''
+examples = [
+    "Switch have been added to predicted devices list, GID: 4A00B00C00D00E01, as 2nd device",
+    "Predicted devices, 1st, 2nd and topo respectively, GID 4A00B00C00D00E01; 4A00B00C00D00E02; 4A00B00C00D00E03",
+    "PF_AutoRollUp parent device GID 4A00B00C00D00E01, affected phases PHASE_ABC, for auto roll up index 1.",
+    "BayEnd GID 4A00B00C00D00E01 TA status is TA_ENERGIZED.",
+    "Start trace BayEnd for input LID 4A00B00C00D00E01 (GID 4A00B00C00D00E02) is LID 4A00B00C00D00E03 (GID 4A00B00C00D00E04).",
+]
+counter_examples = ["Prediction nothing."]
+
+[[template]]
+code = "DFH-019"
+class = "other"
+title = "Function option or state line"
+sev = 5
+regex = '''^(?:UseLowVoltage is (?:true|false)\.|Load Flow Update shouldn't be performed\.|There are \d+ custom switch type roll up data\.|Recloser lock out signal: (?:0x)?[0-9A-Fa-f]{1,16}|Block reclosing signal: (?:0x)?[0-9A-Fa-f]{1,16}|Nodes have partial energization:|NodeLID: (?:0x)?[0-9A-Fa-f]{1,16}|Work Order Validation (?:started|finished successfully)\.\.\.|WOV cleanUp (?:started|finished successfully)|Prepare StateForecastOptions options\.)$'''
+examples = [
+    "UseLowVoltage is false.",
+    "Load Flow Update shouldn't be performed.",
+    "Recloser lock out signal: 4A00B00C00D00E01",
+    "NodeLID: 4A00B00C00D00E01",
+    "Work Order Validation started...",
+]
+counter_examples = ["UseLowVoltage is maybe."]
+
+# ---------------------------------------------------------------------------------------------
+# 050-099: model build and EMS functions
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DFH-050"
+class = "validation"
+title = "Isolated node in the root"
+sev = 4  # per-element
+fts = false
+regex = '''^\[EMSBUILD\]: (?P<node>(?:NOS )?Node): LID: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}) in Root: LID: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) is isolated\.$'''
+fields = { lid = "hex", root = "hex" }
+examples = [
+    { msg = "[EMSBUILD]: Node: LID: 4A00B00C00D00E01 in Root: LID: 4A00B00C00D00E02 is isolated.", fields = { node = "Node" } },
+    { msg = "[EMSBUILD]: NOS Node: LID: 12345678 in Root: LID: 0x4A00B00C00D00E03 is isolated.", fields = { node = "NOS Node" } },
+]
+counter_examples = ["[EMSBUILD]: Node: LID: 1 in Root: LID: 2 is connected."]
+
+[[template]]
+code = "DFH-051"
+class = "lifecycle"
+title = "Model builder run started"
+sev = 5
+fts = false
+text = "[EMSBUILD]: Started EMSModelBuilder:Build() function!"
+examples = ["[EMSBUILD]: Started EMSModelBuilder:Build() function!"]
+counter_examples = ["[EMSBUILD]: Paused EMSModelBuilder:Build() function!"]
+
+[[template]]
+code = "DFH-077"
+class = "lifecycle"
+title = "Model builder run ended"
+sev = 5
+fts = false
+text = "[EMSBUILD]: Ended EMSModelBuilder:Build() function!"
+examples = ["[EMSBUILD]: Ended EMSModelBuilder:Build() function!"]
+counter_examples = ["[EMSBUILD]: Paused EMSModelBuilder:Build() function!"]
+
+[[template]]
+code = "DFH-052"
+class = "validation"
+title = "Transmission network with disabled calculations"
+sev = 4  # per-element
+fts = false
+text = "[EMSBUILD]: Detected at least one transmission network that has disabled calculations."
+examples = ["[EMSBUILD]: Detected at least one transmission network that has disabled calculations."]
+counter_examples = ["[EMSBUILD]: Detected no transmission network that has disabled calculations."]
+
+[[template]]
+code = "DFH-053"
+class = "other"
+title = "Root being processed by the model builder"
+sev = 5
+fts = false
+regex = '''^\[EMSBUILD\]: Processing root ID: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16})\. Root source GID: (?P<gid>\d+)$'''
+fields = { root = "hex", gid = "int" }
+examples = [
+    { msg = "[EMSBUILD]: Processing root ID: 4A00B00C00D00E01. Root source GID: 1000123", fields = { gid = 1000123 } },
+]
+counter_examples = ["[EMSBUILD]: Processing root ID: . Root source GID: 1"]
+
+[[template]]
+code = "DFH-054"
+class = "validation"
+title = "Island below the minimum number of branches"
+sev = 4  # per-element
+fts = false
+text = "[EMSBUILD]: Number of branches in island is lower than minimum number. Unresolved Island!"
+examples = ["[EMSBUILD]: Number of branches in island is lower than minimum number. Unresolved Island!"]
+counter_examples = ["[EMSBUILD]: Number of loops in island is lower than minimum number. Unresolved Island!"]
+
+[[template]]
+code = "DFH-078"
+class = "validation"
+title = "Island below the minimum number of nodes"
+sev = 4  # per-element
+fts = false
+text = "[EMSBUILD]: Number of nodes in island is lower than minimum number. Unresolved Island!"
+examples = ["[EMSBUILD]: Number of nodes in island is lower than minimum number. Unresolved Island!"]
+counter_examples = ["[EMSBUILD]: Number of loops in island is lower than minimum number. Unresolved Island!"]
+
+[[template]]
+code = "DFH-055"
+class = "other"
+title = "Merged sections postprocessing started"
+sev = 5
+fts = false
+text = "[EMSBUILD]: Postprocessing of merged sections is started."
+examples = ["[EMSBUILD]: Postprocessing of merged sections is started."]
+counter_examples = ["[EMSBUILD]: Postprocessing of merged sections is skipped."]
+
+[[template]]
+code = "DFH-079"
+class = "other"
+title = "Merged sections postprocessing finished"
+sev = 5
+fts = false
+text = "[EMSBUILD]: Postprocessing of merged sections is finished."
+examples = ["[EMSBUILD]: Postprocessing of merged sections is finished."]
+counter_examples = ["[EMSBUILD]: Postprocessing of merged sections is skipped."]
+
+[[template]]
+code = "DFH-056"
+class = "validation"
+title = "EMS root in a disabled part of the network"
+sev = 4  # per-element
+fts = false
+regex = '''^\[EMSBUILD\]: EMS root LID: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) is in disabled part of network! Root source GID: (?P<gid>\d+)$'''
+fields = { root = "hex", gid = "int" }
+examples = [
+    { msg = "[EMSBUILD]: EMS root LID: 4A00B00C00D00E01 is in disabled part of network! Root source GID: 1000123", fields = { gid = 1000123 } },
+]
+counter_examples = ["[EMSBUILD]: EMS root LID: 4A00B00C00D00E01 is in enabled part of network! Root source GID: 1000123"]
+
+[[template]]
+code = "DFH-057"
+class = "other"
+title = "Custom data clean up of the model builder started"
+sev = 5
+fts = false
+text = "[EMSBUILD]: Clean up of custom data started!"
+examples = ["[EMSBUILD]: Clean up of custom data started!"]
+counter_examples = ["[EMSBUILD]: Clean up of custom data skipped!"]
+
+[[template]]
+code = "DFH-080"
+class = "other"
+title = "Custom data clean up of the model builder finished"
+sev = 5
+fts = false
+text = "[EMSBUILD]: Clean up of custom data finished!"
+examples = ["[EMSBUILD]: Clean up of custom data finished!"]
+counter_examples = ["[EMSBUILD]: Clean up of custom data skipped!"]
+
+[[template]]
+code = "DFH-058"
+class = "validation"
+title = "EMS part of the network not selected"
+sev = 4
+text = "[EMSBUILD]: EMSModelBuilder:EMS part of network is not selected..."
+examples = ["[EMSBUILD]: EMSModelBuilder:EMS part of network is not selected..."]
+counter_examples = ["[EMSBUILD]: EMSModelBuilder:EMS part of network is selected..."]
+
+[[template]]
+code = "DFH-081"
+class = "validation"
+title = "EMS part of the network not selected (function side)"
+sev = 4
+text = "Ems part of network has not been selected..."
+examples = ["Ems part of network has not been selected..."]
+counter_examples = ["Ems part of network has been selected..."]
+
+[[template]]
+code = "DFH-059"
+class = "validation"
+title = "Element without a valid container"
+sev = 4  # per-element
+fts = false
+regex = '''^\[EMSCH\]: Container is not valid for element LID: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}), GID: (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16}) \((?P<method>\w+)\)\.$'''
+fields = { lid = "hex", gid = "hex" }
+examples = [
+    { msg = "[EMSCH]: Container is not valid for element LID: 4A00B00C00D00E01, GID: 0x4A00B00C00D00E02 (FindSubstationTransmissionOrRegion).", fields = { method = "FindSubstationTransmissionOrRegion" } },
+    "[EMSCH]: Container is not valid for element LID: 12345678, GID: 4A00B00C00D00E02 (FindExample).",
+]
+counter_examples = ["[EMSCH]: Container is valid for element LID: 1, GID: 2 (X)."]
+
+[[template]]
+code = "DFH-060"
+class = "validation"
+title = "Isolated nodes cannot be removed from the root cache"
+sev = 4  # per-element
+fts = false
+regex = '''^\[EMSSE\]: Can not remove isolated nodes form cache of root\( LID: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) \)$'''
+fields = { root = "hex" }
+examples = [
+    "[EMSSE]: Can not remove isolated nodes form cache of root( LID: 4A00B00C00D00E01 )",
+]
+counter_examples = ["[EMSSE]: Can not remove isolated nodes form cache of root( LID:  )"]
+
+[[template]]
+code = "DFH-061"
+class = "other"
+title = "Topology estimation of a root"
+sev = 5
+fts = false
+regex = '''^\[EMSSE\]: (?P<phase>Started|Finished) Topology Estimation for root \( LID: (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) \) \( GID: (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16}) \)$'''
+fields = { root = "hex", gid = "hex" }
+examples = [
+    { msg = "[EMSSE]: Started Topology Estimation for root ( LID: 4A00B00C00D00E01 ) ( GID: 4A00B00C00D00E02 )", fields = { phase = "Started" } },
+    "[EMSSE]: Finished Topology Estimation for root ( LID: 12345678 ) ( GID: 0x4A00B00C00D00E03 )",
+]
+counter_examples = ["[EMSSE]: Aborted Topology Estimation for root ( LID: 1 ) ( GID: 2 )"]
+
+[[template]]
+code = "DFH-062"
+class = "other"
+title = "EMS state estimation function started"
+sev = 5
+text = "[EMSSE]: Started Function"
+examples = ["[EMSSE]: Started Function"]
+counter_examples = ["[EMSSE]: Started Topology"]
+
+[[template]]
+code = "DFH-082"
+class = "other"
+title = "EMS state estimation clean up started"
+sev = 5
+text = "[EMSSE]: Started CleanUp"
+examples = ["[EMSSE]: Started CleanUp"]
+counter_examples = ["[EMSSE]: Started Topology"]
+
+[[template]]
+code = "DFH-083"
+class = "other"
+title = "EMS state estimation clean up finished"
+sev = 5
+text = "[EMSSE]: Finished CleanUp successfully"
+examples = ["[EMSSE]: Finished CleanUp successfully"]
+counter_examples = ["[EMSSE]: Finished CleanUp"]
+
+[[template]]
+code = "DFH-084"
+class = "other"
+title = "EMS state estimation switches export started"
+sev = 5
+text = "[EMSSE]: Export switches data started."
+examples = ["[EMSSE]: Export switches data started."]
+counter_examples = ["[EMSSE]: Export switches data skipped."]
+
+[[template]]
+code = "DFH-085"
+class = "other"
+title = "EMS state estimation switches export finished"
+sev = 5
+text = "[EMSSE]: Export switches data finished."
+examples = ["[EMSSE]: Export switches data finished."]
+counter_examples = ["[EMSSE]: Export switches data skipped."]
+
+[[template]]
+code = "DFH-063"
+class = "statistics"
+title = "Gain function of a transmission network"
+sev = 5
+regex = '''^\[EMSSE\]: Gain function for transmission network \( LID: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}) \) (?:is not calculated because transmission network is DISABLED|is: \( (?P<gain>[^ )]+) *\))$'''
+fields = { lid = "hex" }
+examples = [
+    { msg = "[EMSSE]: Gain function for transmission network ( LID: 4A00B00C00D00E01 ) is: ( 0.5   )", fields = { gain = "0.5" } },
+    "[EMSSE]: Gain function for transmission network ( LID: 4A00B00C00D00E02 ) is not calculated because transmission network is DISABLED",
+]
+counter_examples = ["[EMSSE]: Gain function for transmission network ( LID: 4A00B00C00D00E01 ) is enabled"]
+
+[[template]]
+code = "DFH-064"
+class = "statistics"
+title = "Gain function of the entire network"
+sev = 5
+regex = '''^\[EMSSE\]: Gain function for entire network is: \( (?P<gain>[^ )]+) *\)$'''
+examples = [
+    { msg = "[EMSSE]: Gain function for entire network is: ( 0.25 )", fields = { gain = "0.25" } },
+]
+counter_examples = ["[EMSSE]: Gain function for entire network is: 0.25"]
+
+[[template]]
+code = "DFH-065"
+class = "statistics"
+title = "Circuit efficiency set"
+sev = 5
+fts = false
+regex = '''^\[EMSPI\]: (?P<metric>Calculated Circuit Line Efficiency of Circuit|Service Efficiency of circuit) LID: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}), GID: (?P<gid>\d+) is set to (?P<value>\S+?)(?: \[%\])?\.$'''
+fields = { lid = "hex", gid = "int" }
+examples = [
+    { msg = "[EMSPI]: Calculated Circuit Line Efficiency of Circuit LID: 4A00B00C00D00E01, GID: 1000123 is set to 98.5.", fields = { metric = "Calculated Circuit Line Efficiency of Circuit", gid = 1000123, value = "98.5" } },
+    { msg = "[EMSPI]: Service Efficiency of circuit LID: 12345678, GID: 1000124 is set to 100 [%].", fields = { value = "100" } },
+]
+counter_examples = ["[EMSPI]: Service Efficiency of circuit LID: 12345678, GID: x is set to 100 [%]."]
+
+[[template]]
+code = "DFH-066"
+class = "statistics"
+title = "Substation input power and losses"
+sev = 5
+regex = '''^\[EMSPI\]: Input (?P<kind>active|reactive) power of substation LID: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}), GID: (?P<gid>\d+) is (?P<power>\S+) \[kW\]\. Relative active power losses is set to (?P<losses>\S+) \[%\]$'''
+fields = { lid = "hex", gid = "int" }
+examples = [
+    { msg = "[EMSPI]: Input active power of substation LID: 4A00B00C00D00E01, GID: 1000123 is 12.5 [kW]. Relative active power losses is set to 0.5 [%]", fields = { kind = "active", power = "12.5", losses = "0.5" } },
+    "[EMSPI]: Input reactive power of substation LID: 12345678, GID: 1000124 is 3 [kW]. Relative active power losses is set to 0 [%]",
+]
+counter_examples = ["[EMSPI]: Input apparent power of substation LID: 1, GID: 2 is 3 [kW]. Relative active power losses is set to 0 [%]"]
+
+[[template]]
+code = "DFH-067"
+class = "other"
+title = "EMS performance indices calculation started"
+sev = 5
+text = "[EMSPI]: EMS Performance Indices calculation started."
+examples = ["[EMSPI]: EMS Performance Indices calculation started."]
+counter_examples = ["[EMSPI]: EMS Performance Indices calculation aborted."]
+
+[[template]]
+code = "DFH-086"
+class = "other"
+title = "EMS performance indices calculation ended"
+sev = 5
+text = "[EMSPI]: EMS Performance Indices calculation successfully ended."
+examples = ["[EMSPI]: EMS Performance Indices calculation successfully ended."]
+counter_examples = ["[EMSPI]: EMS Performance Indices calculation aborted."]
+
+[[template]]
+code = "DFH-087"
+class = "validation"
+title = "No transformers in the model"
+sev = 4
+text = "[EMSPI]: There are no transformers in model!"
+examples = ["[EMSPI]: There are no transformers in model!"]
+counter_examples = ["[EMSPI]: There are transformers in model!"]
+
+[[template]]
+code = "DFH-068"
+class = "validation"
+title = "Circuit without nodes"
+sev = 4  # per-element
+regex = '''^\[EMSPI\]: There are no nodes in circuit LID: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}), GID: (?P<gid>\d+)\.$'''
+fields = { lid = "hex", gid = "int" }
+examples = [
+    { msg = "[EMSPI]: There are no nodes in circuit LID: 4A00B00C00D00E01, GID: 1000123.", fields = { gid = 1000123 } },
+]
+counter_examples = ["[EMSPI]: There are no nodes in circuit LID: , GID: 1."]
+
+[[template]]
+code = "DFH-069"
+class = "validation"
+title = "Diagrams not allocated for a circuit"
+sev = 4  # per-element
+regex = '''^\[EMSPI\]: Diagrams are not allocated for parent LID: (?P<parent_lid>(?:0x)?[0-9A-Fa-f]{1,16}), GID: (?P<parent_gid>\d+) or child circuit LID: (?P<lid>(?:0x)?[0-9A-Fa-f]{1,16}), GID: (?P<gid>\d+)\.$'''
+fields = { parent_lid = "hex", parent_gid = "int", lid = "hex", gid = "int" }
+examples = [
+    { msg = "[EMSPI]: Diagrams are not allocated for parent LID: 4A00B00C00D00E01, GID: 1000123 or child circuit LID: 4A00B00C00D00E02, GID: 1000124.", fields = { parent_gid = 1000123, gid = 1000124 } },
+]
+counter_examples = ["[EMSPI]: Diagrams are allocated for parent LID: 1, GID: 2 or child circuit LID: 3, GID: 4."]
+
+[[template]]
+code = "DFH-070"
+class = "other"
+title = "Reactive reserve monitoring step"
+sev = 5
+regex = '''^\[EMSRRM\]:? (?P<step>Allocation and setting Custom Data started\.\.\.|RRM calculation (?:started|ended) \.\.\.|Results successfully handled\.|RRM Cleanup (?:started\.|finished \.\.\.))$'''
+examples = [
+    { msg = "[EMSRRM]: Allocation and setting Custom Data started...", fields = { step = "Allocation and setting Custom Data started..." } },
+    "[EMSRRM] RRM calculation started ...",
+    "[EMSRRM] RRM calculation ended ...",
+    "[EMSRRM] Results successfully handled.",
+    "[EMSRRM]: RRM Cleanup started.",
+    "[EMSRRM]: RRM Cleanup finished ...",
+]
+counter_examples = ["[EMSRRM] RRM calculation paused ..."]
+
+[[template]]
+code = "DFH-071"
+class = "error"
+title = "Fault calculation failed"
+sev = 2
+text = "[EMSFC]: Calculation failed"
+examples = ["[EMSFC]: Calculation failed"]
+counter_examples = ["[EMSFC]: Calculation started"]
+
+[[template]]
+code = "DFH-088"
+class = "error"
+title = "Breaker capacity calculation failed"
+sev = 2
+text = "[EMSBC]: Calculation failed"
+examples = ["[EMSBC]: Calculation failed"]
+counter_examples = ["[EMSBC]: Calculation started"]
+
+[[template]]
+code = "DFH-072"
+class = "error"
+title = "EMS cache for the fault calculation not created"
+sev = 2
+text = "[EMSFC]:Create EMS cache for FC execution failed."
+examples = ["[EMSFC]:Create EMS cache for FC execution failed."]
+counter_examples = ["[EMSFC]:Create EMS cache for FC execution started."]
+
+[[template]]
+code = "DFH-089"
+class = "error"
+title = "EMS cache for the breaker capacity calculation not created"
+sev = 2
+text = "[EMSBC]:Create EMS cache for BC execution failed."
+examples = ["[EMSBC]:Create EMS cache for BC execution failed."]
+counter_examples = ["[EMSBC]:Create EMS cache for BC execution started."]
+
+[[template]]
+code = "DFH-073"
+class = "validation"
+title = "Fault calculation found an unresolved network island"
+sev = 3
+text = "[EMSFC]: Model builder found unresolved network island"
+examples = ["[EMSFC]: Model builder found unresolved network island"]
+counter_examples = ["[EMSFC]: Model builder found resolved network island"]
+
+[[template]]
+code = "DFH-090"
+class = "validation"
+title = "Breaker capacity calculation found an unresolved network island"
+sev = 3
+text = "[EMSBC]: Model builder found unresolved network island"
+examples = ["[EMSBC]: Model builder found unresolved network island"]
+counter_examples = ["[EMSBC]: Model builder found resolved network island"]
+
+[[template]]
+code = "DFH-074"
+class = "other"
+title = "Fault or breaker capacity step"
+sev = 5
+fts = false
+regex = '''^\[(?P<function>EMSFC|EMSBC)\]: (?P<step>Allocate model started\.|Creating communication to Internal model\.|EMS BC Model allocation starting\.\.\.|Allocate function model successfully ended!|Calculate started[.!]|Calculate successfully ended!|Postprocess (?:started|ended)[.!]|Deallocat(?:e|ion) of model (?:started|successfully ended)[.!]|Results have been successfully handled\.)$'''
+examples = [
+    { msg = "[EMSFC]: Allocate model started.", fields = { function = "EMSFC", step = "Allocate model started." } },
+    "[EMSBC]: Calculate started!",
+    "[EMSFC]: Postprocess ended!",
+    "[EMSFC]: Deallocate of model started!",
+    "[EMSBC]: Deallocation of model successfully ended!",
+    "[EMSBC]: Results have been successfully handled.",
+]
+counter_examples = ["[EMSFC]: Allocate model paused."]
+
+[[template]]
+code = "DFH-075"
+class = "statistics"
+title = "Breaker capacity function summary"
+sev = 4
+regex = '''^\[EMSBC\]: Function completed with (?P<errors>\d+) errors, (?P<warnings>\d+), warnings, (?P<infos>\d+) info's !$'''
+fields = { errors = "int", warnings = "int", infos = "int" }
+examples = [
+    { msg = "[EMSBC]: Function completed with 1 errors, 2, warnings, 3 info's !", fields = { errors = 1, warnings = 2, infos = 3 } },
+]
+counter_examples = ["[EMSBC]: Function completed with x errors, 2, warnings, 3 info's !"]
+
+[[template]]
+code = "DFH-076"
+class = "other"
+title = "Load flow wrapper trace line"
+sev = 5
+regex = '''^\[EMS LFW\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected)).*$'''
+examples = ["[EMS LFW] Find input DMS root GID 1000123."]
+counter_examples = ["[EMS LFW] Failed to find the input root."]
+
+# ---------------------------------------------------------------------------------------------
+# 100-149: [SE] state estimation
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DFH-100"
+class = "other"
+title = "State estimation trace line"
+sev = 5
+fts = false
+regex = '''^\[SE\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected))(?!.*function finished with).*$'''
+examples = [
+    "[SE] Load calibration started...",
+    "[SE] Percent of good SCADA quality IPQV measurements in root 4A00B00C00D00E01 is 98.5.",
+]
+counter_examples = ["[SE] Error: Load flow initialization failed. Aborting..."]
+
+# ---------------------------------------------------------------------------------------------
+# 150-189: [LF], [MR], [PU], [SF], [SSV] and other functions
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DFH-150"
+class = "validation"
+title = "Load calculation unsuccessful for the SDPs of a block"
+sev = 4  # per-element
+fts = false
+regex = '''^Load calculation unsuccessful for (?P<sdps>\d+) SDPs in block with ID (?P<block>\d+)\.$'''
+fields = { sdps = "int", block = "int" }
+examples = [
+    { msg = "Load calculation unsuccessful for 9 SDPs in block with ID 1866.", fields = { sdps = 9, block = 1866 } },
+]
+counter_examples = ["Load calculation successful for 9 SDPs in block with ID 1866."]
+
+[[template]]
+code = "DFH-151"
+class = "validation"
+title = "Load flow regulator set point is wrong"
+sev = 4  # per-element
+fts = false
+regex = '''^\[LF\] \(WARNING\) Set point (?P<set_point>\S+) +is wrong for reg=(?P<regulator>(?:0x)?[0-9A-Fa-f]{1,16})\.$'''
+fields = { regulator = "hex" }
+examples = [
+    { msg = "[LF] (WARNING) Set point 1.05   is wrong for reg=4A00B00C00D00E01.", fields = { set_point = "1.05" } },
+]
+counter_examples = ["[LF] (WARNING) Set point 1.05 is right for reg=4A00B00C00D00E01."]
+
+[[template]]
+code = "DFH-152"
+class = "validation"
+title = "Load flow voltage or loading violation"
+sev = 4  # per-element
+regex = '''^\[LF\] (?P<kind>\w+ voltage|Overloaded) (?P<value>\S+) is detected (?:at node|at the end of branch|at branch) (?P<element>(?:0x)?[0-9A-Fa-f]{1,16})(?: in iteration (?P<iteration>\d+))?\.\.\.$'''
+fields = { element = "hex", iteration = "int" }
+examples = [
+    { msg = "[LF] Low voltage 0.91 is detected at node 4A00B00C00D00E01 in iteration 3...", fields = { kind = "Low voltage", value = "0.91", iteration = 3 } },
+    "[LF] High voltage 1.12 is detected at the end of branch 12345678 in iteration 2...",
+    "[LF] Overloaded 1.3 is detected at branch 4A00B00C00D00E02...",
+]
+counter_examples = ["[LF] Low voltage 1 is cleared at node 1 in iteration 1..."]
+
+[[template]]
+code = "DFH-153"
+class = "validation"
+title = "Part of the network with unknown topology"
+sev = 4  # per-element
+regex = '''^\[LF\] In this root there are parts of network with unknown topology\. Lid the of (?P<what>\w+(?: branch)?) is (?P<element>(?:0x)?[0-9A-Fa-f]{1,16}) \.\.\.$'''
+fields = { element = "hex" }
+examples = [
+    { msg = "[LF] In this root there are parts of network with unknown topology. Lid the of device is 4A00B00C00D00E01 ...", fields = { what = "device" } },
+]
+counter_examples = ["[LF] In this root there are parts of network with known topology. Lid the of device is 1 ..."]
+
+[[template]]
+code = "DFH-154"
+class = "validation"
+title = "Load flow results with invalid values"
+sev = 3
+regex = '''^\[LF\] (?:All elements in the root (?P<root>(?:0x)?[0-9A-Fa-f]{1,16}) have invalid values of results \.\.\.|Invalid values of results are detected\. Lid of the first branch is (?P<branch>(?:0x)?[0-9A-Fa-f]{1,16}) \.\.\.)$'''
+examples = [
+    "[LF] All elements in the root 4A00B00C00D00E01 have invalid values of results ...",
+    "[LF] Invalid values of results are detected. Lid of the first branch is 4A00B00C00D00E02 ...",
+]
+counter_examples = ["[LF] All elements in the root 4A00B00C00D00E01 have valid values of results ..."]
+
+[[template]]
+code = "DFH-155"
+class = "other"
+title = "Load flow trace line"
+sev = 5
+fts = false
+regex = '''^\[LF\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected))(?!.*(?:is detected|unknown topology)).*$'''
+examples = [
+    "[LF] Load Flow function started for root 4A00B00C00D00E01...",
+    "[LF] Moved tap changer 4A00B00C00D00E02 to position 3 from position -1",
+]
+counter_examples = ["[LF] Error: Load Flow calculation has failed."]
+
+[[template]]
+code = "DFH-156"
+class = "other"
+title = "Model readiness trace line"
+sev = 5
+fts = false
+regex = '''^\[MR\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected))(?!.*function finished with).*$'''
+examples = [
+    "[MR] Model Readiness prepare started...",
+    "[MR] Model Readiness calculation started for root 4A00B00C00D00E01 in substation 4A00B00C00D00E02...",
+]
+counter_examples = ["[MR] Warning: Model Readiness quality of root 4A00B00C00D00E01 is bad."]
+
+[[template]]
+code = "DFH-157"
+class = "other"
+title = "Pattern updater trace line"
+sev = 5
+fts = false
+regex = '''^\[PU\]: (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected)).*$'''
+examples = [
+    "[PU]: Pattern Updater execute started.",
+    "[PU]: There are 12 Interval Schedules for proccesing.",
+]
+counter_examples = ["[PU]: Pattern Updater failed."]
+
+[[template]]
+code = "DFH-158"
+class = "other"
+title = "State forecast switching command applied"
+sev = 4
+sev_field = "result"
+sev_map = { "failed" = 3, "done successfully" = 5 }
+regex = '''^\[SF\] Applying Switching command \((?P<index>\d+) of (?P<total>\d+)\) for element LID (?P<element>(?:0x)?[0-9A-Fa-f]{1,16}) (?P<result>done successfully|failed)\. Next Action\.\.\.$'''
+fields = { index = "int", total = "int", element = "hex" }
+examples = [
+    { msg = "[SF] Applying Switching command (1 of 3) for element LID 4A00B00C00D00E01 done successfully. Next Action...", fields = { index = 1, total = 3, result = "done successfully" } },
+    "[SF] Applying Switching command (2 of 3) for element LID 12345678 failed. Next Action...",
+]
+counter_examples = ["[SF] Applying Switching command (x of 3) for element LID 1 failed. Next Action..."]
+
+[[template]]
+code = "DFH-159"
+class = "other"
+title = "State forecast trace line"
+sev = 5
+regex = '''^\[SF\](?: |: )(?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected))(?!.*Applying Switching command).*$'''
+examples = [
+    "[SF]: State Forecast calculation finished.",
+    "[SF]: Time-stamp 12 3:04 - state 1",
+]
+counter_examples = ["[SF] Applying Switching command (1 of 3) for element LID 1 done successfully. Next Action..."]
+
+[[template]]
+code = "DFH-160"
+class = "other"
+title = "Switching validation trace line"
+sev = 5
+fts = false
+regex = '''^\[SSV\]:? (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected))(?!.*Issued Message).*$'''
+examples = [
+    "[SSV] SSV_Execute started.",
+    "[SSV]: Function EMS_SSVInitialize finished.",
+]
+counter_examples = ["[SSV] Issued Message: Fuse should not be replaced under a load."]
+
+[[template]]
+code = "DFH-161"
+class = "validation"
+title = "Switching validation message for the operator"
+sev = 4
+regex = '''^\[SSV\] (?:Possible )?Issued Message ?: .*$'''
+examples = [
+    "[SSV] Issued Message: Fuse should not be replaced under a load.",
+    "[SSV] Possible Issued Message: Example condition may apply.",
+]
+counter_examples = ["[SSV] SSV_Execute started."]
+
+[[template]]
+code = "DFH-162"
+class = "error"
+title = "Switching validation error, validation skipped"
+sev = 3
+regex = '''^\[SSV\]:? (?:(?:\w+ - |\w+: )?ERROR(?: -|:) .*|Error: .*|Function \w+ finished with error \d+|LoadFlow_Execute returned error code \d+\.)$'''
+examples = [
+    "[SSV] ExampleValidations: ERROR - Some validation is skipped!",
+    "[SSV]: ExampleValidation - ERROR: Invalid bayEnds!",
+    "[SSV] Error: startBayEnd is not associated in subroutine Example",
+    "[SSV]: Function ExampleValidation finished with error 5",
+    "[SSV] LoadFlow_Execute returned error code 3.",
+]
+counter_examples = ["[SSV] SSV_Execute started."]
+
+[[template]]
+code = "DFH-163"
+class = "validation"
+title = "Switching validation aborted"
+sev = 3
+regex = '''^\[SSV\] (?P<reason>.+?) ?Aborting\.{2,3}$'''
+examples = [
+    { msg = "[SSV] Loop is not broken. Aborting...", fields = { reason = "Loop is not broken." } },
+    "[SSV] Pointer on extension options isn't set. Aborting...",
+]
+counter_examples = ["[SSV] Loop is not broken."]
+
+[[template]]
+code = "DFH-164"
+class = "validation"
+title = "Switching validation input not usable"
+sev = 3
+regex = '''^\[SSV\] (?:InterlockingItem that signal belongs to is not valid or is not in operational model\.|Substation extracted from the root LID: (?:0x)?[0-9A-Fa-f]{1,16} is not valid\.|Switch is not closing, therefore it cannot ground energized element\.)$'''
+examples = [
+    "[SSV] InterlockingItem that signal belongs to is not valid or is not in operational model.",
+    "[SSV] Substation extracted from the root LID: 4A00B00C00D00E01 is not valid.",
+    "[SSV] Switch is not closing, therefore it cannot ground energized element.",
+]
+counter_examples = ["[SSV] Switch is closing."]
+
+[[template]]
+code = "DFH-165"
+class = "other"
+title = "Outage trace trace line"
+sev = 5
+regex = '''^\[OT\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected)).*$'''
+examples = ["[OT] Outage Trace cleanUp started...", "[OT] In outage area exist 3 switches."]
+counter_examples = ["[OT] Outage Trace failed."]
+
+[[template]]
+code = "DFH-166"
+class = "other"
+title = "Outage statistics trace line"
+sev = 5
+regex = '''^\[OS\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected)).*$'''
+examples = ["[OS] Outage Statistics Function started...", "[OS] 1. instruction: command type 5"]
+counter_examples = ["[OS] Command is not valid for further calculation."]
+
+[[template]]
+code = "DFH-167"
+class = "other"
+title = "Permit validation trace line"
+sev = 5
+regex = '''^\[PV-LLP\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected)).*$'''
+examples = ["[PV-LLP] PV_Calculate has started.", "[PV-LLP] Added device LID 4A00B00C00D00E01 to results structure."]
+counter_examples = ["[PV-LLP] PV_Calculate failed."]
+
+[[template]]
+code = "DFH-168"
+class = "other"
+title = "Prediction function trace line"
+sev = 5
+regex = '''^\[PF (?:INFO|Options)\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected)).*$'''
+examples = [
+    "[PF INFO] PF_Calculate started...",
+    "[PF Options] IncType NO_POWER | PredType STORM | NumInput 1",
+]
+counter_examples = ["[PF ERROR] PF_Prepare: completed with ERROR."]
+
+[[template]]
+code = "DFH-169"
+class = "other"
+title = "Switching restoration trace line"
+sev = 5
+regex = '''^\[SRSB\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected)).*$'''
+examples = ["[SRSB] Analog 4A00B00C00D00E01 last quality was: 5."]
+counter_examples = ["[SRSB] Analog 4A00B00C00D00E01 failed."]
+
+[[template]]
+code = "DFH-170"
+class = "other"
+title = "Performance indices trace line"
+sev = 5
+regex = '''^\[PI\] (?!.*(?:arning|WARNING|rror|ERROR|[Ff]ail|annot|an not|ot valid|nvalid|bort|unsuccess|NaN|imeout|imed out|denied|rejected)).*$'''
+examples = ["[PI] Root size: 2"]
+counter_examples = ["[PI] Root size failed"]
+
+[[template]]
+code = "DFH-171"
+class = "validation"
+title = "Load group without temperature range schedules"
+sev = 4  # per-element
+fts = false
+regex = '''^There are no temperature range schedules for specified temperature and time for load group with lid (?P<lid>\d+)$'''
+fields = { lid = "int" }
+examples = [
+    { msg = "There are no temperature range schedules for specified temperature and time for load group with lid 1000123", fields = { lid = 1000123 } },
+]
+counter_examples = ["There are temperature range schedules for specified temperature and time for load group with lid 1000123"]
+
+[[template]]
+code = "DFH-172"
+class = "statistics"
+title = "Feeder consumption and generation"
+sev = 5
+regex = '''^\[SFBuilder\] Feeder (?P<feeder>\d+) has active consumption (?P<active>[^\s,]+), reactive consumption (?P<reactive>[^\s,]+), total active (?P<gen_active>\S+) and reactive (?P<gen_reactive>\S+) generation$'''
+fields = { feeder = "int" }
+examples = [
+    { msg = "[SFBuilder] Feeder 1000123 has active consumption 1.5, reactive consumption 0.5, total active 0 and reactive 0 generation", fields = { feeder = 1000123, active = "1.5" } },
+]
+counter_examples = ["[SFBuilder] Feeder x has active consumption 1.5, reactive consumption 0.5, total active 0 and reactive 0 generation"]
+
+[[template]]
+code = "DFH-173"
+class = "validation"
+title = "Feeder consumption not available"
+sev = 4  # per-element
+fts = false
+regex = '''^\[SFBuilder\] Feeder (?P<feeder>\d+) has active consumption: NaN.*$'''
+examples = [
+    { msg = "[SFBuilder] Feeder 1000123 has active consumption: NaN | NaN | and generation NaN | NaN |", fields = { feeder = "1000123" } },
+]
+counter_examples = ["[SFBuilder] Feeder 1000123 has active consumption: 1 | 2 | and generation 3 | 4 |"]
+
+# ---------------------------------------------------------------------------------------------
+# 190-199: generic failures and function results
+# ---------------------------------------------------------------------------------------------
+
+[[template]]
+code = "DFH-190"
+class = "error"
+title = "Function reported an error"
+sev = 2
+regex = '''^(?:\[SE\] Error: |\[LF\] Error: |\[MR\] Error: |\[SF\] Error: |\[SF\]: Error in ).*$'''
+examples = [
+    "[LF] Error: Load Flow calculation has failed.",
+    "[SE] Error: Root 4A00B00C00D00E01 is not up to date.",
+    "[SF]: Error in Load Flow calculation for root 4A00B00C00D00E01 , state 1 ...",
+]
+counter_examples = ["[LF] Load Flow finished successfully for root 4A00B00C00D00E01..."]
+
+[[template]]
+code = "DFH-191"
+class = "validation"
+title = "Function warning"
+sev = 3
+regex = '''^(?:\[SE\] Warning: |\[LF\] Warning: |\[MR\] Warning: |\[SF\] Warning: |\[SF\]: Warning: ).*$'''
+examples = [
+    "[SE] Warning: State Estimation quality of root 4A00B00C00D00E01 is questionable.",
+    "[MR] Warning: Start section not found for feeder 4A00B00C00D00E02. Number of feeders with this issue: 4.",
+]
+counter_examples = ["[SE] State Estimation quality of root 4A00B00C00D00E01 is good."]
+
+[[template]]
+code = "DFH-192"
+class = "end"
+title = "State estimation or model readiness function finished"
+sev = 5
+sev_field = "result"
+sev_map = { success = 5, warning = 3 }
+regex = '''^(?:\[SE\] State Estimation|\[MR\] Model Readiness) function finished with (?P<result>success|warning)\.$'''
+examples = [
+    { msg = "[SE] State Estimation function finished with success.", fields = { result = "success" } },
+    "[SE] State Estimation function finished with warning.",
+]
+counter_examples = ["[SE] State Estimation function finished with delay.", "[SE] State Estimation function finished with error."]
+
+[[template]]
+code = "DFH-195"
+class = "error"
+title = "State estimation or model readiness function failed"
+sev = 2
+regex = '''^(?:\[SE\] State Estimation|\[MR\] Model Readiness) function finished with error\.$'''
+examples = ["[SE] State Estimation function finished with error.", "[MR] Model Readiness function finished with error."]
+counter_examples = ["[SE] State Estimation function finished with success."]
+
+[[template]]
+code = "DFH-193"
+class = "validation"
+title = "Command not valid for calculation"
+sev = 3
+regex = '''^(?:\[SF\] Current command|\[OS\] Command) is not valid for (?:further )?calculation\.$'''
+examples = [
+    "[SF] Current command is not valid for calculation.",
+    "[OS] Command is not valid for further calculation.",
+]
+counter_examples = ["[SF] Current command is valid for calculation."]
+
+[[template]]
+code = "DFH-194"
+class = "validation"
+title = "Prediction trace aborted by an energization measurement"
+sev = 4  # per-element
+regex = '''^Measurement indicating energization, analog GID (?P<gid>(?:0x)?[0-9A-Fa-f]{1,16}), abort prediction trace\.$'''
+fields = { gid = "hex" }
+examples = ["Measurement indicating energization, analog GID 4A00B00C00D00E01, abort prediction trace."]
+counter_examples = ["Measurement indicating energization, analog GID 1, continue prediction trace."]
+
+# ---------------------------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------------------------
+
+# The execution thread of a FunctionHost runs one job at a time, so the start and the end of the
+# execution are on the same TID (measured). "New job received" arrives on another thread and the
+# per-function result line (DFH-005) repeats once per function of the sequence, so neither opens or
+# closes the operation. The severity of the result lines carries the outcome of each function; a
+# failed calculation inside the job marks the operation fail.
+[[operation]]
+name = "FunctionHostJob"
+start = ["DFH-002"]
+end_ok = ["DFH-023"]
+fail = ["DFH-071", "DFH-072", "DFH-088", "DFH-089", "DFH-190", "DFH-195"]
+pair_by = ["tid"]
+check_key = "job_id"

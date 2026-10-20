@@ -117,7 +117,7 @@ def test_export_response_shape_and_headers(client, server, demo):  # noqa: F811
     assert data["anonymized"] is True and data["map_saved"] is True
     (part,) = data["parts"]
     assert set(part) == {"name", "text"} and part["name"].endswith(".txt")
-    assert part["text"].startswith("dmslog report - <TERM-1> <TERM-2> <VALUE-1>\r\n")  # strict: "outage" too
+    assert part["text"].startswith("dmslog report - <TERM-1> <TERM-2> <VALUE-1>\r\n")
     assert data["counts"] == {"records": 6, "events": 1, "payloads": 2}
     categories = {row["category"] for row in data["legend"]}
     assert {"guid", "host", "url", "term", "person"} <= categories
