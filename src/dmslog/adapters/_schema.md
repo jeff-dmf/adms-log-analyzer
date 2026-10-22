@@ -174,7 +174,7 @@ Regex fields win over continuation fields with the same name. Parsers read at mo
 
 Field types in `fields` also apply to `line_regex` outputs.
 
-`kv_at` rules: an item starts with `@Name =` at the window start or after whitespace; its value runs to the next item. An allow-listed name seen more than once (an item injected inside a free-text value) drops every occurrence and counts them in `kv_rejected`, as does a value outside its type; an empty value just leaves the field absent. If the continuation is longer than `window`, the last item of the window is not read and `kv_cut` is set. Types: `int` (`-?` up to 18 ASCII digits), `bool` (`true`/`false`, any case), `token` (`[A-Za-z][A-Za-z0-9_]{0,31}`), `gid` (up to 20 digits, not `0`; above 2^63-1 it stays decimal text). `allow` fields cannot be redeclared in `fields` nor collide with regex groups.
+`kv_at` rules: an item starts with `@Name =` at the window start or after whitespace; its value runs to the next item. An allow-listed name seen more than once (an item injected inside a free-text value) drops every occurrence and counts them in `kv_rejected`, as does a value outside its type; an empty value just leaves the field absent. If the continuation is longer than `window`, `kv_cut` is set, the last item of the window is not read and no allow-listed field is kept (uniqueness cannot be checked past the window); they count in `kv_rejected`. Types: `int` (`-?` up to 18 ASCII digits), `bool` (`true`/`false`, any case), `token` (`[A-Za-z][A-Za-z0-9_]{0,31}`), `gid` (up to 20 digits, not `0`; above 2^63-1 it stays decimal text). `allow` fields cannot be redeclared in `fields` nor collide with regex groups.
 
 ### Payload (`payload`)
 

@@ -497,7 +497,9 @@ def _p_kv_at(cont: str, opts: Mapping[str, Any], spec: ContSpec) -> dict[str, An
         entry = allow.get(m.group(1))
         if entry is None:
             continue
-        if seen[m.group(1)] > 1:
+        if cut or seen[m.group(1)] > 1:
+            # Cut window: uniqueness cannot be checked past the window (a free-text value could supply the
+            # field and the real item sit beyond the cut), so no allow-listed field is kept.
             rejected += 1
             continue
         stop = items[i + 1].start() if i + 1 < len(items) else end

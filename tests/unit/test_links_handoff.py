@@ -330,3 +330,51 @@ def test_the_shipped_catalog_loads_the_job_rules():
     assert [(r["a"], r["b"]) for r in rules] == [("DJB-003", "DJB-051"), ("DJB-050", "DFH-001")]
     assert rules[1]["families"] == ["DMSFH"] and rules[1]["pid_field"] == "fh_pid"
     assert catalog() is not None
+
+
+def test_the_bound_also_applies_to_the_last_ts(make, monkeypatch):
+    """Four pairs of distinct keys at one ts with a bound of 3: nothing is linked, whatever follows."""
+    monkeypatch.setattr(links_mod, "MAX_OPEN_KEYS", 3)
+    pairs = {"sched.log": [(100, "TST-001", i, None) for i in range(4)]}
+    pairs["launch.log"] = [(100, "TST-002", i, None) for i in range(4)]
+    alone = make(pairs)
+    alone.run()
+    assert alone.links() == set()
+    assert alone.stats()[RULE1] == {"linked": 0, "dropped": 4}
+    later = dict(pairs)
+    later["launch.log"] = [*pairs["launch.log"], (500, "TST-002", 99, None)]
+    after = make(later)
+    after.run()
+    assert after.links() == set()  # the same result, plus the later record itself
+    assert after.stats()[RULE1]["dropped"] == 5
+
+
+def test_a_key_repeated_in_the_window_stays_linear(make):
+    import time
+
+    n = 4000
+    db = make(
+        {
+            "sched.log": [(100 + i // 100, "TST-001", 1, None) for i in range(n)],
+            "launch.log": [(105 + i // 100, "TST-002", 1, None) for i in range(n)],
+        }
+    )
+    started = time.perf_counter()
+    db.run()
+    assert time.perf_counter() - started < 5
+    assert db.links() == set()
+    assert db.stats()[RULE1] == {"linked": 0, "ambiguous": n}
+
+
+def test_degrees_by_pid_class(make):
+    """An unknown-PID a matches every b; a known one only the b of its PID or of an unknown PID."""
+    db = make(
+        {
+            "launch.log": [(100, "TST-003", 1, 31), (101, "TST-003", 1, None)],
+            "fh1.log": [(110, "TST-101", 1, None)],  # PID 31: compatible with both a
+            "fh2.log": [(111, "TST-101", 1, None)],  # PID 32: only with the unknown-PID a
+        }
+    )
+    db.run()
+    assert db.links() == set()
+    assert db.stats()[RULE2] == {"linked": 0, "ambiguous": 2}

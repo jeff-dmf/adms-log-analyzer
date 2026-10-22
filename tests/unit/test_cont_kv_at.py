@@ -135,14 +135,30 @@ def test_long_name_is_not_an_item(tset):
 
 def test_huge_value_is_cut_by_the_window_last_item_dropped(tset):
     f = run(tset, "@severity = 3 @message = " + "x" * 9000 + " @type = Alarm")
-    assert f == {"n_items": 1, "ev_severity": 3, "kv_cut": True}
+    assert f == {"n_items": 1, "kv_rejected": 1, "kv_cut": True}
 
 
 def test_cut_never_reads_a_truncated_last_item(tset):
     f = run(tset, "@type = Alarm @message = " + "y" * 4060 + " @severity = 12345")
-    assert f["kv_cut"] is True and f["ev_type"] == "Alarm" and "ev_severity" not in f
+    assert f["kv_cut"] is True and not (set(f) & TYPES)
     f = run(tset, "@type = Alarm @message = " + "y" * 4060 + " @severity = 1")
     assert f["kv_cut"] is True and "ev_severity" not in f
+
+
+def test_cut_keeps_no_allow_listed_field_injection_across_the_cut(tset):
+    # a free-text value supplies @severity inside the window; the legitimate duplicate sits past the cut
+    f = run(tset, "@message = hello @severity = 1 @note = " + "x" * 4200 + " @severity = 3")
+    assert f["kv_cut"] is True and not (set(f) & TYPES) and f["kv_rejected"] >= 1
+    # field only inside the window, no duplicate anywhere
+    f = run(tset, "@severity = 1 @type = Alarm @message = " + "x" * 4200)
+    assert f["kv_cut"] is True and not (set(f) & TYPES) and f["kv_rejected"] == 2
+    # duplicate only after the cut
+    f = run(tset, "@isZone = true @message = " + "x" * 4100 + " @isZone = false")
+    assert f["kv_cut"] is True and not (set(f) & TYPES)
+    # exactly at the window: not cut, fields kept
+    cont = "@severity = 3 @message = "
+    f = run(tset, cont + "x" * (4096 - len(cont)))
+    assert "kv_cut" not in f and f["ev_severity"] == 3
 
 
 def test_cut_item_name_still_counts_as_a_duplicate(tset):
@@ -157,7 +173,7 @@ def test_no_item_in_a_cut_window_reports_the_cut(tset):
 def test_window_option_range_and_effect():
     ts = _catalog(f'{{ parser = "kv_at", window = 256, {ALLOW} }}').for_family("X", sensitive=False)
     f = run(ts, "@severity = 3 @type = " + "A" * 300 + " @isZone = true")
-    assert f["kv_cut"] is True and f["ev_severity"] == 3 and "zone" not in f
+    assert f["kv_cut"] is True and not (set(f) & TYPES)
     for bad in (255, 4097, 0):
         with pytest.raises(SchemaError):
             _catalog(f'{{ parser = "kv_at", window = {bad}, {ALLOW} }}')

@@ -769,13 +769,61 @@ def _window_origin_links(
 class _HandoffA:
     """An ``a`` record of a handoff rule while a ``b`` can still fall in its window."""
 
-    __slots__ = ("ts", "eid", "value", "pid", "degree", "sole", "first")
+    __slots__ = ("ts", "eid", "value", "pid", "state", "snap", "sole", "first")
 
-    def __init__(self, ts: int, eid: int, value: str, pid: str | None) -> None:
+    def __init__(self, ts: int, eid: int, value: str, pid: str | None, state: _ValueState) -> None:
         self.ts, self.eid, self.value, self.pid = ts, eid, value, pid
-        self.degree = 0  # compatible ``b`` records (the ambiguous ones count)
+        self.state = state
+        self.snap = state.b_seen(pid)  # ``b`` records compatible with this PID seen before it arrived
         self.sole = 0  # compatible ``b`` that have no other compatible ``a``
         self.first: tuple[int, int] | None = None  # (entry id, confidence) of the first such ``b``
+
+    @property
+    def degree(self) -> int:
+        """Compatible ``b`` records (the ambiguous ones count), read from the counters of its key value."""
+        return self.state.b_seen(self.pid) - self.snap
+
+
+class _ValueState:
+    """The open ``a`` of one key value, grouped by PID, and how many ``b`` of each PID class were seen.
+
+    A ``b`` with an unknown PID is compatible with every ``a`` of the value; one with the PID ``p`` with the
+    ``a`` of PID ``p`` and those of unknown PID. So the degree of a ``b`` and of an ``a`` come from counters,
+    without visiting the ``a`` records one by one (a key repeated in the window stays linear).
+    """
+
+    __slots__ = ("alive", "by_pid", "n_all", "n_unknown", "n_pid")
+
+    def __init__(self) -> None:
+        self.alive: deque[_HandoffA] = deque()  # every open ``a`` of the value, oldest first
+        self.by_pid: dict[str | None, deque[_HandoffA]] = {}  # the same, by PID (None: unknown)
+        self.n_all = 0  # ``b`` records seen while the state lives
+        self.n_unknown = 0  # ... with an unknown PID
+        self.n_pid: dict[str, int] = {}  # ... with a known PID
+
+    def b_seen(self, pid: str | None) -> int:
+        if pid is None:
+            return self.n_all
+        return self.n_unknown + self.n_pid.get(pid, 0)
+
+    def degree_of_b(self, pid: str | None) -> int:
+        if pid is None:
+            return len(self.alive)
+        return len(self.by_pid.get(pid, ())) + len(self.by_pid.get(None, ()))
+
+    def sole_candidate(self, pid: str | None) -> _HandoffA:
+        """The only compatible ``a`` (call only when ``degree_of_b`` is 1)."""
+        if pid is None:
+            return self.alive[0]
+        same = self.by_pid.get(pid)
+        return same[0] if same else self.by_pid[None][0]
+
+    def add_b(self, pid: str | None) -> None:
+        self.n_all += 1
+        if pid is None:
+            self.n_unknown += 1
+        else:
+            self.n_pid[pid] = self.n_pid.get(pid, 0) + 1
 
 
 def _pid_text(value: Any) -> str | None:
@@ -888,7 +936,7 @@ def _handoff_links(
     )
     events = heapq.merge(*a_gens, *b_gens)
     order: deque[_HandoffA] = deque()  # undecided ``a`` by (ts, id)
-    by_value: dict[str, deque[_HandoffA]] = {}
+    by_value: dict[str, _ValueState] = {}
 
     def decide(a: _HandoffA) -> Iterator[_Link]:
         if a.degree == 1 and a.sole == 1 and a.first is not None:
@@ -901,46 +949,61 @@ def _handoff_links(
     def expire(now: int) -> Iterator[_Link]:
         while order and order[0].ts + max_dt < now:
             a = order.popleft()
-            same = by_value[a.value]
-            same.popleft()  # the oldest of its value is the oldest overall of that value
-            if not same:
+            state = by_value[a.value]
+            state.alive.popleft()  # the oldest of its value (and of its PID) is the oldest overall
+            pid_queue = state.by_pid[a.pid]
+            pid_queue.popleft()
+            if not pid_queue:
+                del state.by_pid[a.pid]
+            if not state.alive:
                 del by_value[a.value]
             yield from decide(a)
 
+    def overflowed() -> bool:
+        """The bound, checked at the end of every ts (the last one included), whatever comes after it."""
+        return len(order) > MAX_OPEN_KEYS
+
     last_ts: int | None = None
     for ts, rank, eid, value, pid in events:
-        if last_ts is not None and ts > last_ts:
-            if len(order) > MAX_OPEN_KEYS:  # state as left by the previous ts, whatever the order inside it
-                counters.dropped += sum(a.sole for a in order)
-                counters.dropped += (rank == 1) + sum(1 for ev in events if ev[1] == 1)
-                return
+        if last_ts is not None and ts > last_ts and overflowed():
+            counters.dropped += sum(a.sole for a in order)
+            counters.dropped += (rank == 1) + sum(1 for ev in events if ev[1] == 1)
+            return
         last_ts = ts
         yield from expire(ts)
         if rank == 0:
-            a = _HandoffA(ts, eid, value, pid)
+            state = by_value.get(value)
+            if state is None:
+                state = by_value[value] = _ValueState()
+            a = _HandoffA(ts, eid, value, pid, state)
             order.append(a)
-            by_value.setdefault(value, deque()).append(a)
+            state.alive.append(a)
+            state.by_pid.setdefault(pid, deque()).append(a)
             continue
-        raw = by_value.get(value, ())
+        state = by_value.get(value)
         known = pid_field is not None and pid is not None
-        cands = [a for a in raw if not (known and a.pid is not None and a.pid != pid)]
-        if not raw:
+        bpid = pid if known else None
+        degree = 0 if state is None else state.degree_of_b(bpid)
+        if state is None:
             if _covered(a_span, ts):
                 counters.unmatched += 1
             else:
                 counters.out_of_coverage += 1
-        elif not cands:
-            counters.pid_mismatch += 1
-        elif len(cands) > 1:
+            continue
+        if degree == 0:
+            counters.pid_mismatch += 1  # the value is open, but every ``a`` has another PID
+        elif degree > 1:
             counters.ambiguous += 1
-        for a in cands:
-            a.degree += 1
-        if len(cands) == 1:
-            a = cands[0]
+        elif degree == 1:
+            a = state.sole_candidate(bpid)
             a.sole += 1
             if a.sole == 1:
                 checked = pid_field is None or (known and a.pid is not None)
                 a.first = (eid, 3 if checked else 2)
+        state.add_b(bpid)
+    if overflowed():  # the last ts is checked like the others: nothing is decided past the bound
+        counters.dropped += sum(a.sole for a in order)
+        return
     while order:
         yield from decide(order.popleft())
 
