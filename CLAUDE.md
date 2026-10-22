@@ -42,6 +42,16 @@ Regras:
 - **Custo da revisão**: classificar o PR em T0/T1/T2 e seguir o orçamento de contexto, o pacote do autor e o prompt-modelo de `docs/REVISAO-CRUZADA.md`; o revisor padrão é `gpt-6.1-sol`/Sonnet em todos os níveis; Opus/`gpt-6-astra` só em caso extremamente complexo ou a pedido do Jefferson. Se o outro harness estiver indisponível, o Jefferson pode aprovar manualmente (registrar em comentário no PR; a revisão cruzada daquele PR é dispensada e não é retomada). Exceção registrada: PR #10.
 - Protocolo e evidências: `docs/REVISAO-CRUZADA.md`. Esta autorização substitui a antiga exigência de pedido separado para commit e aprovação manual de PR; subagentes continuam sem autorização para commit, push ou merge.
 
+## Frente RT (servidores RealTime): antes da 0.1.0
+Decisão do Jefferson (2026-10-22): a frente RT entra **antes** da release 0.1.0. Não propor a tag nem priorizar o teste manual no Windows (#64) à frente dela; a tag continua só com "pode criar a tag" explícito.
+- **Já na `main` (PRs #241 a #250):** entrada do ERS RT (prefixo `CL` ou `<sistema>_<função>_<papel>`, uma captura por servidor do cluster), famílias DMSJOB/DMSCORE/DMSMODEL/DMSOMS/DMSFH/DMSRT mais PSENGINE/ARBIP/NMC/ERS, biblioteca `_dmsrt` (RTL), templates por família (~99,3% dos registros dos ERS RT de exemplo), operações pareadas por chave (`job_id`), reinício do FunctionHost por troca de PID, ligações `handoff` entre Scheduler, Launcher e FunctionHost, parser `kv_at` do AlarmsEvents sensitive. Desenho e decisões: `docs/notas/rt-templates-desenho.md` e `docs/notas/rt-c2-c4-desenho.md`. Estado e tarefas: seção "Frente RT" do `docs/ROADMAP.md`.
+- **A fazer (ordem em `docs/ROADMAP.md`, R1 a R6):** ver o ERS RT na interface e listar defeitos, telas e eventos por serviço, volume do `PSengine.log` (7 GB), arquivos fora de escopo (`.blg`, XML), parte RT do pack de conhecimento (vault `~/Projects/ecostruxure-v3.9`, 64 notas citam o DMS_RealTime) e redução dos candidatos de despacho.
+- **Amostras RT:** os zips RT em `local-samples/` são para descobrir formato e medir; não analisar nem reportar problemas desses ambientes. Nada deles (nome de servidor, máquina, conta, GUID, IP, linha de log, valor de alarme) entra no repositório, em PR, issue, comentário, fixture ou nota: exemplos sempre sintéticos.
+- **Template novo de RT:** `sev` em todo template; falha explícita (`failed`, `error`, `exception`) nunca em template de severidade 4 ou 5 (separar a variante de falha); lista de status usa o pior item; chaves só da lista fechada (`job_id`, `jms_job`, `fh_pid`, `new_pid`, `gid`); `text` exato único no catálogo; verificador local de vazamento (deny-list) limpo antes do push.
+- **Derivação (operações, ligações, ciclo de vida):** o resultado de uma execução incremental tem que ser idêntico ao da execução completa em qualquer ponto de corte e qualquer ordem de indexação, com teste que corta em todos os pontos; memória por chave limitada; nada decidido antes de a janela fechar. Foi o motivo de quase todas as rodadas de revisão desta frente.
+- **Parser `kv_at` (alarmes):** só campos de uma lista branca com tipos fechados, valores nunca guardados nem indexados; a lista aprovada pelo Jefferson está no `DOM-S140` (`dmsoms.toml`) e só muda com pedido dele.
+- **Medir com caso novo:** o ingestor pula fontes inalteradas, então medir template ou derivação nova exige caso novo, em disco (`/home`), não no `/tmp` (tmpfs).
+
 ## Requisitos de portabilidade (Windows e Linux)
 - Destinos finais: **Windows e Linux**, ambos de primeira classe (desenvolvimento em Linux/Omarchy; uso final também em PC Windows). Nada pode funcionar só em um dos dois.
 - No Windows, os logs já estão no PC (lê direto de `C:\SchneiderElectricData\...\Log` e de ZIPs de ERS locais); nada é transferido para fora. O PC provavelmente é corporativo: sem admin, sem internet.
@@ -56,9 +66,9 @@ Regras:
 - **Repo público (U1 revista em 2026-10-11):** nunca commitar o pack de conhecimento (derivado de documentação Schneider; fica fora do repo, em `<pasta de dados>/knowledge/pack` ou `--pack-dir`; o CI tem a guarda `packaging/check_no_pack.py`). Nada de dados reais em PRs, issues, comentários ou fixtures. A anonimização/redação é ferramenta de desenvolvimento (U18): o app final não anonimiza.
 
 ## Referências
-- Documentação dos adapters: projeto `~/Projects/adms-v3.9` (vault Obsidian em `adms-knowledge-base/Concluído/12 Interfaces online/`). Resumo e mapa em `docs/ADAPTERS.md`.
+- Documentação dos adapters: projeto `~/Projects/adms-v3.9` (se não existir, o vault atual é `~/Projects/ecostruxure-v3.9`; vault Obsidian em `adms-knowledge-base/Concluído/12 Interfaces online/`). Resumo e mapa em `docs/ADAPTERS.md`.
 - Logs de exemplo: ERS zipados em `local-samples/` (convenção em `local-samples/README.md`; o que é o ERS em `docs/ERS.md`). Não commitar credenciais nem dados de clientes.
-- Não alterar o adms-v3.9 a partir daqui (só leitura).
+- Não alterar o adms-v3.9 nem o ecostruxure-v3.9 a partir daqui (só leitura).
 
 <!-- ai-memory:start -->
 ## Long-term memory (ai-memory)

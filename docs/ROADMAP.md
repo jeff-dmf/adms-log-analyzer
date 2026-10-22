@@ -289,7 +289,23 @@ Aceite do M9:
 - As metas do M8 (desempenho no pior caso e responsividade) continuam valendo com as features ligadas; revisão de segurança e privacidade (8.2) refeita sobre o que o M9 acrescentou.
 - Casos com vários ERS (9.20): um caso aceita coletas de servidores diferentes, cada uma com seu par padrão + sensitive; duplicata da mesma coleta é recusada com mensagem clara; casos antigos continuam abrindo.
 - UI de uso (9.16 a 9.19): em Windows e Linux o botão abre o seletor do sistema (ou o navegador de pastas embutido quando não houver diálogo), a seleção múltipla de ZIPs aparece como lista clara, as colunas do grid se redimensionam e a largura persiste, e a coluna Source mostra o nome do arquivo com filtro lateral que não diferencia maiúsculas e minúsculas.
-- Só então: teste manual no Windows, UAT do Jefferson e a tag `v0.1.0` (pré-release).
+- Depois da **frente RT** (seção abaixo, decisão de 2026-10-22): teste manual no Windows, UAT do Jefferson e a tag `v0.1.0` (pré-release).
+
+## Frente RT: servidores RealTime (antes da 0.1.0)
+
+Decisão do Jefferson em 2026-10-22: a frente RT vem antes da 0.1.0. Estado em 2026-10-22: a base está na `main` (PRs #241 a #250, desenho em `docs/notas/rt-templates-desenho.md` e `docs/notas/rt-c2-c4-desenho.md`).
+
+| # | Tarefa | Modelo | Estado |
+|---|---|---|---|
+| R0 | Entrada do ERS RT, famílias, templates (lotes A e B, biblioteca, PSengine, arbIP, NMC, ERS), operações por `job_id`, reinício do FunctionHost, ligações `handoff`, parser `kv_at` | opus (desenho), sonnet | **feito** (PRs #241 a #250); cobertura ~99,3% nos 3 ERS RT de exemplo, banco 9,2 GB (baseline 9,65 GB) |
+| R1 | Ver o ERS RT na interface (ingerir o Primary, percorrer as telas) e listar os defeitos: rótulos, agrupamento por serviço, 28 instâncias do FunctionHost, operações e ligações novas | sonnet (verificação no navegador), opus (priorização) | em andamento |
+| R2 | Telas e eventos por serviço, conforme a lista da R1 (um PR por tema) | sonnet | pendente da R1 |
+| R3 | Volume: `PSengine.log` (7 GB) e `PSengine.ALTERNATE_1` (1,5 GB): amostrar a cauda, definir limite, janela do fim do arquivo e a ordem dos timestamps | opus (desenho), sonnet | pendente |
+| R4 | Arquivos fora de escopo (`.blg`, XML de configuração, demais): decidir entre só listar ou um visualizador simples | opus (decisão), sonnet | pendente |
+| R5 | Parte RT do pack de conhecimento (64 notas do vault citam o DMS_RealTime); o pack continua fora do repositório | sonnet | pendente |
+| R6 | Despacho de templates: média de 10 a 17 candidatos por linha contra a meta de 4 (causa: regex sem prefixo do `_common`); só otimização | sonnet | pendente, por último |
+
+Aceite da frente: o ERS RT de exemplo abre e se analisa na interface sem ruído de INT, cada serviço RT com tela ou evento útil, `PSengine` com tratamento definido, o pack RT gerado localmente, vazão e banco dentro das metas do 8.1 e nenhum dado real no repositório.
 
 ## Pós-1.0
 
