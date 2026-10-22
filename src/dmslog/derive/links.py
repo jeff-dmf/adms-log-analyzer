@@ -822,7 +822,7 @@ class _ValueState:
         self.n_all += 1
         if pid is None:
             self.n_unknown += 1
-        else:
+        elif pid in self.by_pid:  # only an open ``a`` of that PID reads this counter (by difference)
             self.n_pid[pid] = self.n_pid.get(pid, 0) + 1
 
 
@@ -950,14 +950,16 @@ def _handoff_links(
         while order and order[0].ts + max_dt < now:
             a = order.popleft()
             state = by_value[a.value]
+            yield from decide(a)  # reads the counters of its PID: forget them only afterwards
             state.alive.popleft()  # the oldest of its value (and of its PID) is the oldest overall
             pid_queue = state.by_pid[a.pid]
             pid_queue.popleft()
             if not pid_queue:
                 del state.by_pid[a.pid]
+                if a.pid is not None:
+                    state.n_pid.pop(a.pid, None)  # no open ``a`` of this PID: a later one starts from 0
             if not state.alive:
                 del by_value[a.value]
-            yield from decide(a)
 
     def overflowed() -> bool:
         """The bound, checked at the end of every ts (the last one included), whatever comes after it."""

@@ -378,3 +378,24 @@ def test_degrees_by_pid_class(make):
     db.run()
     assert db.links() == set()
     assert db.stats()[RULE2] == {"linked": 0, "ambiguous": 2}
+
+
+def test_pid_counters_do_not_accumulate(make, monkeypatch):
+    """One key kept open by a records while b records of many PIDs pass: the counters stay small."""
+    peak = 0
+    real = links_mod._ValueState.add_b
+
+    def track(self, pid):
+        nonlocal peak
+        real(self, pid)
+        peak = max(peak, len(self.n_pid))
+
+    monkeypatch.setattr(links_mod._ValueState, "add_b", track)
+    db = make()
+    n = 20000
+    for i in range(n):
+        db.add("launch.log", i + 1, (i * 10, "TST-003", 1, 31 if i % 2 else None))
+    for i in range(n):
+        db.add("fh1.log", i + 1, (i * 10 + 5, "TST-101", 1, None), pid=1000 + i)
+    db.run()
+    assert peak <= 1  # at most the PID of an open a record, never the 20000 others
