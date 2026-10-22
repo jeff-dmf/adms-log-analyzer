@@ -8,7 +8,7 @@ import { formatTs } from "./time.js";
 export const PREVIEW_LINES = 40;
 export const SIDE_BY_SIDE_LINES = 2000; // what the server keeps per pane (store/keys.py contract)
 export const MAX_KEY_CHIPS = 40;
-const KIND_ORDER = ["normal_sensitive", "response", "callback", "retry", "same_key"];
+const KIND_ORDER = ["normal_sensitive", "response", "handoff", "callback", "retry", "same_key"];
 
 export function confidenceLabel(confidence) {
   const name = S.lnkConfidenceNames[confidence];

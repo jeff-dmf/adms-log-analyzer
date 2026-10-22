@@ -5,8 +5,8 @@ import pytest
 from dmslog.parse.templates import Catalog, TemplateDef, load_catalog
 
 PAIR_KEYS = {"normal", "sensitive", "match", "max_dt_ms", "key", "order"}
-LINK_KEYS = {"kind", "a", "b", "key", "scope", "max_dt_ms", "window_only", "origin"}
-LINK_KINDS = {"callback", "retry", "response"}
+LINK_KEYS = {"kind", "a", "b", "key", "scope", "max_dt_ms", "window_only", "origin", "families", "pid_field"}
+LINK_KINDS = {"callback", "retry", "response", "handoff"}
 
 # (family, normal, sensitive): verified pairs from docs/formato (sections "normal <-> sensitive").
 EXPECTED_PAIRS = {
@@ -134,7 +134,7 @@ def test_link_rules_shape(cat: Catalog) -> None:
         n += 1
         assert set(r) <= LINK_KEYS, (fam, r)
         assert r["kind"] in LINK_KINDS, (fam, r)
-        assert r.get("scope", "stream") in ("stream", "group"), (fam, r)
+        assert r.get("scope", "stream") in ("stream", "group", "collection"), (fam, r)
         assert isinstance(r.get("max_dt_ms", 60000), int) and r.get("max_dt_ms", 60000) > 0
         a_codes, b_codes = _codes(r["a"]), _codes(r["b"])
         window_only = bool(r.get("window_only", False))
@@ -147,7 +147,8 @@ def test_link_rules_shape(cat: Catalog) -> None:
             t = cat.template(code)
             assert _has_key(t, key), (fam, r, code)
             # Rules of one family never reach into another family (the common library is allowed).
-            assert t.family in (fam, "_common"), (fam, code)
+            # (a handoff rule may reach the families it lists in ``families``)
+            assert t.family in (fam, "_common", *r.get("families", ())), (fam, code)
     assert n >= len(EXPECTED_LINKS) // 2
 
 

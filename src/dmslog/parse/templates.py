@@ -159,6 +159,7 @@ class ContSpec:
     options: Mapping[str, Any]
     outputs: frozenset[str]
     regex: re.Pattern[str] | None = None  # line_regex only
+    allow: Mapping[str, tuple[str, str]] | None = None  # kv_at only: log name -> (type, output field)
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,6 +444,80 @@ def _p_line_regex(cont: str, opts: Mapping[str, Any], spec: ContSpec) -> dict[st
     return {k: v for k, v in m.groupdict().items() if v is not None}
 
 
+_KV_AT_ITEM = re.compile(r"(?:^|(?<=\s))@([A-Za-z][A-Za-z0-9_]{0,63}) ?= ?")
+_KV_AT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+_KV_AT_FIELD = re.compile(r"[a-z][a-z0-9_]{0,31}")
+_KV_AT_RESERVED = frozenset({"n_items", "kv_rejected", "kv_cut"})
+_KV_AT_TYPES = ("int", "bool", "token", "gid")
+_KV_AT_INT = re.compile(r"-?[0-9]{1,18}")
+_KV_AT_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}")
+_KV_AT_GID = re.compile(r"[0-9]{1,20}")
+KV_AT_WINDOW = 4096
+KV_AT_MIN_WINDOW = 256
+
+
+def _kv_at_value(kind: str, v: str) -> Any:
+    """Convert a value to its closed type; ``None`` = outside the type. Nothing else ever leaves the text."""
+    if kind == "int":
+        return int(v) if _KV_AT_INT.fullmatch(v) else None
+    if kind == "bool":
+        low = v.lower()
+        return (low == "true") if low in ("true", "false") else None
+    if kind == "token":
+        return v if _KV_AT_TOKEN.fullmatch(v) else None
+    if kind == "gid" and _KV_AT_GID.fullmatch(v) and int(v) != 0:
+        n = int(v)
+        return n if n <= 0x7FFFFFFFFFFFFFFF else str(n)  # same rule as the hexadecimal GIDs
+    return None
+
+
+def _p_kv_at(cont: str, opts: Mapping[str, Any], spec: ContSpec) -> dict[str, Any]:
+    """``@Name = value`` dump: only allow-listed names with closed types leave the text."""
+    allow = spec.allow
+    assert allow is not None
+    window = int(opts.get("window", KV_AT_WINDOW))
+    cut = len(cont) > window
+    text = cont[:window] if cut else cont
+    items = list(_KV_AT_ITEM.finditer(text))
+    if not items:
+        return {"n_items": 0, "kv_cut": True} if cut else {}
+    # An allow-listed name seen twice (also in the item a cut leaves out) drops every occurrence: a value
+    # written inside free text can erase a field, never replace it.
+    seen: dict[str, int] = {}
+    for m in items:
+        name = m.group(1)
+        if name in allow:
+            seen[name] = seen.get(name, 0) + 1
+    n_read = len(items) - 1 if cut else len(items)  # the last item of a cut window may be truncated
+    out: dict[str, Any] = {"n_items": n_read}
+    rejected = 0
+    end = len(text)
+    for i in range(n_read):
+        m = items[i]
+        entry = allow.get(m.group(1))
+        if entry is None:
+            continue
+        if cut or seen[m.group(1)] > 1:
+            # Cut window: uniqueness cannot be checked past the window (a free-text value could supply the
+            # field and the real item sit beyond the cut), so no allow-listed field is kept.
+            rejected += 1
+            continue
+        stop = items[i + 1].start() if i + 1 < len(items) else end
+        v = text[m.end() : stop].strip()
+        if not v:
+            continue  # empty value: field absent, not a rejection
+        got = _kv_at_value(entry[0], v)
+        if got is None:
+            rejected += 1
+        else:
+            out[entry[1]] = got
+    if rejected:
+        out["kv_rejected"] = rejected
+    if cut:
+        out["kv_cut"] = True
+    return out
+
+
 @dataclass(frozen=True, slots=True)
 class _ContParser:
     fn: Callable[[str, Mapping[str, Any], ContSpec], dict[str, Any]]
@@ -465,6 +540,9 @@ CONT_PARSERS: Mapping[str, _ContParser] = MappingProxyType(
         "kv_colon": _ContParser(_p_kv_colon, {"max_items": int}, frozenset({"kv", "n_items"})),
         "kv_dash": _ContParser(_p_kv_dash, {"max_items": int}, frozenset({"kv", "n_items"})),
         "line_regex": _ContParser(_p_line_regex, {"regex": str, "line": int}, frozenset()),
+        "kv_at": _ContParser(
+            _p_kv_at, {"allow": dict, "window": int}, frozenset({"n_items", "kv_rejected", "kv_cut"})
+        ),
     }
 )
 _OPTION_RANGES = {
@@ -472,6 +550,7 @@ _OPTION_RANGES = {
     "max_lines": (1, 5000),
     "max_rows": (1, MAX_CONT_CHARS),
     "line": (1, 20),
+    "window": (KV_AT_MIN_WINDOW, KV_AT_WINDOW),
 }
 
 
@@ -1109,6 +1188,34 @@ def _parse_payload(value: Any, *, src: str, where: str) -> PayloadSpec:
     return PayloadSpec(fmt, start, strip, role, direction, peer)
 
 
+def _parse_kv_at_allow(raw: Any, *, src: str, where: str) -> dict[str, tuple[str, str]]:
+    if not isinstance(raw, dict) or not 1 <= len(raw) <= 32:
+        raise SchemaError(
+            "cont parser 'kv_at' needs an 'allow' table with 1 to 32 entries", source=src, where=where
+        )
+    allow: dict[str, tuple[str, str]] = {}
+    used: set[str] = set()
+    for name, spec in raw.items():
+        if not _KV_AT_NAME.fullmatch(name):
+            raise SchemaError(f"kv_at allow name {name!r} is not a valid item name", source=src, where=where)
+        kind, sep, fname = spec.partition(":") if isinstance(spec, str) else ("", "", "")
+        if not sep or kind not in _KV_AT_TYPES:
+            raise SchemaError(
+                f"kv_at allow {name!r} must be 'type:field' with type in {', '.join(_KV_AT_TYPES)}",
+                source=src,
+                where=where,
+            )
+        if not _KV_AT_FIELD.fullmatch(fname) or fname in _KV_AT_RESERVED:
+            raise SchemaError(
+                f"kv_at allow {name!r}: invalid or reserved field {fname!r}", source=src, where=where
+            )
+        if fname in used:
+            raise SchemaError(f"kv_at allow: field {fname!r} used twice", source=src, where=where)
+        used.add(fname)
+        allow[name] = (kind, fname)
+    return allow
+
+
 def _parse_cont(value: Any, *, src: str, where: str) -> ContSpec:
     if isinstance(value, str):
         value = {"parser": value}
@@ -1135,12 +1242,16 @@ def _parse_cont(value: Any, *, src: str, where: str) -> ContSpec:
             raise SchemaError(f"cont option {key!r} must be between {lo} and {hi}", source=src, where=where)
     rx = None
     outputs = parser.outputs
+    allow: dict[str, tuple[str, str]] | None = None
+    if name == "kv_at":
+        allow = _parse_kv_at_allow(opts.get("allow"), src=src, where=where)
+        outputs = outputs | {f for _, f in allow.values()}
     if name == "line_regex":
         if "regex" not in opts:
             raise SchemaError("cont parser 'line_regex' needs a 'regex' option", source=src, where=where)
         rx, _ = _compile_regex(opts["regex"], src=src, where=where + " cont")
         outputs = frozenset(rx.groupindex)
-    return ContSpec(name, MappingProxyType(opts), outputs, rx)
+    return ContSpec(name, MappingProxyType(opts), outputs, rx, MappingProxyType(allow) if allow else None)
 
 
 def _parse_example(value: Any, *, src: str, where: str, positive: bool) -> Example:
@@ -1211,9 +1322,17 @@ def _parse_template(t: Any, family: str, idx: int, *, src: str, version: str) ->
     names = set(rx.groupindex) if rx is not None else set()
     cont_names = set(cont.outputs) if cont is not None else set()
     all_names = names | cont_names
+    if cont is not None and cont.allow is not None:
+        clash = names & cont_names
+        if clash:
+            raise SchemaError(f"kv_at outputs {sorted(clash)} are also regex groups", source=src, where=where)
 
     ftypes = _get(t, "fields", dict, src=src, where=where, default={})
     for name, kind in ftypes.items():
+        if cont is not None and cont.allow is not None and name in cont.outputs:
+            raise SchemaError(
+                f"'fields' redeclares {name!r}, typed by the kv_at 'allow' table", source=src, where=where
+            )
         if name not in all_names:
             raise SchemaError(
                 f"'fields' declares {name!r}, which is not a regex group nor a cont output",
@@ -1654,6 +1773,9 @@ class Catalog:
             resolved = []
             for n, item in enumerate(items, 1):
                 rule = dict(item)
+                b_visible = visible
+                if section == "link_rule":
+                    b_visible = visible | self._check_link_rule(fam, rule, f"{section} #{n}")
                 for key in CODE_REF_KEYS & set(rule):
                     value = rule[key]
                     refs = [value] if isinstance(value, str) else value
@@ -1666,7 +1788,7 @@ class Catalog:
                     canon = []
                     for r in refs:
                         c = self.resolve(r)
-                        if c is None or c not in visible:
+                        if c is None or c not in (b_visible if key == "b" else visible):
                             raise TemplateReferenceError(
                                 f"{key!r} references unknown template {r!r}",
                                 source=fam.source,
@@ -1674,9 +1796,72 @@ class Catalog:
                             )
                         canon.append(c)
                     rule[key] = canon[0] if isinstance(value, str) else canon
+                if section == "link_rule":
+                    self._check_pid_field(fam, rule, f"{section} #{n}")
                 resolved.append(MappingProxyType(rule))
             out.append(tuple(resolved))
         return out[0], out[1], out[2]
+
+    def _check_link_rule(self, fam: FamilyDef, rule: dict[str, Any], where: str) -> set[str]:
+        """Validate the ``handoff`` / ``scope = "collection"`` / ``families`` / ``pid_field`` keys of a
+        ``[[link_rule]]``; return the codes (besides the family chain) that its ``b`` side may reference."""
+        kind, scope = rule.get("kind"), rule.get("scope", "stream")
+        src = fam.source
+        if scope == "collection" and kind != "handoff":
+            raise SchemaError(
+                "scope = 'collection' is only valid for kind = 'handoff'", source=src, where=where
+            )
+        if "families" in rule and scope != "collection":
+            raise SchemaError("'families' needs scope = 'collection'", source=src, where=where)
+        if "pid_field" in rule and kind != "handoff":
+            raise SchemaError("'pid_field' is only valid for kind = 'handoff'", source=src, where=where)
+        if kind == "handoff":
+            if scope != "collection":
+                raise SchemaError("kind = 'handoff' needs scope = 'collection'", source=src, where=where)
+            key = rule.get("key")
+            if not isinstance(key, str) or not key:
+                raise SchemaError("kind = 'handoff' needs a 'key'", source=src, where=where)
+            for bad in ("window_only", "origin"):
+                if bad in rule:
+                    raise SchemaError(f"kind = 'handoff' does not take {bad!r}", source=src, where=where)
+            pid_field = rule.get("pid_field")
+            if pid_field is not None and (
+                not isinstance(pid_field, str) or not _NAME_RE.fullmatch(pid_field)
+            ):
+                raise SchemaError("'pid_field' must be a field name", source=src, where=where)
+
+            def as_codes(value: Any) -> set[str]:
+                return {value} if isinstance(value, str) else set(value) if isinstance(value, list) else set()
+
+            if as_codes(rule.get("a")) & as_codes(rule.get("b")):
+                raise SchemaError("kind = 'handoff' needs disjoint a and b codes", source=src, where=where)
+        names = rule.get("families", [])
+        if not isinstance(names, list) or not all(isinstance(x, str) for x in names):
+            raise SchemaError("'families' must be a list of family names", source=src, where=where)
+        extra: set[str] = set()
+        for name in names:
+            if name.startswith("_") or name not in self.families:
+                raise TemplateReferenceError(
+                    f"'families' references {name!r}, which is not a loaded family or is a library",
+                    source=src,
+                    where=where,
+                )
+            extra.update(t.code for t in self._chain(name))
+        return extra
+
+    def _check_pid_field(self, fam: FamilyDef, rule: dict[str, Any], where: str) -> None:
+        """``pid_field`` must be a field of every template of the ``a`` side (codes already canonical)."""
+        pid_field = rule.get("pid_field")
+        if pid_field is None:
+            return
+        a = rule.get("a")
+        for code in [a] if isinstance(a, str) else a or []:
+            if pid_field not in self._by_code[code].field_names:
+                raise TemplateReferenceError(
+                    f"'pid_field' {pid_field!r} is not a field of template {code}",
+                    source=fam.source,
+                    where=where,
+                )
 
     def _chain(self, family: str) -> list[TemplateDef]:
         fam = self.families.get(family)

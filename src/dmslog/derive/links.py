@@ -1,4 +1,4 @@
-"""Callback, retry and response links driven by ``[[link_rule]]`` tables (ARQUITETURA 8).
+"""Callback, retry, response and handoff links driven by ``[[link_rule]]`` tables (ARQUITETURA 8).
 
 A rule says: records of the codes ``a`` and later records of the codes ``b`` that share the value of ``key``
 (an ``entry_key`` type, or a field name when the type has no ``entry_key`` rows for that template) belong
@@ -38,6 +38,25 @@ family, process and pid). Rules of one family never link records of another fami
   window) or ``unmatched`` (the partition has no ``a`` record at all). The anchors are read in record
   order (no database sort) and reordered by a heap of the operations in flight; what the memory bounds
   make undecidable is counted as ``dropped`` and never linked.
+
+* ``kind = "handoff"`` (always ``scope = "collection"``, keyed; optional ``families``, ``pid_field``): a job
+  handed from one process to another, where the engine cannot trust any order of ids. One partition per
+  collection group holds every stream (normal and sensitive, any process and pid) of the rule's family plus
+  the families listed in ``families``. A ``b`` (ts ``t``, value ``v``) has as candidates the ``a`` records of
+  value ``v`` with ts in ``[t - max_dt_ms, t]`` (an ``a`` with the same ts counts as earlier); with
+  ``pid_field``, an ``a`` whose field and the ``b`` envelope PID are both known and different is not a
+  candidate. Compatible means: same value, ``a.ts`` in the window of the ``b`` and no known PID
+  mismatch. The link exists if and only if ``degree(a) = 1`` and ``degree(b) = 1`` (degrees count every
+  compatible record, ambiguous ones included); a ``b`` with a compatible ``a`` that is not linked is
+  ``ambiguous``. The link is ``a -> b`` with
+  confidence 3 (PIDs compared and equal, or no ``pid_field``) or 2 (``pid_field`` but one side unknown). A
+  ``b`` without any candidate is ``out_of_coverage`` when its ts lies outside the time span of the sources
+  that hold ``a`` records (file rotation), else ``unmatched``; candidates all removed by the PID test count
+  ``pid_mismatch``; an ``a`` with no compatible ``b`` counts ``unanswered`` (only inside the coverage of the
+  ``b`` side). The outcome depends only on the set of ``(ts, value, pid)`` of the records, never on entry ids
+  or on the order the files were indexed, so a resumed run equals a full one. The memory bound
+  (``MAX_OPEN_KEYS`` undecided ``a``) is checked only when the ts advances; past it the partition stops and
+  everything undecided counts ``dropped``.
 
 Examples (the codes are placeholders)::
 
@@ -79,6 +98,16 @@ Examples (the codes are placeholders)::
     key = "gid"
     origin = "operation"
 
+    # a job handed to another process (maybe of another family), unique both ways, PID checked
+    [[link_rule]]
+    kind = "handoff"
+    a = "XYZ-010"
+    b = "ABC-001"
+    key = "job_id"
+    scope = "collection"
+    families = ["ABC"]
+    pid_field = "host_pid"
+
     # callback with no key anywhere, linked to the operation that ended just before it, if unique both ways
     [[link_rule]]
     kind = "callback"
@@ -119,14 +148,14 @@ from typing import Any
 
 from dmslog.derive.engine import _undo, group_epoch
 
-KINDS = ("callback", "retry", "response")
+KINDS = ("callback", "retry", "response", "handoff")
 DEFAULT_MAX_DT_MS = 60000
 MAX_OPEN_KEYS = 200_000  # open keys (or open window records) kept per rule and partition
 MAX_B_PER_A = 64  # callbacks linked to one ``a`` record
 MAX_A_PER_KEY = 64  # ``origin`` rules: ``a`` records kept per key value; more makes the value ambiguous
 BATCH = 5000
 META_PREFIX = "correlate.links."
-_SIGNATURE_VERSION = "3"
+_SIGNATURE_VERSION = "4"
 ORIGINS = ("record", "operation")
 ORIGIN_CONFIDENCE = 2
 _FIELD_NAME = re.compile(r"^\w+$")
@@ -145,9 +174,21 @@ class LinkSummary:
     unmatched: int = 0  # origin rules: ``b`` whose key value no ``a`` record carries
     no_operation: int = 0  # origin rules: the ``a`` records of the value are outside any operation
     out_of_window: int = 0  # origin rules: no ``a`` of its value (or, window form, no anchor) in the window
+    out_of_coverage: int = 0  # handoff: ``b`` without ``a`` whose ts is outside the span of the ``a`` sources
+    pid_mismatch: int = 0  # handoff: every ``a`` candidate of the ``b`` has another PID
+    unanswered: int = 0  # handoff: ``a`` no ``b`` considered, inside the coverage of the ``b`` sources
 
 
-_COUNTERS = ("dropped", "ambiguous", "unmatched", "no_operation", "out_of_window")
+_COUNTERS = (
+    "dropped",
+    "ambiguous",
+    "unmatched",
+    "no_operation",
+    "out_of_window",
+    "out_of_coverage",
+    "pid_mismatch",
+    "unanswered",
+)
 
 
 @dataclass
@@ -158,6 +199,9 @@ class _Counters:
     unmatched: int = 0
     no_operation: int = 0
     out_of_window: int = 0
+    out_of_coverage: int = 0
+    pid_mismatch: int = 0
+    unanswered: int = 0
 
     def add_to(self, other: Any) -> None:
         for name in _COUNTERS:
@@ -187,12 +231,35 @@ def _max_dt(rule: Any) -> int:
     )
 
 
+def _handoff_problem(rule: Any) -> str | None:
+    key = rule.get("key")
+    if not (isinstance(key, str) and key):
+        return "handoff rule without key"
+    if rule.get("scope") != "collection":
+        return "handoff needs scope = 'collection'"
+    if "window_only" in rule or "origin" in rule:
+        return "handoff takes neither window_only nor origin"
+    if set(_codes(rule.get("a"))) & set(_codes(rule.get("b"))):
+        return "handoff needs disjoint a and b codes"
+    families = rule.get("families", [])
+    if not isinstance(families, (list, tuple)) or not all(isinstance(f, str) for f in families):
+        return "families must be a list of family names"
+    pid_field = rule.get("pid_field")
+    if pid_field is not None and not (isinstance(pid_field, str) and _FIELD_NAME.match(pid_field)):
+        return "pid_field must be a field name"
+    return None
+
+
 def _rule_problem(rule: Any) -> str | None:
     """Why a rule cannot run (None when it can)."""
     if rule.get("kind") not in KINDS:
         return f"unknown link kind {rule.get('kind')!r}"
     if not _codes(rule.get("a")) or not _codes(rule.get("b")):
         return "rule without a/b codes"
+    if rule["kind"] == "handoff":
+        return _handoff_problem(rule)
+    if "families" in rule or "pid_field" in rule:
+        return "families and pid_field are only valid for handoff rules"
     window_only = bool(rule.get("window_only", False))
     if window_only and rule["kind"] == "retry":
         return "window_only is not valid for retry rules"
@@ -699,12 +766,265 @@ def _window_origin_links(
         counters.unmatched += no_anchor
 
 
+class _HandoffA:
+    """An ``a`` record of a handoff rule while a ``b`` can still fall in its window."""
+
+    __slots__ = ("ts", "eid", "value", "pid", "state", "snap", "sole", "first")
+
+    def __init__(self, ts: int, eid: int, value: str, pid: str | None, state: _ValueState) -> None:
+        self.ts, self.eid, self.value, self.pid = ts, eid, value, pid
+        self.state = state
+        self.snap = state.b_seen(pid)  # ``b`` records compatible with this PID seen before it arrived
+        self.sole = 0  # compatible ``b`` that have no other compatible ``a``
+        self.first: tuple[int, int] | None = None  # (entry id, confidence) of the first such ``b``
+
+    @property
+    def degree(self) -> int:
+        """Compatible ``b`` records (the ambiguous ones count), read from the counters of its key value."""
+        return self.state.b_seen(self.pid) - self.snap
+
+
+class _ValueState:
+    """The open ``a`` of one key value, grouped by PID, and how many ``b`` of each PID class were seen.
+
+    A ``b`` with an unknown PID is compatible with every ``a`` of the value; one with the PID ``p`` with the
+    ``a`` of PID ``p`` and those of unknown PID. So the degree of a ``b`` and of an ``a`` come from counters,
+    without visiting the ``a`` records one by one (a key repeated in the window stays linear).
+    """
+
+    __slots__ = ("alive", "by_pid", "n_all", "n_unknown", "n_pid")
+
+    def __init__(self) -> None:
+        self.alive: deque[_HandoffA] = deque()  # every open ``a`` of the value, oldest first
+        self.by_pid: dict[str | None, deque[_HandoffA]] = {}  # the same, by PID (None: unknown)
+        self.n_all = 0  # ``b`` records seen while the state lives
+        self.n_unknown = 0  # ... with an unknown PID
+        self.n_pid: dict[str, int] = {}  # ... with a known PID
+
+    def b_seen(self, pid: str | None) -> int:
+        if pid is None:
+            return self.n_all
+        return self.n_unknown + self.n_pid.get(pid, 0)
+
+    def degree_of_b(self, pid: str | None) -> int:
+        if pid is None:
+            return len(self.alive)
+        return len(self.by_pid.get(pid, ())) + len(self.by_pid.get(None, ()))
+
+    def sole_candidate(self, pid: str | None) -> _HandoffA:
+        """The only compatible ``a`` (call only when ``degree_of_b`` is 1)."""
+        if pid is None:
+            return self.alive[0]
+        same = self.by_pid.get(pid)
+        return same[0] if same else self.by_pid[None][0]
+
+    def add_b(self, pid: str | None) -> None:
+        self.n_all += 1
+        if pid is None:
+            self.n_unknown += 1
+        elif pid in self.by_pid:  # only an open ``a`` of that PID reads this counter (by difference)
+            self.n_pid[pid] = self.n_pid.get(pid, 0) + 1
+
+
+def _pid_text(value: Any) -> str | None:
+    """A PID as comparable text; None when unknown (absent, empty or not a plain number or word)."""
+    if value is None or isinstance(value, (bool, list, dict, float)) or value == "":
+        return None
+    return str(value)
+
+
+def _handoff_rows(
+    conn: sqlite3.Connection, tpl_id: int, stream_ids: list[int], key: str, pid_field: str | None, is_a: bool
+) -> Iterator[tuple[int, int, str, str | None]]:
+    """``(ts, id, key value, pid)`` of one template in the streams, by (ts, id).
+
+    ``pid`` is the envelope PID of a ``b`` record and, for an ``a`` record, the stored field ``pid_field``
+    (None without ``pid_field``). Same key reading as ``_keyed_rows`` (template keys, else the stored field).
+    """
+    streams = ",".join(str(int(s)) for s in stream_ids)
+    where = (
+        "e.tpl_id = ? AND e.ts IS NOT NULL AND e.source_id IN"
+        f" (SELECT id FROM source WHERE stream_id IN ({streams}))"
+    )
+    if not is_a:
+        pid_sql, pid_args = "e.pid", []
+    elif pid_field is not None:
+        pid_sql, pid_args = "json_extract(e.fields, ?)", [f'$."{pid_field}"']
+    else:
+        pid_sql, pid_args = "NULL", []
+    cur = conn.execute(
+        f"SELECT e.ts, e.id, k.value, {pid_sql} FROM entry e JOIN entry_key k INDEXED BY ix_key_entry"
+        f" ON k.entry_id = e.id AND k.key_type = ? AND k.origin = 0 WHERE {where} ORDER BY e.ts, e.id",
+        (*pid_args, key, tpl_id),
+    )
+    found = False
+    for ts, eid, value, pid in cur:
+        found = True
+        yield (ts, eid, str(value), _pid_text(pid))
+    if found or not _FIELD_NAME.match(key):
+        return
+    cur = conn.execute(
+        f"SELECT e.ts, e.id, json_extract(e.fields, ?), {pid_sql} FROM entry e"
+        f" WHERE {where} AND e.fields IS NOT NULL ORDER BY e.ts, e.id",
+        (f'$."{key}"', *pid_args, tpl_id),
+    )
+    for ts, eid, value, pid in cur:
+        if value is None or isinstance(value, (list, dict)):
+            continue
+        yield (ts, eid, str(value), _pid_text(pid))
+
+
+def _coverage(conn: sqlite3.Connection, tpl_ids: list[int], stream_ids: list[int]) -> tuple[int, int] | None:
+    """Time span ``(first_ts, last_ts)`` of the sources that hold records of the templates (None: none)."""
+    streams = ",".join(str(int(s)) for s in stream_ids)
+    sources: set[int] = set()
+    for tpl in tpl_ids:
+        sources.update(
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT e.source_id FROM entry e WHERE e.tpl_id = ? AND e.source_id IN"
+                f" (SELECT id FROM source WHERE stream_id IN ({streams}))",
+                (tpl,),
+            )
+        )
+    if not sources:
+        return None
+    ids = ",".join(str(int(i)) for i in sorted(sources))
+    lo, hi = conn.execute(f"SELECT min(first_ts), max(last_ts) FROM source WHERE id IN ({ids})").fetchone()
+    return None if lo is None or hi is None else (lo, hi)
+
+
+def _covered(span: tuple[int, int] | None, ts: int) -> bool:
+    return span is not None and span[0] <= ts <= span[1]
+
+
+def _handoff_links(
+    conn: sqlite3.Connection,
+    rule: Any,
+    ids: dict[str, int],
+    stream_ids: list[int],
+    max_dt: int,
+    counters: _Counters,
+) -> Iterator[_Link]:
+    """handoff: ``b`` to the one ``a`` of the same key value within ``max_dt`` before it, unique both ways.
+
+    The sweep merges the ``a`` and ``b`` records by ``(ts, rank, id)`` (an ``a`` before a ``b`` of the same
+    ts) and keeps the ``a`` of the last ``max_dt`` ms. Every decision uses only the set of
+    ``(ts, value, pid)`` of the records, never the ids or the order inside one ts: an ``a`` is decided when
+    the sweep passes ``a.ts + max_dt`` (it links when it and its only ``b`` are each other's only match).
+    ``MAX_OPEN_KEYS`` is checked only when the ts advances, over the ``a`` of the window: past it the
+    partition stops and everything undecided is counted ``dropped`` (nothing is guessed).
+    """
+    key, pid_field = rule["key"], rule.get("pid_field")
+    a_tpls = [ids[c] for c in sorted(set(_codes(rule["a"]))) if c in ids]
+    b_tpls = [ids[c] for c in sorted(set(_codes(rule["b"]))) if c in ids]
+    a_span = _coverage(conn, a_tpls, stream_ids)
+    b_span = _coverage(conn, b_tpls, stream_ids)
+    a_gens = (
+        (
+            (ts, 0, eid, value, pid)
+            for ts, eid, value, pid in _handoff_rows(conn, t, stream_ids, key, pid_field, True)
+        )
+        for t in a_tpls
+    )
+    b_gens = (
+        (
+            (ts, 1, eid, value, pid)
+            for ts, eid, value, pid in _handoff_rows(conn, t, stream_ids, key, None, False)
+        )
+        for t in b_tpls
+    )
+    events = heapq.merge(*a_gens, *b_gens)
+    order: deque[_HandoffA] = deque()  # undecided ``a`` by (ts, id)
+    by_value: dict[str, _ValueState] = {}
+
+    def decide(a: _HandoffA) -> Iterator[_Link]:
+        if a.degree == 1 and a.sole == 1 and a.first is not None:
+            yield (a.eid, a.first[0], "handoff", a.first[1])
+        elif a.sole:
+            counters.ambiguous += a.sole  # their only ``a`` has other ``b`` too
+        elif a.degree == 0 and _covered(b_span, a.ts):
+            counters.unanswered += 1
+
+    def expire(now: int) -> Iterator[_Link]:
+        while order and order[0].ts + max_dt < now:
+            a = order.popleft()
+            state = by_value[a.value]
+            yield from decide(a)  # reads the counters of its PID: forget them only afterwards
+            state.alive.popleft()  # the oldest of its value (and of its PID) is the oldest overall
+            pid_queue = state.by_pid[a.pid]
+            pid_queue.popleft()
+            if not pid_queue:
+                del state.by_pid[a.pid]
+                if a.pid is not None:
+                    state.n_pid.pop(a.pid, None)  # no open ``a`` of this PID: a later one starts from 0
+            if not state.alive:
+                del by_value[a.value]
+
+    def overflowed() -> bool:
+        """The bound, checked at the end of every ts (the last one included), whatever comes after it."""
+        return len(order) > MAX_OPEN_KEYS
+
+    last_ts: int | None = None
+    for ts, rank, eid, value, pid in events:
+        if last_ts is not None and ts > last_ts and overflowed():
+            counters.dropped += sum(a.sole for a in order)
+            counters.dropped += (rank == 1) + sum(1 for ev in events if ev[1] == 1)
+            return
+        last_ts = ts
+        yield from expire(ts)
+        if rank == 0:
+            state = by_value.get(value)
+            if state is None:
+                state = by_value[value] = _ValueState()
+            a = _HandoffA(ts, eid, value, pid, state)
+            order.append(a)
+            state.alive.append(a)
+            state.by_pid.setdefault(pid, deque()).append(a)
+            continue
+        state = by_value.get(value)
+        known = pid_field is not None and pid is not None
+        bpid = pid if known else None
+        degree = 0 if state is None else state.degree_of_b(bpid)
+        if state is None:
+            if _covered(a_span, ts):
+                counters.unmatched += 1
+            else:
+                counters.out_of_coverage += 1
+            continue
+        if degree == 0:
+            counters.pid_mismatch += 1  # the value is open, but every ``a`` has another PID
+        elif degree > 1:
+            counters.ambiguous += 1
+        elif degree == 1:
+            a = state.sole_candidate(bpid)
+            a.sole += 1
+            if a.sole == 1:
+                checked = pid_field is None or (known and a.pid is not None)
+                a.first = (eid, 3 if checked else 2)
+        state.add_b(bpid)
+    if overflowed():  # the last ts is checked like the others: nothing is decided past the bound
+        counters.dropped += sum(a.sole for a in order)
+        return
+    while order:
+        yield from decide(order.popleft())
+
+
 # --------------------------------------------------------------------------- a group
 
 
-def _partitions(streams: list[_Stream], scope: str, family: str) -> list[list[int]]:
-    """Stream id lists in which a rule of ``family`` looks for its records."""
+def _partitions(
+    streams: list[_Stream], scope: str, family: str, families: tuple[str, ...] = ()
+) -> list[list[int]]:
+    """Stream id lists in which a rule of ``family`` looks for its records.
+
+    ``scope = "collection"``: one list with every stream of the family and of ``families`` (none when the
+    group has no stream of ``family`` itself).
+    """
     mine = [s for s in streams if s.family == family]
+    if scope == "collection":
+        wanted = {family, *families}
+        return [[s.id for s in streams if s.family in wanted]] if mine else []
     if scope == "stream":
         return [[s.id] for s in mine]
     by_process: dict[tuple[Any, Any], list[int]] = {}
@@ -723,9 +1043,13 @@ def _rule_links(
 ) -> Iterator[_Link]:
     kind = rule["kind"]
     window_only = bool(rule.get("window_only", False))
-    key = None if window_only else rule["key"]
+    key = None if window_only else rule.get("key")
     max_dt = _max_dt(rule)
-    for stream_ids in _partitions(streams, rule.get("scope", "stream"), family):
+    families = tuple(rule.get("families", ()))
+    for stream_ids in _partitions(streams, rule.get("scope", "stream"), family, families):
+        if kind == "handoff":
+            yield from _handoff_links(conn, rule, ids, stream_ids, max_dt, counters)
+            continue
         if _window_origin(rule):
             yield from _window_origin_links(conn, rule, ids, stream_ids, max_dt, counters)
             continue
@@ -813,8 +1137,8 @@ def _stored(raw: Any) -> dict[str, Any]:
 def link_stats(conn: sqlite3.Connection, group: int) -> dict[str, dict[str, int]]:
     """Counters of the last run of the group, per rule label ``"<family>/<kind>:<a>><b>[@operation[-end]]"``.
 
-    Each value has ``linked`` and, when not zero, ``dropped``, ``ambiguous``, ``unmatched``, ``no_operation``
-    and ``out_of_window``. Empty when the group was never linked.
+    Each value has ``linked`` and, when not zero, ``dropped``, ``ambiguous``, ``unmatched``, ``no_operation``,
+    ``out_of_window``, ``out_of_coverage``, ``pid_mismatch`` and ``unanswered``. Empty when never linked.
     """
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (f"{META_PREFIX}{group}",)).fetchone()
     rules = _stored(row[0] if row else None).get("rules")
@@ -824,7 +1148,7 @@ def link_stats(conn: sqlite3.Connection, group: int) -> dict[str, dict[str, int]
 
 
 def link_pending(conn: sqlite3.Connection, catalog: Any, kb: Any = None) -> LinkSummary:
-    """Create the callback/retry/response links of every collection group that changed since the last run.
+    """Create the callback/retry/response/handoff links of every collection group changed since the last run.
 
     A group that fails is rolled back and reported in ``errors``; the others still run. ``kb`` is accepted for
     the pipeline signature and unused.

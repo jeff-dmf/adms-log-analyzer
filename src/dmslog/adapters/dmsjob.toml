@@ -1158,6 +1158,37 @@ b = "DJB-049"
 key = "fh_pid"
 max_dt_ms = 60000
 
+# Launcher: new job received -> the Execute command it sends to a FunctionHost (same stream, `job_id`).
+[[link_rule]]
+kind = "response"
+a = "DJB-051"
+b = "DJB-050"
+key = "job_id"
+max_dt_ms = 60000
+
+# Handoffs between processes, one partition per collection group (never across servers). Unique both ways:
+# a `job_id` repeated inside the window links nothing. Scheduler: job sent to a Launcher -> the Launcher
+# received it (same family, other process).
+[[link_rule]]
+kind = "handoff"
+a = "DJB-003"
+b = "DJB-051"
+key = "job_id"
+scope = "collection"
+max_dt_ms = 60000
+
+# Launcher: Execute command sent to a FunctionHost -> the FunctionHost received the job (other family; the
+# FH PID of the command must be the PID of the FunctionHost log line).
+[[link_rule]]
+kind = "handoff"
+a = "DJB-050"
+b = "DFH-001"
+key = "job_id"
+scope = "collection"
+families = ["DMSFH"]
+pid_field = "fh_pid"
+max_dt_ms = 60000
+
 # Operations paired by `job_id` (a job crosses threads, so the TID cannot pair it). Scheduler: the job
 # sent to a Launcher -> its final status. A single final status goes through `end` (a "Failed" text
 # fails it; DoneWithError and Aborted alone stay ok, the status is not visible to the deriver); the

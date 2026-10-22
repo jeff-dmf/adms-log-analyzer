@@ -1667,7 +1667,10 @@ sev = 4
 fts = false
 stream = "sensitive"
 text = "(AES) [EventReporting] [RecordQueues] of eventRecord. EnqueueEvent: Event log =>"
-examples = ["(AES) [EventReporting] [RecordQueues] of eventRecord. EnqueueEvent: Event log =>"]
+cont = { parser = "kv_at", allow = { severity = "int:ev_severity", type = "token:ev_type", alarmCategory = "int:alarm_category", alarmClass = "int:alarm_class", alarmSourceTypeId = "int:alarm_source_type", alarmInhibitTypeId = "int:alarm_inhibit_type", operActivityTypeId = "int:oper_activity_type", isSTGZone = "bool:stg_zone" } }
+examples = [
+    { msg = "(AES) [EventReporting] [RecordQueues] of eventRecord. EnqueueEvent: Event log =>", cont = "@time = 2026-01-01 00:00:00  @type = Alarm  @message = Example text @severity = 3  @alarmCategory = 12  @isSTGZone = False", fields = { n_items = 6, ev_severity = 3, ev_type = "Alarm", alarm_category = 12, stg_zone = false } },
+]
 counter_examples = ["(AES) [EventReporting] [RecordQueues] of eventRecord. Started RecordQueues initialization."]
 
 # ---------------------------------------------------------------------------------------------
