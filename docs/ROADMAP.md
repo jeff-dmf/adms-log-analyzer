@@ -301,7 +301,7 @@ Decisão do Jefferson em 2026-10-22: a frente RT vem antes da 0.1.0. Estado em 2
 | R1 | Ver o ERS RT na interface e listar os defeitos | sonnet (verificação), opus (priorização) | **feito pela API e pelo código** em 2026-10-24 (`docs/notas/rt-r1-achados.md`, 6 achados); falta a conferência visual no navegador |
 | R2 | Telas e eventos por serviço: rótulos neutros no lugar de "adapter", atalhos (presets) das famílias RT, agrupamento das 28 instâncias do FunctionHost, visão da cadeia do job por `job_id` (achados 1, 2, 3 e 5 da R1) | sonnet; `strings.js` e integração com a sessão principal | pendente |
 | R3 | Volume: `PSengine.log` (7 GB) e `PSengine.ALTERNATE_1` (1,5 GB): amostrar a cauda, definir limite, janela do fim do arquivo e a ordem dos timestamps | opus (desenho), sonnet | pendente |
-| R4 | Arquivos fora de escopo (`.blg`, XML de configuração, demais): decidir entre só listar ou um visualizador simples | opus (decisão), sonnet | pendente; inclui o controle "incluir todos os logs" na interface (hoje só `--all-logs`; achado 4 da R1) |
+| R4 | Arquivos fora de escopo (`.blg`, XML de configuração, demais): decidir entre só listar ou um visualizador simples | opus (decisão), sonnet | pendente |
 | R5 | Parte RT do pack de conhecimento (64 notas do vault citam o DMS_RealTime); o pack continua fora do repositório | sonnet | pendente |
 | R6 | Despacho de templates: média de 10 a 17 candidatos por linha contra a meta de 4 (causa: regex sem prefixo do `_common`); só otimização | sonnet | pendente, por último |
 
