@@ -18,6 +18,18 @@ globalThis.fetch = (url, options = {}) => new Promise((resolve, reject) => {
   held.push({ url: String(url), resolve, reject });
   options.signal?.addEventListener?.("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
 });
+// api.keyChain is added with the route (api.js, main session); until then the same request is made here.
+if (typeof api.keyChain !== "function") {
+  api.keyChain = (caseId, type, value, params, signal) =>
+    fetch("/api/keys/" + encodeURIComponent(type) + "/" + encodeURIComponent(value) + "/chain?case=" + caseId, { signal })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data && data.message ? data.message : "failed");
+        }
+        return data;
+      });
+}
 const answer = (request, status, data) => request.resolve({
   ok: status < 400, status, json: async () => data, text: async () => JSON.stringify(data), headers: { get: () => null },
 });
@@ -50,8 +62,9 @@ function world(overrides = {}) {
 async function load(w, records, next = null) {
   held = [];
   const opening = w.panel.open("msgid", "A/B");
-  assert.equal(held.length, 1);
+  assert.equal(held.length, 2); // the records and the chain of the key
   answer(held[0], 200, { records, next });
+  answer(held[1], 200, { operations: [], handoffs: [], scanned: 0, truncated: false });
   await opening;
   await tick();
 }
@@ -59,7 +72,8 @@ async function load(w, records, next = null) {
 test("the columns are those of the grid and every record is one row", async () => {
   const w = world();
   await load(w, [rec(1), rec(2), rec(3)]);
-  const headers = w.host.all().filter((n) => n.tagName === "TH").map((n) => n.textContent);
+  const recordsTable = find(w.host, "key-table");
+  const headers = recordsTable.all().filter((n) => n.tagName === "TH").map((n) => n.textContent);
   assert.deepEqual(headers, ["Time", "Source", "Level", "Message type", "Message"]);
   const rows = findAll(w.host, "key-row");
   assert.equal(rows.length, 3);
@@ -168,6 +182,7 @@ test("the dock panel is wired to the host: sources, type titles and Show in grid
     await tick();
   }
   answer(held[0], 200, { records: [rec(1)], next: null });
+  answer(held[1], 200, { operations: [], handoffs: [], scanned: 0, truncated: false });
   await opening;
   await tick();
   const host = root.all().find((n) => n.id === "sameKey-host");

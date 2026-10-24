@@ -104,6 +104,7 @@ export function registerAppPanels(dock, deps) {
       const guard = withoutCase(ctx.caseId);
       const panel = module.initEventsPanel(host, {
         api: derivedApi, getCase: guard.getCase, onShowInGrid: deps.showEventInGrid,
+        onSameKey: (type, value) => ctx.dock.open("sameKey", { type, value }),
         onRequestClose: () => ctx.dock.close("operations"),
       });
       let stale = true; // a closed panel loads its list again when it is shown
@@ -228,6 +229,7 @@ export function registerAppPanels(dock, deps) {
       const panel = module.initKeyPanel(host, {
         getCase: ctx.caseId, onSelect: ctx.reveal, onRequestClose: () => ctx.dock.close("sameKey"),
         onShowInGrid: deps.showKeyInGrid, getSourceName: deps.sourceName, getTypeLabel: deps.typeLabel,
+        onShowEventInGrid: deps.showEventInGrid, onOpenOperation: (eventId) => ctx.dock.open("operations", { eventId }),
       });
       return { show: ({ type, value }) => panel.open(type, value), closed: () => panel.close(), reset: () => panel.reset() };
     },

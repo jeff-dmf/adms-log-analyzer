@@ -343,6 +343,10 @@ export const api = {
   keyRecords: (caseId, type, value, params, signal) =>
     request("GET", "/api/keys/" + segment(type) + "/" + segment(value) +
       query({ ...params, case: caseId }), undefined, signal),
+  // Operations and handoffs of one key (R2c): the chain of a job through its processes.
+  keyChain: (caseId, type, value, params, signal) =>
+    request("GET", "/api/keys/" + segment(type) + "/" + segment(value) + "/chain" +
+      query({ ...params, case: caseId }), undefined, signal),
   // Redaction profile (kept in the data directory) and the .txt report built from the server.
   redaction: (signal) => request("GET", "/api/redaction", undefined, signal),
   saveRedaction: (profile, signal) => request("PUT", "/api/redaction", profile, signal),
