@@ -47,6 +47,7 @@ FLAG_HAS_CONT = 2
 FLAG_REF_SENSITIVE = 4
 FLAG_TS_OUT_OF_ORDER = 32
 FLAG_HAS_PAYLOAD = 64
+FLAG_AFTER_SKIP = 128  # first record after a stretch skipped by a reduced source (ingest/capped.py)
 
 SeverityFn = Callable[[int | None, str], int]
 
@@ -117,6 +118,14 @@ ID_FLOOR_TABLES = ("collection", "stream", "source", "entry", "event")
 # Partial open (ROADMAP 9.9): ``meta['partial.<source_id>']`` holds the state of a source indexed out of file
 # order (``ingest/partial.py``); it goes with the source.
 PARTIAL_PREFIX = "partial."
+# Reduced sources (ROADMAP R3b, ``ingest/capped.py``): ``meta['capped.<source_id>']`` is the state of a source
+# indexed as its beginning plus its end (it goes with the source); ``meta['source_cap.<group>']`` is the
+# per-file limit the collection group was opened with (it goes with the group).
+CAPPED_PREFIX = "capped."
+SOURCE_CAP_PREFIX = "source_cap."
+# ``meta['reducing.<source_id>']``: the first indexing of the source reduces it (written with its first
+# commit); tells an interrupted reduction (start again) from an interrupted append to a source indexed whole.
+REDUCING_PREFIX = "reducing."
 # meta['partial_scope.<collection_id>']: scope of an unfinished partial open;
 # meta['partial_order.<collection_id>']: families whose unknown_sig examples a source-first open must repair
 # once the collection is complete
@@ -267,6 +276,8 @@ class IndexWriter:
         self._family: str | None = None
         self._batch_first_id = self._next_id
         self.prev_ts: int | None = None  # ts of the last record appended (for flag 32)
+        # byte offset of the first record after a stretch skipped by a reduced source (gets FLAG_AFTER_SKIP)
+        self.after_skip_off: int | None = None
         # False while filling an id range reserved below records that already exist (partial open): the last
         # buffered row of a source is then not its highest id, so ``source.last_line`` is recomputed.
         self._ids_on_top = True
@@ -874,6 +885,9 @@ class IndexWriter:
         keys = [f"{p}{group}" for p in prefixes]
         keys += [f"payload_extraction_version.{sid}" for sid in sources]
         keys += [f"{PARTIAL_PREFIX}{sid}" for sid in sources]
+        keys += [f"{CAPPED_PREFIX}{sid}" for sid in sources]
+        keys += [f"{REDUCING_PREFIX}{sid}" for sid in sources]
+        keys.append(f"{SOURCE_CAP_PREFIX}{group}")
         keys += [f"{p}{cid}" for cid in cids for p in (PARTIAL_SCOPE_PREFIX, PARTIAL_ORDER_PREFIX)]
         conn.executemany("DELETE FROM meta WHERE key = ?", [(k,) for k in keys])
         for sid in streams:  # derive.<stream>.<chain>: '/' is the character after '.'
@@ -909,6 +923,7 @@ class IndexWriter:
         """
         self.flush()
         self.prev_ts = prev_ts
+        self.after_skip_off = None
         row = self.conn.execute("SELECT stream_id FROM source WHERE id=?", (source_id,)).fetchone()
         self._stream_id = row[0] if row else None
         self._tset = templates
@@ -932,10 +947,13 @@ class IndexWriter:
         dumps = json.dumps
         prev_ts = self.prev_ts
         next_id = self._next_id
+        after_skip = self.after_skip_off
         n = lines = 0
         for r in records:
             ts = r.ts_ms
             flags = FLAG_PARTIAL if r.partial else 0
+            if r.byte_off == after_skip:
+                flags |= FLAG_AFTER_SKIP
             cont = r.cont
             if cont is not None:
                 flags |= FLAG_HAS_CONT

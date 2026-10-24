@@ -25,6 +25,7 @@ from urllib.parse import unquote
 
 from .. import __version__, aliases, messages
 from ..diagnostics import component, describe_error
+from ..ingest import capped as capped_ingest
 from ..ingest import partial as partial_open
 from ..ingest import pipeline
 from ..ingest.discover import SourceNotFoundError, UnsafeArchiveError
@@ -165,6 +166,17 @@ _BOOKMARK_STATUS = {
     "not_found": 404, "entry_not_found": 404, "already_bookmarked": 409, "too_many": 409,
     "import_too_large": 413,
 }  # fmt: skip
+
+
+def _reduced_json(state: capped_ingest.CappedState | None) -> dict[str, Any] | None:
+    """Reduced-source summary shown by the file list (``None`` for a source indexed whole)."""
+    if state is None:
+        return None
+    return {
+        "cap": state.cap, "head_end": state.h, "tail_start": state.lo, "skipped_bytes": state.skipped_bytes,
+        "skipped_lines": state.skipped_lines, "skipped_from_ts": state.skipped_from_ts,
+        "skipped_to_ts": state.skipped_to_ts,
+    }  # fmt: skip
 
 
 class ApiError(Exception):
@@ -1466,13 +1478,16 @@ class Api:
                 " (SELECT c.ers_group FROM collection c WHERE c.id = s.collection_id), s.stream_id"
                 " FROM source s LEFT JOIN stream t ON t.id = s.stream_id ORDER BY s.id"
             ).fetchall()
-        rows = [(*r, *events.pool_fields(r[3], r[4])) for r in rows]
+        with self.store.reader(cid) as conn:
+            reduced = capped_ingest.load_all_capped(conn)
+        rows = [(*r, *events.pool_fields(r[3], r[4]), reduced.get(r[0])) for r in rows]
         sources = [
             {
                 "id": r[0], "name": r[1], "member": r[2], "family": r[3], "process": r[4], "pid": r[5],
                 "sensitive": bool(r[6]), "rotation": r[7], "status": r[8], "error": r[9],
                 "records": r[10], "lines": r[14] or 0, "ts_min": r[11], "ts_max": r[12], "size": r[13],
                 "collection": r[15], "stream": r[16], "pool": r[17], "instance": r[18],
+                "reduced": _reduced_json(r[19]),
             }
             for r in rows
         ]  # fmt: skip

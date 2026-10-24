@@ -65,6 +65,7 @@ CONT_CHARS = 65536  # continuation text handed to the derivers (same limit as th
 _FIRST = itemgetter(0)
 _TPL_ID = itemgetter(6)
 _PID = itemgetter(7)
+_FLAGS = itemgetter(8)
 _HEAD = itemgetter(slice(0, 7))
 META_PREFIX = "derive."
 _ROTATION_SUFFIX = re.compile(r"\.\d+$")
@@ -172,7 +173,8 @@ def _entries(conn: sqlite3.Connection, ranges: list[tuple[int, int, int]], start
         last = max(start, lo) - 1
         while True:
             rows = conn.execute(
-                "SELECT id, ts, tid, sev, coalesce(fields, ''), msg, tpl_id, pid FROM entry NOT INDEXED"
+                "SELECT id, ts, tid, sev, coalesce(fields, ''), msg, tpl_id, pid, flags"
+                " FROM entry NOT INDEXED"
                 " WHERE id > ? AND id <= ? AND source_id = ? ORDER BY id LIMIT ?",
                 (last, hi, source_id, CHUNK),
             ).fetchall()
@@ -216,6 +218,7 @@ def _entries(conn: sqlite3.Connection, ranges: list[tuple[int, int, int]], start
                 map(tpl_code.get, tpls),
                 map(tpl_class.get, tpls),
                 map(_PID, rows),
+                map(_FLAGS, rows),
                 strict=True,
             )
             yield from map(RowEntry, map(add, map(_HEAD, rows), cells))

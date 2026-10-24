@@ -8,6 +8,14 @@ HELP_DATA_DIR = (
     "(default: %%LOCALAPPDATA%%\\dmslog on Windows, ${XDG_DATA_HOME:-~/.local/share}/dmslog elsewhere)."
 )
 HELP_VERSION = "Show the version and exit."
+HELP_INGEST_MAX_SOURCE_MB = (
+    "Per-file limit in MB: a larger log is indexed as its first 1 MB plus its last N MB "
+    "(default 256; 0 = index every file whole). Applies to the first indexing of a file."
+)
+INVALID_MAX_SOURCE_MB = "invalid --max-source-mb {value!r}: use 0 or a whole number of MB"
+INGEST_REDUCED = (
+    "  [reduced] {name}: indexed the first {head} and the last {tail} of {size} (--max-source-mb)"
+)
 API_FILE_TEXT_NOT_FOUND = "No such file in this case."
 API_FILE_TEXT_NOT_VIEWABLE = "This file is not shown as text (indexed log or a type that is not text)."
 API_FILE_TEXT_TOO_LARGE = "This file is larger than {limit} bytes and is not shown."

@@ -401,6 +401,8 @@ def discover(
     max_ratio: float = DEFAULT_MAX_RATIO,
     max_members: int = DEFAULT_MAX_MEMBERS,
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+    reduce_over: int | None = None,
+    max_skipped_member_bytes: int = 0,
     aliases: Aliases | None = None,
 ) -> Iterator[SourceInfo]:
     """Yield a SourceInfo for every file of an ERS zip, an installation folder or one file.
@@ -408,6 +410,9 @@ def discover(
     With `aliases`, the real spelling of a name in a member path is replaced by its public token
     before the path is classified, so `process` (and everything derived from it) carries the public
     name. `member` and `file_name` stay as in the container because the file is read back through them.
+
+    A zip member over `max_member_bytes` is `too_large`, unless it is reducible (`ingest/capped.py`):
+    bigger than `reduce_over` and at most `max_skipped_member_bytes` (only its beginning and end are indexed).
 
     The listing is complete before the first item is yielded because the default scope of
     service logs depends on which services host adapters. Nothing is decompressed or read.
@@ -427,6 +432,8 @@ def discover(
                 max_ratio=max_ratio,
                 max_members=max_members,
                 max_total_bytes=max_total_bytes,
+                reduce_over=reduce_over,
+                max_skipped_member_bytes=max_skipped_member_bytes,
             )
         )
         kind = "zip"
@@ -510,6 +517,8 @@ def _scan_zip(
     max_ratio: float,
     max_members: int,
     max_total_bytes: int,
+    reduce_over: int | None = None,
+    max_skipped_member_bytes: int = 0,
 ) -> Iterator[SourceInfo]:
     try:
         archive = zipfile.ZipFile(path)
@@ -531,7 +540,9 @@ def _scan_zip(
             if key in seen:
                 raise UnsafeArchiveError("duplicate member name", member[:80])
             seen.add(key)
-            violation = _member_violation(info, max_member_bytes, max_ratio)
+            violation = _member_violation(
+                info, max_member_bytes, max_ratio, reduce_over, max_skipped_member_bytes
+            )
             yield _build(
                 path,
                 "zip",
@@ -545,10 +556,17 @@ def _scan_zip(
             )
 
 
-def _member_violation(info: zipfile.ZipInfo, max_member_bytes: int, max_ratio: float) -> str | None:
+def _member_violation(
+    info: zipfile.ZipInfo,
+    max_member_bytes: int,
+    max_ratio: float,
+    reduce_over: int | None = None,
+    max_skipped_member_bytes: int = 0,
+) -> str | None:
     if info.flag_bits & 0x1:
         return "encrypted"
-    if info.file_size > max_member_bytes:
+    reducible = reduce_over is not None and reduce_over < info.file_size <= max_skipped_member_bytes
+    if info.file_size > max_member_bytes and not reducible:
         return "too_large"
     if info.file_size >= RATIO_MIN_BYTES and info.file_size / max(info.compress_size, 1) > max_ratio:
         return "ratio"

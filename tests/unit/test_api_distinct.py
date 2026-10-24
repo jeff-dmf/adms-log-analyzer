@@ -86,6 +86,12 @@ def test_distinct_of_parsed_fields_and_keys_with_drill_down(client, server):  # 
             assert drilled == v["count"]
 
 
+def test_sources_list_has_the_reduced_field(client, case):  # noqa: F811
+    """A source indexed whole answers ``reduced: null`` (the field exists for the file list badge)."""
+    _, sources, _ = client.get(f"/api/sources?case={case}")
+    assert sources["sources"] and all("reduced" in s and s["reduced"] is None for s in sources["sources"])
+
+
 def test_source_text_route_errors_and_nothing_written(client, case):  # noqa: F811
     """GET /api/sources/<id>/text: an indexed log is not viewable, unknown ids are 404."""
     _, sources, _ = client.get(f"/api/sources?case={case}")

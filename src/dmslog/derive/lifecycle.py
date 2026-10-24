@@ -27,7 +27,11 @@ level           ``level_window``    window between two ``Debug level changed fro
 gaps            ``gap``             silence between two consecutive entries longer than
                                     the family heartbeat; only between entries of the
                                     stream (the period covered by the file), never before
-                                    the first or after the last entry.
+                                    the first or after the last entry. Not between the last
+                                    entry before a stretch skipped by a reduced source and the
+                                    first one after it (entry.flags & 128). A level window
+                                    that spans such a stretch has ``detail.skipped_range = true``
+                                    (its duration is not reliable).
 clock           ``clock_jump``      ``ts`` goes backwards by more than 30 min between two
                                     consecutive entries (``detail.back_ms``).
 maps            ``map_reload``      ``"X" map closed.`` -> ``New "X" map content:`` (+
@@ -69,7 +73,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from typing import Any
 
-from dmslog.derive.base import STATUS_OK, STATUS_OPEN, STATUS_TRUNCATED, Event, StoredEntry
+from dmslog.derive.base import FLAG_AFTER_SKIP, STATUS_OK, STATUS_OPEN, STATUS_TRUNCATED, Event, StoredEntry
 
 KIND_STARTUP = "startup"
 KIND_LEVEL = "level_window"
@@ -292,6 +296,14 @@ class _Level:
         self.prev_id: int | None = None  # the entry before ``last_id``
         self.last_ts: int | None = None
         self.n = 0
+        self.first_skipped = False  # a skipped stretch lies inside the first window (before any change)
+
+    def skip(self) -> None:
+        """A record that follows a stretch skipped by a reduced source was fed: the open windows span it."""
+        if self.cur is not None:
+            self.cur["skipped"] = True
+        if not self.seen_change and self.first_id is not None:
+            self.first_skipped = True
 
     @staticmethod
     def parse(e: StoredEntry) -> tuple[str, int | None, str, int | None] | None:
@@ -327,6 +339,7 @@ class _Level:
                 "to_num": w["to_num"],
                 "level_name": w["level_name"],
                 "level_num": w["level_num"],
+                **({"skipped_range": True} if w.get("skipped") else {}),
             },
         )
 
@@ -354,10 +367,12 @@ class _Level:
                         "to_num": frm_n,
                         "level_name": frm,
                         "level_num": frm_n,
+                        "skipped": self.first_skipped,
                     }
                     out.append(self._event(first, end_id if self.n > 0 else e.id, ts, STATUS_OK))
                 self.seen_change = True
                 self.first_id = self.first_ts = None
+                self.first_skipped = False
                 self.cur = {
                     "id": e.id,
                     "ts": ts,
@@ -700,6 +715,7 @@ class LifecycleDeriver:
         # gaps and clock both compare an entry with the previous one that has a ts
         self._prev_id: int | None = None
         self._prev_ts: int | None = None
+        self._after_skip = False  # the next timed entry follows a stretch skipped by a reduced source
         self._maps = _Maps()
         self._pid = _PidChange() if family in PID_CHANGE_FAMILIES else None
         self._last_id: int | None = None
@@ -718,21 +734,26 @@ class LifecycleDeriver:
                 if level.first_id is None and not level.seen_change:
                     level.first_id, level.first_ts = entry.id, ts
                 level.last_ts = ts
+            if entry.flags & FLAG_AFTER_SKIP:
+                level.skip()
             level.prev_id = level.last_id
             level.last_id = entry.id
             if code in _CODES_LEVEL or (code is None and "Debug level changed" in msg):
                 out.extend(level.change(entry))
             level.n += 1
+            if entry.flags & FLAG_AFTER_SKIP:
+                self._after_skip = True
             if ts is not None:
                 prev_ts = self._prev_ts
                 if prev_ts is not None:
                     silence = ts - prev_ts
                     hb = self.heartbeat_ms
-                    if hb is not None and silence > hb:
+                    if hb is not None and silence > hb and not self._after_skip:
                         out.append(self._gap(entry, prev_ts, silence, hb))
                     if -silence > CLOCK_JUMP_MIN_BACK_MS:
                         out.append(self._clock_jump(entry, prev_ts, -silence))
                 self._prev_id, self._prev_ts = entry.id, ts
+                self._after_skip = False
             if code in _MAP_ANY or (code is None and '" map ' in msg):
                 out.extend(self._maps.feed(entry))
             if code in _SERVICE_POINT:
