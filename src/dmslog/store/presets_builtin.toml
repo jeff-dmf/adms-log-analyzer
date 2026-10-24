@@ -164,3 +164,69 @@ filter = { or = [{ tpl = ["CRM-014"] }, { event_status = ["timeout"] }] }
 name = "Log level windows (Info/Verbose)"
 description = "Debug level changes and the Verbose records, to see the windows in which the payload is logged."
 filter = { or = [{ tpl = ["GEN-DBG-01"] }, { level = "verbose" }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of FunctionHost."
+family = "DMSFH"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of job scheduling and launching."
+family = "DMSJOB"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of core services."
+family = "DMSCORE"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of model services."
+family = "DMSMODEL"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of outage management services."
+family = "DMSOMS"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of PSengine."
+family = "PSENGINE"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of arbIP."
+family = "ARBIP"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of NMC."
+family = "NMC"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Errors and exceptions"
+description = "Critical and error records plus the generic exception templates of ERS."
+family = "ERS"
+filter = { or = [{ sev = { le = 2 } }, { tpl = ["GEN-EXC-01"] }] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of FunctionHost that failed, timed out or ended in a business error."
+family = "DMSFH"
+filter = { event_status = ["fail", "timeout", "business_error"] }
+
+[[preset]]
+name = "Failed operations"
+description = "Operations of job scheduling and launching that failed, timed out or ended in a business error."
+family = "DMSJOB"
+filter = { event_status = ["fail", "timeout", "business_error"] }
