@@ -8,6 +8,14 @@ HELP_DATA_DIR = (
     "(default: %%LOCALAPPDATA%%\\dmslog on Windows, ${XDG_DATA_HOME:-~/.local/share}/dmslog elsewhere)."
 )
 HELP_VERSION = "Show the version and exit."
+HELP_INGEST_MAX_SOURCE_MB = (
+    "Per-file limit in MB: a larger log is indexed as its first 1 MB plus its last N MB "
+    "(default 256; 0 = index every file whole). Applies to the first indexing of a file."
+)
+INVALID_MAX_SOURCE_MB = "invalid --max-source-mb {value!r}: use 0 or a whole number of MB"
+INGEST_REDUCED = (
+    "  [reduced] {name}: indexed the first {head} and the last {tail} of {size} (--max-source-mb)"
+)
 HELP_SERVE = "Start the local web viewer."
 HELP_PORT = "TCP port on 127.0.0.1 (default: a random free port)."
 HELP_NO_BROWSER = "Do not open the default web browser."

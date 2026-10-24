@@ -84,3 +84,9 @@ def test_distinct_of_parsed_fields_and_keys_with_drill_down(client, server):  # 
             assert v["leaf"] == leaf_of(v["value"]) and "label" not in v
             drilled = client.post("/api/entries/count", {"case": "Fields", "filter": v["leaf"]})[1]["count"]
             assert drilled == v["count"]
+
+
+def test_sources_list_has_the_reduced_field(client, case):  # noqa: F811
+    """A source indexed whole answers ``reduced: null`` (the field exists for the file list badge)."""
+    _, sources, _ = client.get(f"/api/sources?case={case}")
+    assert sources["sources"] and all("reduced" in s and s["reduced"] is None for s in sources["sources"])

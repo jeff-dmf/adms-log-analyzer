@@ -29,6 +29,17 @@ from pathlib import Path
 from dmslog import __version__
 from dmslog.aliases import Aliases
 from dmslog.diagnostics import component, describe_error, error_label
+from dmslog.ingest.capped import (
+    CappedGrouper,
+    CappedState,
+    drop_capped,
+    indexed_estimate,
+    is_candidate,
+    load_capped,
+    load_source_cap,
+    save_capped,
+    save_source_cap,
+)
 from dmslog.ingest.discover import SourceInfo, discover, resolve_scope
 from dmslog.ingest.ers import (
     ADD_PAIR,
@@ -163,6 +174,7 @@ class SourceResult:
     lines: int = 0
     bytes: int = 0
     error: str | None = None
+    reduced: CappedState | None = None  # the source was indexed as its beginning plus its end
 
 
 @dataclass
@@ -174,6 +186,7 @@ class IngestResult:
     sources_unchanged: int = 0
     sources_skipped: int = 0  # listed, not selected
     sources_failed: int = 0
+    sources_reduced: int = 0  # sources indexed reduced (beginning + end) in this run
     records: int = 0
     lines: int = 0
     bytes: int = 0  # stream bytes read and parsed in this run
@@ -213,6 +226,8 @@ def build_plan(path: str | Path, limits: ReadLimits, aliases: Aliases | None = N
             max_ratio=limits.max_ratio,
             max_members=limits.max_members,
             max_total_bytes=limits.max_total_bytes,
+            reduce_over=limits.reduce_over,
+            max_skipped_member_bytes=limits.max_skipped_member_bytes,
             aliases=aliases,
         )
     )
@@ -415,6 +430,8 @@ class _Run:
         self.stage: str | None = None
         self.pending: dict[str, int | None] = {}  # pending_bytes per member (None: unchanged)
         self.reset_members: set[str] = set()  # sources reset during the run (their rows must be read again)
+        self._caps: dict[int, tuple[int, int]] = {}  # collection id -> (cap_bytes, head_bytes)
+        self.cid = 0  # collection of the run
 
     def _shown(self, text: str | None) -> str | None:
         """A name as presented or stored (progress, results): public spelling, control characters escaped."""
@@ -436,6 +453,25 @@ class _Run:
     def _warn(self, message: str) -> None:
         """Warnings are fixed text plus describe_error() output: names-free, never re-sanitized."""
         self.result.warnings.append(message)
+
+    def cap_of(self, collection_id: int) -> tuple[int, int]:
+        """``(cap_bytes, head_bytes)`` of a collection: the limit stored with its group (a collection opened
+        before the limit existed has none stored: the run's)."""
+        known = self._caps.get(collection_id)
+        if known is None:
+            stored = load_source_cap(self.w.conn, self.w.collection_group(collection_id))
+            limits = self.opt.limits
+            known = stored or (limits.source_cap_bytes, limits.head_bytes)
+            self._caps[collection_id] = known
+        return known
+
+    def reduces(self, info: SourceInfo, collection_id: int, reader: SourceReader) -> bool:
+        """True when indexing ``info`` from the start reads only its beginning and end (UTF-16 never)."""
+        cap, head = self.cap_of(collection_id)
+        if cap <= 0:
+            return False
+        size = info.size if info.container_kind == "zip" else self._file_path(info).stat().st_size
+        return is_candidate(size, cap, head) and not reader.is_utf16(info)
 
     def emit(self, phase: str, source_bytes: int = 0, source_total: int = 0, source_records: int = 0) -> None:
         if self.progress is None:
@@ -539,7 +575,7 @@ class _Run:
                 w.update_collection_path(current.id, path)
             return current.id
         ident = plan.identity
-        return w.add_collection(
+        cid = w.add_collection(
             kind=plan.kind,
             path=path,
             ers_guid=ident.guid if ident else None,
@@ -550,6 +586,9 @@ class _Run:
             machine=plan.machine,
             label=plan.label,
         )
+        limits = self.opt.limits  # a reduced source is reduced again with this limit if it is indexed again
+        save_source_cap(w.conn, w.collection_group(cid), limits.source_cap_bytes, limits.head_bytes)
+        return cid
 
     # ---- installation configuration
 
@@ -724,8 +763,13 @@ class _Run:
         self.result.records += stats.records
         self.result.lines += stats.lines
         self.result.bytes += fed
+        reduced = load_capped(self.w.conn, row.id) if action in (Action.NEW, Action.REINDEX) else None
+        if reduced is not None:
+            self.result.sources_reduced += 1
         self.result.details.append(
-            SourceResult(self._shown(info.member), action.value, stats.records, stats.lines, fed)
+            SourceResult(
+                self._shown(info.member), action.value, stats.records, stats.lines, fed, None, reduced
+            )
         )
         self._finish_source(info, fed, stats.records)
 
@@ -747,6 +791,12 @@ class _Run:
                 key_only = True
             elif mark < PAYLOAD_EXTRACTION_VERSION:
                 action = Action.REINDEX  # its records predate the current payload extraction
+        if (
+            action is Action.RESUME
+            and load_capped(self.w.conn, row.id) is None
+            and self.reduces(info, row.collection_id, reader)
+        ):
+            action = Action.REINDEX  # a reduced source interrupted before its tail started begins again
         if (
             action in (Action.APPEND, Action.RESUME)
             and row.envelope == PLAIN_ENVELOPE
@@ -779,7 +829,7 @@ class _Run:
         for info in selected:
             row = rows.get(info.member)
             if row is None or load_state(self.w.conn, row.id) is not None:
-                out[info.member] = info.size
+                out[info.member] = self._first_bytes(info, reader)
                 continue
             try:
                 action, _key_only = self.plan_action(row, info, reader)
@@ -789,10 +839,20 @@ class _Run:
             if action in (Action.APPEND, Action.RESUME):
                 out[info.member] = max(info.size - row.indexed_bytes, 0)
             elif action is not Action.UNCHANGED:
-                out[info.member] = info.size
+                out[info.member] = self._first_bytes(info, reader)
             else:
                 out[info.member] = None
         return out
+
+    def _first_bytes(self, info: SourceInfo, reader: SourceReader) -> int:
+        """Bytes a first indexing of ``info`` stores: all of them, or the beginning and the end (reduced)."""
+        try:
+            if self.reduces(info, self.cid, reader):
+                cap, head = self.cap_of(self.cid)
+                return indexed_estimate(info.size, cap, head)
+        except OSError:
+            pass
+        return info.size
 
     def _finish_source(self, info: SourceInfo, fed: int, records: int = 0) -> None:
         self.bytes_done += info.size
@@ -841,31 +901,52 @@ class _Run:
         """Parse and store one source; returns the stream bytes fed in this run."""
         w = self.w
         is_zip = info.container_kind == "zip"
-        fixed_size = is_zip or reader.is_utf16(info)  # size cannot be derived from the stream position
+        utf16 = reader.is_utf16(info)
+        fixed_size = is_zip or utf16  # size cannot be derived from the stream position
         w.begin()
         start_off, start_line, prev_ts = 0, 1, None
         envelope = None
         head = HeadWindow()
         tail = TailWindow()
+        cap, head_bytes = self.cap_of(row.collection_id)
+        reduce_size: int | None = None  # a first indexing that keeps only the beginning and the end
+        member_extra = 0  # bytes of the stream that are read and skipped (reduced sources)
+        state: CappedState | None = None  # an already reduced source that is continued
         if action is Action.REINDEX:
             w.delete_source_entries(row.id)
+            drop_capped(w.conn, row.id)
+        if action in (Action.NEW, Action.REINDEX):
+            if cap > 0 and not utf16:
+                size_now = info.size if is_zip else self._file_path(info).stat().st_size
+                if is_candidate(size_now, cap, head_bytes):
+                    reduce_size = size_now
+                    member_extra = self.opt.limits.member_extra(size_now, cap)
         elif action in (Action.APPEND, Action.RESUME):
+            state = load_capped(w.conn, row.id)
             last = w.last_entry(row.id)
             if last is not None:
-                w.truncate_from(row.id, last.byte_off, min_id=last.id)
-                start_off, start_line = last.byte_off, last.line_no
+                if state is not None and last.byte_off < state.lo:
+                    # nothing of the tail is stored yet: it starts at ``lo`` and no record is deleted
+                    start_off, start_line = state.lo, state.lo_line
+                else:
+                    w.truncate_from(row.id, last.byte_off, min_id=last.id)
+                    start_off, start_line = last.byte_off, last.line_no
                 prev_ts = w.last_ts(row.id)
                 envelope = get_envelope(row.envelope)
                 head = HeadWindow(reader.read_head(info))  # the head of the file is already known to match
+            if state is not None:
+                member_extra = self.opt.limits.member_extra(info.size, state.cap)
         self.severity.family = info.family
         w.start_source(
             row.id, prev_ts, self.catalog.for_family(info.family, sensitive=info.sensitive), info.family
         )
+        if state is not None:
+            w.after_skip_off = state.lo
 
         read_from = start_off - min(start_off, HASH_SPAN)  # bytes before the cut only feed the tail hash
         skip = start_off - read_from
         max_rec = self.opt.max_record_bytes
-        grouper = (
+        grouper: RecordGrouper | CappedGrouper | None = (
             RecordGrouper(envelope, start_off=start_off, start_line=start_line, max_record_bytes=max_rec)
             if envelope
             else None
@@ -874,11 +955,35 @@ class _Run:
         batch_start = fed
         pending: list[bytes] = []
         pending_len = 0
+        capped_saved = False
+
+        def new_grouper(found) -> RecordGrouper | CappedGrouper:
+            if reduce_size is not None:
+                return CappedGrouper(
+                    found, size=reduce_size, cap_bytes=cap, head_bytes=head_bytes, max_record_bytes=max_rec
+                )
+            return RecordGrouper(found, max_record_bytes=max_rec)
+
+        def store(records) -> None:
+            if isinstance(grouper, CappedGrouper):
+                w.after_skip_off = grouper.after_skip_off
+            w.append(row.id, records, stats)
 
         def commit(status: str) -> None:
-            nonlocal batch_start
+            nonlocal batch_start, capped_saved
             assert grouper is not None
             w.flush()
+            if (
+                isinstance(grouper, CappedGrouper)
+                and not capped_saved
+                and (status == "ready" or grouper.tail_started)
+            ):
+                # with the first records of the tail, in the same transaction: a crash before this commit
+                # leaves no state and the source is indexed again from the start
+                reduced = grouper.state()
+                if reduced is not None:
+                    save_capped(w.conn, row.id, reduced)
+                    capped_saved = True
             n, first_ts, last_ts = w.source_totals(row.id)
             w.update_source(
                 row.id, indexed_bytes=fed, tail_hash=tail.hexdigest(),
@@ -890,7 +995,8 @@ class _Run:
             w.commit()
             batch_start = fed
 
-        chunks = reader.iter_chunks(info, read_from, self.opt.chunk_size)
+        extra = {"member_extra": member_extra} if member_extra else {}  # only a reduced source skips bytes
+        chunks = reader.iter_chunks(info, read_from, self.opt.chunk_size, **extra)
         try:
             for chunk in chunks:
                 if skip:
@@ -907,11 +1013,11 @@ class _Run:
                         continue
                     chunk = b"".join(pending)
                     pending.clear()
-                    grouper = RecordGrouper(detect_envelope(chunk), max_record_bytes=max_rec)
+                    grouper = new_grouper(detect_envelope(chunk))
                 head.update(chunk)
                 tail.update(chunk)
                 fed += len(chunk)
-                w.append(row.id, grouper.feed(chunk), stats)
+                store(grouper.feed(chunk))
                 if fed - batch_start >= self.opt.batch_bytes or w.buffered >= MAX_BATCH_RECORDS:
                     commit("indexing")
                     w.begin()
@@ -920,16 +1026,14 @@ class _Run:
             chunks.close()
         if grouper is None:  # source shorter than the detection size (possibly empty)
             data = b"".join(pending)
-            grouper = RecordGrouper(
-                detect_envelope(data) if data else envelope_or_plain(info.envelope), max_record_bytes=max_rec
-            )
+            grouper = new_grouper(detect_envelope(data) if data else envelope_or_plain(info.envelope))
             head.update(data)
             tail.update(data)
             fed += len(data)
-            w.append(row.id, grouper.feed(data), stats)
+            store(grouper.feed(data))
         # Resuming always re-parses the last record, so a live file needs no special flag: a record is
         # partial only when the data ends without a newline.
-        w.append(row.id, grouper.finish(final=True), stats)
+        store(grouper.finish(final=True))
         commit("ready")
         return fed - start_off
 
@@ -951,6 +1055,13 @@ class _Run:
             self._finish_source(info, 0)
             return True
         if not first.windowed or row.status not in ("pending", "skipped"):
+            self.process(row, info, reader)
+            return False
+        try:
+            reduced = self.reduces(info, row.collection_id, reader)
+        except OSError:
+            reduced = False
+        if reduced:  # a reduced source is never opened by window: it is indexed whole (reduced) right here
             self.process(row, info, reader)
             return False
         try:
@@ -1525,6 +1636,7 @@ def run_ingest(
     writer.sync_templates(run.catalog)
     writer.commit()
     cid = run.resolve_collection()
+    run.cid = cid
     if (
         options.first is not None
         and not conn.execute("SELECT 1 FROM source WHERE collection_id = ? LIMIT 1", (cid,)).fetchone()

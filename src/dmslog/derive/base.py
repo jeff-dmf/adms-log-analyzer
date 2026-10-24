@@ -50,6 +50,7 @@ class StoredEntry:
     msg: str  # first line after the envelope
     cont: str = ""  # continuation lines joined with '\n' (may be empty)
     keys: tuple[tuple[str, str], ...] = ()  # (key_type, value) pairs
+    flags: int = 0  # entry.flags (store/writer.py FLAG_*)
 
     @property
     def fields_raw(self) -> str | None:
@@ -64,10 +65,12 @@ class StoredEntry:
 class RowEntry(tuple):  # type: ignore[type-arg]
     """``StoredEntry`` look-alike built straight from a query row (the engine's fast path).
 
-    The row is ``(id, ts, tid, sev, fields_json, msg, tpl_id, cont, keys, tpl_code, tpl_class[, pid])``:
+    The row is ``(id, ts, tid, sev, fields_json, msg, tpl_id, cont, keys, tpl_code, tpl_class
+    [, pid[, flags]])``:
     ``fields_json`` and ``cont`` are empty strings and ``keys`` an empty tuple when absent. ``pid`` is the
-    optional 12th cell (None when absent); ``level`` is not read by any deriver and is None. ``fields`` is
-    parsed (and cached) only when a deriver asks for it; ``fields_raw`` and ``field(name)`` let a deriver
+    optional 12th cell (None when absent) and ``flags`` the optional 13th (0 when absent); ``level`` is not
+    read by any deriver and is None. ``fields`` is parsed (and cached) only when a deriver asks for it;
+    ``fields_raw`` and ``field(name)`` let a deriver
     skip that parse. Same attribute
     names and values as ``StoredEntry``.
     """
@@ -88,6 +91,10 @@ class RowEntry(tuple):  # type: ignore[type-arg]
     @property
     def pid(self) -> int | None:
         return self[11] if len(self) > 11 else None
+
+    @property
+    def flags(self) -> int:
+        return self[12] if len(self) > 12 else 0
 
     def field(self, name: str) -> Any:
         """``fields.get(name)``, skipping the JSON parse when that is provably the same answer.
