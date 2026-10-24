@@ -259,6 +259,7 @@ function start() {
   let menubar = null;
   let appActions = null;
   let sourceFamilies = new Map();
+  let sourceProcesses = new Map();
   // API for the panels fed by derived events: their queries carry the chosen collection.
   const derivedApi = scopeApi(api, () => (collectionsPanel ? collectionsPanel.selectedGroups() : []));
   const seenFields = new Set(readList(FIELD_NAMES_KEY));
@@ -517,6 +518,7 @@ function start() {
   knowledge = new KnowledgeSection(byId("detail-knowledge"), {
     getCase: () => caseId,
     getFamily: (sourceId) => sourceFamilies.get(sourceId) || "",
+    getProcess: (sourceId) => sourceProcesses.get(sourceId) || "",
     onError: showError,
   });
 
@@ -713,6 +715,7 @@ function start() {
       }
       sourceNames = new Map(list.map((s) => [s.id, s.name]));
       sourceFamilies = new Map(list.map((s) => [s.id, s.family || ""]));
+      sourceProcesses = new Map(list.map((s) => [s.id, s.process || ""]));
       grid.setSourceNames(sourceNames);
       // The collections load first so the Collection column and the filter are right in the first load.
       const listed = collectionsPanel ? collectionsPanel.refresh() : Promise.resolve();

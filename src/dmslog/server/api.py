@@ -899,6 +899,7 @@ def _query_int(request: Request, name: str, default: int) -> int:
 
 _FAMILY = re.compile(r"[A-Za-z0-9_]{1,32}\Z")
 _PRODUCT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+_PROCESS_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}\Z")
 _TEMPLATE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}\Z")
 _ERROR_CODE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}\Z")
 
@@ -1628,6 +1629,12 @@ class Api:
         code = request.query.get("template")
         if code is None or not _TEMPLATE_CODE.match(code):
             raise ApiError(400, "invalid_field", messages.API_BAD_TEMPLATE)
+        process = request.query.get("process") or None
+        if process is not None and not _PROCESS_NAME.match(process):
+            raise ApiError(400, "invalid_field", messages.API_BAD_PROCESS)
+        stream_family = request.query.get("stream_family") or None
+        if stream_family is not None and not _FAMILY.match(stream_family):
+            raise ApiError(400, "invalid_field", messages.API_BAD_FAMILY)
         with self.store.reader(cid) as conn:
             row = conn.execute("SELECT family, title FROM template WHERE code = ?", (code,)).fetchone()
             if row is None:
@@ -1646,11 +1653,15 @@ class Api:
                 "description": found.description if found else None,
                 "log_relevant": found.log_relevant if found else None,
             })  # fmt: skip
+        # The RT service comes from the PROCESS of the record's stream (and its real family), never from the
+        # family of the template: shared templates (_dmsrt, _common) belong to no service.
+        service = knowledge.rt_service(process, stream_family) if process else None
         return Response(200, {
             "case": cid,
             "template": code,
             "family": family,
             "title": title,
+            **({"service": service.as_dict()} if service is not None else {}),
             "hint": None if hint is None else {
                 "text": hint.text, "params": list(hint.params), "note": hint.note,
             },

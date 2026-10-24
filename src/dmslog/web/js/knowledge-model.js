@@ -53,6 +53,58 @@ function textOrNull(value) {
   return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
+function stringList(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string" && item.trim() !== "")
+    : [];
+}
+
+// The RT service block of the template answer (null when the answer has no usable `service`).
+// Everything comes from the local pack: text only, lists filtered to strings.
+export function buildServiceView(service) {
+  if (!service || typeof service !== "object" || Array.isArray(service)) {
+    return null;
+  }
+  const processName = textOrNull(service.process);
+  if (processName === null) {
+    return null;
+  }
+  const references = [];
+  for (const item of Array.isArray(service.references) ? service.references : []) {
+    if (item && textOrNull(item.doc) !== null) {
+      references.push({
+        doc: item.doc,
+        note: textOrNull(item.note),
+        section: textOrNull(item.section),
+        mentions: Number.isInteger(item.mentions) ? item.mentions : null,
+      });
+    }
+  }
+  const related = [];
+  for (const item of Array.isArray(service.related) ? service.related : []) {
+    if (item && textOrNull(item.process) !== null) {
+      related.push({ process: item.process, via: textOrNull(item.via) });
+    }
+  }
+  return {
+    process: processName,
+    family: textOrNull(service.family),
+    group: textOrNull(service.group),
+    title: textOrNull(service.title),
+    summary: textOrNull(service.summary),
+    note: textOrNull(service.note),
+    section: textOrNull(service.section),
+    installDir: textOrNull(service.install_dir),
+    monitored: stringList(service.monitored),
+    counters: stringList(service.counters),
+    usageEvents: Number.isInteger(service.usage_events) ? service.usage_events : null,
+    references,
+    related,
+    keys: stringList(service.keys),
+    inVault: service.in_vault === true,
+  };
+}
+
 // Server text explaining that the knowledge pack is missing or invalid (null when it is installed).
 // The pack is optional and installed locally; the text comes from the server (messages.py).
 export function packNoticeOf(templateData, errorAnswers) {
@@ -86,7 +138,8 @@ export function buildKnowledgeView(templateData, errorAnswers) {
     });
   }
   const packNotice = packNoticeOf(templateData, errorAnswers);
-  if (hintText === null && errors.length === 0 && packNotice === null) {
+  const service = buildServiceView(templateData ? templateData.service : null);
+  if (hintText === null && errors.length === 0 && packNotice === null && service === null) {
     return null;
   }
   const params = [];
@@ -110,5 +163,6 @@ export function buildKnowledgeView(templateData, errorAnswers) {
     errors,
     outOfVault: errors.some((item) => item.outOfVault),
     packNotice,
+    service,
   };
 }

@@ -24,12 +24,13 @@ globalThis.document = {
 const { KnowledgeSection } = await import("../../src/dmslog/web/js/knowledge.js");
 const { api } = await import("../../src/dmslog/web/js/api.js");
 
-function setup() {
+function setup(getProcess = () => "") {
   const host = node("section");
   const state = { caseId: "c1", errors: [] };
   const section = new KnowledgeSection(host, {
     getCase: () => state.caseId,
     getFamily: () => "AWFM",
+    getProcess,
     onError: (err) => state.errors.push(err),
   });
   return { host, state, section };
@@ -103,4 +104,67 @@ test("non-404 failures are reported and hide the section", async () => {
   await section.show({ id: 7, tpl_id: 2, tpl: "WFM-080", fields: {}, source_id: 1 });
   assert.equal(host.hidden, true);
   assert.equal(state.errors.length, 1);
+});
+
+const SERVICE_TEMPLATE = {
+  hint: null, params: [], adapter: null, vault_note: null,
+  service: {
+    process: "DMS_ExampleService", family: "DMSEXAMPLE", group: "Example group", title: "Example Service",
+    summary: "Example summary.", note: "Example/Service.md", section: null, install_dir: "C:\\Example",
+    monitored: ["cpu"], counters: ["ExampleCounter"], usage_events: 0,
+    references: [{ doc: "Example doc", note: "Example/Doc.md", section: "S1", mentions: 1 }],
+    related: [{ process: "DMS_ExampleOther", via: "job_id" }], keys: ["job_id"], in_vault: false,
+  },
+};
+
+function setupProcess(processes) {
+  const host = node("section");
+  const section = new KnowledgeSection(host, {
+    getCase: () => "c1",
+    getFamily: () => "DMSEXAMPLE",
+    getProcess: (sourceId) => processes[sourceId] || "",
+    onError: () => {},
+  });
+  return { host, section };
+}
+
+test("a service-only answer shows the Service block with text only", async () => {
+  const { host, section } = setupProcess({ 1: "DMS_ExampleService" });
+  let args;
+  api.knowledge = async (...a) => { args = a; return SERVICE_TEMPLATE; };
+  await section.show({ id: 10, tpl_id: 2, tpl: "RTL-001", fields: {}, source_id: 1 });
+  assert.equal(host.hidden, false);
+  assert.deepEqual({ ...args[2] }, { process: "DMS_ExampleService", streamFamily: "DMSEXAMPLE" });
+  const text = host.textContent;
+  assert.match(text, /Example Service/);
+  assert.match(text, /DMS_ExampleOther \(job_id\)/);
+  assert.match(text, /Example doc \u00b7 S1/);
+  assert.match(text, /Not described in the vault/);
+});
+
+test("the cache is keyed by process as well as template", async () => {
+  const { section } = setupProcess({ 1: "DMS_ExampleService", 2: "DMS_ExampleOther" });
+  let calls = 0;
+  api.knowledge = async () => { calls += 1; return SERVICE_TEMPLATE; };
+  await section.show({ id: 11, tpl_id: 2, tpl: "RTL-001", fields: {}, source_id: 1 });
+  await section.show({ id: 12, tpl_id: 2, tpl: "RTL-001", fields: {}, source_id: 1 });
+  assert.equal(calls, 1);
+  await section.show({ id: 13, tpl_id: 2, tpl: "RTL-001", fields: {}, source_id: 2 });
+  assert.equal(calls, 2);
+});
+
+
+test("a process name outside the API contract is not sent (the panel stays available)", async () => {
+  const sent = [];
+  const { host, section } = setup((id) => ({ 1: "Example Server", 2: "123Example", 3: "DMS_FunctionHost_7" })[id] || "");
+  api.knowledge = async (caseId, template, opts) => { sent.push(opts); return TEMPLATE; };
+  api.knowledgeError = async () => { throw Object.assign(new Error("x"), { status: 404 }); };
+  for (const sourceId of [1, 2, 3]) {
+    await section.show({ id: 10 + sourceId, tpl_id: 2, tpl: "WFM-080" + sourceId, fields: {}, source_id: sourceId });
+  }
+  assert.equal(sent[0].process, undefined);
+  assert.equal(sent[1].process, undefined);
+  assert.equal(sent[2].process, "DMS_FunctionHost_7");
+  assert.equal(sent[2].streamFamily, "AWFM");
+  assert.equal(host.hidden, false);
 });

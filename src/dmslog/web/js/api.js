@@ -301,8 +301,14 @@ export const api = {
     request("GET", "/api/templates" + query({ case: caseId, family }), undefined, signal),
   unknown: (caseId, family, limit, signal) =>
     request("GET", "/api/unknown" + query({ case: caseId, family, limit }), undefined, signal),
-  knowledge: (caseId, template, signal) =>
-    request("GET", "/api/knowledge" + query({ case: caseId, template }), undefined, signal),
+  // `opts` (optional): {process, streamFamily} of the record's stream, which select the RT service block.
+  knowledge: (caseId, template, opts, signal) =>
+    request("GET", "/api/knowledge" + query({
+      case: caseId,
+      template,
+      process: opts && opts.process,
+      stream_family: opts && opts.streamFamily,
+    }), undefined, signal),
   knowledgeError: (caseId, family, code, signal) =>
     request("GET", "/api/knowledge/error" + query({ case: caseId, family, code }), undefined, signal),
   configProducts: (caseId, signal) =>

@@ -97,3 +97,40 @@ test("buildKnowledgeView shows the server notice when the knowledge pack is not 
   const view = buildKnowledgeView({ hint: { text: "h" }, knowledge_pack: installed }, []);
   assert.equal(view.packNotice, null);
 });
+
+const SERVICE = {
+  process: "DMS_ExampleService", family: "DMSEXAMPLE", group: "Example group", title: "Example Service",
+  summary: "Example summary.", note: "Example/Service.md", section: "Example section",
+  install_dir: "C:\\Example\\Dir", monitored: ["cpu", "ram", 7, ""], counters: ["ExampleCounter", null],
+  usage_events: 3, references: [{ doc: "Example doc", note: "Example/Doc.md", section: "S1", mentions: 2 }, { nope: 1 }, null],
+  related: [{ process: "DMS_ExampleOther", via: "job_id" }, { via: "x" }], keys: ["job_id", 5], in_vault: true,
+};
+
+test("buildKnowledgeView exposes the RT service and shows the panel with only a service", () => {
+  const view = buildKnowledgeView({ hint: null, params: [], service: SERVICE }, []);
+  assert.equal(view.hint, null);
+  assert.equal(view.service.title, "Example Service");
+  assert.equal(view.service.installDir, "C:\\Example\\Dir");
+  assert.deepEqual(view.service.monitored, ["cpu", "ram"]);
+  assert.deepEqual(view.service.counters, ["ExampleCounter"]);
+  assert.deepEqual(view.service.keys, ["job_id"]);
+  assert.deepEqual(view.service.related, [{ process: "DMS_ExampleOther", via: "job_id" }]);
+  assert.deepEqual(view.service.references, [{ doc: "Example doc", note: "Example/Doc.md", section: "S1", mentions: 2 }]);
+  assert.equal(view.service.inVault, true);
+});
+
+test("service without the pack keeps empty fields and in_vault false", () => {
+  const view = buildKnowledgeView({
+    service: { process: "DMS_ExampleService", family: "DMSEXAMPLE", title: null, summary: null, monitored: [], references: [], in_vault: false },
+    knowledge_pack: { state: "not_installed", installed: false, message: "Knowledge pack not installed." },
+  }, []);
+  assert.equal(view.service.inVault, false);
+  assert.equal(view.service.title, null);
+  assert.deepEqual(view.service.related, []);
+});
+
+test("an absent or malformed service gives no service view", () => {
+  assert.equal(buildKnowledgeView({ hint: { text: "h" } }, []).service, null);
+  assert.equal(buildKnowledgeView({ hint: { text: "h" }, service: { title: "x" } }, []).service, null);
+  assert.equal(buildKnowledgeView({ hint: { text: "h" }, service: [] }, []).service, null);
+});

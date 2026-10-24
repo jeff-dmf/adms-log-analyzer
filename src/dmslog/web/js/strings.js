@@ -809,6 +809,17 @@ export const S = {
   fvMissing: "The collection file is no longer available.",
   fvFailed: "The file could not be read.",
   fvLoadFailed: "The file viewer could not be loaded.",
+  // RT service block of the knowledge panel (R5f)
+  knowService: "Service",
+  knowServiceProcess: "Process",
+  knowServiceGroup: "Group",
+  knowServiceInstallDir: "Install folder",
+  knowServiceMonitored: "Monitoring",
+  knowServiceCounters: "Counters",
+  knowServiceKeys: "Keys",
+  knowServiceRelated: "Related services",
+  knowServiceReferences: "References",
+  knowServiceNotInVault: "Not described in the vault.",
   // Process pools (R2b): instances of one process family, e.g. the FunctionHost pool
   poolInstance: "{pool} #{instance}",
   poolFolderOne: "{pool} ({count} instance)",
