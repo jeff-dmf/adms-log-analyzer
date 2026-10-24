@@ -151,7 +151,10 @@ _BACKSLASH_ESC_RE = re.compile(
 )
 _LEADING_ZEROS_RE = re.compile(r"(&#[xX]?)0+(?=[0-9A-Fa-f])")
 _HUGE_REF_RE = re.compile(r"&#(?:[xX][0-9A-Fa-f]{9,}|[0-9]{9,});?")  # beyond any code point (and int())
-_LEFTOVER_ENTITY_RE = re.compile(r"&[#A-Za-z0-9]+;")  # a reference html.unescape did not know
+_ENTITY_TOKEN_RE = re.compile(r"&[#A-Za-z0-9]+;?")  # anything that looks like a character reference
+_ENTITY_CLOSED_RE = re.compile(
+    r"&[#A-Za-z0-9]+;"
+)  # only the ones closed by ";" (a prefix may be glued before)
 _DECODE_ROUNDS = 4  # escapes of escapes (&amp;#112;, \\u0070) are decoded a few levels deep
 
 
@@ -163,7 +166,25 @@ def _decode_backslash(m: re.Match[str]) -> str:
     return chr(code) if code <= 0x10FFFF and not 0xD800 <= code <= 0xDFFF else " "
 
 
+def _decoded(text: str, *, entities: bool) -> str:
+    """``text`` with backslash escapes decoded (and, if asked, HTML character references), a few levels."""
+    for _ in range(_DECODE_ROUNDS):
+        if "\\" not in text and not (entities and "&" in text):
+            break
+        step = _BACKSLASH_ESC_RE.sub(_decode_backslash, text.replace("\\\\", "\\"))
+        if entities and "&#" in step:
+            step = _HUGE_REF_RE.sub(" ", _LEADING_ZEROS_RE.sub(r"\1", step))
+        decoded = html.unescape(step) if entities else step
+        if decoded == text:
+            break
+        text = decoded
+    return text
+
+
 def _count_core_words(text: str) -> int:
+    # NFKD turns an accented letter into letter + combining mark; the mark (like every other non-ASCII or
+    # invisible character) is dropped by the filter, the letter stays
+    text = unicodedata.normalize("NFKD", text).lower()
     return len(_CORE_WORDS_RE.findall(_NON_ALNUM_RE.sub("", text)))
 
 
@@ -171,25 +192,32 @@ def credential_mentions(text: str) -> int:
     """How many times a credential core word (password, pwd, secret, token, apikey, ...) is mentioned.
 
     Any mention counts, in any syntax and however it is spelled (backslash escapes, character references
-    of any form, case, accents, invisible characters, punctuation or blanks between the letters). Two views
-    are searched, the larger count wins: one where a reference nobody knows (``&nosuch;``) is dropped (it
-    only joins the letters around it) and one where its name is kept. The caller withholds the whole file
-    when this is not zero.
+    of any form, case, accents, invisible characters, punctuation or blanks between the letters). Several
+    views of the text are searched and the largest count wins, because a decoder can also destroy a name
+    (``&notoken`` becomes ``\u00actoken``):
+    (A) backslash escapes decoded, no HTML decoding; (B) backslash escapes and HTML references decoded;
+    (C) every reference-like token (``&...;``) dropped from the raw text, which joins the letters around
+    it; (D) the same on the text with backslash escapes decoded; (E) the same as C and D but only for the
+    references closed by ``;``, so that letters glued before one are not taken with it. The caller
+    withholds the whole file when the result is not zero.
     """
-    for _ in range(_DECODE_ROUNDS):
-        if "\\" not in text and "&" not in text:
-            break
-        step = _BACKSLASH_ESC_RE.sub(_decode_backslash, text.replace("\\\\", "\\"))
-        if "&#" in step:
-            step = _HUGE_REF_RE.sub(" ", _LEADING_ZEROS_RE.sub(r"\1", step))
-        decoded = html.unescape(step)
-        if decoded == text:
-            break
-        text = decoded
-    text = unicodedata.normalize("NFKD", text).lower()  # accents become combining marks, dropped below
-    if "&" not in text:
-        return _count_core_words(text)
-    return max(_count_core_words(text), _count_core_words(_LEFTOVER_ENTITY_RE.sub("", text)))
+    plain = _decoded(text, entities=False)
+    views = [plain]
+    if "&" in text or "&" in plain:
+        views += [
+            _decoded(text, entities=True),
+            _ENTITY_TOKEN_RE.sub("", text),
+            _ENTITY_TOKEN_RE.sub("", plain),
+            _ENTITY_CLOSED_RE.sub("", text),
+            _ENTITY_CLOSED_RE.sub("", plain),
+        ]
+    best = 0
+    seen: set[str] = set()
+    for view in views:
+        if view not in seen:
+            seen.add(view)
+            best = max(best, _count_core_words(view))
+    return best
 
 
 # ---------------------------------------------------------------------- reading

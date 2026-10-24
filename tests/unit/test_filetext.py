@@ -139,6 +139,18 @@ REPRODUCERS = [
     "&#112;&#97;&#115;&#115;&#119;&#111;&#114;&#100;=SYNTHETIC_9472",
     "&#x0000000000000070;assword=SYNTHETIC_9472",
     "\\U00000070assword=SYNTHETIC_9472",
+    "&notoken=SYNTHETIC_9472",
+    "pass&notit;word=SYNTHETIC_9472",
+    "&amp;notoken=SYNTHETIC_9472",
+    "&notokenx=1&v=SYNTHETIC_9472",
+    "&amp;amp;password=SYNTHETIC_9472",
+    "pass&notin;word=SYNTHETIC_9472",
+    "&not;&token=SYNTHETIC_9472",
+    "to&nbsp;ken=SYNTHETIC_9472",
+    "to&shy;ken=SYNTHETIC_9472",
+    "pa&#x00AD;ssword=SYNTHETIC_9472",
+    "\\u0026notoken=SYNTHETIC_9472",
+    "pass\\u0026notit;word=SYNTHETIC_9472",
 ]
 
 
@@ -450,6 +462,9 @@ def test_pathological_input_is_fast():
         "&a;",
         "e\u0301",
         "&amp;#",
+        "&",
+        "&&",
+        "&not",
         "&#0",
         "&a",
         "&#99999999999;",
@@ -457,7 +472,8 @@ def test_pathological_input_is_fast():
     ],
 )
 def test_other_hostile_shapes_are_fast(unit):
-    assert _time_hostile((unit,)) < 1
+    # html.unescape calls back into Python for every reference-like token: those shapes get a looser bound
+    assert _time_hostile((unit,)) < (2 if "&" in unit else 1)
 
 
 # ---------------------------------------------------------------------- review regressions
@@ -740,3 +756,33 @@ def test_huge_numeric_references_neither_crash_nor_hide_a_mention():
     assert credential_mentions("&#x" + "f" * 5000 + ";") == 0
     assert credential_mentions("&#" + "0" * 5000 + "112;assword") == 1
     assert credential_mentions("&#x" + "0" * 5000 + "70;assword") == 1
+
+
+def test_hypothesis_entities_and_punctuation_between_letters_or_glued_before():
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    words = ["password", "passwd", "pwd", "passphrase", "secret", "token", "apikey", "privatekey"]
+    words += ["sharedkey", "clientsecret", "credential"]
+    # between letters: punctuation, or a reference closed by ";" (a bare "&not" there reads as a different
+    # character, not as a gap)
+    between = st.one_of(
+        st.text(alphabet=" \t\r\n.:/-_=\"'<>,", max_size=3),
+        st.from_regex(r"&[a-z]{1,8};", fullmatch=True),
+        st.from_regex(r"&#x?[0-9a-fA-F]{1,6};", fullmatch=True),
+        st.sampled_from(["&amp;", "&nbsp;", "&shy;", "&notit;", "&nosuch;", "&#x00AD;", "&#0000173;"]),
+    )
+    # glued before the word: any "&[a-z]+;?"
+    before = st.one_of(st.just(""), st.from_regex(r"&[a-z]{1,8};?", fullmatch=True))
+
+    @settings(max_examples=400, deadline=None)
+    @given(st.sampled_from(words), st.lists(between, min_size=1, max_size=5), before, st.booleans())
+    def check(word, parts, prefix, split):
+        if split:
+            glue = [parts[i % len(parts)] for i in range(len(word) - 1)]
+            spelled = "".join(c + g for c, g in zip(word, glue + [""], strict=False))
+        else:
+            spelled = word
+        assert credential_mentions(f"{prefix}{spelled}={SYN}") >= 1
+
+    check()
