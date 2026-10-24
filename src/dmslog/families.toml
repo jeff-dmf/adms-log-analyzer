@@ -199,8 +199,7 @@ scope = "optional"
 
 [[rule]]
 family = "PSENGINE"
-layout = "single"
-process = "PSengine"
+pattern = '(?:^|/)(?P<process>PSengine(?:\.ALTERNATE_\d+)?)\.log(?:\.(?P<rotation>\d+))?$'
 envelope = "adms"
 scope = "optional"
 
