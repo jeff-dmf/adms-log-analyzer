@@ -148,9 +148,9 @@ Linhas (uma tabela, ordem por tempo; operação por `ts_start`, passagem por `fr
 | Status | `statusLabel` + tom (texto, nunca só cor) | confiança (`S.lnkConfidenceNames`) |
 | Duration | `duration_ms` (`open` sem duração) | `dt_ms` |
 | Records | `n_entries` | vazio |
-| (ação) | botão "Show in grid" (`deps.showEventInGrid(event)`, o mesmo do painel de operações) e botão "Open operation" (`ctx.dock.open("operations", {eventId})`) | botão "Go to record" (seleciona o `to.entry_id` no grid, `onSelect`) |
+| (ação) | botão "Show in grid" (`deps.showEventInGrid(gridTarget(event))`, com o helper `gridTarget` de `events-model.js`, que monta `{from, to, entryId}`; o mesmo do painel de operações) e botão "Open operation" (`ctx.dock.open("operations", {eventId})`) | botão "Go to record" (seleciona o `to.entry_id` no grid, `onSelect`) |
 
-Resumo acima da tabela (`S.chainSummary`, com plurais): `"3 operations, 2 handoffs, 310 ms from first to last"`, e, se houver operação com `fail`/`timeout`/`business_error`, `"Failed at FunctionHostJob (DMS_FunctionHost #7)"` (primeira operação com falha em ordem de tempo).
+Resumo acima da tabela (`S.chainSummary`, com plurais): `"3 operations, 2 handoffs, 310 ms from first to last"` (a duração do primeiro ao último item só aparece quando todos os itens são da mesma `collection`; com várias coletas os relógios podem diferir, então o resumo omite a duração agregada e cada operação mostra a sua própria duração e o rótulo `C<n>`), e, se houver operação com `fail`/`timeout`/`business_error`, `"Failed at FunctionHostJob (DMS_FunctionHost #7)"` (primeira operação com falha em ordem de tempo).
 
 Estados:
 
