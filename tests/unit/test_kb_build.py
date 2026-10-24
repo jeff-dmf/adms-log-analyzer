@@ -469,7 +469,7 @@ def test_malformed_markdown_is_cleaned_in_linear_time(piece):
     kb_build.clean_cell(text)
     kb_build._plain(text)
     kb_build.first_sentence([text])
-    assert time.perf_counter() - started < 10.0  # loose: CI runners are 2 to 4 times slower than a workstation
+    assert time.perf_counter() - started < 10.0  # loose: the CI runners are slower than a workstation
 
 
 def test_clean_cell_still_resolves_links():
