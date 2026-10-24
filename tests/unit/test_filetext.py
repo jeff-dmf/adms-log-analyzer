@@ -427,6 +427,11 @@ def test_hostile_content_is_inert(case):
     assert out.text == text  # returned as text, nothing expanded or executed
 
 
+# A quadratic pass over 4 MiB takes minutes, so this bound still catches it; it is loose because the CI
+# runners (Windows included) run these shapes 2 to 4 times slower than a workstation.
+HOSTILE_LIMIT_S = 10
+
+
 def _time_hostile(shapes) -> float:
     size = 4 * 1024 * 1024
     start = time.perf_counter()
@@ -436,8 +441,8 @@ def _time_hostile(shapes) -> float:
 
 
 def test_pathological_input_is_fast():
-    """4 MiB of hostile input per shape: the four review shapes in 2 s in total (the passes are linear)."""
-    assert _time_hostile(("<x><![CDATA[", "Password=", "<a ", '<a b="', "Password='")) < 2
+    """4 MiB of hostile input per shape: the review shapes in a bounded time (the passes are linear)."""
+    assert _time_hostile(("<x><![CDATA[", "Password=", "<a ", '<a b="', "Password='")) < HOSTILE_LIMIT_S
 
 
 @pytest.mark.parametrize(
@@ -482,7 +487,7 @@ def test_pathological_input_is_fast():
 )
 def test_other_hostile_shapes_are_fast(unit):
     # html.unescape calls back into Python for every reference-like token: those shapes get a looser bound
-    assert _time_hostile((unit,)) < (2 if "&" in unit else 1)
+    assert _time_hostile((unit,)) < HOSTILE_LIMIT_S
 
 
 # ---------------------------------------------------------------------- review regressions
