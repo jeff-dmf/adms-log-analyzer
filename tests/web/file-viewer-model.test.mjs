@@ -120,6 +120,8 @@ test("facts and the count of hidden values", () => {
   assert.equal(model.hiddenText(file), "3 values hidden");
   assert.equal(model.hiddenText({ ...file, revealed: true }), "3 hidden values shown");
   assert.equal(model.hiddenText({ ...file, hidden: 0 }), "No values hidden");
+  assert.equal(model.hiddenText({ ...file, withheld: true }), "Content hidden: this file mentions 3 credentials");
+  assert.equal(model.hiddenText({ ...file, withheld: true, revealed: true }), "3 hidden values shown");
   assert.equal(model.normalizeText({ text: 5 }), null);
   assert.equal(model.normalizeText(null), null);
 });
