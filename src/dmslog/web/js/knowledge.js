@@ -27,15 +27,17 @@ function remember(cache, key, value) {
 }
 
 // host: element to fill (hidden while there is nothing to show).
-// Options: getCase(), getFamily(sourceId) -> family code or "", onError(err).
+// Options: getCase(), getFamily(sourceId) -> family code or "", getProcess(sourceId) -> process name or "",
+// onError(err).
 export class KnowledgeSection {
-  constructor(host, { getCase, getFamily, onError }) {
+  constructor(host, { getCase, getFamily, getProcess, onError }) {
     this.host = host;
     this.getCase = getCase;
     this.getFamily = getFamily;
+    this.getProcess = getProcess || (() => "");
     this.onError = onError || (() => {});
     this.guard = new RequestGuard();
-    this.cache = new Map(); // "case|template" and "case|family|code" -> answer (null = unknown)
+    this.cache = new Map(); // "case|process|template" and "case|family|code" -> answer (null = unknown)
     this.clear();
   }
 
@@ -57,7 +59,9 @@ export class KnowledgeSection {
       this.clear();
       return;
     }
-    const plan = planKnowledge(entry, this.getFamily(entry.source_id));
+    const family = this.getFamily(entry.source_id);
+    const processName = this.getProcess(entry.source_id) || "";
+    const plan = planKnowledge(entry, family);
     if (plan.template === null && plan.errors.length === 0) {
       this.clear();
       return;
@@ -65,8 +69,9 @@ export class KnowledgeSection {
     const ticket = this.guard.begin(caseId, entry.id);
     try {
       const [templateData, ...errorAnswers] = await Promise.all([
-        plan.template === null ? null : this.lookup("t|" + caseId + "|" + plan.template,
-          () => api.knowledge(caseId, plan.template, ticket.signal)),
+        plan.template === null ? null : this.lookup("t|" + caseId + "|" + processName + "|" + plan.template,
+          () => api.knowledge(caseId, plan.template,
+            { process: processName || undefined, streamFamily: family || undefined }, ticket.signal)),
         ...plan.errors.map((item) =>
           this.lookup("e|" + caseId + "|" + item.family + "|" + item.code,
             () => api.knowledgeError(caseId, item.family, item.code, ticket.signal))),
@@ -110,7 +115,7 @@ export class KnowledgeSection {
     }
     // Without the knowledge pack (and without an ERS-defined error code) there is nothing to explain: the section is
     // not shown at all. The pack notice belongs to the status of the pack, not to every record.
-    if (view.hint === null && view.errors.length === 0) {
+    if (view.hint === null && view.errors.length === 0 && view.service === null) {
       host.hidden = true;
       return;
     }
@@ -138,6 +143,74 @@ export class KnowledgeSection {
     if (view.note !== null) {
       host.appendChild(this.noteRow(view.note));
     }
+    if (view.service !== null) {
+      host.appendChild(this.serviceBlock(view.service));
+    }
+  }
+
+  // RT service block: every value comes from the local pack (untrusted), placed with textContent only.
+  serviceBlock(service) {
+    const box = element("div", "kn-service");
+    box.appendChild(element("div", "kn-label", S.knowService || "Service"));
+    box.appendChild(element("div", "kn-service-title", service.title || service.process));
+    const facts = [];
+    if (service.title) {
+      facts.push([S.knowServiceProcess || "Process", service.process]);
+    }
+    if (service.group) {
+      facts.push([S.knowServiceGroup || "Group", service.group]);
+    }
+    if (service.installDir) {
+      facts.push([S.knowServiceInstallDir || "Install folder", service.installDir]);
+    }
+    if (service.monitored.length > 0) {
+      facts.push([S.knowServiceMonitored || "Monitoring", service.monitored.join(", ")]);
+    }
+    if (service.counters.length > 0) {
+      facts.push([S.knowServiceCounters || "Counters", service.counters.join(", ")]);
+    }
+    if (service.keys.length > 0) {
+      facts.push([S.knowServiceKeys || "Keys", service.keys.join(", ")]);
+    }
+    if (service.summary !== null) {
+      box.appendChild(element("p", "kn-hint", service.summary));
+    }
+    if (facts.length > 0) {
+      const list = element("dl", "kn-facts");
+      for (const [label, value] of facts) {
+        list.appendChild(element("dt", "kn-label", label));
+        list.appendChild(element("dd", "kn-mono", value));
+      }
+      box.appendChild(list);
+    }
+    if (service.related.length > 0) {
+      box.appendChild(element("div", "kn-label", S.knowServiceRelated || "Related services"));
+      const list = element("ul", "kn-error-list");
+      for (const item of service.related) {
+        list.appendChild(element("li", "kn-mono", item.via === null ? item.process : item.process + " (" + item.via + ")"));
+      }
+      box.appendChild(list);
+    }
+    if (service.references.length > 0) {
+      box.appendChild(element("div", "kn-label", S.knowServiceReferences || "References"));
+      const list = element("ul", "kn-error-list");
+      for (const item of service.references) {
+        const li = element("li", "kn-reference");
+        li.appendChild(element("span", "kn-error-text", item.section === null ? item.doc : item.doc + " \u00b7 " + item.section));
+        if (item.note !== null) {
+          li.appendChild(this.noteRow(item.note));
+        }
+        list.appendChild(li);
+      }
+      box.appendChild(list);
+    }
+    if (service.note !== null) {
+      box.appendChild(this.noteRow(service.note));
+    }
+    if (!service.inVault) {
+      box.appendChild(element("p", "kn-pack-notice", S.knowServiceNotInVault || "Not described in the vault."));
+    }
+    return box;
   }
 
   paramsTable(params) {

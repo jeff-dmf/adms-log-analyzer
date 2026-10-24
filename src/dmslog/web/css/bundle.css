@@ -7577,6 +7577,34 @@ body.no-case #grid-panel > :not(.case-empty):not(h2) {
   overflow-wrap: anywhere;
 }
 
+.kn-service {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.kn-service-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.kn-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 10px;
+  margin: 4px 0;
+}
+
+.kn-facts dt,
+.kn-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.kn-reference {
+  margin-bottom: 4px;
+}
+
 /* ---- repeats.css ---- */
 /* Repeated records and missing steps (9.12). The grid marker is a glyph (the words are the tooltip and the aria-label of
    the row); status colours come from events.css. Only tokens of tokens.css and app.css. */
