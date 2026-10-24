@@ -318,3 +318,27 @@ def test_client_disconnecting_mid_body_raises_nothing(server, monkeypatch, capsy
     assert finished.wait(3), "the handler did not finish"
     assert errors == []
     assert "Traceback" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("code", ["RTL-001", "GEN-EXC-01"])
+def test_rt_service_comes_from_the_process_not_from_the_template_family(client, demo, code):  # noqa: F811
+    """Shared templates (_dmsrt, _common) still get the Service block of the record's process."""
+    base = f"/api/knowledge?case=Demo&template={code}"
+    status, body, _ = client.get(base + "&process=DMS_FunctionHost_7&stream_family=DMSFH")
+    assert status == 200 and body["service"]["process"] == "DMS_FunctionHost"
+    assert body["service"]["family"] == "DMSFH" and body["service"]["in_vault"] is False  # no pack here
+    status, body, _ = client.get(base + "&process=DMS_JobLauncher&stream_family=DMSJOB")
+    assert status == 200 and body["service"]["process"] == "DMS_JobLauncher"
+    status, body, _ = client.get(base)
+    assert status == 200 and "service" not in body
+    status, body, _ = client.get(base + "&process=NotAnRtProcess")
+    assert status == 200 and "service" not in body
+    # a pool instance with the wrong stream family is refused
+    status, body, _ = client.get(base + "&process=DMS_FunctionHost_7&stream_family=AWFM")
+    assert status == 200 and "service" not in body
+
+
+def test_rt_service_parameters_are_validated(client, demo):  # noqa: F811
+    for query in ("process=bad%20name", "process=1abc", "stream_family=bad%20family"):
+        status, body, _ = client.get(f"/api/knowledge?case=Demo&template=WFM-080&{query}")
+        assert status == 400 and body["error"] == "invalid_field"
