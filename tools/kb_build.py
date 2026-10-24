@@ -21,9 +21,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 import tomllib
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -31,9 +34,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from dmslog.knowledge.pack_schema import (  # noqa: E402
     OPTIONAL_PACK_FILES,
     PACK_FILES,
+    RT_MAX_COUNTERS,
+    RT_MAX_REFERENCES,
+    RT_MAX_SUMMARY,
+    RT_MAX_TEXT,
     RT_SERVICES_FILE,
     SCHEMA_VERSION,
+    validate_rt_services,
 )
+
+MAX_NOTE_BYTES = 4 * 1024 * 1024  # a note larger than this is refused before it is decoded
+MAX_PARAGRAPH_CHARS = 4096  # candidate paragraph of the RT summary, cut before any regex
 
 GENERATOR_VERSION = "1.1.0"
 NOTICE = (
@@ -76,8 +87,6 @@ ADAPTER_TYPES = {
     "multispeak": "multispeak",
 }
 
-_WIKILINK = re.compile(r"\[\[([^\]]*)\]\]")
-_MDLINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _HEADING = re.compile(r"^##\s+(.+?)\s+—\s+(.+?)\s+\(\[\[([A-Za-z0-9]+) Index(?:\\?\|[^\]]*)?\]\]\)\s*$")
 _PROCESS_PREFIX = re.compile(r"\b([A-Z][A-Za-z]*Adapter)_")
 
@@ -129,16 +138,65 @@ def split_row(line: str) -> list[str]:
     return cells
 
 
+def _wiki_links(text: str) -> str:
+    """``[[target|label]]`` -> label (or target); one linear scan (no regex backtracking on bad markdown)."""
+    out: list[str] = []
+    pos = 0
+    close = -2  # cached index of the next "]" at or after the scan point
+    while True:
+        start = text.find("[[", pos)
+        if start < 0:
+            break
+        if close < start + 2:
+            close = text.find("]", start + 2)
+            if close < 0:
+                break
+        if text.startswith("]]", close):
+            inner = text[start + 2 : close].replace("\\|", "|")
+            target, _, label = inner.partition("|")
+            out.append(text[pos:start])
+            out.append(label or target)
+            pos = close + 2
+        else:
+            out.append(text[pos : start + 1])
+            pos = start + 1
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _md_links(text: str) -> str:
+    """``[label](url)`` -> label; one linear scan."""
+    out: list[str] = []
+    pos = 0
+    close = -2  # cached next "]"
+    paren = -2  # cached next ")"
+    while True:
+        start = text.find("[", pos)
+        if start < 0:
+            break
+        if close < start + 1:
+            close = text.find("]", start + 1)
+            if close < 0:
+                break
+        if text.startswith("(", close + 1):
+            if paren < close + 2:
+                paren = text.find(")", close + 2)
+            if paren < 0:
+                break  # no ")" left: no link can match any more
+            out.append(text[pos:start])
+            out.append(text[start + 1 : close])
+            pos = paren + 1
+            continue
+        out.append(text[pos : start + 1])
+        pos = start + 1
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def clean_cell(cell: str) -> str:
     """Resolve escaped pipes, wiki/markdown links and inline-code marks of a cell."""
 
-    def wiki(match: re.Match) -> str:
-        inner = match.group(1).replace("\\|", "|")
-        target, _, label = inner.partition("|")
-        return label or target
-
-    text = _WIKILINK.sub(wiki, cell.strip())
-    text = _MDLINK.sub(r"\1", text)
+    text = _md_links(_wiki_links(cell.strip()))
     text = text.replace("\\|", "|")
     if len(text) >= 2 and text.startswith("`") and text.endswith("`"):
         text = text[1:-1]
@@ -229,10 +287,41 @@ class Vault:
     def rel(self, path: Path) -> str:
         return path.relative_to(self.root).as_posix()
 
+    def _check_inside(self, path: Path) -> None:
+        """Refuse symlinks and any path that does not resolve inside the resolved vault root."""
+        try:
+            parts = Path(path).relative_to(self.root).parts
+        except ValueError as exc:
+            raise BuildError(f"refusing to read a file outside the vault: {path}") from exc
+        current = self.root
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise BuildError(f"refusing to follow a symbolic link: {current}")
+        real_root = Path(os.path.realpath(self.root))
+        real = Path(os.path.realpath(path))
+        if real != real_root and not real.is_relative_to(real_root):
+            raise BuildError(f"refusing to read a file outside the vault: {path}")
+
+    def _walk_notes(self, base: Path):
+        """Sorted ``.md`` files below ``base``; symbolic links (files and directories) are never followed."""
+        found = []
+        for folder, dirnames, filenames in os.walk(base, followlinks=False):
+            dirnames[:] = sorted(d for d in dirnames if not (Path(folder) / d).is_symlink())
+            for name in filenames:
+                path = Path(folder) / name
+                if name.endswith(".md") and not path.is_symlink():
+                    found.append(path)
+        return sorted(found)
+
     def read(self, path: Path) -> str:
         if path.suffix != ".md":
             raise BuildError(f"refusing to read a non-Markdown file: {path}")
-        data = path.read_bytes()
+        self._check_inside(path)
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_NOTE_BYTES + 1)
+        if len(data) > MAX_NOTE_BYTES:
+            raise BuildError(f"note larger than {MAX_NOTE_BYTES} bytes: {path}")
         self.hashes[self.rel(path)] = hashlib.sha256(data).hexdigest()
         return data.decode("utf-8-sig").replace("\r\n", "\n")
 
@@ -240,7 +329,7 @@ class Vault:
         """Path of ``filename`` anywhere in the section (None when absent; error when ambiguous)."""
         if self._index is None:
             self._index = {}
-            for path in sorted(self.section.rglob("*.md")):
+            for path in self._walk_notes(self.section):
                 self._index.setdefault(path.name, []).append(path)
         found = self._index.get(filename, [])
         if len(found) > 1:
@@ -251,7 +340,7 @@ class Vault:
         """Every ``.md`` note of the vault by file name (``archive`` folders are left out)."""
         if self._root_index is None:
             self._root_index = {}
-            for path in sorted(self.root.rglob("*.md")):
+            for path in self._walk_notes(self.root):
                 if "archive" in path.relative_to(self.root).parts[:-1]:
                     continue
                 self._root_index.setdefault(path.name, []).append(path)
@@ -505,10 +594,6 @@ DEFAULT_RT_CURATED = (
     Path(__file__).resolve().parents[1].joinpath("src", "dmslog", "knowledge", "curated", "rt_services.toml")
 )
 RT_SUMMARY_MODES = ("first-sentence", "none")
-RT_SUMMARY_MAX = 240
-RT_TEXT_MAX = 300
-RT_MAX_REFERENCES = 8
-RT_MAX_COUNTERS = 64
 # Closed list of documents searched for references, in priority order (ARQUITETURA 7.1).
 RT_REFERENCE_DOCS = (
     "SARC",
@@ -535,14 +620,22 @@ _NUMBERED_HEADING = re.compile(r"^(#+)\s+(\d+(?:\.\d+)*)\.?\s+(.*?)\s*$")
 _BULLETS = re.compile(r"[•\s]+")
 _PROGRAM_FILES = re.compile(r"^[A-Za-z]:\\Program Files(?: \(x86\))?\\[^\\]+\\")
 _DRIVE = re.compile(r"^[A-Za-z]:\\")
-_SENTENCE_END = re.compile(r"[.!?](?=\s+[A-Z0-9\"'(]|\s*$)")
 _NOT_PROSE = re.compile(r"^(?:[-+•]\s|\*(?!\*)|\d+[.)]\s|!\[|>|<|\||#)")
+_FENCE = re.compile(r"^(?:```|~~~)")
+_ABBREVIATIONS = frozenset({"e.g", "i.e", "etc", "vs", "cf", "fig", "approx"})
+_SENTENCE_MARK = re.compile(r"[.!?]")
+_MAX_LINE_CHARS = 1000  # longer lines are not scanned for headings
 
 
 def _plain(text: str) -> str:
     """Single-line plain text: links resolved, emphasis and code marks removed, spaces collapsed."""
     text = clean_cell(text).replace("**", "").replace("`", "")
-    return re.sub(r"\s+", " ", text).strip()
+    text = "".join(" " if unicodedata.category(ch) in ("Cc", "Zl", "Zp") else ch for ch in text)
+    return " ".join(text.split())
+
+
+def _heading(line: str):
+    return _NUMBERED_HEADING.match(line) if len(line) <= _MAX_LINE_CHARS else None
 
 
 def _normalize(name: str) -> str:
@@ -563,37 +656,72 @@ def find_section(text: str, section: str):
     """``(title, lines below the heading)`` of the heading numbered ``section`` (None when absent)."""
     lines = _body(text).splitlines()
     for index, line in enumerate(lines):
-        match = _NUMBERED_HEADING.match(line)
+        match = _heading(line)
         if not match or match.group(2) != section:
             continue
         level = len(match.group(1))
         below = []
         for following in lines[index + 1 :]:
-            other = re.match(r"^(#+)\s", following)
+            other = re.match(r"^(#+)\s", following[:_MAX_LINE_CHARS])
             if other and len(other.group(1)) <= level:
                 break
             below.append(following)
-        return _plain(match.group(3))[:RT_TEXT_MAX], below
+        return _plain(match.group(3))[:RT_MAX_TEXT], below
     return None
 
 
-def first_sentence(lines: list[str], limit: int = RT_SUMMARY_MAX):
-    """First sentence of the first prose paragraph (None when there is no prose)."""
+def _sentence_end(text: str):
+    """Index just after the first sentence end of ``text`` (None: the sentence runs to the end)."""
+    for mark in _SENTENCE_MARK.finditer(text):
+        end = mark.end()
+        if end == len(text):
+            return None
+        if not text[end].isspace():
+            continue  # "3.5", "a.b", "file.txt"
+        word = text[:end].rsplit(" ", 1)[-1].rstrip(".!?").lower()
+        if mark.group() == "." and (word in _ABBREVIATIONS or (len(word) == 1 and word.isalpha())):
+            continue
+        return end
+    return None
+
+
+def first_sentence(lines: list[str], limit: int = RT_MAX_SUMMARY):
+    """First sentence of the first prose paragraph (None when there is no prose).
+
+    Fenced code blocks, quotes, tables, lists, figures and captions are skipped; the candidate paragraph
+    is cut at ``MAX_PARAGRAPH_CHARS`` before any pattern runs and the result is one line of at most
+    ``limit`` characters.
+    """
     paragraph: list[str] = []
+    size = 0
+    fenced = False
     for line in lines:
         stripped = line.strip()
+        if _FENCE.match(stripped):
+            fenced = not fenced
+            if paragraph:
+                break
+            continue
+        if fenced:
+            continue
         if not stripped or _NOT_PROSE.match(stripped):
             if paragraph:
                 break
             continue
         paragraph.append(stripped)
-    text = _plain(" ".join(paragraph))
+        size += len(stripped) + 1
+        if size >= MAX_PARAGRAPH_CHARS:
+            break
+    text = _plain(" ".join(paragraph)[:MAX_PARAGRAPH_CHARS])
     if not text:
         return None
-    match = _SENTENCE_END.search(text)
-    sentence = text[: match.end()] if match else text
+    end = _sentence_end(text)
+    sentence = text[:end].strip() if end else text
     if len(sentence) > limit:
-        sentence = sentence[: limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
+        head = sentence[: limit - 1]
+        if " " in head and not sentence[limit - 1].isspace():
+            head = head.rsplit(" ", 1)[0]
+        sentence = head.rstrip(" ,;:") + "…"
     return sentence
 
 
@@ -645,13 +773,13 @@ def _install_dirs(text: str | None) -> list[tuple[str, set[str]]]:
     current = None
     names: set[str] = set()
     for line in _body(text).splitlines():
-        heading = re.match(r"^##+\s+[\d.]*\s*(.*?)\s*$", line)
+        heading = re.match(r"^##+\s+[\d.]*\s*(.*?)\s*$", line[:_MAX_LINE_CHARS])
         if heading:
             if current is not None:
                 result.append((current, names))
-            title = heading.group(1)
+            title = _plain(heading.group(1))
             title = _PROGRAM_FILES.sub("", title) if _PROGRAM_FILES.match(title) else _DRIVE.sub("", title)
-            current, names = title[:RT_TEXT_MAX], set()
+            current, names = title[:RT_MAX_TEXT], set()
         elif current is not None:
             names.update(token for token in _BULLETS.split(line) if token.endswith(".exe"))
     if current is not None:
@@ -722,7 +850,7 @@ def _references(notes, entry: dict, own_note: str | None):
             continue
         section = None
         for line in reversed(body[: matches[0].start()].splitlines()):
-            heading = _NUMBERED_HEADING.match(line)
+            heading = _heading(line)
             if heading:
                 section = heading.group(2)
                 break
@@ -766,7 +894,15 @@ def build_rt_services(vault: Vault, services: list[dict], summary_mode: str = "f
         normalized = {_normalize(name) for name in names}
         title, note, summary = sections.get(process, (None, None, None))
         section = entry["vault"]["section"] if note else None
-        counters = sorted({c for block, items in counter_blocks if block in normalized for c in items})
+        counters = sorted(
+            {
+                c
+                for block, items in counter_blocks
+                if block in normalized
+                for c in items
+                if len(c) <= RT_MAX_TEXT
+            }
+        )
         rows.append(
             {
                 "process": process,
@@ -801,6 +937,15 @@ def rt_coverage(files: dict[str, str]) -> str | None:
     )
 
 
+def _validate_rt_output(value: dict) -> None:
+    """The loader drops the whole RT block when the file is invalid, so never produce an invalid one."""
+    with tempfile.TemporaryDirectory() as folder:
+        Path(folder, RT_SERVICES_FILE).write_text(dump(value), encoding="utf-8", newline="\n")
+        errors = validate_rt_services(folder)
+    if errors:
+        raise BuildError("generated " + RT_SERVICES_FILE + " is invalid: " + "; ".join(errors[:5]))
+
+
 def build_pack(
     vault_root, vault_commit="auto", rt_curated=DEFAULT_RT_CURATED, rt_summary="first-sentence"
 ) -> dict[str, str]:
@@ -822,6 +967,7 @@ def build_pack(
     if rt_curated is not None and (Path(rt_curated) != DEFAULT_RT_CURATED or Path(rt_curated).is_file()):
         services = load_rt_curated(rt_curated)
         data[RT_SERVICES_FILE] = {"rt_services": build_rt_services(vault, services, rt_summary)}
+        _validate_rt_output(data[RT_SERVICES_FILE])
     if vault_commit == "auto":
         commit = find_vault_commit(vault_root)
     elif vault_commit == "none":

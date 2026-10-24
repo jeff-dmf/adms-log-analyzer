@@ -404,3 +404,122 @@ def test_diff_pack_flags_unknown_json_but_not_the_optional_file(tmp_path):
     assert kb_build.diff_pack(files, out) == []
     (out / "stray.json").write_text("{}", encoding="utf-8")
     assert any("stray.json" in problem for problem in kb_build.diff_pack(files, out))
+
+
+# ----- Review fixes: confinement, bounded work, first sentence, valid output --------------------------
+
+
+def _symlink(link, target, directory=False):
+    try:
+        link.symlink_to(target, target_is_directory=directory)
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links cannot be created here")
+
+
+def test_symlinked_note_outside_the_vault_is_never_read(tmp_path, capsys):
+    vault = tmp_path / "vault"
+    shutil.copytree(MINI_VAULT, vault)
+    outside = tmp_path / "outside.md"
+    outside.write_text("# 9. Outside\n\nExampleScheduler secret.\n", encoding="utf-8")
+    _symlink(vault / "02 Example Operations" / "PRFI 9 Link.md", outside)
+    out = build(tmp_path, "pack", vault=vault)
+    assert not any("Link" in rel for rel in load(out, "manifest.json")["files"])
+    assert not any("Link" in r["note"] for row in rt_rows(out).values() for r in row["references"])
+    # a curated note that is itself a link is not found either
+    curated = tmp_path / "curated.toml"
+    curated.write_text(
+        '[[service]]\nprocess = "DMS_X"\nfamily = "NMC"\nvault = { doc = "PRFI", note = "PRFI 9 Link.md", '
+        'section = "9" }\n',
+        encoding="utf-8",
+    )
+    args = ["--vault", str(vault), "--out", str(tmp_path / "o"), "--vault-commit", "none"]
+    assert kb_build.main([*args, "--rt-curated", str(curated)]) == 2
+    assert "not found in the vault" in capsys.readouterr().err
+
+
+def test_symlinked_directory_is_not_followed_and_read_refuses_links(tmp_path):
+    vault = tmp_path / "vault"
+    shutil.copytree(MINI_VAULT, vault)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "SARC 8 Outside.md").write_text("# 8. Outside\n\nExampleScheduler.\n", encoding="utf-8")
+    _symlink(vault / "linked", outside, directory=True)
+    out = build(tmp_path, "pack", vault=vault)
+    assert not any("Outside" in r["note"] for row in rt_rows(out).values() for r in row["references"])
+    handle = kb_build.Vault(vault)
+    with pytest.raises(kb_build.BuildError):
+        handle.read(vault / "linked" / "SARC 8 Outside.md")
+    with pytest.raises(kb_build.BuildError):
+        handle.read(outside / "SARC 8 Outside.md")
+
+
+def test_oversized_note_is_refused_before_decoding(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(kb_build, "MAX_NOTE_BYTES", 200)
+    args = ["--vault", str(MINI_VAULT), "--out", str(tmp_path / "o"), "--vault-commit", "none", "--no-rt"]
+    assert kb_build.main(args) == 2
+    assert "larger than 200 bytes" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("piece", ["[", "(", "]", "|", "**", "`", "[[", "](", "[a]("])
+def test_malformed_markdown_is_cleaned_in_linear_time(piece):
+    import time
+
+    text = piece * (400000 // len(piece))  # a quadratic pass would take minutes here, linear well under 1 s
+    started = time.perf_counter()
+    kb_build.clean_cell(text)
+    kb_build._plain(text)
+    kb_build.first_sentence([text])
+    assert time.perf_counter() - started < 10.0  # loose: CI runners are 2 to 4 times slower than a workstation
+
+
+def test_clean_cell_still_resolves_links():
+    assert kb_build.clean_cell("[[A Index|Title]] and [text](http://x/y) [a] (b) [[n]]") == (
+        "Title and text [a] (b) n"
+    )
+    assert kb_build.clean_cell("[x] [y](z") == "[x] [y](z"
+
+
+def test_first_sentence_stops_at_the_first_sentence_end():
+    first = kb_build.first_sentence
+    assert first(["Example ends. another sentence is copied."]) == "Example ends."
+    assert first(["Use it, e.g. now, or i.e. later. Then stop."]) == "Use it, e.g. now, or i.e. later."
+    assert first(["Version 3.5 is used. Next."]) == "Version 3.5 is used."
+    assert first(["No end here"]) == "No end here"
+    assert first(["Is it? Yes."]) == "Is it?"
+
+
+def test_first_sentence_skips_fenced_code_quotes_and_tables():
+    lines = ["```", "code line. more code.", "```", "> quoted. text.", "| a | b |", "", "Real prose. Rest."]
+    assert kb_build.first_sentence(lines) == "Real prose."
+    assert kb_build.first_sentence(["~~~", "only code", "~~~"]) is None
+    assert kb_build.first_sentence(["```", "never closed"]) is None
+
+
+def test_first_sentence_limit_is_one_line_and_not_mid_word():
+    text = " ".join(["word"] * 200)
+    sentence = kb_build.first_sentence([text])
+    assert len(sentence) <= 240 and sentence.endswith(chr(0x2026)) and "\n" not in sentence
+    assert sentence[:-1].split(" ")[-1] == "word"
+    assert len(kb_build.first_sentence(["x" * 5000])) <= 240
+
+
+def test_rt_counter_longer_than_the_schema_limit_is_dropped_and_the_output_validates(tmp_path):
+    vault = tmp_path / "vault"
+    shutil.copytree(MINI_VAULT, vault)
+    note = next(vault.rglob("SCOM 5.6*.md"))
+    note.write_text(
+        note.read_text(encoding="utf-8").replace("| Queue Depth |", f"| {'c' * 301} |"), encoding="utf-8"
+    )
+    out = build(tmp_path, "pack", vault=vault)
+    assert rt_rows(out)["DMS_ExampleScheduler"]["counters"] == ["Active Slots"]
+    assert validate_pack(out) == []
+
+
+def test_invalid_generated_rt_output_is_a_build_error_and_nothing_is_written(tmp_path, capsys):
+    curated = tmp_path / "curated.toml"
+    curated.write_text('[[service]]\nprocess = "bad name!"\nfamily = "NMC"\n', encoding="utf-8")
+    out = tmp_path / "o"
+    args = ["--vault", str(MINI_VAULT), "--out", str(out), "--vault-commit", "none"]
+    assert kb_build.main([*args, "--rt-curated", str(curated)]) == 2
+    assert "is invalid" in capsys.readouterr().err
+    assert not out.exists()
