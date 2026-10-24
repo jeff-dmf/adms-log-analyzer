@@ -3,6 +3,7 @@
 // used to sit in the side column; they are moved into the dialog bodies the first time the dialogs are mounted, so the
 // fields, the CaseFiles lists (progress, per-file results, Retry) and every handler keep working unchanged. The main
 // action of each list sits in the foot. Loaded on demand (import()) by sources.js; nothing here is part of the opening.
+import { capMbOf } from "./case-files-model.js";
 import { createDialogShell } from "./panel-shell.js";
 import { S } from "./strings.js";
 
@@ -64,7 +65,10 @@ function showLabels(root) {
 // `announce(text)` is the dialog's one live region (the status and the errors of the section are spoken through it).
 // Returns { node, wanted(), ready() -> Promise<boolean>, validate(paths, scope), snapshot(paths, scope), refresh(),
 // reset(), showServerError(text) }: `paths`/`scope` are the files and the scope of the action being started.
-function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, scopeSelect, onMessage, announce }) {
+function createPartialSlot(
+  doc,
+  { getPaths, getCaseId, getScope, getCapMb, loadModule, scopeSelect, capSelect, onMessage, announce },
+) {
   const node = doc.createElement("div");
   node.className = "po-slot";
   const row = doc.createElement("label");
@@ -108,7 +112,7 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
         if (mine !== generation) {
           return false;
         }
-        controller = mod.mountPartialBody({ host: content, getCaseId, getPaths, getScope, announce });
+        controller = mod.mountPartialBody({ host: content, getCaseId, getPaths, getScope, getCapMb, announce });
         controller.refresh();
         note.textContent = "";
         const wasOnRetry = doc.activeElement === retry;
@@ -140,12 +144,14 @@ function createPartialSlot(doc, { getPaths, getCaseId, getScope, loadModule, sco
       load();
     }
   });
-  if (scopeSelect) {
-    scopeSelect.addEventListener("change", () => {
-      if (controller) {
-        controller.invalidate(S.poScopeChanged);
-      }
-    });
+  for (const select of [scopeSelect, capSelect]) {
+    if (select) {
+      select.addEventListener("change", () => {
+        if (controller) {
+          controller.invalidate(S.poScopeChanged);
+        }
+      });
+    }
   }
 
   return {
@@ -310,8 +316,10 @@ export function mountCaseDialogs({
     getPaths: () => [...addFiles.state.items.map((item) => item.path), addFiles.pathInput.value, refs.pathInput.value],
     getCaseId,
     getScope,
+    getCapMb: () => (refs.capSelect ? capMbOf(refs.capSelect.value) : undefined),
     loadModule: loadPartial,
     scopeSelect: refs.scopeSelect || null,
+    capSelect: refs.capSelect || null,
     onMessage,
     announce: announceAdd,
   });

@@ -289,3 +289,93 @@
     background: linear-gradient(Highlight, Highlight) center / 6px 2px no-repeat;
   }
 }
+
+/* A source the indexer read only in part (the first and last stretch of a huge log): the title of the badge says what was
+   skipped (js/case-files-model.js reducedTitle). The text carries the meaning; the border reinforces it. */
+.badge-reduced {
+  flex: none;
+  padding: 0 var(--space-1);
+  color: var(--status-info-ink);
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  cursor: help;
+}
+
+/* "Not indexed (n)": the sources the indexer skipped, closed by default. In the tree its rows are st-row; in the flat list
+   they are ni-row inside one list item at the end of the list. */
+.st-row.is-not-indexed .st-box {
+  visibility: hidden;
+}
+
+.st-view,
+.ni-view {
+  flex: none;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.ni-group {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.ni-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--source-row);
+  white-space: nowrap;
+}
+
+.ni-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.ni-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.ni-toggle[aria-expanded="false"] .st-twisty::before {
+  content: "\25B8"; /* right-pointing triangle */
+}
+
+.ni-toggle[aria-expanded="true"] .st-twisty::before {
+  content: "\25BE"; /* down-pointing triangle */
+}
+
+.ni-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ni-size {
+  flex: none;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-skip-note {
+  color: var(--ink-muted);
+}
+
+@media (forced-colors: active) {
+  .badge-reduced {
+    border-color: CanvasText;
+  }
+}

@@ -60,6 +60,8 @@ EXPECTED_MODULES = {
     "unknown-panel.js",
     "key-panel-model.js",
     "key-chain-model.js",
+    "file-viewer-model.js",
+    "file-viewer.js",
     "key-panel.js",
     "queue-model.js",
     "queue-panel.js",

@@ -2,11 +2,12 @@
 import { S } from "./strings.js";
 
 export class ApiError extends Error {
-  constructor(status, code, message) {
+  constructor(status, code, message, extra) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    if (extra && Number.isFinite(extra.limit)) this.limit = extra.limit; // 413 of the file viewer
   }
 
   get kind() {
@@ -138,7 +139,7 @@ async function request(method, url, body, signal, { exactRev = false } = {}) {
   if (!response.ok) {
     const code = data && data.error ? String(data.error) : "http_" + response.status;
     const message = data && data.message ? String(data.message) : S.errorGeneric + " (" + response.status + ")";
-    throw new ApiError(response.status, code, message);
+    throw new ApiError(response.status, code, message, data);
   }
   return data;
 }
@@ -187,7 +188,7 @@ async function requestFile(url, body, as, signal) {
     }
     const code = data && data.error ? String(data.error) : "http_" + response.status;
     const message = data && data.message ? String(data.message) : S.errorGeneric + " (" + response.status + ")";
-    throw new ApiError(response.status, code, message);
+    throw new ApiError(response.status, code, message, data);
   }
   let data;
   try {
@@ -229,23 +230,30 @@ export const api = {
   // `first` (optional): open only part first, {from, to, sources} (ARQUITETURA 9.3b); omitted when there is none.
   // `messageQueue`: true reads the message-queue databases of the collection (sensitive); false turns the case option off
   // for this and later additions; undefined leaves the case option as it is (nothing is sent).
-  addCollection: (caseId, path, scope, first, messageQueue) =>
+  // `capMb` (optional): per-file cap in MB for large logs (0 = every file whole); omitted = the default cap.
+  addCollection: (caseId, path, scope, first, messageQueue, capMb) =>
     request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections", {
       path,
       scope,
       ...(first ? { first } : {}),
       ...(typeof messageQueue === "boolean" ? { message_queue: messageQueue } : {}),
+      ...(typeof capMb === "number" ? { source_cap_mb: capMb } : {}),
     }),
   // Partial opening: the sources of a path before indexing, the work an earlier partial opening left, and resuming it.
   partial: {
-    plan: (caseId, path, scope, signal) =>
-      request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections/plan", { path, scope }, signal),
+    plan: (caseId, path, scope, signal, capMb) =>
+      request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/collections/plan",
+        { path, scope, ...(typeof capMb === "number" ? { source_cap_mb: capMb } : {}) }, signal),
     pending: (caseId, signal) =>
       request("GET", "/api/cases/" + encodeURIComponent(caseId) + "/pending", undefined, signal),
     resume: (caseId) => request("POST", "/api/cases/" + encodeURIComponent(caseId) + "/resume", {}),
   },
   progressUrl: (caseId) => "/api/cases/" + encodeURIComponent(caseId) + "/progress",
   sources: (caseId) => request("GET", "/api/sources" + query({ case: caseId })),
+  // Read-only text of a source that is not indexed (config, XML, ...); `reveal` shows what is withheld by default.
+  sourceText: (caseId, id, params, signal) =>
+    request("GET", "/api/sources/" + encodeURIComponent(id) + "/text" +
+      query({ case: caseId, reveal: params && params.reveal ? "1" : undefined }), undefined, signal),
   page: (caseId, filter, cursor, dir, limit, signal, columns) =>
     request("POST", "/api/entries/page", { case: caseId, filter, cursor, dir, limit, columns: columns || [] }, signal),
   templates: (caseId, family, signal) =>

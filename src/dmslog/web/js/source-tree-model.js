@@ -1,6 +1,8 @@
 // Pure model of the sources tree (no DOM): the folder structure of the ERS (the member path of every source), the
 // rows that are visible for a set of open folders and a filter, the check state of a folder, and the keys. The DOM
 // layer is source-tree.js. A folder checks every source under it; the selection is the same set the flat list uses.
+import { isNotIndexed } from "./case-files-model.js";
+import { buildNotIndexed } from "./file-viewer-model.js";
 import { compareInstance, hasPool, processLabel } from "./process-label.js";
 import { fold, matchRange } from "./source-filter-model.js";
 import { S, format, pluralKey } from "./strings.js";
@@ -37,6 +39,10 @@ function folderNode(key, name) {
 // sensitive, source (files only)}. Several collections (ers_group): one top folder per collection, as the grid's C<n>.
 // A folder that holds only one folder is merged with it ("SchneiderElectricData/ADMS") so a deep path costs one row.
 export function buildTree(sources) {
+  // Sources the indexer skipped (not selected, not indexable, over the limit) are never checkable: they go to one
+  // "Not indexed" group at the end (file-viewer-model.js), closed by default.
+  const notIndexed = buildNotIndexed(sources);
+  sources = sources.filter((s) => !isNotIndexed(s));
   const groups = new Set(sources.map((s) => s.collection).filter((g) => g !== null && g !== undefined));
   const byCollection = groups.size > 1;
   const top = new Map(); // collection -> folder node
@@ -112,7 +118,7 @@ export function buildTree(sources) {
   finish(root);
   const merge = (node) => {
     // A pool folder is never merged into its parent (nor another folder into it): it is a group, not a path.
-    while (node.folder && !node.pool && node.children.length === 1 && node.children[0].folder && !node.children[0].pool) {
+    while (node.folder && !node.pool && !node.notIndexed && node.children.length === 1 && node.children[0].folder && !node.children[0].pool) {
       const only = node.children[0];
       node.name = node.name === "" ? only.name : node.name + "/" + only.name;
       node.key = only.key;
@@ -121,12 +127,15 @@ export function buildTree(sources) {
     node.children.forEach(merge);
   };
   root.children.forEach(merge);
+  if (notIndexed !== null) {
+    root.children.push(notIndexed);
+  }
   return { roots: root.children, ids: root.ids };
 }
 
 // The folders open when nothing was chosen yet: the top ones, so the first level is in view.
 export function defaultOpen(tree) {
-  return new Set(tree.roots.filter((node) => node.folder).map((node) => node.key));
+  return new Set(tree.roots.filter((node) => node.folder && !node.notIndexed).map((node) => node.key));
 }
 
 // Keys of the folders that hold a source whose path matches the filter (they open by themselves while it is typed).
@@ -171,7 +180,7 @@ export function closed(open, key) {
 export function visibleRows(tree, openKeys, matched) {
   const open = impliedOpen(openKeys);
   const rows = [];
-  const keep = (node) => matched === null || node.ids.some((id) => matched.has(id));
+  const keep = (node) => matched === null || (node.notIndexed ? node.allIds : node.ids).some((id) => matched.has(id));
   const walk = (nodes, level) => {
     const shown = nodes.filter(keep);
     shown.forEach((node, index) => {
@@ -188,6 +197,9 @@ export function visibleRows(tree, openKeys, matched) {
 
 // The ids a click on a node acts on: everything under it, or only what the filter shows.
 export function idsOf(node, matched) {
+  if (node.notIndexed) {
+    return []; // a source that was not indexed has no records to select
+  }
   return matched === null ? node.ids : node.ids.filter((id) => matched.has(id));
 }
 

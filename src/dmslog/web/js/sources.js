@@ -2,7 +2,7 @@
 import { ApiError, api } from "./api.js";
 import { takeCases, takeSources } from "./prefetch.js";
 import { filterSources, highlightParts, isFiltering } from "./source-filter-model.js";
-import { refusalResult } from "./case-files-model.js";
+import { badgeText, capMbOf, formatSize, isNotIndexed, isReduced, label, reducedTitle, refusalResult } from "./case-files-model.js";
 import { setFieldError } from "./field-error.js";
 import { S, countNoun, format, pluralKey } from "./strings.js";
 
@@ -64,6 +64,16 @@ export class SourcesPanel {
     this.resumeMod = null; // the loaded resume-banner.js
     this.resumeReady = null; // promise of its load; reset by a failed load so the next check tries again
     this.loadResume = () => import("./resume-banner.js"); // replaced by tests
+    this.viewer = null; // the text viewer of the files that were not indexed (file-viewer.js), after its first use
+    this.viewerReady = null; // promise of its mount; reset by a failed load so the next use tries again
+    this.viewerWanted = 0; // one per request to view a file: only the last one opens
+    this.loadViewer = () => import("./file-viewer.js"); // replaced by tests
+    this.niModel = null; // the loaded file-viewer-model.js (the "Not indexed" group of the flat list)
+    this.niReady = null; // promise of its load
+    this.loadNiModel = () => import("./file-viewer-model.js"); // replaced by tests
+    this.niOpen = new Set(); // keys of the open folders of the "Not indexed" group in the flat list (closed by default)
+    this.niItem = null; // the <li> of that group, always the last child of the list
+    this.niSig = ""; // what it shows now, so it is rebuilt only when that changes
     this.bindList();
     this.bindHeader();
     refs.caseSelect.addEventListener("change", () => {
@@ -393,6 +403,7 @@ export class SourcesPanel {
         this.addFiles.state.resetResults(); // results belong to the case they were opened in
       }
       this.resetRows(); // source ids are per case: no row of the old case is reused
+      this.closeViewer(); // a file of the old case does not stay on screen
       // Every switch drops the pending requests and closes Add files (it belongs to the case it was opened in). Only the
       // New case dialog of a case being created stays: its progress, results and Retry must remain in view.
       const keepNew = this.queueBusy;
@@ -732,6 +743,9 @@ export class SourcesPanel {
     this.order = [];
     this.emptyNode = null;
     this.tabStop = null;
+    this.niItem = null;
+    this.niSig = "";
+    this.niOpen = new Set();
   }
 
   makeRow(id) {
@@ -755,7 +769,7 @@ export class SourcesPanel {
     label.appendChild(box);
     label.appendChild(text);
     li.appendChild(label);
-    return { li, label, box, text, name, count, meta, mark: null, badge: null, sig: null };
+    return { li, label, box, text, name, count, meta, mark: null, badge: null, reduced: null, sig: null };
   }
 
   // Writes what the row says now; a node is touched only when its text changed.
@@ -818,6 +832,22 @@ export class SourcesPanel {
     if (row.li.className !== rowClass) {
       row.li.className = rowClass;
     }
+    const reduced = isReduced(source);
+    if (reduced && !row.reduced) {
+      row.reduced = document.createElement("span");
+      row.reduced.className = "badge badge-reduced";
+      row.reduced.textContent = badgeText();
+      row.label.appendChild(row.reduced);
+    } else if (!reduced && row.reduced) {
+      row.reduced.remove();
+      row.reduced = null;
+    }
+    if (row.reduced) {
+      const text = reducedTitle(source);
+      if (row.reduced.title !== text) {
+        row.reduced.title = text;
+      }
+    }
     if (source.sensitive && !row.badge) {
       row.badge = document.createElement("span");
       row.badge.className = "badge";
@@ -854,9 +884,12 @@ export class SourcesPanel {
     const list = this.refs.sourceList;
     const shown = this.sources.length === 0 ? [] : filterSources(this.sources, this.query);
     const entries = [];
+    const skipped = []; // the sources that were not indexed: their own group at the end, never a checkable row
     const seen = new Set();
     for (const entry of shown) {
-      if (!seen.has(entry.source.id)) { // an id twice would be one row
+      if (isNotIndexed(entry.source)) {
+        skipped.push(entry.source);
+      } else if (!seen.has(entry.source.id)) { // an id twice would be one row
         seen.add(entry.source.id);
         entries.push(entry);
       }
@@ -904,6 +937,7 @@ export class SourcesPanel {
     }
     this.order = nextIds;
     this.syncEmpty(this.sources.length === 0 ? S.sourcesEmpty : shown.length === 0 ? S.sourceFilterNone : null);
+    this.syncNotIndexed(skipped);
     this.syncTabStops();
 
     // A node that moved or left loses the focus: give it back to the same row, or to the nearest one.
@@ -916,6 +950,153 @@ export class SourcesPanel {
       } else if (this.refs.filterInput) {
         this.refs.filterInput.focus();
       }
+    }
+  }
+
+  // -- files that were not indexed: the group of the flat list and the text viewer ------------------------------------
+
+  // The "Not indexed (n)" group at the end of the flat list: one folder row per level (same keys as the tree), files with
+  // a View button when the server can show them. The model loads on demand; the group appears when it has loaded.
+  syncNotIndexed(skipped) {
+    if (skipped.length === 0) {
+      this.clearNotIndexed();
+      return;
+    }
+    if (!this.niModel) {
+      if (!this.niReady) {
+        this.niReady = this.loadNiModel().then((mod) => {
+          this.niModel = mod;
+          this.renderSources();
+        });
+        this.niReady.catch(() => {
+          this.niReady = null; // tried again at the next render
+        });
+      }
+      return;
+    }
+    const root = this.niModel.buildNotIndexed(skipped);
+    const all = isFiltering(this.query);
+    const rows = this.niModel.niRows(root, this.niOpen, all);
+    const sig = rows.map((r) => r.node.key + (r.open ? "+" : "-")).join("|") + "\u0001" + (root ? root.name : "");
+    if (this.niItem && this.niItem.parentNode === this.refs.sourceList && sig === this.niSig) {
+      return;
+    }
+    const focusedKey = this.niItem && this.niItem.contains(document.activeElement) ? document.activeElement.dataset.niKey : undefined;
+    this.niSig = sig;
+    if (!this.niItem) {
+      this.niItem = document.createElement("li");
+      this.niItem.className = "ni-group";
+    }
+    this.niItem.textContent = "";
+    for (const row of rows) {
+      this.niItem.appendChild(this.makeNiRow(row));
+    }
+    this.refs.sourceList.appendChild(this.niItem); // also moves it behind rows added after it
+    if (focusedKey !== undefined) {
+      const again = Array.from(this.niItem.querySelectorAll("button")).find((b) => b.dataset.niKey === focusedKey);
+      if (again) {
+        again.focus();
+      }
+    }
+  }
+
+  clearNotIndexed() {
+    if (this.niItem) {
+      this.niItem.remove();
+      this.niItem = null;
+      this.niSig = "";
+    }
+  }
+
+  makeNiRow(row) {
+    const { node } = row;
+    const line = document.createElement("div");
+    line.className = "ni-row" + (node.folder ? " is-folder" : " is-file");
+    line.dataset.level = String(row.level);
+    line.style.paddingInlineStart = (row.level - 1) * 14 + "px";
+    if (node.folder) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "ni-toggle";
+      toggle.dataset.niKey = node.key;
+      toggle.setAttribute("aria-expanded", row.open ? "true" : "false");
+      const twisty = document.createElement("span");
+      twisty.className = "st-twisty";
+      twisty.setAttribute("aria-hidden", "true");
+      const name = document.createElement("span");
+      name.className = "ni-name";
+      name.textContent = node.name;
+      toggle.append(twisty, name);
+      toggle.addEventListener("click", () => {
+        if (this.niOpen.has(node.key)) {
+          this.niOpen = new Set([...this.niOpen].filter((key) => !key.startsWith(node.key)));
+        } else {
+          this.niOpen.add(node.key);
+        }
+        this.renderSources();
+      });
+      line.appendChild(toggle);
+      return line;
+    }
+    const name = document.createElement("span");
+    name.className = "ni-name";
+    name.textContent = node.name;
+    name.title = node.name;
+    line.appendChild(name);
+    if (typeof node.source.size === "number") {
+      const size = document.createElement("span");
+      size.className = "ni-size";
+      size.textContent = formatSize(node.source.size);
+      line.appendChild(size);
+    }
+    if (node.viewable) {
+      const view = document.createElement("button");
+      view.type = "button";
+      view.className = "ui-button ni-view";
+      view.dataset.niKey = node.key;
+      view.textContent = label("fvView", "View");
+      view.setAttribute("aria-label", label("fvViewFile", "View {name}", { name: node.name }));
+      view.addEventListener("click", () => this.viewSource(node.source, view));
+      line.appendChild(view);
+    }
+    return line;
+  }
+
+  // Opens the viewer for a file that was not indexed. `opener` gets the focus back when it closes. The viewer module loads
+  // on first use; a failed load is reported and tried again at the next request.
+  viewSource(source, opener) {
+    if (this.caseId === null) {
+      return Promise.resolve();
+    }
+    const caseId = this.caseId;
+    const wanted = (this.viewerWanted += 1);
+    if (this.viewer) {
+      this.viewer.open(caseId, source, opener || null);
+      return Promise.resolve();
+    }
+    if (!this.viewerReady) {
+      this.viewerReady = this.loadViewer().then((mod) => {
+        this.viewer = mod.mountFileViewer({
+          host: this.refs.viewerHost || document.body,
+          onMessage: this.handlers.onMessage,
+          restoreFocus: () => (this.refs.filterInput ? this.refs.filterInput.focus() : undefined),
+        });
+      });
+      this.viewerReady.catch((err) => {
+        this.viewerReady = null;
+        this.handlers.onMessage(label("fvLoadFailed", "The file viewer could not be loaded.") + (err && err.message ? " " + err.message : ""), true);
+      });
+    }
+    return this.viewerReady.then(() => {
+      if (wanted === this.viewerWanted && this.viewer && this.caseId === caseId) {
+        this.viewer.open(caseId, source, opener || null);
+      }
+    }, () => {});
+  }
+
+  closeViewer() {
+    if (this.viewer) {
+      this.viewer.close();
     }
   }
 
@@ -942,6 +1123,13 @@ export class SourcesPanel {
     return this.refs.scopeSelect.value === "all" ? "all" : "default";
   }
 
+  // "Large files": the per-file limit in MB (256, 1024 or 0 = whole file) of the select in the opening dialog; undefined
+  // while the page has no such select (the server then uses its default).
+  currentCapMb() {
+    const select = this.refs.capSelect;
+    return select ? capMbOf(select.value) : undefined;
+  }
+
   // Opens one path in the current case and resolves when its job ends (one job per case at a time):
   // {status: "ok"|"failed"|"refused", code?, message?}.
   // expectedCaseId (optional) ties the run to the case it was created for. `first` (optional): open only part first
@@ -949,7 +1137,11 @@ export class SourcesPanel {
   // onStarted() when the server accepted the job (only if this operation is still the current one).
   runCollection(path, scope, expectedCaseId, first = null, hooks = null, queueKind = "add") {
     const queue = this.queueWanted(queueKind); // read now: the dialog may change before the job starts
-    return this.runJob((caseId) => api.addCollection(caseId, path, scope, first, queue), expectedCaseId, { first, hooks });
+    const capMb = this.currentCapMb(); // read now, like the queue option
+    // The limit is the sixth argument, sent only when the page has the select (the call stays as it was without it).
+    const start = (caseId) =>
+      capMb === undefined ? api.addCollection(caseId, path, scope, first, queue) : api.addCollection(caseId, path, scope, first, queue, capMb);
+    return this.runJob(start, expectedCaseId, { first, hooks });
   }
 
   // One operation of the open case (an opening or a resume), from its start request to its done event. It owns this.waiter

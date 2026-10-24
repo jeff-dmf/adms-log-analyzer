@@ -1,6 +1,7 @@
 // Detail panel: full multi-line text of the selected entry (text nodes only) plus a context list. The header, the
 // ghost action buttons and the collapsible "Parsed fields" section follow the investigation order of UI-20.
 import { api } from "./api.js";
+import { afterSkipNote } from "./case-files-model.js";
 import { RequestGuard, canLoadContext, createDetailPrefs, headerParts } from "./detail-model.js";
 import { renderHighlighted } from "./search.js";
 import { S, format } from "./strings.js";
@@ -314,6 +315,15 @@ export class Detail {
         second.appendChild(span("dt-fact", fact));
       }
       box.appendChild(second);
+    }
+    // The first record after a stretch that a reduced source skipped (flags & 128): the lines before it are not indexed.
+    const skip = afterSkipNote(entry, this.getSourceInfo(entry.source_id) || {});
+    if (skip !== "") {
+      const third = document.createElement("div");
+      third.className = "dt-row dt-skip-note";
+      third.setAttribute("role", "note");
+      third.appendChild(span("dt-fact", skip));
+      box.appendChild(third);
     }
   }
 
