@@ -1,4 +1,4 @@
-"""Tests for dmslog.store.filetext: read-only text of non-indexed sources, with credentials hidden.
+"""Tests for dmslog.store.filetext: read-only text of non-indexed sources, withheld on a credential mention.
 
 All fixtures are synthetic: no real hosts, accounts or secrets.
 """
@@ -12,19 +12,17 @@ import pytest
 
 from dmslog.store.db import connect, create_case_db
 from dmslog.store.filetext import (
-    MASK,
     BinaryContentError,
     ContainerMissingError,
     FileTextLimits,
     FileTooLargeError,
     NotViewableError,
     SourceNotFoundError,
-    hide_credentials,
-    is_credential_name,
+    credential_mentions,
     read_source_text,
 )
 
-SECRET = "example-secret"
+SECRET = "SYNTHETIC_9472"  # holds no core word: it must not trigger the detection by itself
 
 
 # ---------------------------------------------------------------------- case helpers
@@ -73,249 +71,163 @@ def read(case, name: str, text: str | bytes, reveal=False):
     return read_source_text(case[0], zip_source(case, name, data), reveal=reveal)
 
 
-def hidden_text(text: str) -> tuple[str, int]:
-    return hide_credentials(text)
+# ---------------------------------------------------------------------- detection (all or nothing)
+
+SYN = SECRET
 
 
-# ---------------------------------------------------------------------- credential names
+def _u(word: str) -> str:
+    """JSON escape of every character: the text contains no letter of the word."""
+    return "".join(f"\\u{ord(c):04x}" for c in word)
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "password",
-        "Password",
-        "PASSWORD",
-        "DbPassword",
-        "db_password",
-        "user-pwd",
-        "Pwd",
-        "secret",
-        "ClientSecret",
-        "client_secret",
-        "api-key",
-        "ApiKey",
-        "apikey",
-        "PrivateKey",
-        "shared_key",
-        "authToken",
-        "token",
-        "Credential",
-        "pass",
-    ],
-)
-def test_credential_names_positive(name):
-    assert is_credential_name(name)
+def _ent(word: str) -> str:
+    return "".join(f"&#{ord(c)};" for c in word)
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "compass",
-        "bypass",
-        "tokenizer",
-        "ServerName",
-        "timeout",
-        "key",
-        "user",
-        "passenger",
-        "connectionString",
-    ],
-)
-def test_credential_names_negative(name):
-    assert not is_credential_name(name)
+def _held(case, name: str, text: str):
+    out = read(case, name, text)
+    assert out.withheld and out.text == "" and out.hidden >= 1, text[:80]
+    assert SYN not in out.text
+    return out
 
 
-# ---------------------------------------------------------------------- hiding (fail closed)
+REPRODUCERS = [
+    '{"password":"prefix"\\u000aSYNTHETIC_9472"}',
+    '<add value="SYNTHETIC_9472" other=">" key="password"/>',
+    'Password=" first\nSYNTHETIC_9472\nlast"',
+    '{"api:key":"SYNTHETIC_9472"}',
+    '{"private/key":"SYNTHETIC_9472"}',
+    '{"password"' + " " * 64 + ':"SYNTHETIC_9472"}',
+    '{"password":"SYNTHETIC_9472',
+    '<add key="password" other=unquoted value="SYNTHETIC_9472"/>',
+    "<Password flag=unquoted>SYNTHETIC_9472</Password>",
+    '{"' + "x" * 250 + 'password":"SYNTHETIC_9472"}',
+    '{"' + _u("x" * 100 + "_password") + '":"SYNTHETIC_9472"}',
+    '<Parameter Name="Password">\n\n  SYNTHETIC_9472\n</Parameter>',
+    "<Password>\n<![CDATA[SYNTHETIC_9472",
+    f'{{"{_u("password")}":"SYNTHETIC_9472"}}',
+    f"<{_ent('password')}>SYNTHETIC_9472</{_ent('password')}>",
+    "<add key='client secret' value='SYNTHETIC_9472'/>",
+    "Shared  Key = SYNTHETIC_9472",
+    "pass&amp;#119;ord=SYNTHETIC_9472",
+    "p.a.s.s.w.o.r.d: SYNTHETIC_9472",
+    "P\tA\nS\rS W-O_R:D=SYNTHETIC_9472",
+    "ConnectionString=Server=s;Pwd=SYNTHETIC_9472",
+    "TOKEN=SYNTHETIC_9472",
+    "api key: SYNTHETIC_9472",
+    "<![CDATA[ passphrase: SYNTHETIC_9472 ]]>",
+    "<!-- credentials: SYNTHETIC_9472 -->",
+    "\uff50\uff41\uff53\uff53\uff57\uff4f\uff52\uff44=SYNTHETIC_9472",
+    "pass\u200bword=SYNTHETIC_9472",
+    "\\u0070\\u0061ssword=SYNTHETIC_9472",
+    "&amp;#x70;assword=SYNTHETIC_9472",
+]
 
 
-def shown(text: str) -> str:
-    return hide_credentials(text)[0]
+@pytest.mark.parametrize("text", REPRODUCERS)
+def test_any_mention_withholds_the_whole_file(case, text):
+    out = _held(case, "r.config", text)
+    assert out.size > 0 and out.lines >= 1
+    revealed = read_source_text(case[0], out.source_id, reveal=True)
+    assert revealed.text == text.replace("\r\n", "\n").replace("\r", "\n") and not revealed.withheld
+    assert revealed.hidden == out.hidden
 
 
-@pytest.mark.parametrize("variant", ["password", "PASSWORD", "Pwd", "pWd", "Secret", "DbPassword", "api-key"])
-@pytest.mark.parametrize("w", ["", " ", "\t", "   \t  "])
-def test_connection_pair_names_case_and_spaces(variant, w):
-    text = f"Server=s;{variant}{w}={w}{SECRET};Port=1\nnext line=ok\n"
-    out, n = hidden_text(text)
-    assert n == 1 and SECRET not in out
-    assert out.startswith("Server=s;") and out.endswith("\nnext line=ok\n")  # other lines stay readable
-
-
-def test_connection_pair_quoted_value_with_semicolon_and_empty_value():
-    out, n = hidden_text("Server=s;Password='ab;" + SECRET + "';Port=1")
-    assert n == 1 and SECRET not in out and "ab" not in out
-    assert hidden_text("Server=s;Password=;Port=1")[1] <= 1
-
-
-def test_non_credentials_are_untouched():
-    for text in (
-        "Server=s;Passport=123;Database=d;Port=1",
-        "<Server Host='h1' Compass='north' Bypass='yes' tokenizer='x'/>",
-        "<add key='Timeout' value='30'/>\n<add key='ServerName' value='host1'/>\n",
-        "host = h1\ncompass = north\nurl: http://example.test/x\n",
-        '{"user": "u1", "timeout": "30", "compass": "x"}',
-        "<ServerName>host1</ServerName><Timeout>30</Timeout>",
-    ):
-        assert hidden_text(text) == (text, 0), text
-
-
-@pytest.mark.parametrize(
-    "tag",
-    [
-        f'<add key="DbPassword" value="{SECRET}" />',
-        f'<add value="{SECRET}" key="DbPassword"/>',
-        f'<add name="ApiKey" value="{SECRET}"/>',
-        f"<add KEY='PASSWORD' VALUE='{SECRET}'/>",
-        f'<add   key = "Secret"   value = "{SECRET}"   />',
-        f'<add key="password" other=unquoted value="{SECRET}"/>',
-        f'<add value="{SECRET}" other=unquoted\n key="password"\n flag/>',
-        f'<add key="password"\n     other=unquoted\n     value="{SECRET}"/>',
-    ],
-)
-def test_add_key_value_hidden(tag):
-    out, n = hidden_text(tag)
-    assert n >= 1 and SECRET not in out and MASK in out and out.startswith("<add")
-
-
-def test_neighbouring_lines_of_a_credential_tag_stay():
-    text = f'<a x="1"/>\n<add key="password" value="{SECRET}"/>\n<b y="2"/>\n'
-    out, _ = hidden_text(text)
-    assert out.startswith('<a x="1"/>\n<add') and out.endswith('\n<b y="2"/>\n') and SECRET not in out
+def test_the_count_is_the_number_of_mentions():
+    assert credential_mentions("a=1") == 0
+    assert credential_mentions("password=x") == 1
+    assert credential_mentions("password=x\nSecret: y\n<token>z</token>") == 4  # open and close tags
+    assert credential_mentions("Pass Word") == 1
+    assert credential_mentions("clientSecret") == 1  # one mention, not two ("secret" inside)
+    assert credential_mentions("") == 0
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        f"<Config>\n  <Password>{SECRET}</Password>\n</Config>",
-        f"<Password flag=unquoted>{SECRET}</Password>",
-        f"<Password>\n<![CDATA[{SECRET}]]>\n</Password>",
-        f"<Password>  \t<![CDATA[{SECRET}]]>  </Password>",
-        f"<Password>\n  {SECRET}\n</Password>",
-        f"<Password>part1<![CDATA[{SECRET}]]></Password>",
-        f"<token><![CDATA[{SECRET}]]></token>",
-        f'<Parameter Name="Password" Type="String">{SECRET}</Parameter>',
-        f"<Parameter Name='Password'>\n\n  {SECRET}\n\n</Parameter>",
-        f"<Password>\n<![CDATA[{SECRET}",  # CDATA left open: to the end of the text
-        f"<Password>{SECRET}",  # element left open
-        f"<ConnectionString>Server=s;Pwd={SECRET}</ConnectionString>",
+        "bypass compass passport passenger",
+        "Compass=north;Bypass=yes",
+        '<xs:schema xmlns:xs="x"><xs:element name="Timeout"/></xs:schema>',
+        '<appSettings><add key="ServerName" value="host1"/></appSettings>',
+        "[section]\nhost = h1\nurl: http://example.test/x\n",
+        "",
     ],
 )
-def test_elements_with_credentials_hidden(text):
-    out, n = hidden_text(text)
-    assert n >= 1 and SECRET not in out, text
+def test_text_without_a_core_word_has_no_mention(text):
+    assert credential_mentions(text) == 0
 
 
-@pytest.mark.parametrize("tag", ["password", "PASSWORD", "dbPwd", "ClientSecret"])
-def test_element_names_case(tag):
-    out, n = hidden_text(f"<{tag}>{SECRET}</{tag}>")
-    assert n == 1 and SECRET not in out and out.startswith(f"<{tag}>")
+def test_withheld_file_keeps_encoding_for_utf16(case):
+    sid = zip_source(case, "w16.config", b"\xff\xfe" + f"Password={SECRET}".encode("utf-16-le"))
+    out = read_source_text(case[0], sid)
+    assert out.withheld and out.encoding == "utf-16" and out.size == len(f"Password={SECRET}")
 
 
-def test_element_without_text_hides_nothing_useful():
-    assert hidden_text("<Password></Password>\n<Password/>\n")[0].count(SECRET) == 0
+def test_hypothesis_core_word_always_withholds():
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
 
+    words = ["password", "passwd", "pwd", "passphrase", "secret", "token", "apikey", "privatekey"]
+    words += ["sharedkey", "clientsecret", "credential"]
+    seps = st.text(alphabet=" \t\r\n.:/-_=\"'<>&;,", max_size=4)
+    junk = st.text(
+        alphabet=st.characters(blacklist_characters="\\&", blacklist_categories=("Cs",)), max_size=30
+    )
 
-@pytest.mark.parametrize(
-    "attr", ["password", "Password", "PWD", "ApiKey", "client-secret", "authToken", "DbPassword"]
-)
-def test_xml_attribute_hidden(attr):
-    out, n = hidden_text(f'<Server Host="h1" {attr}="{SECRET}" Port="1"/>')
-    assert n == 1 and SECRET not in out and out.startswith("<Server")
+    def spelled(word, parts, mode):
+        glue = [parts[i % len(parts)] for i in range(len(word) - 1)]
+        if mode == 0:  # separators between the letters
+            pieces = [c + g for c, g in zip(word, glue + [""], strict=False)]
+            return "".join(pieces)
+        if mode == 1:  # JSON escapes
+            return _u(word)
+        if mode == 2:  # character references
+            return _ent(word)
+        return word.upper()
 
+    @settings(max_examples=400, deadline=None)
+    @given(st.sampled_from(words), st.lists(seps, min_size=1, max_size=4), st.integers(0, 3), junk, junk)
+    def check(word, parts, mode, before, after):
+        text = f"{before}{spelled(word, parts, mode)}={SYN}{after}"
+        assert credential_mentions(text) >= 1, text
 
-def test_attribute_values_with_quotes_spaces_and_newlines():
-    for text in (
-        f"<Server Password = '{SECRET}' Port='1'/>",
-        f'<Server ApiKey=\n  "{SECRET}\nsecond line" Port="1"/>',
-        f'<Server ApiKey="{SECRET}\'last" Port="1"/>',
-        f'<Server ApiKey=\'{SECRET}"last\' Port="1"/>',
-        f'<Server\n  Password\n=\n"{SECRET}"\n/>',
-    ):
-        out, n = hidden_text(text)
-        assert n >= 1 and SECRET not in out and "second line" not in out, text
-
-
-def test_json_members_hidden():
-    for text in (
-        f'{{"user": "u1", "password": "{SECRET}", "apiKey" : "{SECRET}"}}',
-        f'{{"password"{" " * 64}:"{SECRET}"}}',
-        f'{{"password"{" " * 5000}\n\t\r\n:\n"{SECRET}"}}',
-        f'{{"{"x" * 250}password":"{SECRET}"}}',
-        f'{{"{_u("x" * 100 + "_password")}":"{SECRET}"}}',
-        f'{{"password":"{SECRET}',  # truncated
-        f'{{"password":\n\n"{SECRET}"}}',
-    ):
-        out, n = hidden_text(text)
-        assert n >= 1 and SECRET not in out, text[:80]
-
-
-@pytest.mark.parametrize(
-    "line",
-    [
-        f"password = {SECRET}",
-        f"Password={SECRET}",
-        f"PASSWORD:   {SECRET}",
-        f"  db.pwd = {SECRET}",
-        f"Shared Key = {SECRET}",
-        f"client_secret={SECRET}",
-        f"api key: {SECRET}",
-    ],
-)
-def test_ini_line_hidden(line):
-    out, n = hidden_text(f"[section]\nhost = h1\n{line}\nport = 1\n")
-    assert n >= 1 and SECRET not in out
-    assert "host = h1" in out and "port = 1" in out and "[section]" in out  # other lines stay readable
-
-
-def test_already_masked_text_shows_nothing_new():
-    out, _ = hidden_text(f"Password={SECRET}\nHost=h1\n")
-    assert out == f"Password={MASK}\nHost=h1\n"
-    assert hidden_text(out) == (out, 0)
-
-
-def test_names_spelled_with_escapes_are_found():
-    for text in (
-        f'{{"\\u0070assword":"{SECRET}"}}',
-        f"<&#112;assword>{SECRET}</&#112;assword>",
-        f'<add key="&#x70;assword" value="{SECRET}"/>',
-        f"\\x70assword={SECRET}",
-        f"<Server pass&#119;ord='{SECRET}'/>",
-    ):
-        out, n = hidden_text(text)
-        assert n >= 1 and SECRET not in out, text
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        f'Server=s;Password="first""{SECRET}";Port=1',
-        f"Server=s;Password='first''{SECRET}';Port=1",
-        f'Server=s;Pwd="a""b""{SECRET}";Port=1',
-        f"<Db connectionString=\"Server=s;Password='first''{SECRET}';Port=1\"/>",
-    ],
-)
-def test_connection_password_with_doubled_quotes_fully_hidden(text):
-    out, n = hidden_text(text)
-    assert n >= 1 and SECRET not in out and "first" not in out
+    check()
 
 
 # ---------------------------------------------------------------------- read_source_text
 
 
-def test_zip_reveal_returns_original_hidden_counts(case):
+def test_zip_withheld_and_reveal_return_the_real_size_and_lines(case):
     xml = (
         f'<?xml version="1.0"?>\r\n<c>\r\n  <Password>{SECRET}</Password>\r\n'
         "  <Other>x</Other>\r\n  <Host>h1</Host>\r\n</c>\r\n"
     )
     sid = zip_source(case, "app.config", xml.encode())
-    shown = read_source_text(case[0], sid)
-    assert shown.hidden == 1 and not shown.revealed
-    assert SECRET not in shown.text and MASK in shown.text and "<Host>h1</Host>" in shown.text
-    assert "\r" not in shown.text and shown.kind == "config" and shown.name == "app.config"
-    assert shown.encoding == "utf-8" and shown.lines >= 3
+    held = read_source_text(case[0], sid)
+    assert held.withheld and held.text == "" and held.hidden == 2 and not held.revealed
+    assert held.kind == "config" and held.name == "app.config" and held.encoding == "utf-8"
+    assert held.size == len(xml.encode()) and held.lines == 6  # of the real file, not of the empty text
     raw = read_source_text(case[0], sid, reveal=True)
-    assert raw.revealed and raw.hidden == 1 and SECRET in raw.text and MASK not in raw.text
+    assert raw.revealed and not raw.withheld and raw.hidden == 2 and SECRET in raw.text
+    assert "\r" not in raw.text and (raw.size, raw.lines) == (held.size, held.lines)
+
+
+def test_file_without_a_credential_mention_is_returned_intact(case):
+    for name, text in (
+        (
+            "a.xsd",
+            '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="a"/></xs:schema>',
+        ),
+        (
+            "b.config",
+            '<configuration><appSettings><add key="Timeout" value="30"/></appSettings></configuration>',
+        ),
+        ("c.ini", "[section]\nhost = h1\nport = 1\ncompass = north\nbypass = yes\n"),
+        ("d.json", '{"user": "u1", "timeout": 30}'),
+    ):
+        out = read(case, name, text)
+        assert out.text == text and out.hidden == 0 and not out.withheld, name
 
 
 def test_folder_collection(case):
@@ -325,7 +237,8 @@ def test_folder_collection(case):
     (folder / "cfg" / "x.ini").write_text(f"Password={SECRET}\nhost=h1\n", encoding="utf-8")
     sid = add_source(conn, add_collection(conn, "folder", folder), "cfg/x.ini", 30)
     out = read_source_text(conn, sid)
-    assert out.hidden == 1 and "host=h1" in out.text and SECRET not in out.text
+    assert out.hidden == 1 and out.withheld and out.text == ""
+    assert read_source_text(conn, sid, reveal=True).text == f"Password={SECRET}\nhost=h1\n"
 
 
 def test_loose_file_collection(case):
@@ -343,7 +256,8 @@ def test_utf8_bom_and_utf16(case):
     out = read(case, "c.config", b"\xfe\xff" + "<a>x</a>".encode("utf-16-be"))
     assert out.text == "<a>x</a>"
     sid = zip_source(case, "d.config", b"\xff\xfe" + f"Password={SECRET}".encode("utf-16-le"))
-    assert read_source_text(case[0], sid).hidden == 1
+    out = read_source_text(case[0], sid)
+    assert out.hidden == 1 and out.withheld and out.text == ""
 
 
 def test_latin1_fallback_never_raises(case):
@@ -460,7 +374,7 @@ def test_nothing_written_to_the_case(case):
     # also through a read-only connection
     ro = connect(db, readonly=True)
     try:
-        assert read_source_text(ro, sid).hidden == 1
+        assert read_source_text(ro, sid).withheld
     finally:
         ro.close()
     assert digest() == before
@@ -479,7 +393,7 @@ def _time_hostile(shapes) -> float:
     size = 4 * 1024 * 1024
     start = time.perf_counter()
     for unit in shapes:
-        hide_credentials(unit * (size // len(unit)))
+        credential_mentions(unit * (size // len(unit)))
     return time.perf_counter() - start
 
 
@@ -505,10 +419,14 @@ def test_pathological_input_is_fast():
         'password="\n',
         '<a key="password"\n',
         "ab password ",
+        "\\\\\\\\",
+        "&amp;",
+        '\\\\"',
+        "password\\\\u0070",
     ],
 )
 def test_other_hostile_shapes_are_fast(unit):
-    assert _time_hostile((unit,)) < 2
+    assert _time_hostile((unit,)) < 1
 
 
 # ---------------------------------------------------------------------- review regressions
@@ -574,113 +492,6 @@ def test_registered_root_may_itself_be_a_symlink(case):
     assert read_source_text(conn, sid).text == "host=h1\n"
 
 
-# ---------------------------------------------------------------------- adversarial pass
-
-
-def _variants(secret: str) -> list[str]:
-    out: list[str] = []
-    names = [
-        "Password",
-        "PASSWORD",
-        "password",
-        "pWd",
-        "DbPassword",
-        "api-key",
-        "ApiKey",
-        "client_secret",
-        "authToken",
-    ]
-    for name in names:
-        for w in ["", " ", "\t", "  \t"]:
-            for q in ('"', "'"):
-                other = "'" if q == '"' else '"'
-                out.append(f'<Server {name}{w}={w}{q}{secret}{q} Port="1"/>')
-                out.append(f'<Server {name}{w}={w}{q}{secret}{other}x{q} Port="1"/>')
-                out.append(f'<Server Port="1"\r\n  {name}{w}={w}{q}{secret}{q}/>')
-                out.append(f"Server=s;{name}{w}={w}{q}{secret}{q};Port=1")
-                out.append(f"Server=s;{name}{w}={w}{q}ab{q}{q}{secret}{q};Port=1")
-                out.append(f'{{"{name}"{w}:{w}"{secret}"}}')
-            out.append(f"Server=s;{name}{w}={w}{secret};Port=1")
-            out.append(f"{name}{w}={w}{secret}\r\nnext=1\r\n")
-            out.append(f"{name}{w}:{w}{secret}\n")
-            out.append(f"<{name}>{w}{secret}{w}</{name}>")
-            out.append(f'<{name} attr="1">\r\n<![CDATA[{secret}]]>\r\n</{name}>')
-            out.append(f"<!-- c --><{name}>{secret}</{name}><!-- d -->")
-            out.append(f'<add key{w}={w}"{name}" value{w}={w}"{secret}"/>')
-            out.append(f"<add value='{secret}' name='{name}' />")
-            out.append(f'<add\r\n  key="{name}"\r\n  value="{secret}"\r\n/>')
-    for cs in ("connectionString", "ConnectionString", "connection-string"):
-        out.append(f'<add name="x" {cs}="Data Source=h;User Id=u;pwd={secret};"/>')
-        out.append(f"<{cs}>Server=s;PASSWORD = {secret}</{cs}>")
-        out.append(f"{cs} = Server=s;Pwd={secret}")
-    for name in ("password", "Password", "api-key", "pwd"):
-        w = " " * 70 + "\t\r\n"
-        out += [
-            f'{{"{name}{w}":"{secret}"}}',
-            f'{{"{name}"{w}:{w}"{secret}"',
-            f'{{"{name}":"{secret}',
-            f'{{"{name}":"{secret}\\',
-            f'<add key="{name}" other=unquoted value="{secret}"',
-            f'<add value="{secret}" key="{name}" other=unquoted flag/>',
-            f'<add key="{name}" value="{secret}',
-            f"<add key='{name}' value='{secret}",
-            f"<{name} flag=unquoted>{secret}</{name}>",
-            f"<{name}>{secret}",
-            f"<{name}>\n\n<![CDATA[{secret}",
-            f"<{name}><![CDATA[{secret}]]",
-            f'<{name} a="1 b="2">{secret}</{name}>',
-            f'{name}="{secret}',
-            f"{name}='{secret}",
-            f'{name} = "{secret}\r\nsecond"',
-            f"\t{name}\t:\t{secret}\r",
-            f"{name}\n\n\n  {secret}",
-            f"<!-- {name}: {secret} -->",
-            f"<![CDATA[ {name}: {secret} ]]>",
-            f"{_u(name)}={secret}",
-            f'{{"{_u(name)}":"{secret}"}}',
-            f"<{''.join(f'&#{ord(c)};' for c in name)}>{secret}</{name}>",
-        ]
-    return out
-
-
-def test_adversarial_variants_never_show_the_secret():
-    variants = _variants(SECRET)
-    assert len(variants) > 600
-    for text in variants:
-        out, n = hide_credentials(text)
-        assert SECRET not in out and n >= 1, text
-        again, _n2 = hide_credentials(out)
-        assert SECRET not in again, text  # a second pass never reveals anything
-
-
-def test_hypothesis_secret_never_shown():
-    from hypothesis import given, settings
-    from hypothesis import strategies as st
-
-    names = st.sampled_from(
-        ["password", "Password", "PWD", "pwd", "DbPassword", "api_key", "ApiKey", "token", "secret"]
-    )
-    ws = st.text(alphabet=" \t", max_size=3)
-    quote = st.sampled_from(['"', "'"])
-    junk = st.text(alphabet="abc <>/=;\n", max_size=12)
-
-    @settings(max_examples=300, deadline=None)
-    @given(names, ws, ws, quote, st.integers(0, 5), junk, junk)
-    def check(name, w1, w2, q, shape, before, after):
-        body = {
-            0: f"<S {name}{w1}={w2}{q}{SECRET}{q}/>",
-            1: f"{name}{w1}={w2}{SECRET}\n",
-            2: f"<{name}>{w1}{SECRET}{w2}</{name}>",
-            3: f'<add key="{name}" value="{SECRET}"/>',
-            4: f"Server=s;{name}{w1}={w2}{q}{SECRET}{q};",
-            5: f'{{"{name}"{w1}:{w2}"{SECRET}"}}',
-        }[shape]
-        out, _ = hide_credentials(f"{before}\n{body}\n{after}")
-        assert SECRET not in out
-
-    check()
-
-
 @pytest.mark.parametrize("bom,codec", [(b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")])
 def test_utf16_with_bom_multiline_is_text_not_binary(case, bom, codec):
     text = "<a>\n  <b>one</b>\n  <c>caf\u00e9</c>\n</a>\n" * 3
@@ -699,78 +510,7 @@ def test_utf16_without_bom_is_binary(case):
             read(case, f"y_{codec}.config", "<a>hello</a>\n".encode(codec))
 
 
-# ---------------------------------------------------------------------- second review regressions
-
-SYN = "SYNTHETIC_9472"
-
-
-def _u(word: str) -> str:
-    """JSON escape of every character: the key contains no letter of the word."""
-    return "".join(f"\\u{ord(c):04x}" for c in word)
-
-
-def test_fully_escaped_json_key_and_value_are_hidden():
-    for text in (
-        f'{{"{_u("password")}":"{SYN}"}}',
-        f'{{"{_u("password")}":"{_u(SYN)}"}}',
-        f'{{"{_u("apiKey")}" :\n "{SYN}"}}',
-        f'{{"a":1,"{_u("Pwd")}":"{SYN}","b":2}}',
-    ):
-        out, n = hide_credentials(text)
-        assert n >= 1 and SYN not in out and _u(SYN) not in out, text
-    out, _ = hide_credentials(f'{{"{_u("password")}":"{SYN}","x":"y"}}')
-    assert out == f'{{"{_u("password")}":"{MASK}'  # fail closed: the rest of the line goes too
-
-
-def test_json_file_with_escaped_key_through_the_reader(case):
-    out = read(case, "esc.json", f'{{"{_u("password")}":"{SYN}"}}')
-    assert out.hidden == 1 and SYN not in out.text
-    assert SYN in read(case, "esc2.json", f'{{"{_u("password")}":"{SYN}"}}', reveal=True).text
-
-
-def test_json_non_credentials_stay():
-    text = f'{{"{_u("timeout")}":"30","name":"{SYN}"}}'
-    assert hide_credentials(text) == (text, 0)
-
-
-@pytest.mark.parametrize("extra", [0, 63, 64, 65, 500, 5000])
-def test_tags_with_many_attributes_still_hidden(extra):
-    attrs = " ".join(f'a{i}="v{i}"' for i in range(extra))
-    add = f'<add key="password" {attrs} value="{SYN}" {attrs}/>'
-    out, n = hide_credentials(add)
-    assert n >= 1 and SYN not in out
-    elem = f"<Password {attrs}>{SYN}</Password>"
-    out, n = hide_credentials(elem)
-    assert n >= 1 and SYN not in out
-    named = f'<Parameter {attrs} Name="password">{SYN}</Parameter>'
-    out, n = hide_credentials(named)
-    assert n >= 1 and SYN not in out
-
-
-def test_unclosed_or_odd_tags_do_not_leak_the_value_attribute():
-    for text in (
-        f'<add key="password" value="{SYN}" broken',
-        f'<add key="password" value="{SYN}" bare other=unquoted/>',
-        f"<add value=\"{SYN}\" key='password' flag>",
-    ):
-        out, _ = hide_credentials(text)
-        assert SYN not in out, text
-
-
-def test_escaped_quote_flood_is_linear():
-    start = time.perf_counter()
-    for text in (
-        "password" + '\\"' * 2_097_148,
-        '\\"password' * 400_000,
-        '"password": ' + '\\"' * 2_000_000,
-        'password"' + "\\" * 2_000_000,
-        '"password"' + ':"\\"' * 1_000_000,
-    ):
-        hide_credentials(text)
-    assert time.perf_counter() - start < 2
-
-
-# -- one handle, no redirect (symlinks)
+# ---------------------------------------------------------------------- one handle, no redirect
 
 
 def _symlink_or_skip(link: Path, target: Path, directory: bool = False) -> None:

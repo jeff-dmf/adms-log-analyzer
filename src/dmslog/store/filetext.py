@@ -1,25 +1,17 @@
 """Read-only text of sources that are listed but not indexed (docs/notas/rt-r3-r4-desenho.md, 3.2).
 
 ``read_source_text`` reads one skipped source on demand (``.config``, ``.xml``, ``.csc``, ...) from
-the zip or folder registered in the case and returns its text with the values of credentials hidden
-by default.
+the zip or folder registered in the case. All or nothing per file: when the text mentions a credential
+(password, pwd, secret, token, apikey, ...) anywhere, in any syntax, the text is withheld (``text == ""``,
+``withheld``) unless the caller asks to ``reveal`` it. There are no regions, parsers or delimiters to get
+wrong: the mention is looked for in a normalised view (escapes decoded, lower case, everything that is not
+a letter or a digit removed), so punctuation, blanks, quotes or escapes between the letters change nothing.
 
 * Nothing is written: no database row, no FTS entry, no cache, no export. The connection is only
   used for ``SELECT``.
-* The file content is untrusted data. There is no XML or JSON parser (no DTD, no entities): hiding is
-  fail closed. Every occurrence of a credential name (``is_credential_name``: password, pwd, secret, token,
-  api/private/shared key, client secret, credential; camelCase and punctuation split; also when spelled with
-  ``\\uXXXX`` or ``&#..;`` escapes) hides what follows it, up to the end of its region, whatever the syntax:
-    - at least to the end of the logical line, after any separators, quotes and blank lines between the
-      name and its value;
-    - a value that opens a quote: to the line of the closing quote (doubled quotes are escapes);
-    - inside a start tag: to the end of the tag and, for an element, to its closing tag or the end of the
-      next non-empty line (whichever is later);
-    - a CDATA section the region reaches is taken whole (an open one: to the end of the text).
-  Precision is traded for safety (``PasswordPolicy`` is hidden); lines without a credential name stay
-  readable. Hosts, accounts and addresses are not hidden.
+* The file content is untrusted data; it is only scanned and returned as text.
 * Only extensions of a closed list are viewable, up to ``MAX_TEXT_BYTES`` decoded bytes; a NUL byte in
-  the first 8 KiB means a binary file.
+  the first 8 KiB (in the text, for UTF-16 with a BOM) means a binary file.
 * The file is opened once and read from that one handle (a zip is opened once too, never through a
   symlink). With directory handles and ``O_NOFOLLOW`` the kernel refuses a symlink on any component, even
   one swapped in while the source is being read; without them (Windows) every component is checked with
@@ -29,13 +21,12 @@ by default.
 
 from __future__ import annotations
 
-import bisect
-import functools
 import os
 import re
 import sqlite3
 import stat
 import sys
+import unicodedata
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -46,7 +37,6 @@ from dmslog.ingest.discover import normalize_member_name
 
 MAX_TEXT_BYTES = 4 * 1024 * 1024
 BINARY_PROBE_BYTES = 8 * 1024
-MASK = "\u2022" * 4
 
 # Closed list of viewable extensions (lowercase, with the dot).
 TEXT_EXTENSIONS = frozenset(
@@ -137,303 +127,57 @@ class FileText:
     size: int  # bytes of the decoded stream (UTF-8 for UTF-16 files)
     encoding: str  # "utf-8" | "utf-16" | "latin-1"
     lines: int
-    hidden: int  # values hidden by default (also reported when ``revealed``)
+    hidden: int  # credential mentions found (reported whether or not the text is withheld)
     revealed: bool
-    text: str  # original text when ``revealed``, else with the values masked
+    text: str  # the text; "" when ``withheld``
+    withheld: bool = False  # True: the file mentions a credential and ``reveal`` was not asked for
 
 
 # ---------------------------------------------------------------------- hiding rules
 
-_SPLIT_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_NON_ALNUM = re.compile(r"[^a-z0-9]+")
-_CRED_TOKENS = frozenset(
-    {
-        "pass",
-        "password",
-        "passwords",
-        "passwd",
-        "passphrase",
-        "pwd",
-        "secret",
-        "secrets",
-        "token",
-        "tokens",
-        "apikey",
-        "credential",
-        "credentials",
-        "privatekey",
-        "sharedkey",
-        "clientsecret",
-    }
+# ---------------------------------------------------------------------- credential detection
+
+# The core words of a credential. They are looked for in a normalised view of the text (escapes decoded,
+# lower case, every character that is not a letter or digit removed), so no delimiter, escape, quote,
+# blank, line break or punctuation between the letters can hide a mention.
+_CORE_WORDS_RE = re.compile(
+    r"password|passwd|pwd|passphrase|secret|token|apikey|privatekey|sharedkey|clientsecret|credential"
 )
-_CRED_SUFFIXES = ("password", "passwd", "pwd", "secret", "apikey", "privatekey", "sharedkey")
-_CRED_PAIRS = frozenset({("api", "key"), ("private", "key"), ("shared", "key"), ("client", "secret")})
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_ESC_RE = re.compile(
+    r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|&#[xX]([0-9a-fA-F]{1,6});|&#([0-9]{1,7});"
+    r"|&(?:amp|lt|gt|quot|apos);|\\[nrtbf\"'/\\]"
+)
 
 
-def _tokens(name: str) -> list[str]:
-    return [t for t in _NON_ALNUM.split(_SPLIT_CAMEL.sub("_", name).lower()) if t]
+_NAMED = {"&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'"}
+_DECODE_ROUNDS = 4  # escapes of escapes (&amp;#112;, \\u0070) are decoded a few levels deep
 
 
-@functools.lru_cache(maxsize=8192)
-def is_credential_name(name: str) -> bool:
-    """True when ``name`` (an attribute, element, key or setting name) names a credential.
+def _decode_escape(m: re.Match[str]) -> str:
+    hexa = m.group(1) or m.group(2) or m.group(3)
+    code = int(hexa, 16) if hexa else int(m.group(4)) if m.group(4) else None
+    if code is None:
+        whole = m.group(0)
+        return _NAMED.get(whole, whole[1:] if whole.startswith("\\") else " ")
+    return chr(code) if code <= 0x10FFFF and not 0xD800 <= code <= 0xDFFF else " "
 
-    Names are split at case changes and punctuation; ``pass`` / ``password`` / ``pwd`` / ``secret`` /
-    ``token`` / ``credential`` and key pairs match as whole words (``DbPassword`` and ``api-key`` do,
-    ``compass``, ``bypass`` and ``tokenizer`` do not). Connection-string names are not credential names
-    here: only the password pairs inside them are hidden.
+
+def credential_mentions(text: str) -> int:
+    """How many times a credential core word (password, pwd, secret, token, apikey, ...) is mentioned.
+
+    Any mention counts, in any syntax and however it is spelled (escapes, case, punctuation or blanks
+    between the letters). The caller withholds the whole file when this is not zero.
     """
-    toks = _tokens(name)
-    if "".join(toks) in _CRED_TOKENS:
-        return True
-    for i, tok in enumerate(toks):
-        if tok in _CRED_TOKENS or (len(tok) > 3 and tok.endswith(_CRED_SUFFIXES)):
-            return True
-        if i + 1 < len(toks) and (tok, toks[i + 1]) in _CRED_PAIRS:
-            return True
-    return False
-
-
-# A run of name characters that contains a credential word (verified by is_credential_name); one word
-# before it is included so that "Shared Key" or "api key" are seen as a pair.
-_NAME_RE = re.compile(
-    r"(?<![\w.\-])(?:[\w.\-]+[ \t]+)?(?P<name>[\w.\-]*(?:pass|pwd|secret|token|credential|key)[\w.\-]*)",
-    re.IGNORECASE,
-)
-_HINT_RE = re.compile(r"pass|pwd|secret|token|credential|key", re.IGNORECASE)
-_SEP_RE = re.compile(r"""[\s=:"']*""")  # between a name and its value (any amount)
-_BREAK_RE = re.compile(r"[\r\n]")
-_BLANK_RE = re.compile(r"[\r\n \t]*")
-_TAG_NAME_RE = re.compile(r"<(?P<tag>[\w:.\-]+)")
-_CLOSE_TAG_RE = re.compile(r"</(?P<tag>[\w:.\-]+)\s*>")
-_CDATA_OPEN = "<![CDATA["
-# Escapes that can hide the letters of a name: \uXXXX, \xHH, &#xHH; and &#NNN;
-_ESC_RE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|&#[xX]([0-9a-fA-F]{1,6});|&#([0-9]{1,7});")
-Span = tuple[int, int]
-
-
-def _cdata_sections(text: str) -> dict[int, int]:
-    """Start -> end of every CDATA section, in one pass (-1 for an unterminated one: it runs to the end)."""
-    out: dict[int, int] = {}
-    pos = 0
-    while (i := text.find(_CDATA_OPEN, pos)) != -1:
-        k = text.find("]]>", i + len(_CDATA_OPEN))
-        if k == -1:
-            out[i] = -1
+    for _ in range(_DECODE_ROUNDS):
+        if "\\" not in text and "&" not in text:
             break
-        out[i] = k + 3
-        pos = k + 3
-    return out
-
-
-class _DecodedView:
-    """The text with the escapes that can spell a name decoded, and the way back to the original."""
-
-    def __init__(self, text: str) -> None:
-        parts: list[str] = []
-        self.dstarts: list[int] = []
-        self.ostarts: list[int] = []
-        self.olens: list[int] = []  # 0 = plain segment (one to one), else the length of one escape
-        pos = dpos = 0
-        for m in _ESC_RE.finditer(text):
-            if m.start() > pos:
-                self._add(parts, dpos, pos, 0, text[pos : m.start()])
-                dpos += m.start() - pos
-            code = int(next(g for g in m.groups() if g is not None), 16 if m.group(4) is None else 10)
-            char = chr(code) if code <= 0x10FFFF else "\ufffd"
-            self._add(parts, dpos, m.start(), m.end() - m.start(), char)
-            dpos += 1
-            pos = m.end()
-        if pos < len(text):
-            self._add(parts, dpos, pos, 0, text[pos:])
-        self.text = "".join(parts)
-        self.changed = bool(self.olens) and any(self.olens)
-
-    def _add(self, parts: list[str], dpos: int, opos: int, olen: int, piece: str) -> None:
-        parts.append(piece)
-        self.dstarts.append(dpos)
-        self.ostarts.append(opos)
-        self.olens.append(olen)
-
-    def to_original(self, a: int, b: int) -> Span:
-        """Original span of the decoded span [a, b) (a decoded escape counts whole)."""
-        i = bisect.bisect_right(self.dstarts, a) - 1
-        start = self.ostarts[i] + (a - self.dstarts[i] if not self.olens[i] else 0)
-        j = bisect.bisect_right(self.dstarts, b - 1) - 1
-        end = self.ostarts[j] + (b - self.dstarts[j] if not self.olens[j] else self.olens[j])
-        return start, end
-
-
-class _Scan:
-    """Region finder over one text. Searches are memoised so that, in a single pass, no stretch of the
-    text is scanned twice for the same purpose (hostile input stays linear)."""
-
-    def __init__(self, text: str) -> None:
-        self.t = text
-        self.n = len(text)
-        self._nl = (-1, -1)
-        self._gt = (-1, -1)
-        self._scan = 0
-        self._last_lt = -1
-        self._last_gt = -1
-        self._cdata: dict[int, int] | None = None
-        self._cstarts: list[int] = []
-        self._closes: dict[str, list[int]] | None = None
-
-    def line_end(self, i: int) -> int:
-        lo, res = self._nl
-        if lo != -1 and lo <= i <= res:
-            return res
-        m = _BREAK_RE.search(self.t, i)
-        res = m.start() if m else self.n
-        self._nl = (i, res)
-        return res
-
-    def next_gt(self, i: int) -> int:
-        lo, res = self._gt
-        if lo != -1 and lo <= i and (res == -1 or i <= res):
-            return res
-        res = self.t.find(">", i)
-        self._gt = (i, res)
-        return res
-
-    def next_nonempty_line_end(self, i: int) -> int:
-        j = _BLANK_RE.match(self.t, i).end()  # type: ignore[union-attr]
-        return self.n if j >= self.n else self.line_end(j)
-
-    def close_quote(self, q: str, start: int) -> int:
-        """Index of the quote that really closes a value (a doubled quote is an escape), or -1."""
-        i = start
-        while (k := self.t.find(q, i)) != -1:
-            if k + 1 < self.n and self.t[k + 1] == q:
-                i = k + 2
-                continue
-            return k
-        return -1
-
-    def in_tag(self, ne: int) -> int:
-        """Index of the "<" of the start tag that contains position ``ne``, or -1."""
-        f = self.t.rfind("<", self._scan, ne)
-        if f != -1:
-            self._last_lt = f
-        f = self.t.rfind(">", self._scan, ne)
-        if f != -1:
-            self._last_gt = f
-        self._scan = ne
-        return self._last_lt if self._last_lt > self._last_gt else -1
-
-    def close_tag_start(self, tag: str, after: int) -> int:
-        if self._closes is None:
-            self._closes = {}
-            for m in _CLOSE_TAG_RE.finditer(self.t):
-                self._closes.setdefault(m.group("tag").lower(), []).append(m.start())
-        starts = self._closes.get(tag.lower())
-        if not starts:
-            return -1
-        k = bisect.bisect_left(starts, after)
-        return starts[k] if k < len(starts) else -1
-
-    def extend_over_cdata(self, ns: int, end: int) -> int:
-        if self._cdata is None:
-            self._cdata = _cdata_sections(self.t) if _CDATA_OPEN in self.t else {}
-            self._cstarts = sorted(self._cdata)
-        k = bisect.bisect_left(self._cstarts, ns)
-        while k < len(self._cstarts) and self._cstarts[k] < end:
-            e = self._cdata[self._cstarts[k]]
-            end = max(end, self.n if e == -1 else e)
-            k += 1
-        return end
-
-    def region(self, ns: int, ne: int) -> Span | None:
-        """What to hide for a credential name at [ns, ne): from the first character of its value (after
-        any separators, quotes and blanks) to the end of the region. Fail closed: the region runs to the
-        end of the logical line at least; a value that opens a quote runs to the closing quote's line;
-        inside a start tag it runs to the end of the tag and, for an element, to its closing tag or the end
-        of the next non-empty line (whichever is later); a CDATA section it reaches is taken whole."""
-        t = self.t
-        p = _SEP_RE.match(t, ne).end()  # type: ignore[union-attr]
-        lt = self.in_tag(ne)
-        end = self.line_end(p) if p < self.n else self.n
-        if p > ne and t[p - 1] in "\"'":
-            c = self.close_quote(t[p - 1], p)
-            if c != -1:
-                end = max(end, self.line_end(c))
-        start = p
-        if lt != -1:
-            gt = self.next_gt(ne)
-            if gt == -1:
-                end = self.n
-            else:
-                end = max(end, self.line_end(gt))
-                if t[gt - 1] != "/":  # an element with content: up to its closing tag, or two lines
-                    head = _TAG_NAME_RE.match(t, lt)
-                    if head:
-                        close = self.close_tag_start(head.group("tag"), gt)
-                        end = max(end, close, self.next_nonempty_line_end(self.line_end(gt)))
-                head = _TAG_NAME_RE.match(t, lt)
-                if head and ns != head.start("tag"):  # an attribute: its value may come before the name
-                    start = head.end()
-                elif p == gt:  # "<Password>": keep the ">" visible
-                    start = gt + 1
-        end = self.extend_over_cdata(ns, end)
-        return (start, end) if end > start else None
-
-
-_NONBLANK_RE = re.compile(r"\S")
-
-
-def _worth_hiding(text: str, a: int, b: int) -> bool:
-    """False for an empty or blank span, or one that is already the mask (no slicing of long spans)."""
-    if b <= a:
-        return False
-    if _NONBLANK_RE.search(text, a, b) is None:
-        return False
-    return not (b - a <= 2 * len(MASK) and text[a:b].strip() == MASK)
-
-
-def hide_credentials(text: str) -> tuple[str, int]:
-    """``text`` with credential values replaced by ``MASK``, and how many values were hidden.
-
-    Fail closed: every occurrence of a credential name hides what follows it up to the end of its region
-    (see ``_Scan.region``), whatever the syntax around it; precision is traded for safety (``PasswordPolicy``
-    is hidden too) but lines without a credential name stay readable. Names spelled with escapes
-    (``\\u0070assword``, ``&#112;assword``) are found in a decoded view. One pass, linear in the text.
-    """
-    escaped = "\\" in text or "&#" in text
-    if not escaped and not _HINT_RE.search(text):
-        return text, 0
-    view = _DecodedView(text) if escaped else None
-    work = view.text if view is not None and view.changed else text
-    if work is not text and not _HINT_RE.search(work):
-        return text, 0
-    if work is text and not _HINT_RE.search(work):
-        return text, 0
-    scan = _Scan(work)
-    regions: list[Span] = []
-    covered = 0
-    for m in _NAME_RE.finditer(work):
-        ns = m.start("name")
-        if ns < covered:
-            continue
-        if not (is_credential_name(m.group("name")) or is_credential_name(m.group(0))):
-            continue
-        r = scan.region(ns, m.end())
-        if r is not None:
-            regions.append(r)
-            covered = r[1]
-    if view is not None and view.changed:
-        regions = [view.to_original(a, b) for a, b in regions]
-    spans = [(a, b) for a, b in regions if _worth_hiding(text, a, b)]
-    if not spans:
-        return text, 0
-    out: list[str] = []
-    pos = 0
-    for a, b in spans:
-        out.append(text[pos:a])
-        out.append(MASK)
-        pos = b
-    out.append(text[pos:])
-    return "".join(out), len(spans)
+        decoded = _ESC_RE.sub(_decode_escape, text.replace("\\\\", "\\").replace("&amp;", "&"))
+        if decoded == text:
+            break
+        text = decoded
+    text = unicodedata.normalize("NFKC", text).lower()
+    return len(_CORE_WORDS_RE.findall(_NON_ALNUM_RE.sub("", text)))
 
 
 # ---------------------------------------------------------------------- reading
@@ -689,8 +433,8 @@ def read_source_text(
     if binary:
         raise BinaryContentError("binary content")
     text = _normalize_newlines(text)
-    masked, hidden = hide_credentials(text)
-    shown = text if reveal else masked
+    hidden = credential_mentions(text)
+    withheld = hidden > 0 and not reveal
     return FileText(
         source_id=source_id,
         name=file_name,
@@ -698,8 +442,9 @@ def read_source_text(
         kind=ext[1:],
         size=total,
         encoding=encoding,
-        lines=len(shown.splitlines()),
+        lines=len(text.splitlines()),
         hidden=hidden,
         revealed=reveal,
-        text=shown,
+        text="" if withheld else text,
+        withheld=withheld,
     )
