@@ -122,6 +122,23 @@ REPRODUCERS = [
     "pass\u200bword=SYNTHETIC_9472",
     "\\u0070\\u0061ssword=SYNTHETIC_9472",
     "&amp;#x70;assword=SYNTHETIC_9472",
+    '<add key="&#00000112;assword" value="SYNTHETIC_9472"/>',
+    '<add key="&#x00000070;assword" value="SYNTHETIC_9472"/>',
+    "p&Ascr;ssword=SYNTHETIC_9472",
+    "pass&Tab;word=SYNTHETIC_9472",
+    "pass\u1e83ord=SYNTHETIC_9472",
+    "passw\u0301ord=SYNTHETIC_9472",
+    "pass&nosuchentity;word=SYNTHETIC_9472",
+    "&#x70;&#x61;ssword=SYNTHETIC_9472",
+    "p\u0301a\u0300s\u0302s\u0303w\u0308o\u030ar\u0327d\u0323=SYNTHETIC_9472",
+    "pass\u200bw\u200cor\u200dd\u2060=SYNTHETIC_9472",
+    "pass\u00adword=SYNTHETIC_9472",
+    "\u202epass\u202cword\u200f=SYNTHETIC_9472",
+    "&password=SYNTHETIC_9472",
+    "a=1&password=SYNTHETIC_9472&b=2",
+    "&#112;&#97;&#115;&#115;&#119;&#111;&#114;&#100;=SYNTHETIC_9472",
+    "&#x0000000000000070;assword=SYNTHETIC_9472",
+    "\\U00000070assword=SYNTHETIC_9472",
 ]
 
 
@@ -184,10 +201,14 @@ def test_hypothesis_core_word_always_withholds():
             return _u(word)
         if mode == 2:  # character references
             return _ent(word)
+        if mode == 3:  # numeric references with leading zeros
+            return "".join(f"&#{'0' * len(parts[0])}{ord(c)};" for c in word)
+        if mode == 4:  # combining marks and invisible characters between and on the letters
+            return "".join(c + "\u0301\u200b" for c in word)
         return word.upper()
 
     @settings(max_examples=400, deadline=None)
-    @given(st.sampled_from(words), st.lists(seps, min_size=1, max_size=4), st.integers(0, 3), junk, junk)
+    @given(st.sampled_from(words), st.lists(seps, min_size=1, max_size=4), st.integers(0, 5), junk, junk)
     def check(word, parts, mode, before, after):
         text = f"{before}{spelled(word, parts, mode)}={SYN}{after}"
         assert credential_mentions(text) >= 1, text
@@ -423,6 +444,16 @@ def test_pathological_input_is_fast():
         "&amp;",
         '\\\\"',
         "password\\\\u0070",
+        "&#",
+        "&#0000000",
+        "&#x",
+        "&a;",
+        "e\u0301",
+        "&amp;#",
+        "&#0",
+        "&a",
+        "&#99999999999;",
+        "pass&#0000112;&nosuch;\u0301",
     ],
 )
 def test_other_hostile_shapes_are_fast(unit):
@@ -702,3 +733,10 @@ def test_handle_path_matches_the_opened_file(local_case):
     if actual is None:
         pytest.skip("no handle path on this platform")
     assert filetext._norm(actual) == filetext._norm(os.path.realpath(folder / "cfg" / "x.ini"))
+
+
+def test_huge_numeric_references_neither_crash_nor_hide_a_mention():
+    assert credential_mentions("&#" + "9" * 5000 + ";") == 0
+    assert credential_mentions("&#x" + "f" * 5000 + ";") == 0
+    assert credential_mentions("&#" + "0" * 5000 + "112;assword") == 1
+    assert credential_mentions("&#x" + "0" * 5000 + "70;assword") == 1

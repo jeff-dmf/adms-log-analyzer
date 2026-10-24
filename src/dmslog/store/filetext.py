@@ -21,6 +21,7 @@ a letter or a digit removed), so punctuation, blanks, quotes or escapes between 
 
 from __future__ import annotations
 
+import html
 import os
 import re
 import sqlite3
@@ -137,47 +138,58 @@ class FileText:
 
 # ---------------------------------------------------------------------- credential detection
 
-# The core words of a credential. They are looked for in a normalised view of the text (escapes decoded,
-# lower case, every character that is not a letter or digit removed), so no delimiter, escape, quote,
-# blank, line break or punctuation between the letters can hide a mention.
+# The core words of a credential. They are looked for in normalised views of the text (escapes and
+# character references decoded, decomposed, lower case, every character that is not an ASCII letter or digit
+# removed), so no delimiter, escape, quote, blank, line break, punctuation, accent or invisible character
+# between the letters can hide a mention.
 _CORE_WORDS_RE = re.compile(
     r"password|passwd|pwd|passphrase|secret|token|apikey|privatekey|sharedkey|clientsecret|credential"
 )
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
-_ESC_RE = re.compile(
-    r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|&#[xX]([0-9a-fA-F]{1,6});|&#([0-9]{1,7});"
-    r"|&(?:amp|lt|gt|quot|apos);|\\[nrtbf\"'/\\]"
+_BACKSLASH_ESC_RE = re.compile(
+    r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|\\U([0-9a-fA-F]{8})|\\([nrtbf\"'/\\])"
 )
-
-
-_NAMED = {"&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'"}
+_LEADING_ZEROS_RE = re.compile(r"(&#[xX]?)0+(?=[0-9A-Fa-f])")
+_HUGE_REF_RE = re.compile(r"&#(?:[xX][0-9A-Fa-f]{9,}|[0-9]{9,});?")  # beyond any code point (and int())
+_LEFTOVER_ENTITY_RE = re.compile(r"&[#A-Za-z0-9]+;")  # a reference html.unescape did not know
 _DECODE_ROUNDS = 4  # escapes of escapes (&amp;#112;, \\u0070) are decoded a few levels deep
 
 
-def _decode_escape(m: re.Match[str]) -> str:
+def _decode_backslash(m: re.Match[str]) -> str:
     hexa = m.group(1) or m.group(2) or m.group(3)
-    code = int(hexa, 16) if hexa else int(m.group(4)) if m.group(4) else None
-    if code is None:
-        whole = m.group(0)
-        return _NAMED.get(whole, whole[1:] if whole.startswith("\\") else " ")
+    if hexa is None:
+        return " "  # \n, \", ...: a separator, never a letter
+    code = int(hexa, 16)
     return chr(code) if code <= 0x10FFFF and not 0xD800 <= code <= 0xDFFF else " "
+
+
+def _count_core_words(text: str) -> int:
+    return len(_CORE_WORDS_RE.findall(_NON_ALNUM_RE.sub("", text)))
 
 
 def credential_mentions(text: str) -> int:
     """How many times a credential core word (password, pwd, secret, token, apikey, ...) is mentioned.
 
-    Any mention counts, in any syntax and however it is spelled (escapes, case, punctuation or blanks
-    between the letters). The caller withholds the whole file when this is not zero.
+    Any mention counts, in any syntax and however it is spelled (backslash escapes, character references
+    of any form, case, accents, invisible characters, punctuation or blanks between the letters). Two views
+    are searched, the larger count wins: one where a reference nobody knows (``&nosuch;``) is dropped (it
+    only joins the letters around it) and one where its name is kept. The caller withholds the whole file
+    when this is not zero.
     """
     for _ in range(_DECODE_ROUNDS):
         if "\\" not in text and "&" not in text:
             break
-        decoded = _ESC_RE.sub(_decode_escape, text.replace("\\\\", "\\").replace("&amp;", "&"))
+        step = _BACKSLASH_ESC_RE.sub(_decode_backslash, text.replace("\\\\", "\\"))
+        if "&#" in step:
+            step = _HUGE_REF_RE.sub(" ", _LEADING_ZEROS_RE.sub(r"\1", step))
+        decoded = html.unescape(step)
         if decoded == text:
             break
         text = decoded
-    text = unicodedata.normalize("NFKC", text).lower()
-    return len(_CORE_WORDS_RE.findall(_NON_ALNUM_RE.sub("", text)))
+    text = unicodedata.normalize("NFKD", text).lower()  # accents become combining marks, dropped below
+    if "&" not in text:
+        return _count_core_words(text)
+    return max(_count_core_words(text), _count_core_words(_LEFTOVER_ENTITY_RE.sub("", text)))
 
 
 # ---------------------------------------------------------------------- reading
