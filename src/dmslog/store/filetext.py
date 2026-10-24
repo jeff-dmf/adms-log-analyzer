@@ -21,6 +21,9 @@ a letter or a digit removed), so punctuation, blanks, quotes or escapes between 
 
 from __future__ import annotations
 
+import functools
+import html
+import html.entities
 import os
 import re
 import sqlite3
@@ -137,47 +140,136 @@ class FileText:
 
 # ---------------------------------------------------------------------- credential detection
 
-# The core words of a credential. They are looked for in a normalised view of the text (escapes decoded,
-# lower case, every character that is not a letter or digit removed), so no delimiter, escape, quote,
-# blank, line break or punctuation between the letters can hide a mention.
+# The core words of a credential. They are looked for in normalised views of the text (escapes and
+# character references decoded, decomposed, lower case, every character that is not an ASCII letter or digit
+# removed), so no delimiter, escape, quote, blank, line break, punctuation, accent or invisible character
+# between the letters can hide a mention.
 _CORE_WORDS_RE = re.compile(
     r"password|passwd|pwd|passphrase|secret|token|apikey|privatekey|sharedkey|clientsecret|credential"
 )
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
-_ESC_RE = re.compile(
-    r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|&#[xX]([0-9a-fA-F]{1,6});|&#([0-9]{1,7});"
-    r"|&(?:amp|lt|gt|quot|apos);|\\[nrtbf\"'/\\]"
+_BACKSLASH_ESC_RE = re.compile(
+    r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|\\U([0-9a-fA-F]{8})|\\([nrtbf\"'/\\])"
+)
+_LEADING_ZEROS_RE = re.compile(r"(&#[xX]?)0+(?=[0-9A-Fa-f])")
+_HUGE_REF_RE = re.compile(r"&#(?:[xX][0-9A-Fa-f]{9,}|[0-9]{9,});?")  # beyond any code point (and int())
+_ENTITY_TOKEN_RE = re.compile(r"&[#A-Za-z0-9]+;?")  # anything that looks like a character reference
+_ENTITY_CLOSED_RE = re.compile(
+    r"&[#A-Za-z0-9]+;"
+)  # only the ones closed by ";" (a prefix may be glued before)
+_DECODE_ROUNDS = 8  # escapes of escapes (&amp;#112;, \\u0070) are decoded this many levels deep
+
+
+def _decode_backslash(m: re.Match[str]) -> str:
+    hexa = m.group(1) or m.group(2) or m.group(3)
+    if hexa is None:
+        return " "  # \n, \", ...: a separator, never a letter
+    code = int(hexa, 16)
+    return chr(code) if code <= 0x10FFFF and not 0xD800 <= code <= 0xDFFF else " "
+
+
+@functools.lru_cache(maxsize=4)  # the chains share their first steps; cleared when the search ends
+def _backslash_step(text: str) -> str:
+    return _BACKSLASH_ESC_RE.sub(_decode_backslash, text.replace("\\\\", "\\"))
+
+
+@functools.lru_cache(maxsize=4)
+def _html_step(text: str) -> str:
+    text = text.replace("&amp;", "&") if "&amp;" in text else text  # what unescape does for it, at C speed
+    if "&" not in text:
+        return text
+    if "&#" in text:
+        text = _HUGE_REF_RE.sub(" ", _LEADING_ZEROS_RE.sub(r"\1", text))
+    return html.unescape(text)
+
+
+_CLOSED_REF_RE = re.compile(r"&(#[0-9]+;|#[xX][0-9A-Fa-f]+;|[A-Za-z][A-Za-z0-9]*;)")
+
+
+def _strict_ref(m: re.Match[str]) -> str:
+    token = m.group(0)
+    if token[1] == "#":
+        return html.unescape(token)
+    return html.entities.html5.get(token[1:], token)  # an unknown "&name;" stays as it is
+
+
+@functools.lru_cache(maxsize=4)
+def _strict_html_step(text: str) -> str:
+    """Only the references closed by ";" (``html.unescape`` also reads ``&not`` out of ``&notit;``)."""
+    text = text.replace("&amp;", "&") if "&amp;" in text else text
+    if "&#" in text:
+        text = _HUGE_REF_RE.sub(" ", _LEADING_ZEROS_RE.sub(r"\1", text))
+    return _CLOSED_REF_RE.sub(_strict_ref, text)
+
+
+# The chains of decoding steps; each level of each chain is searched (see credential_mentions)
+_CHAINS: tuple[Callable[[str], str], ...] = (
+    _backslash_step,  # backslash escapes only: a decoder must not destroy a name (&notoken)
+    lambda t: _html_step(_backslash_step(t)),
+    lambda t: _backslash_step(_html_step(t)),
+    lambda t: _strict_html_step(_backslash_step(t)),
+    lambda t: _backslash_step(_strict_html_step(t)),
 )
 
 
-_NAMED = {"&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'"}
-_DECODE_ROUNDS = 4  # escapes of escapes (&amp;#112;, \\u0070) are decoded a few levels deep
-
-
-def _decode_escape(m: re.Match[str]) -> str:
-    hexa = m.group(1) or m.group(2) or m.group(3)
-    code = int(hexa, 16) if hexa else int(m.group(4)) if m.group(4) else None
-    if code is None:
-        whole = m.group(0)
-        return _NAMED.get(whole, whole[1:] if whole.startswith("\\") else " ")
-    return chr(code) if code <= 0x10FFFF and not 0xD800 <= code <= 0xDFFF else " "
+def _count_core_words(text: str) -> int:
+    # NFKD turns an accented letter into letter + combining mark; the mark (like every other non-ASCII or
+    # invisible character) is dropped by the filter, the letter stays
+    if not text.isascii():
+        text = unicodedata.normalize("NFKD", text)
+    text = text.lower()
+    return len(_CORE_WORDS_RE.findall(_NON_ALNUM_RE.sub("", text)))
 
 
 def credential_mentions(text: str) -> int:
     """How many times a credential core word (password, pwd, secret, token, apikey, ...) is mentioned.
 
-    Any mention counts, in any syntax and however it is spelled (escapes, case, punctuation or blanks
-    between the letters). The caller withholds the whole file when this is not zero.
+    Any mention counts, in any syntax and however it is spelled (backslash escapes, character references
+    of any form, case, accents, invisible characters, punctuation or blanks between the letters). The text
+    is decoded step by step (up to ``_DECODE_ROUNDS`` levels) by five chains: backslash escapes only;
+    backslash escapes then HTML references, and the reverse; the same with only the references closed by
+    ``;`` (``html.unescape`` also reads legacy ones such as ``&not`` out of ``&notit;``). At every level three
+    views are searched: the text as it is, the text without any reference-like token (``&...;?``), which
+    joins the letters around an unknown reference, and the text without the references closed by ``;``
+    (letters glued before a reference stay). The largest count wins, because a decoder can also destroy a
+    name (``&notoken`` becomes ``\u00actoken``). The caller withholds the whole file when it is not zero.
     """
-    for _ in range(_DECODE_ROUNDS):
-        if "\\" not in text and "&" not in text:
-            break
-        decoded = _ESC_RE.sub(_decode_escape, text.replace("\\\\", "\\").replace("&amp;", "&"))
-        if decoded == text:
-            break
-        text = decoded
-    text = unicodedata.normalize("NFKC", text).lower()
-    return len(_CORE_WORDS_RE.findall(_NON_ALNUM_RE.sub("", text)))
+    best = 0
+    seen: set[str] = set()
+
+    def search(view: str) -> None:
+        nonlocal best
+        if view not in seen:
+            seen.add(view)
+            best = max(best, _count_core_words(view))
+
+    def search_level(level: str) -> None:
+        search(level)
+        if "&" in level:
+            search(_ENTITY_TOKEN_RE.sub("", level))
+            search(_ENTITY_CLOSED_RE.sub("", level))
+
+    try:
+        _search_chains(text, search_level)
+    finally:
+        _backslash_step.cache_clear()
+        _html_step.cache_clear()
+        _strict_html_step.cache_clear()
+    return best
+
+
+def _search_chains(text: str, search_level: Callable[[str], None]) -> None:
+    search_level(text)
+    for step in _CHAINS:
+        level = text
+        for _ in range(_DECODE_ROUNDS):
+            if "\\" not in level and "&" not in level:
+                break
+            nxt = step(level)
+            if nxt == level:
+                break
+            level = nxt
+            search_level(level)
 
 
 # ---------------------------------------------------------------------- reading

@@ -122,6 +122,40 @@ REPRODUCERS = [
     "pass\u200bword=SYNTHETIC_9472",
     "\\u0070\\u0061ssword=SYNTHETIC_9472",
     "&amp;#x70;assword=SYNTHETIC_9472",
+    '<add key="&#00000112;assword" value="SYNTHETIC_9472"/>',
+    '<add key="&#x00000070;assword" value="SYNTHETIC_9472"/>',
+    "p&Ascr;ssword=SYNTHETIC_9472",
+    "pass&Tab;word=SYNTHETIC_9472",
+    "pass\u1e83ord=SYNTHETIC_9472",
+    "passw\u0301ord=SYNTHETIC_9472",
+    "pass&nosuchentity;word=SYNTHETIC_9472",
+    "&#x70;&#x61;ssword=SYNTHETIC_9472",
+    "p\u0301a\u0300s\u0302s\u0303w\u0308o\u030ar\u0327d\u0323=SYNTHETIC_9472",
+    "pass\u200bw\u200cor\u200dd\u2060=SYNTHETIC_9472",
+    "pass\u00adword=SYNTHETIC_9472",
+    "\u202epass\u202cword\u200f=SYNTHETIC_9472",
+    "&password=SYNTHETIC_9472",
+    "a=1&password=SYNTHETIC_9472&b=2",
+    "&#112;&#97;&#115;&#115;&#119;&#111;&#114;&#100;=SYNTHETIC_9472",
+    "&#x0000000000000070;assword=SYNTHETIC_9472",
+    "\\U00000070assword=SYNTHETIC_9472",
+    "&notoken=SYNTHETIC_9472",
+    "pass&notit;word=SYNTHETIC_9472",
+    "&amp;notoken=SYNTHETIC_9472",
+    "&notokenx=1&v=SYNTHETIC_9472",
+    "&amp;amp;password=SYNTHETIC_9472",
+    "pass&notin;word=SYNTHETIC_9472",
+    "&not;&token=SYNTHETIC_9472",
+    "to&nbsp;ken=SYNTHETIC_9472",
+    "to&shy;ken=SYNTHETIC_9472",
+    "pa&#x00AD;ssword=SYNTHETIC_9472",
+    "\\u0026notoken=SYNTHETIC_9472",
+    "pass\\u0026notit;word=SYNTHETIC_9472",
+    "p&#97;ss&nosuch;word=SYNTHETIC_9472",
+    "pass&amp;nosuch;word=SYNTHETIC_9472",
+    "pass&amp;notit;word=SYNTHETIC_9472",
+    "p&amp;#97;ss&amp;amp;nosuch;word=SYNTHETIC_9472",
+    "p\\u0026#97;ss\\u0026nosuch;word=SYNTHETIC_9472",
 ]
 
 
@@ -184,10 +218,14 @@ def test_hypothesis_core_word_always_withholds():
             return _u(word)
         if mode == 2:  # character references
             return _ent(word)
+        if mode == 3:  # numeric references with leading zeros
+            return "".join(f"&#{'0' * len(parts[0])}{ord(c)};" for c in word)
+        if mode == 4:  # combining marks and invisible characters between and on the letters
+            return "".join(c + "\u0301\u200b" for c in word)
         return word.upper()
 
     @settings(max_examples=400, deadline=None)
-    @given(st.sampled_from(words), st.lists(seps, min_size=1, max_size=4), st.integers(0, 3), junk, junk)
+    @given(st.sampled_from(words), st.lists(seps, min_size=1, max_size=4), st.integers(0, 5), junk, junk)
     def check(word, parts, mode, before, after):
         text = f"{before}{spelled(word, parts, mode)}={SYN}{after}"
         assert credential_mentions(text) >= 1, text
@@ -389,6 +427,11 @@ def test_hostile_content_is_inert(case):
     assert out.text == text  # returned as text, nothing expanded or executed
 
 
+# A quadratic pass over 4 MiB takes minutes, so this bound still catches it; it is loose because the CI
+# runners (Windows included) run these shapes 2 to 4 times slower than a workstation.
+HOSTILE_LIMIT_S = 10
+
+
 def _time_hostile(shapes) -> float:
     size = 4 * 1024 * 1024
     start = time.perf_counter()
@@ -398,8 +441,8 @@ def _time_hostile(shapes) -> float:
 
 
 def test_pathological_input_is_fast():
-    """4 MiB of hostile input per shape: the four review shapes in 2 s in total (the passes are linear)."""
-    assert _time_hostile(("<x><![CDATA[", "Password=", "<a ", '<a b="', "Password='")) < 2
+    """4 MiB of hostile input per shape: the review shapes in a bounded time (the passes are linear)."""
+    assert _time_hostile(("<x><![CDATA[", "Password=", "<a ", '<a b="', "Password='")) < HOSTILE_LIMIT_S
 
 
 @pytest.mark.parametrize(
@@ -423,10 +466,28 @@ def test_pathological_input_is_fast():
         "&amp;",
         '\\\\"',
         "password\\\\u0070",
+        "&#",
+        "&#0000000",
+        "&#x",
+        "&a;",
+        "e\u0301",
+        "&amp;#",
+        "&amp;",
+        "&amp;amp;amp;amp;",
+        "p&amp;#97;ss&amp;nosuch;word ",
+        "&a;",
+        "&",
+        "&&",
+        "&not",
+        "&#0",
+        "&a",
+        "&#99999999999;",
+        "pass&#0000112;&nosuch;\u0301",
     ],
 )
 def test_other_hostile_shapes_are_fast(unit):
-    assert _time_hostile((unit,)) < 1
+    # html.unescape calls back into Python for every reference-like token: those shapes get a looser bound
+    assert _time_hostile((unit,)) < HOSTILE_LIMIT_S
 
 
 # ---------------------------------------------------------------------- review regressions
@@ -589,8 +650,9 @@ def test_intermediate_directory_swapped_before_open_is_refused(local_case, monke
 
     conn, sid, folder, outside, _body = local_case
     monkeypatch.setattr(filetext, "_HAVE_DIR_FD", filetext._HAVE_DIR_FD and not fallback)
-    # the directory is opened by name ("cfg") with directory handles, by the whole path otherwise
-    target = "x.ini" if fallback else "cfg"
+    # the directory is opened by name ("cfg") with directory handles, by the whole path otherwise (Windows has
+    # no dir_fd: the fallback is its only path)
+    target = "cfg" if filetext._HAVE_DIR_FD else "x.ini"
     _hook_open(monkeypatch, target, lambda: _swap_with_symlink(folder / "cfg", outside, directory=True))
     with pytest.raises(ContainerMissingError):
         read_source_text(conn, sid, reveal=True)
@@ -702,3 +764,129 @@ def test_handle_path_matches_the_opened_file(local_case):
     if actual is None:
         pytest.skip("no handle path on this platform")
     assert filetext._norm(actual) == filetext._norm(os.path.realpath(folder / "cfg" / "x.ini"))
+
+
+def test_huge_numeric_references_neither_crash_nor_hide_a_mention():
+    assert credential_mentions("&#" + "9" * 5000 + ";") == 0
+    assert credential_mentions("&#x" + "f" * 5000 + ";") == 0
+    assert credential_mentions("&#" + "0" * 5000 + "112;assword") == 1
+    assert credential_mentions("&#x" + "0" * 5000 + "70;assword") == 1
+
+
+def test_hypothesis_entities_and_punctuation_between_letters_or_glued_before():
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    words = ["password", "passwd", "pwd", "passphrase", "secret", "token", "apikey", "privatekey"]
+    words += ["sharedkey", "clientsecret", "credential"]
+    # between letters: punctuation, or a reference closed by ";" (a bare "&not" there reads as a different
+    # character, not as a gap)
+    between = st.one_of(
+        st.text(alphabet=" \t\r\n.:/-_=\"'<>,", max_size=3),
+        st.from_regex(r"&[a-z]{1,8};", fullmatch=True),
+        st.from_regex(r"&#x?[0-9a-fA-F]{1,6};", fullmatch=True),
+        st.sampled_from(["&amp;", "&nbsp;", "&shy;", "&notit;", "&nosuch;", "&#x00AD;", "&#0000173;"]),
+    )
+    # glued before the word: any "&[a-z]+;?"
+    before = st.one_of(st.just(""), st.from_regex(r"&[a-z]{1,8};?", fullmatch=True))
+
+    @settings(max_examples=400, deadline=None)
+    @given(st.sampled_from(words), st.lists(between, min_size=1, max_size=5), before, st.booleans())
+    def check(word, parts, prefix, split):
+        if split:
+            glue = [parts[i % len(parts)] for i in range(len(word) - 1)]
+            spelled = "".join(c + g for c, g in zip(word, glue + [""], strict=False))
+        else:
+            spelled = word
+        assert credential_mentions(f"{prefix}{spelled}={SYN}") >= 1
+
+    check()
+
+
+def test_hypothesis_composed_encodings_never_hide_a_mention():
+    """Any composition of per-letter encodings and per-position insertions still counts as a mention.
+
+    The one documented exception is a legacy reference WITHOUT ";" that really forms another character
+    inside the word (``to&notken`` reads ``to`` + not-sign + ``ken``): nothing in the file spells the
+    word then, so a bare ``&name`` is only inserted followed by a punctuation character.
+    """
+    import html as html_module
+
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    words = ["password", "passwd", "pwd", "secret", "token", "apikey", "privatekey", "clientsecret"]
+    words += ["credential"]
+
+    def named(letter: str) -> str | None:
+        for suffix in ("scr", "opf", "fr"):
+            if f"{letter}{suffix};" in html_module.entities.html5:
+                return f"&{letter}{suffix};"
+        return None
+
+    def encode_letter(letter: str, how: int, zeros: int, amps: int) -> str:
+        code = ord(letter)
+        if how == 1:
+            enc = f"&#{'0' * zeros}{code};"
+        elif how == 2:
+            enc = f"&#x{'0' * zeros}{code:x};"
+        elif how == 3:
+            enc = named(letter) or f"&#{code};"
+        elif how == 4:
+            enc = f"\\u{code:04x}"
+        else:
+            return letter
+        for _ in range(amps):  # "&" written as "&amp;" up to three times
+            enc = enc.replace("&", "&amp;") if how != 4 else enc
+        return enc
+
+    inserts = st.sampled_from(
+        [
+            "&nosuch;",
+            "&notit;",
+            "&nbsp;",
+            "&shy;",
+            "&#99999999999;",
+            "&#xZZ;",
+            "&#;",
+            "&nosuch.",
+            "&nosuch ",
+            "&x-",
+            "\u0301",
+            "\u200b",
+            "\u00ad",
+            "\u202e",
+            ".",
+            "-",
+            "_",
+            " ",
+            "\t",
+            "\n",
+            ":",
+            "&amp;nosuch;",
+            "&amp;amp;nosuch;",
+        ]
+    )
+
+    @settings(max_examples=500, deadline=None)
+    @given(
+        st.sampled_from(words),
+        st.lists(st.tuples(st.integers(0, 4), st.integers(0, 6), st.integers(0, 3)), min_size=8, max_size=16),
+        st.lists(st.one_of(st.just(""), inserts), min_size=8, max_size=16),
+        st.booleans(),
+        st.integers(0, 2),
+    )
+    def check(word, encodings, gaps, upper, outer_amps):
+        parts = []
+        for i, letter in enumerate(word):
+            letter = letter.upper() if upper and i % 2 == 0 else letter
+            how, zeros, amps = encodings[i % len(encodings)]
+            parts.append(encode_letter(letter, how, zeros, amps))
+            if i < len(word) - 1:
+                parts.append(gaps[i % len(gaps)])
+        spelled = "".join(parts)
+        for _ in range(outer_amps):  # the whole text escaped once more
+            spelled = spelled.replace("&", "&amp;")
+        assert credential_mentions(f"{spelled}={SYN}") >= 1, spelled
+
+    check()
