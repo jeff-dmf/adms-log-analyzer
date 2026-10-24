@@ -719,3 +719,229 @@ def test_utf16_without_bom_is_binary(case):
     for codec in ("utf-16-le", "utf-16-be"):
         with pytest.raises(BinaryContentError):
             read(case, f"y_{codec}.config", "<a>hello</a>\n".encode(codec))
+
+
+# ---------------------------------------------------------------------- second review regressions
+
+SYN = "SYNTHETIC_9472"
+
+
+def _u(word: str) -> str:
+    """JSON escape of every character: the key contains no letter of the word."""
+    return "".join(f"\\u{ord(c):04x}" for c in word)
+
+
+def test_fully_escaped_json_key_and_value_are_hidden():
+    for text in (
+        f'{{"{_u("password")}":"{SYN}"}}',
+        f'{{"{_u("password")}":"{_u(SYN)}"}}',
+        f'{{"{_u("apiKey")}" :\n "{SYN}"}}',
+        f'{{"a":1,"{_u("Pwd")}":"{SYN}","b":2}}',
+    ):
+        out, n = hide_credentials(text)
+        assert n == 1 and SYN not in out and _u(SYN) not in out, text
+    out, _ = hide_credentials(f'{{"{_u("password")}":"{SYN}","x":"y"}}')
+    assert out == f'{{"{_u("password")}":"{MASK}","x":"y"}}'
+
+
+def test_json_file_with_escaped_key_through_the_reader(case):
+    out = read(case, "esc.json", f'{{"{_u("password")}":"{SYN}"}}')
+    assert out.hidden == 1 and SYN not in out.text
+    assert SYN in read(case, "esc2.json", f'{{"{_u("password")}":"{SYN}"}}', reveal=True).text
+
+
+def test_json_non_credentials_stay():
+    text = f'{{"{_u("timeout")}":"30","name":"{SYN}"}}'
+    assert hide_credentials(text) == (text, 0)
+
+
+@pytest.mark.parametrize("extra", [0, 63, 64, 65, 500, 5000])
+def test_tags_with_many_attributes_still_hidden(extra):
+    attrs = " ".join(f'a{i}="v{i}"' for i in range(extra))
+    add = f'<add key="password" {attrs} value="{SYN}" {attrs}/>'
+    out, n = hide_credentials(add)
+    assert n == 1 and SYN not in out
+    elem = f"<Password {attrs}>{SYN}</Password>"
+    out, n = hide_credentials(elem)
+    assert n == 1 and SYN not in out
+    named = f'<Parameter {attrs} Name="password">{SYN}</Parameter>'
+    out, n = hide_credentials(named)
+    assert n == 1 and SYN not in out
+
+
+def test_unclosed_or_odd_tags_do_not_leak_the_value_attribute():
+    for text in (
+        f'<add key="password" value="{SYN}" broken',
+        f'<add key="password" value="{SYN}" bare other=unquoted/>',
+        f"<add value=\"{SYN}\" key='password' flag>",
+    ):
+        out, _ = hide_credentials(text)
+        assert SYN not in out, text
+
+
+def test_escaped_quote_flood_is_linear():
+    start = time.perf_counter()
+    for text in (
+        "password" + '\\"' * 2_097_148,
+        '\\"password' * 400_000,
+        '"password": ' + '\\"' * 2_000_000,
+        'password"' + "\\" * 2_000_000,
+        '"password"' + ':"\\"' * 1_000_000,
+    ):
+        hide_credentials(text)
+    assert time.perf_counter() - start < 2
+
+
+# -- one handle, no redirect (symlinks)
+
+
+def _symlink_or_skip(link: Path, target: Path, directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=directory)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+
+
+def _swap_with_symlink(path: Path, target: Path, directory: bool = False) -> None:
+    backup = path.with_name(path.name + ".orig")
+    path.rename(backup)
+    _symlink_or_skip(path, target, directory)
+
+
+@pytest.fixture
+def local_case(case):
+    conn, _db, tmp = case
+    folder = tmp / "Log"
+    (folder / "cfg").mkdir(parents=True)
+    body = "host=h1\n" * 30_000  # 240 KB: several read blocks
+    (folder / "cfg" / "x.ini").write_text(body, encoding="utf-8")
+    outside = tmp / "outside"
+    outside.mkdir()
+    (outside / "x.ini").write_text(f"host=h2\nPassword={SYN}\n" + body, encoding="utf-8")
+    sid = add_source(conn, add_collection(conn, "folder", folder), "cfg/x.ini", len(body))
+    return conn, sid, folder, outside, body
+
+
+def _hook_open(monkeypatch, when: str, action):
+    """Run ``action`` just before the first ``os.open`` whose path argument is ``when``."""
+    from dmslog.store import filetext
+
+    real = filetext._os_open
+    done = []
+
+    def wrapper(path, *args, **kwargs):
+        if str(path).endswith(when) and not done:
+            done.append(1)
+            action()
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(filetext, "_os_open", wrapper)
+
+
+def _hook_read(monkeypatch, nth: int, action):
+    from dmslog.store import filetext
+
+    real = filetext._read_block
+    calls = []
+
+    def wrapper(fh, size):
+        calls.append(1)
+        if len(calls) == nth:
+            action()
+        return real(fh, size)
+
+    monkeypatch.setattr(filetext, "_read_block", wrapper)
+    return calls
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_file_swapped_for_symlink_before_open_is_refused(local_case, monkeypatch, fallback):
+    from dmslog.store import filetext
+
+    conn, sid, folder, outside, _body = local_case
+    monkeypatch.setattr(filetext, "_HAVE_DIR_FD", filetext._HAVE_DIR_FD and not fallback)
+    _hook_open(monkeypatch, "x.ini", lambda: _swap_with_symlink(folder / "cfg" / "x.ini", outside / "x.ini"))
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid, reveal=True)
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_intermediate_directory_swapped_before_open_is_refused(local_case, monkeypatch, fallback):
+    from dmslog.store import filetext
+
+    conn, sid, folder, outside, _body = local_case
+    monkeypatch.setattr(filetext, "_HAVE_DIR_FD", filetext._HAVE_DIR_FD and not fallback)
+    # the directory is opened by name ("cfg") with directory handles, by the whole path otherwise
+    target = "x.ini" if fallback else "cfg"
+    _hook_open(monkeypatch, target, lambda: _swap_with_symlink(folder / "cfg", outside, directory=True))
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid, reveal=True)
+
+
+def test_swap_between_read_blocks_never_returns_outside_content(local_case, monkeypatch):
+    conn, sid, folder, outside, body = local_case
+    calls = _hook_read(
+        monkeypatch, 2, lambda: _swap_with_symlink(folder / "cfg" / "x.ini", outside / "x.ini")
+    )
+    try:
+        out = read_source_text(conn, sid, reveal=True)
+    except ContainerMissingError:
+        out = None
+    assert len(calls) >= 2  # the swap really happened between two blocks
+    assert out is None or (SYN not in out.text and out.text == body)
+
+
+def test_swap_between_read_blocks_in_fallback_is_detected(local_case, monkeypatch):
+    from dmslog.store import filetext
+
+    conn, sid, folder, outside, _body = local_case
+    monkeypatch.setattr(filetext, "_HAVE_DIR_FD", False)
+    _hook_read(monkeypatch, 2, lambda: _swap_with_symlink(folder / "cfg" / "x.ini", outside / "x.ini"))
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid, reveal=True)
+
+
+def test_directory_swapped_between_read_blocks_never_returns_outside_content(local_case, monkeypatch):
+    conn, sid, folder, outside, body = local_case
+    _hook_read(monkeypatch, 2, lambda: _swap_with_symlink(folder / "cfg", outside, directory=True))
+    try:
+        out = read_source_text(conn, sid, reveal=True)
+    except ContainerMissingError:
+        out = None
+    assert out is None or (SYN not in out.text and out.text == body)
+
+
+def test_read_is_done_from_one_handle(local_case, monkeypatch):
+    from dmslog.store import filetext
+
+    conn, sid, *_ = local_case
+    opened = []
+    real = filetext._os_open
+    monkeypatch.setattr(filetext, "_os_open", lambda p, *a, **k: opened.append(str(p)) or real(p, *a, **k))
+    read_source_text(conn, sid)
+    assert [p for p in opened if p.endswith("x.ini")] == opened[-1:] and len(
+        [p for p in opened if p.endswith("x.ini")]
+    ) == 1  # the file itself is opened exactly once
+
+
+def test_zip_that_is_a_symlink_is_refused(case):
+    conn, _db, tmp = case
+    real = tmp / "real.zip"
+    with zipfile.ZipFile(real, "w") as zf:
+        zf.writestr("cfg/a.config", f"Password={SYN}")
+    link = tmp / "link.zip"
+    _symlink_or_skip(link, real)
+    sid = add_source(conn, add_collection(conn, "ers_zip", link), "cfg/a.config", 20)
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid, reveal=True)
+
+
+def test_zip_swapped_for_symlink_before_open_is_refused(case, monkeypatch):
+    conn, _db, tmp = case
+    sid = zip_source(case, "z.config", f"Password={SYN}".encode())
+    other = tmp / "other.zip"
+    with zipfile.ZipFile(other, "w") as zf:
+        zf.writestr("Servers/cfg/z.config", f"Password={SYN}")
+    _hook_open(monkeypatch, "ers.zip", lambda: _swap_with_symlink(tmp / "ers.zip", other))
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid, reveal=True)
