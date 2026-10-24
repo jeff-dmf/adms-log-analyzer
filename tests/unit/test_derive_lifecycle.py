@@ -470,63 +470,60 @@ def test_rederivation_from_low_watermark_matches_whole_stream(family: str) -> No
         assert sorted(map(repr, map(key, kept + redone))) == sorted(map(repr, map(key, whole))), (family, k)
 
 
-def _head_streams() -> dict[str, list[StoredEntry]]:
-    out: dict[str, list[StoredEntry]] = {}
+def _sweep_stream(kinds: tuple[str, ...]) -> list[StoredEntry]:
+    """``o`` untimed, ``t`` timed, ``j`` timed two hours later (a gap), ``c`` level change."""
     mk = Maker()
-    out["orphans_work_change"] = [
-        other(mk, None, "orphan"),
-        other(mk, None, "orphan 2"),
-        other(mk, T0),
-        other(mk, T0 + 1_000),
-        level_change(mk, T0 + 2_000, ("Info", 5), ("DebugLog", 3)),
-        other(mk, None),
-        other(mk, T0 + 3_000),
-    ]
-    mk = Maker()
-    out["orphan_then_change"] = [
-        other(mk, None, "orphan"),
-        level_change(mk, T0, ("Info", 5), ("DebugLog", 3)),
-        other(mk, T0 + 1_000),
-        level_change(mk, T0 + 2_000, ("DebugLog", 3), ("Info", 5)),
-        other(mk, T0 + 3_000),
-    ]
-    mk = Maker()
-    out["change_first"] = [
-        level_change(mk, T0, ("Info", 5), ("DebugLog", 3)),
-        other(mk, T0 + 1_000),
-        level_change(mk, T0 + 2_000, ("DebugLog", 3), ("Info", 5)),
-    ]
-    mk = Maker()
-    out["two_changes_in_a_row"] = [
-        other(mk, None, "orphan"),
-        other(mk, None, "orphan 2"),
-        level_change(mk, T0, ("Info", 5), ("DebugLog", 3)),
-        level_change(mk, T0, ("DebugLog", 3), ("Info", 5)),
-        other(mk, T0 + 1_000),
-    ]
+    out: list[StoredEntry] = []
+    ts, level = T0, 0
+    levels = (("Info", 5), ("DebugLog", 3))
+    for kind in kinds:
+        if kind == "o":
+            out.append(other(mk, None, "orphan"))
+            continue
+        ts += 2 * HOUR if kind == "j" else 1_000
+        if kind == "c":
+            out.append(level_change(mk, ts, levels[level], levels[1 - level]))
+            level = 1 - level
+        else:
+            out.append(other(mk, ts))
     return out
 
 
-@pytest.mark.parametrize("family", ["AWFM", "AAVL"])
-@pytest.mark.parametrize("name", sorted(_head_streams()))
-def test_untimed_head_does_not_hide_the_first_level_window(family: str, name: str) -> None:
-    entries = _head_streams()[name]
-    whole = run_in_memory([LifecycleDeriver(family)], entries)
-    assert any(ev.kind == "level_window" and ev.detail.get("from") is None for ev in whole)
-    for k in range(1, len(entries) + 1):
-        first = LifecycleDeriver(family)
-        events = [ev for e in entries[:k] for ev in first.feed(e)]
-        wm = first.low_watermark()
-        assert wm is not None and wm <= entries[k - 1].id
-        kept = [ev for ev in events if (ev.start_entry_id or 0) < wm]
-        second = LifecycleDeriver(family, stream_start=wm == entries[0].id)
-        redone = run_in_memory([second], [e for e in entries if e.id >= wm])
-        redone = [ev for ev in redone if (ev.start_entry_id or 0) >= wm]
-        assert sorted(map(repr, map(key, kept + redone))) == sorted(map(repr, map(key, whole))), (
-            family,
-            name,
-            k,
+def _resume(family: str, entries: list[StoredEntry], k: int, cp: int) -> list[Event]:
+    """What the engine does: events of the first pass that start before ``cp`` are kept, the rest is derived
+    again from ``cp``; the level state follows the rule "first window open unless a level window is kept"."""
+    first = LifecycleDeriver(family)
+    events = [ev for e in entries[:k] for ev in first.feed(e)]
+    kept = [ev for ev in events if (ev.start_entry_id or 0) < cp]
+    second = LifecycleDeriver(family, stream_start=cp == entries[0].id)
+    if cp != entries[0].id:
+        before = [e for e in entries if e.id < cp]
+        second.resume_level(
+            first_window_open=not any(ev.kind == "level_window" for ev in kept),
+            n_before=len(before),
+            last_id=before[-1].id,
         )
+    redone = run_in_memory([second], [e for e in entries if e.id >= cp])
+    return kept + [ev for ev in redone if (ev.start_entry_id or 0) >= cp]
+
+
+@pytest.mark.parametrize("family", ["AAVL", "AWFM"])
+def test_every_short_stream_every_cut_every_checkpoint_equals_the_whole_run(family: str) -> None:
+    """Exhaustive: streams of up to 6 records (untimed, timed, two-hour jump, level change); the resume point
+    is ANY id up to the level rule's watermark (other rules may pull it back)."""
+    for size in range(1, 7):
+        for kinds in itertools.product("otjc", repeat=size):
+            entries = _sweep_stream(kinds)
+            whole = sorted(map(repr, map(key, run_in_memory([LifecycleDeriver(family)], entries))))
+            for k in range(1, size + 1):
+                wm = LifecycleDeriver(family)
+                for e in entries[:k]:
+                    list(wm.feed(e))
+                top = wm.low_watermark()
+                assert top is not None
+                for cp in range(entries[0].id, top + 1):
+                    got = sorted(map(repr, map(key, _resume(family, entries, k, cp))))
+                    assert got == whole, (family, kinds, k, cp)
 
 
 def test_flush_without_eof_emits_nothing_and_watermark_tracks_open_state() -> None:

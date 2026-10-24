@@ -680,6 +680,28 @@ def _derive_chain(
         ).fetchone()
         if earlier:
             derivers = build_derivers(family, rules, truncated=truncated, stream_start=False)
+            resume_level = [d for d in derivers if hasattr(d, "resume_level")]
+            if resume_level:
+                # The first window is recreated unless a level window starts before the checkpoint
+                # (not whether entries exist before it: untimed records may precede the first window).
+                where, params = (
+                    "stream_id = ? AND kind = 'level_window' AND start_entry_id < ?",
+                    [stream_id, cp],
+                )
+                if multi:
+                    where += " AND json_extract(detail, '$.chain') = ?"
+                    params.append(chain)
+                sql = f"SELECT 1 FROM event WHERE {where} LIMIT 1"  # noqa: S608
+                first_open = conn.execute(sql, params).fetchone() is None
+                n_before, last_before = 0, None
+                if first_open:
+                    n_before, last_before = conn.execute(
+                        f"SELECT count(*), max(id) FROM entry NOT INDEXED"  # noqa: S608
+                        f" WHERE source_id IN ({marks}) AND id < ?",
+                        [*(r[0] for r in ranges), cp],
+                    ).fetchone()
+                for d in resume_level:
+                    d.resume_level(first_window_open=first_open, n_before=n_before, last_id=last_before)
             if any(getattr(d, "tracks_pid", False) for d in derivers):
                 pid = _confirmed_pid(conn, stream_id, chain, multi, [r[0] for r in ranges], cp)
                 for d in derivers:

@@ -288,10 +288,6 @@ class _Startup:
 class _Level:
     def __init__(self, stream_start: bool = True) -> None:
         self.first_id: int | None = None  # first entry with ts, until the first change
-        # First entry fed at all (with or without ts), until the first change: the resume point of the
-        # first window must not skip untimed records that precede ``first_id``.
-        self.head_id: int | None = None
-        self.pin_head = False  # the first window starts at the first change: keep ``head_id`` as watermark
         self.first_ts: int | None = None
         # Resuming mid-stream: the first window (before any change) belongs to an earlier pass.
         self.seen_change = not stream_start
@@ -374,15 +370,6 @@ class _Level:
                         "skipped": self.first_skipped,
                     }
                     out.append(self._event(first, end_id if self.n > 0 else e.id, ts, STATUS_OK))
-                # The first window starts at the first timed entry. When that entry is this very change, the
-                # window starts at the checkpoint a resume would use: the reset would delete it and, with
-                # entries before it, nothing would recreate it. The head stays the watermark until the next
-                # change (after which the first window starts before the checkpoint and is kept).
-                if self.cur is None and self.first_id == e.id:
-                    self.pin_head = True
-                else:
-                    self.head_id = None
-                    self.pin_head = False
                 self.seen_change = True
                 self.first_id = self.first_ts = None
                 self.first_skipped = False
@@ -408,8 +395,8 @@ class _Level:
         marks = []
         if self.cur is not None:
             marks.append(self.cur["id"])
-        if (not self.seen_change or self.pin_head) and self.head_id is not None:
-            marks.append(self.head_id)
+        if not self.seen_change and self.first_id is not None:
+            marks.append(self.first_id)
         return min(marks) if marks else None
 
 
@@ -743,8 +730,6 @@ class LifecycleDeriver:
             if startup.open or msg.startswith(_START_PREFIXES) or msg[:1].isspace():
                 out.extend(startup.feed(entry))
             level = self._level
-            if level.head_id is None and not level.seen_change:
-                level.head_id = entry.id
             if ts is not None:
                 if level.first_id is None and not level.seen_change:
                     level.first_id, level.first_ts = entry.id, ts
@@ -782,6 +767,17 @@ class LifecycleDeriver:
     @property
     def tracks_pid(self) -> bool:
         return self._pid is not None
+
+    def resume_level(self, *, first_window_open: bool, n_before: int, last_id: int | None) -> None:
+        """Called by the engine when it resumes mid-chain. ``first_window_open``: no level window starts
+        before the checkpoint, so the first window (before any change) is derived again from here; the
+        entries before the checkpoint (all untimed then) are only counted (``n_before``, ``last_id``) so
+        that its entry count and end id equal those of the whole run. Otherwise the saved windows stand."""
+        level = self._level
+        level.seen_change = not first_window_open
+        if first_window_open:
+            level.n = n_before
+            level.last_id = last_id
 
     def seed_previous_pid(self, pid: int | None) -> None:
         """Called by the engine when it resumes mid-chain: the CONFIRMED PID in force before the first

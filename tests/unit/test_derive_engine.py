@@ -383,6 +383,33 @@ def test_first_level_window_is_recovered_at_every_cut(tmp_path, name):
         whole.close()
 
 
+def test_first_level_window_survives_a_checkpoint_pulled_back_by_a_gap(tmp_path):
+    """The hourly-gap rule keeps the last entry as its resume point: the checkpoint can sit on the first
+    change although the second one already closed the first window (AAVL: gaps over 61 minutes)."""
+    avl = f"{tp.LOGDIR}/AVLAdapter_5000.log"
+    hours = 2 * 3_600_000
+    lines = [ORPHAN, line(0, UP), line(hours, DOWN), line(hours + 10, "[Op] work 1")]
+    whole = tp.fresh_db(tmp_path, "whole")
+    try:
+        ingest(whole, tp.write_folder(tmp_path / "W", {avl: render(lines)}))
+        want = snapshot(whole)
+        assert sum(r[0] == "level_window" for r in want[0]) == 3
+        for first in range(1, len(lines) + 1):
+            for second in range(first, len(lines) + 1):
+                steps = tp.fresh_db(tmp_path, f"g{first}_{second}")
+                try:
+                    root = tp.write_folder(tmp_path / f"G{first}_{second}", {avl: render(lines[:first])})
+                    ingest(steps, root)
+                    for upto in (second, len(lines)):
+                        (root / avl).write_bytes(render(lines[:upto]))
+                        ingest(steps, root)
+                    assert snapshot(steps) == want, (first, second)
+                finally:
+                    steps.close()
+    finally:
+        whole.close()
+
+
 @pytest.mark.parametrize("name", ["orphan_then_change", "many_orphans_then_change"])
 def test_first_level_window_survives_a_rotation_follow_up(tmp_path, name):
     lines = _first_window_scenarios()[name]
