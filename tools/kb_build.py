@@ -2,6 +2,7 @@
 
 Usage:
     python tools/kb_build.py --vault <vault dir> [--out <pack dir>] [--check] [--vault-commit auto|none|<sha>]
+        [--no-rt] [--rt-curated <rt_services.toml>] [--rt-summary first-sentence|none]
 
 Reads only ``.md`` files from the vault (read-only, nothing is executed) and writes deterministic JSON
 (sorted keys and rows, indent=2, LF, UTF-8, trailing newline, no timestamps). With ``--check`` nothing is
@@ -20,15 +21,32 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
+import tomllib
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from dmslog.knowledge.pack_schema import PACK_FILES, SCHEMA_VERSION  # noqa: E402
+from dmslog.knowledge.pack_schema import (  # noqa: E402
+    OPTIONAL_PACK_FILES,
+    PACK_FILES,
+    RT_MAX_COUNTERS,
+    RT_MAX_REFERENCES,
+    RT_MAX_SUMMARY,
+    RT_MAX_TEXT,
+    RT_SERVICES_FILE,
+    SCHEMA_VERSION,
+    validate_rt_services,
+)
 
-GENERATOR_VERSION = "1.0.0"
+MAX_NOTE_BYTES = 4 * 1024 * 1024  # a note larger than this is refused before it is decoded
+MAX_PARAGRAPH_CHARS = 4096  # candidate paragraph of the RT summary, cut before any regex
+
+GENERATOR_VERSION = "1.1.0"
 NOTICE = (
     "This pack is derived from Schneider Electric documentation (ADMS GridOps/ADMS). "
     "The repository must stay private; do not publish this pack, nor artifacts that embed it."
@@ -69,8 +87,6 @@ ADAPTER_TYPES = {
     "multispeak": "multispeak",
 }
 
-_WIKILINK = re.compile(r"\[\[([^\]]*)\]\]")
-_MDLINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _HEADING = re.compile(r"^##\s+(.+?)\s+—\s+(.+?)\s+\(\[\[([A-Za-z0-9]+) Index(?:\\?\|[^\]]*)?\]\]\)\s*$")
 _PROCESS_PREFIX = re.compile(r"\b([A-Z][A-Za-z]*Adapter)_")
 
@@ -122,16 +138,65 @@ def split_row(line: str) -> list[str]:
     return cells
 
 
+def _wiki_links(text: str) -> str:
+    """``[[target|label]]`` -> label (or target); one linear scan (no regex backtracking on bad markdown)."""
+    out: list[str] = []
+    pos = 0
+    close = -2  # cached index of the next "]" at or after the scan point
+    while True:
+        start = text.find("[[", pos)
+        if start < 0:
+            break
+        if close < start + 2:
+            close = text.find("]", start + 2)
+            if close < 0:
+                break
+        if text.startswith("]]", close):
+            inner = text[start + 2 : close].replace("\\|", "|")
+            target, _, label = inner.partition("|")
+            out.append(text[pos:start])
+            out.append(label or target)
+            pos = close + 2
+        else:
+            out.append(text[pos : start + 1])
+            pos = start + 1
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _md_links(text: str) -> str:
+    """``[label](url)`` -> label; one linear scan."""
+    out: list[str] = []
+    pos = 0
+    close = -2  # cached next "]"
+    paren = -2  # cached next ")"
+    while True:
+        start = text.find("[", pos)
+        if start < 0:
+            break
+        if close < start + 1:
+            close = text.find("]", start + 1)
+            if close < 0:
+                break
+        if text.startswith("(", close + 1):
+            if paren < close + 2:
+                paren = text.find(")", close + 2)
+            if paren < 0:
+                break  # no ")" left: no link can match any more
+            out.append(text[pos:start])
+            out.append(text[start + 1 : close])
+            pos = paren + 1
+            continue
+        out.append(text[pos : start + 1])
+        pos = start + 1
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def clean_cell(cell: str) -> str:
     """Resolve escaped pipes, wiki/markdown links and inline-code marks of a cell."""
 
-    def wiki(match: re.Match) -> str:
-        inner = match.group(1).replace("\\|", "|")
-        target, _, label = inner.partition("|")
-        return label or target
-
-    text = _WIKILINK.sub(wiki, cell.strip())
-    text = _MDLINK.sub(r"\1", text)
+    text = _md_links(_wiki_links(cell.strip()))
     text = text.replace("\\|", "|")
     if len(text) >= 2 and text.startswith("`") and text.endswith("`"):
         text = text[1:-1]
@@ -217,14 +282,46 @@ class Vault:
             raise BuildError(f"vault section not found: {self.section}")
         self.hashes: dict[str, str] = {}
         self._index = None
+        self._root_index = None
 
     def rel(self, path: Path) -> str:
         return path.relative_to(self.root).as_posix()
 
+    def _check_inside(self, path: Path) -> None:
+        """Refuse symlinks and any path that does not resolve inside the resolved vault root."""
+        try:
+            parts = Path(path).relative_to(self.root).parts
+        except ValueError as exc:
+            raise BuildError(f"refusing to read a file outside the vault: {path}") from exc
+        current = self.root
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise BuildError(f"refusing to follow a symbolic link: {current}")
+        real_root = Path(os.path.realpath(self.root))
+        real = Path(os.path.realpath(path))
+        if real != real_root and not real.is_relative_to(real_root):
+            raise BuildError(f"refusing to read a file outside the vault: {path}")
+
+    def _walk_notes(self, base: Path):
+        """Sorted ``.md`` files below ``base``; symbolic links (files and directories) are never followed."""
+        found = []
+        for folder, dirnames, filenames in os.walk(base, followlinks=False):
+            dirnames[:] = sorted(d for d in dirnames if not (Path(folder) / d).is_symlink())
+            for name in filenames:
+                path = Path(folder) / name
+                if name.endswith(".md") and not path.is_symlink():
+                    found.append(path)
+        return sorted(found)
+
     def read(self, path: Path) -> str:
         if path.suffix != ".md":
             raise BuildError(f"refusing to read a non-Markdown file: {path}")
-        data = path.read_bytes()
+        self._check_inside(path)
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_NOTE_BYTES + 1)
+        if len(data) > MAX_NOTE_BYTES:
+            raise BuildError(f"note larger than {MAX_NOTE_BYTES} bytes: {path}")
         self.hashes[self.rel(path)] = hashlib.sha256(data).hexdigest()
         return data.decode("utf-8-sig").replace("\r\n", "\n")
 
@@ -232,9 +329,26 @@ class Vault:
         """Path of ``filename`` anywhere in the section (None when absent; error when ambiguous)."""
         if self._index is None:
             self._index = {}
-            for path in sorted(self.section.rglob("*.md")):
+            for path in self._walk_notes(self.section):
                 self._index.setdefault(path.name, []).append(path)
         found = self._index.get(filename, [])
+        if len(found) > 1:
+            raise BuildError(f"ambiguous note name {filename!r}: {[self.rel(p) for p in found]}")
+        return found[0] if found else None
+
+    def root_index(self) -> dict[str, list[Path]]:
+        """Every ``.md`` note of the vault by file name (``archive`` folders are left out)."""
+        if self._root_index is None:
+            self._root_index = {}
+            for path in self._walk_notes(self.root):
+                if "archive" in path.relative_to(self.root).parts[:-1]:
+                    continue
+                self._root_index.setdefault(path.name, []).append(path)
+        return self._root_index
+
+    def find_any(self, filename: str):
+        """Path of ``filename`` anywhere in the vault (None when absent; error when ambiguous)."""
+        found = self.root_index().get(filename, [])
         if len(found) > 1:
             raise BuildError(f"ambiguous note name {filename!r}: {[self.rel(p) for p in found]}")
         return found[0] if found else None
@@ -474,16 +588,386 @@ def build_parameters(vault: Vault):
     return {"parameters": rows}
 
 
-def build_pack(vault_root, vault_commit="auto") -> dict[str, str]:
-    """Build the pack in memory: ``{file name: text}`` (deterministic)."""
+# ----- RT services (rt_services.json) -----------------------------------------------------------------
+
+DEFAULT_RT_CURATED = (
+    Path(__file__).resolve().parents[1].joinpath("src", "dmslog", "knowledge", "curated", "rt_services.toml")
+)
+RT_SUMMARY_MODES = ("first-sentence", "none")
+# Closed list of documents searched for references, in priority order (ARQUITETURA 7.1).
+RT_REFERENCE_DOCS = (
+    "SARC",
+    "PAIN",
+    "PRFI",
+    "SCOM",
+    "AVEL",
+    "SMAN",
+    "BCON",
+    "MNTN",
+    "INST",
+    "SWFS",
+    "SQEO",
+    "NDEX",
+)
+# Supporting notes (structure only; a missing note leaves the fields empty).
+EXECUTABLES_NOTE = "AVEL 2.1 Exclusion List for Executables.md"
+COUNTERS_NOTE = "SCOM 5.6 EcoStruxure GridOps Specific Performance Counters.md"
+MONITORING_NOTE = "SCOM 5.11 EcoStruxure GridOps Process Performance Counter.md"
+USAGE_EVENTS_NOTE = "SMAN Usage Events.md"
+H_APPLICATION_KEY = "ApplicationKey"
+
+_NUMBERED_HEADING = re.compile(r"^(#+)\s+(\d+(?:\.\d+)*)\.?\s+(.*?)\s*$")
+_BULLETS = re.compile(r"[•\s]+")
+_PROGRAM_FILES = re.compile(r"^[A-Za-z]:\\Program Files(?: \(x86\))?\\[^\\]+\\")
+_DRIVE = re.compile(r"^[A-Za-z]:\\")
+_NOT_PROSE = re.compile(r"^(?:[-+•]\s|\*(?!\*)|\d+[.)]\s|!\[|>|<|\||#)")
+_FENCE = re.compile(r"^(?:```|~~~)")
+_ABBREVIATIONS = frozenset({"e.g", "i.e", "etc", "vs", "cf", "fig", "approx"})
+_SENTENCE_MARK = re.compile(r"[.!?]")
+_MAX_LINE_CHARS = 1000  # longer lines are not scanned for headings
+
+
+def _plain(text: str) -> str:
+    """Single-line plain text: links resolved, emphasis and code marks removed, spaces collapsed."""
+    text = clean_cell(text).replace("**", "").replace("`", "")
+    text = "".join(" " if unicodedata.category(ch) in ("Cc", "Zl", "Zp") else ch for ch in text)
+    return " ".join(text.split())
+
+
+def _heading(line: str):
+    return _NUMBERED_HEADING.match(line) if len(line) <= _MAX_LINE_CHARS else None
+
+
+def _normalize(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _body(text: str) -> str:
+    """The note without its front matter."""
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        for index, line in enumerate(lines[1:], start=1):
+            if line.strip() == "---":
+                return "\n".join(lines[index + 1 :])
+    return text
+
+
+def find_section(text: str, section: str):
+    """``(title, lines below the heading)`` of the heading numbered ``section`` (None when absent)."""
+    lines = _body(text).splitlines()
+    for index, line in enumerate(lines):
+        match = _heading(line)
+        if not match or match.group(2) != section:
+            continue
+        level = len(match.group(1))
+        below = []
+        for following in lines[index + 1 :]:
+            other = re.match(r"^(#+)\s", following[:_MAX_LINE_CHARS])
+            if other and len(other.group(1)) <= level:
+                break
+            below.append(following)
+        return _plain(match.group(3))[:RT_MAX_TEXT], below
+    return None
+
+
+def _sentence_end(text: str):
+    """Index just after the first sentence end of ``text`` (None: the sentence runs to the end)."""
+    for mark in _SENTENCE_MARK.finditer(text):
+        end = mark.end()
+        if end == len(text):
+            return None
+        if not text[end].isspace():
+            continue  # "3.5", "a.b", "file.txt"
+        word = text[:end].rsplit(" ", 1)[-1].rstrip(".!?").lower()
+        if mark.group() == "." and (word in _ABBREVIATIONS or (len(word) == 1 and word.isalpha())):
+            continue
+        return end
+    return None
+
+
+def first_sentence(lines: list[str], limit: int = RT_MAX_SUMMARY):
+    """First sentence of the first prose paragraph (None when there is no prose).
+
+    Fenced code blocks, quotes, tables, lists, figures and captions are skipped; the candidate paragraph
+    is cut at ``MAX_PARAGRAPH_CHARS`` before any pattern runs and the result is one line of at most
+    ``limit`` characters.
+    """
+    paragraph: list[str] = []
+    size = 0
+    fenced = False
+    for line in lines:
+        stripped = line.strip()
+        if _FENCE.match(stripped):
+            fenced = not fenced
+            if paragraph:
+                break
+            continue
+        if fenced:
+            continue
+        if not stripped or _NOT_PROSE.match(stripped):
+            if paragraph:
+                break
+            continue
+        paragraph.append(stripped)
+        size += len(stripped) + 1
+        if size >= MAX_PARAGRAPH_CHARS:
+            break
+    text = _plain(" ".join(paragraph)[:MAX_PARAGRAPH_CHARS])
+    if not text:
+        return None
+    end = _sentence_end(text)
+    sentence = text[:end].strip() if end else text
+    if len(sentence) > limit:
+        head = sentence[: limit - 1]
+        if " " in head and not sentence[limit - 1].isspace():
+            head = head.rsplit(" ", 1)[0]
+        sentence = head.rstrip(" ,;:") + "…"
+    return sentence
+
+
+def load_rt_curated(path: Path) -> list[dict]:
+    try:
+        data = tomllib.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise BuildError(f"cannot read the curated RT services file {path}: {exc}") from exc
+    services = data.get("service", [])
+    seen: set[str] = set()
+    for entry in services:
+        process, family = entry.get("process"), entry.get("family")
+        if not isinstance(process, str) or not isinstance(family, str):
+            raise BuildError(f"{path}: every service needs a 'process' and a 'family'")
+        if process in seen:
+            raise BuildError(f"{path}: duplicate process {process}")
+        seen.add(process)
+        vault = entry.get("vault", "absent")
+        if isinstance(vault, dict):
+            if not all(isinstance(vault.get(key), str) and vault[key] for key in ("doc", "note", "section")):
+                raise BuildError(f"{path}: {process}: 'vault' needs doc, note and section")
+        elif vault != "absent":
+            raise BuildError(f"{path}: {process}: 'vault' must be a table or \"absent\"")
+    return services
+
+
+def _candidates(entry: dict) -> list[str]:
+    """Identifiers searched for: the process, the process without ``DMS_``/``OMS_`` and the ``names``."""
+    process = entry["process"]
+    found = [process, re.sub(r"^(?:DMS|OMS)_", "", process), *entry.get("names", [])]
+    return sorted({name for name in found if name}, key=lambda name: (-len(name), name))
+
+
+def _word_regex(names: list[str]) -> re.Pattern:
+    alternatives = "|".join(re.escape(name) for name in names)
+    return re.compile(rf"(?<![A-Za-z0-9_])(?:{alternatives})(?![A-Za-z0-9])")
+
+
+def _read_support(vault: Vault, filename: str):
+    path = vault.find_any(filename)
+    return vault.read(path) if path else None
+
+
+def _install_dirs(text: str | None) -> list[tuple[str, set[str]]]:
+    """``(folder, executable names)`` for every heading of the executables note."""
+    result: list[tuple[str, set[str]]] = []
+    if not text:
+        return result
+    current = None
+    names: set[str] = set()
+    for line in _body(text).splitlines():
+        heading = re.match(r"^##+\s+[\d.]*\s*(.*?)\s*$", line[:_MAX_LINE_CHARS])
+        if heading:
+            if current is not None:
+                result.append((current, names))
+            title = _plain(heading.group(1))
+            title = _PROGRAM_FILES.sub("", title) if _PROGRAM_FILES.match(title) else _DRIVE.sub("", title)
+            current, names = title[:RT_MAX_TEXT], set()
+        elif current is not None:
+            names.update(token for token in _BULLETS.split(line) if token.endswith(".exe"))
+    if current is not None:
+        result.append((current, names))
+    return result
+
+
+def _monitoring(text: str | None) -> list[tuple[str, set[str]]]:
+    """``(cpu|ram|hdd, process names)`` for every table of the process monitoring note."""
+    result = []
+    if not text:
+        return result
+    for _heading, headers, rows in parse_tables(_body(text)):
+        kind = headers[0].replace("*", "").strip().lower() if headers else ""
+        if kind not in ("cpu", "ram", "hdd") or len(headers) < 2:
+            continue
+        names: set[str] = set()
+        for row in rows:
+            names.update(token for token in _BULLETS.split(row[1]) if token)
+        result.append((kind, names))
+    return result
+
+
+def _counter_blocks(text: str | None) -> list[tuple[str, list[str]]]:
+    """``(normalized block name, counter names)`` for every counter table."""
+    result = []
+    if not text:
+        return result
+    for _heading, headers, rows in parse_tables(_body(text)):
+        block = _normalize(headers[0]) if headers else ""
+        if len(headers) < 2 or not block:
+            continue
+        result.append((block, [name for name in (_plain(row[0]) for row in rows) if name]))
+    return result
+
+
+def _usage_events(text: str | None) -> list[str]:
+    """Normalized ``ApplicationKey`` of every usage event row."""
+    keys: list[str] = []
+    if not text:
+        return keys
+    for _heading, headers, rows in parse_tables(_body(text)):
+        if H_APPLICATION_KEY in headers:
+            column = headers.index(H_APPLICATION_KEY)
+            keys.extend(_normalize(row[column]) for row in rows)
+    return keys
+
+
+def _reference_notes(vault: Vault):
+    """``(doc, relative path, body)`` of the notes of the closed document list, in priority order."""
+    found = []
+    for priority, doc in enumerate(RT_REFERENCE_DOCS):
+        for name, paths in vault.root_index().items():
+            if name.startswith(doc + " "):
+                found.extend((priority, vault.rel(path), doc, path) for path in paths)
+    found.sort(key=lambda item: item[:2])
+    return [(doc, rel, _body(vault.read(path))) for _priority, rel, doc, path in found]
+
+
+def _references(notes, entry: dict, own_note: str | None):
+    pattern = _word_regex(_candidates(entry))
+    found = []
+    for doc, rel, body in notes:
+        if rel == own_note:
+            continue
+        matches = list(pattern.finditer(body))
+        if not matches:
+            continue
+        section = None
+        for line in reversed(body[: matches[0].start()].splitlines()):
+            heading = _heading(line)
+            if heading:
+                section = heading.group(2)
+                break
+        found.append((RT_REFERENCE_DOCS.index(doc), -len(matches), rel, doc, section))
+    found.sort(key=lambda item: item[:3])
+    return [
+        {"doc": doc, "note": rel, "section": section, "mentions": -negative}
+        for _priority, negative, rel, doc, section in found[:RT_MAX_REFERENCES]
+    ]
+
+
+def build_rt_services(vault: Vault, services: list[dict], summary_mode: str = "first-sentence"):
+    """The rows of ``rt_services.json`` from the curated services and the vault (sorted by process)."""
+    install_dirs = _install_dirs(_read_support(vault, EXECUTABLES_NOTE))
+    monitoring = _monitoring(_read_support(vault, MONITORING_NOTE))
+    counter_blocks = _counter_blocks(_read_support(vault, COUNTERS_NOTE))
+    usage_keys = _usage_events(_read_support(vault, USAGE_EVENTS_NOTE))
+    sections: dict[str, tuple[str, str, str | None]] = {}
+    cache: dict[tuple[str, str], tuple[str, list[str]]] = {}
+    for entry in services:
+        ref = entry.get("vault", "absent")
+        if not isinstance(ref, dict):
+            continue
+        path = vault.find_any(ref["note"])
+        if path is None:
+            raise BuildError(f"{entry['process']}: note {ref['note']!r} not found in the vault")
+        key = (ref["note"], ref["section"])
+        if key not in cache:
+            found = find_section(vault.read(path), ref["section"])
+            if found is None:
+                raise BuildError(f"{entry['process']}: section {ref['section']} not found in {ref['note']!r}")
+            cache[key] = found
+        title, below = cache[key]
+        summary = first_sentence(below) if summary_mode == "first-sentence" else None
+        sections[entry["process"]] = (title, vault.rel(path), summary)
+    notes = _reference_notes(vault)
+    rows = []
+    for entry in sorted(services, key=lambda item: item["process"]):
+        process = entry["process"]
+        names = _candidates(entry)
+        normalized = {_normalize(name) for name in names}
+        title, note, summary = sections.get(process, (None, None, None))
+        section = entry["vault"]["section"] if note else None
+        counters = sorted(
+            {
+                c
+                for block, items in counter_blocks
+                if block in normalized
+                for c in items
+                if len(c) <= RT_MAX_TEXT
+            }
+        )
+        rows.append(
+            {
+                "process": process,
+                "family": entry["family"],
+                "title": title,
+                "summary": summary,
+                "note": note,
+                "section": section,
+                "install_dir": next(
+                    (folder for folder, exes in install_dirs if any(f"{name}.exe" in exes for name in names)),
+                    None,
+                ),
+                "monitored": sorted({kind for kind, procs in monitoring if procs & set(names)}),
+                "counters": counters[:RT_MAX_COUNTERS],
+                "usage_events": sum(1 for key in usage_keys if key in normalized),
+                "references": _references(notes, entry, note),
+            }
+        )
+    return rows
+
+
+def rt_coverage(files: dict[str, str]) -> str | None:
+    """The coverage line of the RT services (numbers only); None when the pack has no such file."""
+    if RT_SERVICES_FILE not in files:
+        return None
+    rows = json.loads(files[RT_SERVICES_FILE])["rt_services"]
+    total = len(rows)
+    with_section = sum(1 for row in rows if row["note"] is not None)
+    with_references = sum(1 for row in rows if row["references"])
+    return (
+        f"rt: {with_section}/{total} services with a vault section, {with_references}/{total} with references"
+    )
+
+
+def _validate_rt_output(value: dict) -> None:
+    """The loader drops the whole RT block when the file is invalid, so never produce an invalid one."""
+    with tempfile.TemporaryDirectory() as folder:
+        Path(folder, RT_SERVICES_FILE).write_text(dump(value), encoding="utf-8", newline="\n")
+        errors = validate_rt_services(folder)
+    if errors:
+        raise BuildError("generated " + RT_SERVICES_FILE + " is invalid: " + "; ".join(errors[:5]))
+
+
+def build_pack(
+    vault_root, vault_commit="auto", rt_curated=DEFAULT_RT_CURATED, rt_summary="first-sentence"
+) -> dict[str, str]:
+    """Build the pack in memory: ``{file name: text}`` (deterministic).
+
+    ``rt_curated`` is the curated RT services file (None: no ``rt_services.json``; the default file is
+    skipped when it does not exist); ``rt_summary`` is ``first-sentence`` or ``none`` (no vault text).
+    """
     vault_root = Path(vault_root)
     vault = Vault(vault_root)
+    if rt_summary not in RT_SUMMARY_MODES:
+        raise BuildError(f"unknown RT summary mode {rt_summary!r}")
     data = {
         "adapters.json": build_adapters(vault),
         "error_codes.json": build_error_codes(vault),
         "operations.json": build_operations(vault),
         "parameters.json": build_parameters(vault),
     }
+    if rt_curated is not None and (Path(rt_curated) != DEFAULT_RT_CURATED or Path(rt_curated).is_file()):
+        services = load_rt_curated(rt_curated)
+        data[RT_SERVICES_FILE] = {"rt_services": build_rt_services(vault, services, rt_summary)}
+        _validate_rt_output(data[RT_SERVICES_FILE])
     if vault_commit == "auto":
         commit = find_vault_commit(vault_root)
     elif vault_commit == "none":
@@ -522,7 +1006,7 @@ def diff_pack(files: dict[str, str], out: Path) -> list[str]:
             problems.append(f"{name}: missing in {out}")
         elif path.read_bytes() != text.encode("utf-8"):
             problems.append(f"{name}: differs from the freshly built pack")
-    expected = set(PACK_FILES)
+    expected = set(PACK_FILES) | set(OPTIONAL_PACK_FILES)
     for path in sorted(out.glob("*.json")) if out.is_dir() else []:
         if path.name not in expected:
             problems.append(f"{path.name}: unexpected file in {out}")
@@ -554,6 +1038,19 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--check", action="store_true", help="do not write; fail if --out differs")
     parser.add_argument("--vault-commit", default="auto", help="'auto' (read .git), 'none' or a commit id")
+    parser.add_argument("--no-rt", action="store_true", help="do not generate rt_services.json")
+    parser.add_argument(
+        "--rt-curated",
+        type=Path,
+        default=DEFAULT_RT_CURATED,
+        help="curated RT services file (default: the one in src/dmslog/knowledge/curated)",
+    )
+    parser.add_argument(
+        "--rt-summary",
+        choices=RT_SUMMARY_MODES,
+        default="first-sentence",
+        help="'none' leaves the first sentence of each vault section out of rt_services.json",
+    )
     args = parser.parse_args(argv)
     if args.out is None:
         args.out = default_out(args.data_dir)
@@ -565,7 +1062,9 @@ def main(argv=None) -> int:
         )
         return 2
     try:
-        files = build_pack(args.vault, args.vault_commit)
+        files = build_pack(
+            args.vault, args.vault_commit, None if args.no_rt else args.rt_curated, args.rt_summary
+        )
     except (BuildError, OSError, UnicodeDecodeError) as exc:
         print(f"kb_build: error: {exc}", file=sys.stderr)
         return 2
@@ -583,6 +1082,9 @@ def main(argv=None) -> int:
         return 0
     write_pack(files, args.out)
     print(f"kb_build: wrote {len(files)} files to {args.out}")
+    coverage = rt_coverage(files)
+    if coverage:
+        print(f"kb_build: {coverage}")
     return 0
 
 

@@ -1,0 +1,49 @@
+# Synthetic curated RT services for the kb_build tests (tests/fixtures/mini_vault). Nothing real.
+version = 1
+
+[[service]]
+process = "DMS_ExampleScheduler"
+family = "DMSJOB"
+group = "calculation"
+codes = ["DJB-001..039"]
+keys = ["job_id"]
+names = ["ExampleSched"]
+vault = { doc = "SARC", note = "SARC 5.4.3 Example Services.md", section = "5.4.3.4.1" }
+
+[[service]]
+process = "DMS_ExampleLauncher"
+family = "DMSJOB"
+group = "calculation"
+codes = ["DJB-040..079"]
+keys = ["job_id"]
+vault = { doc = "SARC", note = "SARC 5.4.3 Example Services.md", section = "5.4.3.4.2" }
+
+[[service]]
+process = "DMS_ExampleHost"
+family = "DMSFH"
+group = "calculation"
+keys = ["job_id"]
+vault = { doc = "SARC", note = "SARC 5.4.3 Example Services.md", section = "5.4.3.4.3" }
+
+[[service]]
+process = "DMS_ExampleLong"
+family = "DMSCORE"
+group = "core"
+vault = { doc = "SARC", note = "SARC 5.4.3 Example Services.md", section = "5.4.3.4.4" }
+
+[[service]]
+process = "DMS_ExampleEmpty"
+family = "DMSCORE"
+group = "core"
+vault = { doc = "SARC", note = "SARC 5.4.3 Example Services.md", section = "5.4.3.4.5" }
+
+[[service]]
+process = "ExampleAbsent"
+family = "NMC"
+group = "tool"
+vault = "absent"
+
+[[service]]
+process = "ExampleNothing"
+family = "ERS"
+group = "tool"

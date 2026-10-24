@@ -41,7 +41,10 @@ _spec.loader.exec_module(kb_build)
 @pytest.fixture
 def built_pack_dir(tmp_path):
     out = tmp_path / "pack"
-    assert kb_build.main(["--vault", str(MINI_VAULT), "--out", str(out), "--vault-commit", "none"]) == 0
+    assert (
+        kb_build.main(["--vault", str(MINI_VAULT), "--out", str(out), "--vault-commit", "none", "--no-rt"])
+        == 0
+    )
     return out
 
 

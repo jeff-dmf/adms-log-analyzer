@@ -1,3 +1,4 @@
+import dataclasses
 import importlib.util
 from pathlib import Path
 
@@ -9,11 +10,12 @@ from dmslog.knowledge.installation import (
     InstallationConfig,
     ProductConfig,
 )
-from dmslog.knowledge.pack import load_pack_from
+from dmslog.knowledge.pack import EMPTY_PACK, RtReference, RtService, load_pack_from
 from dmslog.knowledge.registry import ConfigParam
-from dmslog.knowledge.resolve import Knowledge, severity_number
+from dmslog.knowledge.resolve import Knowledge, _curated_rt_services, resolve_rt_service, severity_number
 
 ROOT = Path(__file__).resolve().parents[2]
+MINI_PACK = ROOT / "tests" / "fixtures" / "knowledge" / "mini_pack"
 MINI_VAULT = ROOT / "tests" / "fixtures" / "mini_vault"
 
 _spec = importlib.util.spec_from_file_location("kb_build", ROOT / "tools" / "kb_build.py")
@@ -24,7 +26,10 @@ _spec.loader.exec_module(kb_build)
 @pytest.fixture
 def pack(tmp_path):
     out = tmp_path / "pack"
-    assert kb_build.main(["--vault", str(MINI_VAULT), "--out", str(out), "--vault-commit", "none"]) == 0
+    assert (
+        kb_build.main(["--vault", str(MINI_VAULT), "--out", str(out), "--vault-commit", "none", "--no-rt"])
+        == 0
+    )
     return load_pack_from(out)
 
 
@@ -189,3 +194,141 @@ def test_without_pack_vault_lookups_are_empty_and_ers_still_answers():
 def test_a_given_pack_counts_as_installed(pack):
     status = Knowledge(pack).pack_status
     assert (status.state, status.source) == ("installed", "given")
+
+
+# -- RT services (R5e) ---------------------------------------------------------------------------
+
+
+def _pack_with(*services):
+    return dataclasses.replace(EMPTY_PACK, rt_services=tuple(services))
+
+
+def _vault_row(process, family, **kw):
+    base = {
+        "title": "Example title",
+        "summary": "Synthetic sentence.",
+        "note": "01 Example/Example Note.md",
+        "section": "1.2.3",
+        "install_dir": "Example\\bin",
+        "monitored": ("cpu",),
+        "counters": ("Example Counter",),
+        "usage_events": 2,
+        "references": (RtReference("EXMP", "02 Example/EXMP 1.md", "1.1", 3),),
+    }
+    base.update(kw)
+    return RtService(process, family, **base)
+
+
+def test_rt_service_exact_name_without_pack():
+    info = resolve_rt_service("DMS_JobScheduler")
+    assert info is not None
+    assert (info.process, info.family, info.group) == ("DMS_JobScheduler", "DMSJOB", "calculation")
+    assert info.keys == ("job_id",)
+    assert info.title is None and info.note is None and info.summary is None
+    assert info.monitored == () and info.counters == () and info.references == ()
+    assert info.usage_events == 0
+    assert info.in_vault is False
+
+
+def test_rt_service_none_pack_and_empty_pack_equal():
+    assert resolve_rt_service("DMS_JobScheduler", EMPTY_PACK) == resolve_rt_service("DMS_JobScheduler")
+
+
+def test_rt_service_joins_pack_record():
+    pack = _pack_with(_vault_row("DMS_JobScheduler", "DMSJOB"))
+    info = Knowledge(pack).rt_service("DMS_JobScheduler")
+    assert info.in_vault is True
+    assert info.title == "Example title"
+    assert info.section == "1.2.3"
+    assert info.counters == ("Example Counter",)
+    assert info.references[0].doc == "EXMP"
+    assert info.family == "DMSJOB"  # curated, not the pack
+
+
+def test_rt_service_pack_record_without_note_is_not_in_vault():
+    pack = _pack_with(_vault_row("DMS_JobScheduler", "DMSJOB", note=None, title=None, section=None))
+    assert resolve_rt_service("DMS_JobScheduler", pack).in_vault is False
+
+
+def test_rt_service_pool_instance_resolves_to_pool():
+    pack = _pack_with(_vault_row("DMS_FunctionHost", "DMSFH"))
+    info = resolve_rt_service("DMS_FunctionHost_7", pack, "DMSFH")
+    assert info.process == "DMS_FunctionHost"
+    assert info.in_vault is True
+    assert resolve_rt_service("DMS_FunctionHost_7").process == "DMS_FunctionHost"
+    assert resolve_rt_service("DMS_FunctionHost").process == "DMS_FunctionHost"
+
+
+@pytest.mark.parametrize(
+    "name", ["DMS_FunctionHost_0", "DMS_FunctionHost_", "DMS_FunctionHost_12345", "DMS_FunctionHost_x"]
+)
+def test_rt_service_pool_instance_shape_is_strict(name):
+    assert resolve_rt_service(name) is None
+
+
+def test_rt_service_only_pools_take_instances():
+    assert resolve_rt_service("DMS_JobScheduler_2") is None
+
+
+def test_rt_service_pool_instance_with_other_family_is_refused():
+    assert resolve_rt_service("DMS_FunctionHost_7", None, "DMSJOB") is None
+
+
+def test_rt_service_multi_service_families_resolve_by_process():
+    sched = resolve_rt_service("DMS_JobScheduler")
+    launcher = resolve_rt_service("DMS_JobLauncher")
+    manager = resolve_rt_service("DMS_JobManagerService")
+    assert {sched.family, launcher.family, manager.family} == {"DMSJOB"}
+    assert len({sched.process, launcher.process, manager.process}) == 3
+    assert launcher.keys == ("job_id", "fh_pid", "new_pid")
+    assert manager.keys == ("job_id", "jms_job")
+
+
+def test_rt_service_related_carries_the_key():
+    launcher = resolve_rt_service("DMS_JobLauncher")
+    pairs = {(r.process, r.via) for r in launcher.related}
+    assert ("DMS_JobScheduler", "job_id") in pairs
+    assert ("DMS_FunctionHost", "handoff") in pairs
+    assert resolve_rt_service("DMS_JobScheduler").as_dict()["related"][0] == {
+        "process": "DMS_JobLauncher",
+        "via": "job_id",
+    }
+
+
+@pytest.mark.parametrize(
+    "name", [None, "", "DMS_Unknown", "Example_Adapter", "ADMS_Process", "dms_jobscheduler"]
+)
+def test_rt_service_unknown_or_non_rt_is_none(name):
+    assert resolve_rt_service(name) is None
+    assert Knowledge(EMPTY_PACK).rt_service(name) is None
+
+
+def test_rt_service_with_synthetic_mini_pack_keeps_curated_only_processes():
+    # The mini pack only knows synthetic processes: real ones still resolve (curated) with empty vault fields.
+    pack = load_pack_from(MINI_PACK)
+    assert pack.rt_services
+    info = resolve_rt_service("DMS_JobScheduler", pack)
+    assert info is not None and info.in_vault is False
+    # a pack-only process that the curated TOML does not know is not an RT service
+    assert resolve_rt_service("DMS_ExampleScheduler", pack) is None
+
+
+def test_rt_service_every_curated_service_resolves():
+    curated = _curated_rt_services()
+    assert len(curated) == 33
+    for name, row in curated.items():
+        info = resolve_rt_service(name)
+        assert info is not None and info.process == name and info.family == row.family
+
+
+def test_rt_service_results_are_immutable():
+    info = resolve_rt_service("DMS_JobLauncher", _pack_with(_vault_row("DMS_JobLauncher", "DMSJOB")))
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        info.title = "x"
+    assert isinstance(info.keys, tuple) and isinstance(info.related, tuple)
+    assert isinstance(info.monitored, tuple) and isinstance(info.references, tuple)
+    d = info.as_dict()
+    d["keys"].append("bogus")  # a copy: the cached curated data is untouched
+    d["related"].clear()
+    again = resolve_rt_service("DMS_JobLauncher")
+    assert "bogus" not in again.keys and again.related

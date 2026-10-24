@@ -18,6 +18,7 @@ consulted) and ``pack_status`` says why.
 
 from __future__ import annotations
 
+import functools
 import re
 import tomllib
 from collections.abc import Mapping
@@ -27,7 +28,16 @@ from pathlib import Path
 
 from dmslog.knowledge import pack as pack_module
 from dmslog.knowledge.installation import InstallationConfig
-from dmslog.knowledge.pack import EMPTY_PACK, AdapterInfo, Pack, PackStatus, VaultError, VaultParam
+from dmslog.knowledge.pack import (
+    EMPTY_PACK,
+    AdapterInfo,
+    Pack,
+    PackStatus,
+    RtReference,
+    RtService,
+    VaultError,
+    VaultParam,
+)
 from dmslog.store.config import product_for_process
 
 _SEVERITY_NUMBERS = {"fatal": 1, "critical": 1, "error": 2, "warning": 3, "warn": 3, "info": 4}
@@ -73,6 +83,148 @@ class Hint:
     text: str
     params: tuple[str, ...] = ()
     note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RtRelated:
+    process: str
+    via: str  # a correlation key of the service, or "handoff"
+
+
+@dataclass(frozen=True, slots=True)
+class RtServiceInfo:
+    """The ``service`` block of ``GET /api/knowledge``: curated TOML joined with the pack record.
+
+    Vault fields are ``None``/empty and ``in_vault`` is False without a pack or without a vault section.
+    """
+
+    process: str  # canonical service name (the pool name for pool instances)
+    family: str
+    group: str
+    title: str | None
+    summary: str | None
+    note: str | None
+    section: str | None
+    install_dir: str | None
+    monitored: tuple[str, ...]
+    counters: tuple[str, ...]
+    usage_events: int
+    references: tuple[RtReference, ...]
+    related: tuple[RtRelated, ...]
+    keys: tuple[str, ...]
+    in_vault: bool
+
+    def as_dict(self) -> dict:
+        """JSON-ready form (fresh lists and plain dicts)."""
+        return {
+            "process": self.process,
+            "family": self.family,
+            "group": self.group,
+            "title": self.title,
+            "summary": self.summary,
+            "note": self.note,
+            "section": self.section,
+            "install_dir": self.install_dir,
+            "monitored": list(self.monitored),
+            "counters": list(self.counters),
+            "usage_events": self.usage_events,
+            "references": [
+                {"doc": r.doc, "note": r.note, "section": r.section, "mentions": r.mentions}
+                for r in self.references
+            ],
+            "related": [{"process": r.process, "via": r.via} for r in self.related],
+            "keys": list(self.keys),
+            "in_vault": self.in_vault,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _CuratedService:
+    process: str
+    family: str
+    group: str
+    keys: tuple[str, ...]
+    related: tuple[RtRelated, ...]
+
+
+# DMS_FunctionHost_<n>: instances of a pool (same shape as the [[pool]] of families.toml).
+_POOL_INSTANCE = re.compile(r"(?P<base>.+)_[1-9]\d{0,3}")
+
+
+@functools.lru_cache(maxsize=1)
+def _curated_rt_services() -> dict[str, _CuratedService]:
+    """``curated/rt_services.toml`` by process name (always available, no pack needed); loaded once."""
+    try:
+        raw = (resources.files("dmslog.knowledge") / "curated" / "rt_services.toml").read_bytes()
+        data = tomllib.loads(raw.decode("utf-8-sig"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    services: dict[str, _CuratedService] = {}
+    for row in data.get("service", []):
+        process = row.get("process")
+        if not isinstance(process, str) or not process:
+            continue
+        related = tuple(
+            RtRelated(r["process"], r["via"])
+            for r in row.get("related", [])
+            if isinstance(r, dict) and isinstance(r.get("process"), str) and isinstance(r.get("via"), str)
+        )
+        services[process] = _CuratedService(
+            process,
+            str(row.get("family", "")),
+            str(row.get("group", "")),
+            tuple(k for k in row.get("keys", []) if isinstance(k, str)),
+            related,
+        )
+    return services
+
+
+def _resolve_rt_name(process: str, family: str | None) -> _CuratedService | None:
+    curated = _curated_rt_services()
+    found = curated.get(process)
+    if found is not None:
+        return found
+    match = _POOL_INSTANCE.fullmatch(process)
+    if match:
+        base = curated.get(match.group("base"))
+        # Only the pool (the FunctionHost) takes numbered instances; the real family of the stream,
+        # when given, must be the pool's.
+        if base is not None and base.family == "DMSFH" and family in (None, base.family):
+            return base
+    return None
+
+
+def resolve_rt_service(
+    process: str | None, pack: Pack | None = None, family: str | None = None
+) -> RtServiceInfo | None:
+    """Service block for the PROCESS of a record's stream (never the template family), or ``None``.
+
+    ``family`` is the real family of the stream (optional): it only guards pool instances. Pure: the
+    curated TOML is loaded once; nothing else is read.
+    """
+    if not process:
+        return None
+    base = _resolve_rt_name(process, family)
+    if base is None:
+        return None
+    vault: RtService | None = pack.rt_service(base.process) if pack is not None else None
+    return RtServiceInfo(
+        process=base.process,
+        family=base.family,
+        group=base.group,
+        title=vault.title if vault else None,
+        summary=vault.summary if vault else None,
+        note=vault.note if vault else None,
+        section=vault.section if vault else None,
+        install_dir=vault.install_dir if vault else None,
+        monitored=tuple(vault.monitored) if vault else (),
+        counters=tuple(vault.counters) if vault else (),
+        usage_events=vault.usage_events if vault else 0,
+        references=tuple(vault.references) if vault else (),
+        related=base.related,
+        keys=base.keys,
+        in_vault=vault is not None and vault.note is not None,
+    )
 
 
 def _norm(text: str) -> str:
@@ -162,6 +314,12 @@ class Knowledge:
         if adapter is None:
             return None
         return adapter.index_note or adapter.config_note
+
+    # -- RT services -----------------------------------------------------------------------------
+
+    def rt_service(self, process: str | None, family: str | None = None) -> RtServiceInfo | None:
+        """``service`` block for the process of a record's stream; ``None`` outside RT/unknown."""
+        return resolve_rt_service(process, self.pack, family)
 
     # -- errors ----------------------------------------------------------------------------------
 
