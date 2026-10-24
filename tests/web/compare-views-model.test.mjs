@@ -240,3 +240,11 @@ test("texts: every cv string is static, non-empty and in the vocabulary of the a
     assert.ok(S.cvInvalid[key], key);
   }
 });
+
+test("process mode: pool instances read as the pool and sit together in numeric order", () => {
+  const fh = (stream, n) => ({ stream_id: stream, family: "DMSFH", process: "DMS_FunctionHost_" + n, pool: "DMS_FunctionHost", instance: n });
+  const options = processOptions([fh(30, 10), { stream_id: 31, family: "Wfm", process: "Wfm" }, fh(32, 2), fh(33, 1)]);
+  assert.deepEqual(options.map((o) => o.value), ["33", "32", "30", "31"]);
+  assert.equal(options[0].label, "DMSFH / DMS_FunctionHost #1 (process 33)");
+  assert.ok(describeSide({ stream: fh(30, 7) }, "process").startsWith("DMSFH / DMS_FunctionHost #7"));
+});

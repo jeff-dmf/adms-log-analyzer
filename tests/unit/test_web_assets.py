@@ -62,6 +62,7 @@ EXPECTED_MODULES = {
     "key-panel.js",
     "queue-model.js",
     "queue-panel.js",
+    "process-label.js",
     "links-model.js",
     "links.js",
     "side-by-side.js",

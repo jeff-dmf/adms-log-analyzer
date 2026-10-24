@@ -109,3 +109,9 @@ test("level windows and lifecycle events are listed in time order", () => {
   assert.equal(rows[1].what, "gap, 1 h 0 min");
   assert.equal(rows[0].suspect, false);
 });
+
+test("dashboard rows label a pool instance by pool and number", () => {
+  const event = { id: 2, kind: "level_window", name: "Verbose", ts_start: 5000, family: "DMSFH", process: "DMS_FunctionHost_3", pool: "DMS_FunctionHost", instance: 3 };
+  assert.equal(levelRows([event])[0].process, "DMSFH / DMS_FunctionHost #3");
+  assert.equal(lifecycleRows([[{ ...event, kind: "restart" }]])[0].process, "DMSFH / DMS_FunctionHost #3");
+});

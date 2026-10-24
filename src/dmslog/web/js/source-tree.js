@@ -243,6 +243,14 @@ export class SourceTree {
     if (el.title !== title) {
       el.title = title;
     }
+    // A pool instance reads "DMS_FunctionHost #7, DMS_FunctionHost_7.log"; other rows are named by their text.
+    if (node.label) {
+      if (el.getAttribute("aria-label") !== node.label) {
+        el.setAttribute("aria-label", node.label);
+      }
+    } else if (el.getAttribute("aria-label") !== null) {
+      el.removeAttribute("aria-label");
+    }
     const bad = node.folder ? node.unreadable > 0 : isUnreadable(node.source);
     entry.mark.hidden = !bad;
     if (bad) {

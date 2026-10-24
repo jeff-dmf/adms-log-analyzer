@@ -11,7 +11,7 @@ comma separated. User text only ever reaches SQL as bound parameters.
     ``name`` and ``status`` accept comma lists; ``stream`` is a stream id; ``source`` keeps events
     whose first entry belongs to that source id; ``q`` matches ``event.key`` exactly or by prefix
     (case sensitive); ``from``/``to`` bound ``ts_start`` (inclusive). Default limit 200, max 1000.
-    ``<event>`` = ``{id, stream_id, family, process, sensitive, kind, name, key, tid,
+    ``<event>`` = ``{id, stream_id, family, process, pool, instance, sensitive, kind, name, key, tid,
     start_entry_id, end_entry_id, ts_start, ts_end, duration_ms, status, sev, n_entries,
     detail}`` where ``detail`` is the parsed JSON column (``null`` when absent or malformed).
 
@@ -189,11 +189,21 @@ def _detail(text: str | None) -> Any:
         return None
 
 
+def pool_fields(family: str | None, process: str | None) -> tuple[str | None, int | None]:
+    """``(pool, instance)`` read-time annotation of a process (``(None, None)`` outside a pool)."""
+    from dmslog.ingest.discover import load_rules
+
+    found = load_rules().pool_of(family, process)
+    return found if found else (None, None)
+
+
 def _event_json(row: tuple[Any, ...]) -> dict[str, Any]:
     (id_, stream_id, family, process, sensitive, kind, name, key, tid, start_id, end_id, ts_start, ts_end,
      duration, status, sev, n_entries, detail) = row  # fmt: skip
+    pool, instance = pool_fields(family, process)
     return {
         "id": id_, "stream_id": stream_id, "family": family, "process": process,
+        "pool": pool, "instance": instance,
         "sensitive": None if sensitive is None else bool(sensitive), "kind": kind, "name": name,
         "key": key, "tid": tid, "start_entry_id": start_id, "end_entry_id": end_id,
         "ts_start": ts_start, "ts_end": ts_end, "duration_ms": duration, "status": status, "sev": sev,

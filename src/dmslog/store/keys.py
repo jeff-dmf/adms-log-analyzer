@@ -12,7 +12,7 @@ SQL only as a bound parameter; the route percent-decodes it and limits its lengt
     ``{"records": [<record>], "next": "<ts>:<id>" | null}``: every record carrying that key in ANY
     source of the case, ordered by ``(ts, id)`` (records without a time first), keyset pagination
     (``after`` is the ``next`` of the previous page; never OFFSET). Default limit 200, max 1000.
-    ``<record>`` = ``{id, source_id, member, family, process, sensitive, ts, tid, level, sev,
+    ``<record>`` = ``{id, source_id, member, family, process, pool, instance, sensitive, ts, tid, level, sev,
     tpl_code, msg, collection}`` with ``msg`` cut at 300 characters; ``collection`` is the collection group
     of the record. ``collection=<group>`` keeps only that group (U21: by default the search spans every
     collection of the case and the order across collections is approximate, each has its own clock).
@@ -20,7 +20,7 @@ SQL only as a bound parameter; the route percent-decodes it and limits its lengt
 ``GET /api/entries/<id>/links?case=``
     ``{"links": [<link>]}``: links of the entry in both directions, at most 200, ordered by the
     counterpart ``(ts, id)``. ``<link>`` = ``{entry_id, kind, confidence, direction, source_id,
-    source: {member, sensitive}, family, process, ts, tid, tpl_code, msg}``; ``direction`` is
+    source: {member, sensitive}, family, process, pool, instance, ts, tid, tpl_code, msg}``; ``direction`` is
     ``"out"`` when the entry is side ``a`` of the link and ``"in"`` when it is side ``b``.
 
 ``GET /api/entries/<id>/side-by-side?case=``
@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .events import Cursor
+from .events import Cursor, pool_fields
 from .query import PAGE_TIMEOUT_S, read_guard
 
 if TYPE_CHECKING:
@@ -67,9 +67,11 @@ def _sensitive(value: Any) -> bool | None:
 
 def _record(row: tuple[Any, ...]) -> dict[str, Any]:
     (id_, source_id, member, family, process, sensitive, ts, tid, level, sev, code, msg, group, tpl_id) = row
+    pool, instance = pool_fields(family, process)
     return {
         "id": id_, "source_id": source_id, "member": member, "family": family, "process": process,
-        "sensitive": _sensitive(sensitive), "ts": ts, "tid": tid, "level": level, "sev": sev,
+        "pool": pool, "instance": instance, "sensitive": _sensitive(sensitive),
+        "ts": ts, "tid": tid, "level": level, "sev": sev,
         "tpl_code": code, "tpl_id": tpl_id or None, "msg": msg, "collection": group,
     }  # fmt: skip
 
@@ -149,6 +151,7 @@ def links_of(conn: sqlite3.Connection, entry_id: int) -> list[dict[str, Any]]:
         {
             "entry_id": r[0], "kind": r[1], "confidence": r[2], "direction": r[3], "source_id": r[4],
             "source": {"member": r[5], "sensitive": _sensitive(r[6])}, "family": r[7], "process": r[8],
+            "pool": pool_fields(r[7], r[8])[0], "instance": pool_fields(r[7], r[8])[1],
             "ts": r[9], "tid": r[10], "tpl_code": r[11], "msg": r[12],
         }
         for r in rows

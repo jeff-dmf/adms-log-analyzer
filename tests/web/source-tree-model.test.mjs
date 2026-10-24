@@ -115,3 +115,52 @@ test("a chain inside a collection that splits keeps the collection folder open t
   assert.deepEqual(names.slice(0, 4), ["C1", "A/B", "x.log", "Other"]);
   assert.deepEqual([...impliedOpen(new Set(["C1|A/B/"]))].sort(), ["C1|", "C1|A/", "C1|A/B/"]);
 });
+
+const fhSrc = (id, n, extra = {}) =>
+  src(id, "Svc/Log/DMS_FunctionHost_" + n + ".log", { family: "DMSFH", pool: "DMS_FunctionHost", instance: n, ...extra });
+
+test("pool instances go into one virtual folder in numeric order, with its own key and counters", () => {
+  const sources = [10, 2, 1, 11].map((n, i) => fhSrc(i + 1, n)).concat([src(9, "Svc/Log/other.log")]);
+  const tree = buildTree(sources);
+  const folder = tree.roots[0];
+  assert.equal(folder.name, "Svc/Log");
+  assert.deepEqual(folder.children.map((n) => n.name), ["DMS_FunctionHost (4 instances)", "other.log"]);
+  const pool = folder.children[0];
+  assert.equal(pool.folder, true);
+  assert.equal(pool.key, "Svc/Log/\u0000pool:DMS_FunctionHost/");
+  assert.deepEqual(pool.children.map((n) => n.source.instance), [1, 2, 10, 11]);
+  assert.equal(pool.files, 4);
+  assert.equal(pool.records, 40);
+  assert.deepEqual(pool.children.map((n) => n.label), [
+    "DMS_FunctionHost #1, DMS_FunctionHost_1.log", "DMS_FunctionHost #2, DMS_FunctionHost_2.log",
+    "DMS_FunctionHost #10, DMS_FunctionHost_10.log", "DMS_FunctionHost #11, DMS_FunctionHost_11.log",
+  ]);
+  assert.equal(folder.children[1].label, null);
+});
+
+test("a pool with one instance also groups, and a folder holding only the pool is not merged with it", () => {
+  const tree = buildTree([fhSrc(1, 3)]);
+  assert.equal(tree.roots[0].name, "Svc/Log");
+  assert.equal(tree.roots[0].children[0].name, "DMS_FunctionHost (1 instance)");
+});
+
+test("the pool folder keeps the check state and the keys of any folder; one pool per collection", () => {
+  const sources = [fhSrc(1, 1), fhSrc(2, 2), fhSrc(3, 1, { collection: 2 })];
+  const tree = buildTree(sources);
+  assert.deepEqual(tree.roots.map((n) => n.name), ["C1/Svc/Log", "C2/Svc/Log"]);
+  const pool = tree.roots[0].children[0];
+  assert.equal(pool.key, "C1|Svc/Log/\u0000pool:DMS_FunctionHost/");
+  assert.notEqual(pool.key, tree.roots[1].children[0].key);
+  assert.equal(checkState(pool.ids, new Set([1])), "some");
+  assert.deepEqual([...toggled(new Set(), pool.ids)].sort(), [1, 2]);
+  assert.ok(impliedOpen(new Set([pool.key])).has("C1|Svc/Log/"));
+  assert.ok(!closed(new Set([pool.key, "C1|Svc/Log/"]), "C1|Svc/Log/").has(pool.key));
+  const rows = visibleRows(tree, new Set(["C1|", "C1|Svc/Log/", pool.key]), null);
+  assert.deepEqual(rows.filter((r) => r.node.source).map((r) => r.level), [3, 3]);
+});
+
+test("sources without a pool build the same tree as before", () => {
+  const tree = buildTree([src(1, "A/x.log", { pool: null, instance: null })]);
+  assert.equal(tree.roots[0].children[0].label, null);
+  assert.equal(tree.roots[0].children[0].folder, false);
+});

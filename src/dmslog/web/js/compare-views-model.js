@@ -7,6 +7,7 @@
 // api.compareViews.run(caseId, body, signal)    -> the answer of /api/entries/compare
 // api.views.list(caseId, signal)                -> { views: [{id, name, filter}] }          (saved views, filter mode)
 // api.events(caseId, params, signal)            -> { items: [event] }                        (operation and process modes)
+import { familyProcessText, groupPoolItems } from "./process-label.js";
 import { S, countNoun, format } from "./strings.js";
 import { formatTs, parseTs } from "./time.js";
 
@@ -189,7 +190,7 @@ export function describeSide(side, mode, viewName) {
   }
   if (mode === "process" && side.stream) {
     const s = side.stream;
-    const label = [s.family, s.process].filter((x, i, all) => x && all.indexOf(x) === i).join(" / ");
+    const label = familyProcessText(s);
     const base = format(S.cvProcessText, { name: label || S.cvUnknownType, pid: s.pid === null || s.pid === undefined ? "?" : s.pid });
     return side.from === undefined ? base : base + " " + format(S.cvWindowText, { from: formatTs(side.from), to: formatTs(side.to) });
   }
@@ -348,11 +349,11 @@ export function processOptions(events) {
   for (const e of Array.isArray(events) ? events : []) {
     if (e && Number.isSafeInteger(e.stream_id) && !seen.has(e.stream_id)) {
       seen.add(e.stream_id);
-      const label = [e.family, e.process].filter((x, i, all) => x && all.indexOf(x) === i).join(" / ");
-      out.push({ value: String(e.stream_id), label: format(S.cvProcessOption, { name: label || S.cvUnknownType, id: e.stream_id }) });
+      const label = familyProcessText(e);
+      out.push({ value: String(e.stream_id), label: format(S.cvProcessOption, { name: label || S.cvUnknownType, id: e.stream_id }), pool: e.pool, instance: e.instance });
     }
   }
-  return out;
+  return groupPoolItems(out).map(({ value, label }) => ({ value, label }));
 }
 
 // One loader per list. A list belongs to a SCOPE: the case, the collections chosen and the view (getScope() is one string

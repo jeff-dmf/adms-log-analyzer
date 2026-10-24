@@ -136,9 +136,11 @@ def test_event_shape(conn):
     page, _ = events.list_events(conn, EventFilter(kinds=("operation",), names=("GetB",)), limit=1)
     (event,) = page
     assert set(event) == {
-        "id", "stream_id", "family", "process", "sensitive", "kind", "name", "key", "tid", "start_entry_id",
+        "id", "stream_id", "family", "process", "pool", "instance", "sensitive", "kind", "name", "key", "tid",
+        "start_entry_id",
         "end_entry_id", "ts_start", "ts_end", "duration_ms", "status", "sev", "n_entries", "detail",
     }  # fmt: skip
+    assert event["pool"] is None and event["instance"] is None
     assert event["family"] == "AONT" and event["sensitive"] is True and event["detail"] == {"op_key": "B0"}
 
 

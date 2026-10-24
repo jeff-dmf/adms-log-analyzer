@@ -738,6 +738,10 @@ export const S = {
   lnkMoreOne: "Showing the first {count} link.",
   lnkMoreOther: "Showing the first {count} links.",
   lnkListLabel: "Linked records",
+  // Process pools (R2b): instances of one process family, e.g. the FunctionHost pool
+  poolInstance: "{pool} #{instance}",
+  poolFolderOne: "{pool} ({count} instance)",
+  poolFolderOther: "{pool} ({count} instances)",
   lnkKindNames: {
     normal_sensitive: "normal / sensitive",
     callback: "callback",

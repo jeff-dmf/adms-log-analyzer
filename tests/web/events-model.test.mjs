@@ -103,3 +103,9 @@ test("bannerText says one jump, many jumps or 'more than'", () => {
   assert.match(bannerText({ ...base, kind: "possible" }), /^Possible clock change/);
   assert.equal(bannerText(null), "");
 });
+
+test("a FunctionHost instance reads as the pool and its number; others keep the process name", () => {
+  const fh = { ...EVENT, family: "DMSFH", process: "DMS_FunctionHost_7", pool: "DMS_FunctionHost", instance: 7 };
+  assert.equal(buildEventRow(fh).process, "DMSFH / DMS_FunctionHost #7");
+  assert.equal(buildEventRow({ ...fh, pool: null, instance: null }).process, "DMSFH / DMS_FunctionHost_7");
+});
