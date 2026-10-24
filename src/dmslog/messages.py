@@ -8,6 +8,11 @@ HELP_DATA_DIR = (
     "(default: %%LOCALAPPDATA%%\\dmslog on Windows, ${XDG_DATA_HOME:-~/.local/share}/dmslog elsewhere)."
 )
 HELP_VERSION = "Show the version and exit."
+API_FILE_TEXT_NOT_FOUND = "No such file in this case."
+API_FILE_TEXT_NOT_VIEWABLE = "This file is not shown as text (indexed log or a type that is not text)."
+API_FILE_TEXT_TOO_LARGE = "This file is larger than {limit} bytes and is not shown."
+API_FILE_TEXT_BINARY = "This file looks binary and is not shown as text."
+API_FILE_TEXT_MISSING = "The file is no longer available where the case was opened."
 HELP_SERVE = "Start the local web viewer."
 HELP_PORT = "TCP port on 127.0.0.1 (default: a random free port)."
 HELP_NO_BROWSER = "Do not open the default web browser."
