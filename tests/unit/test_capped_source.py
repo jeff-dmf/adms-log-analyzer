@@ -29,6 +29,7 @@ from partial_helpers import assert_integrity, assert_same, content
 
 from dmslog.cli import main
 from dmslog.derive import lifecycle
+from dmslog.derive.base import FLAG_AFTER_SKIP as DERIVE_FLAG_AFTER_SKIP
 from dmslog.ingest.capped import (
     DEFAULT_HEAD_BYTES,
     DEFAULT_SOURCE_CAP_BYTES,
@@ -70,14 +71,26 @@ class Interrupted(BaseException):
 
 
 def build_log(
-    n: int, *, step_ms: int = 1000, first_ms: int = 0, cont_every: int = 3, pid: int = 4444, tag: str = "item"
+    n: int,
+    *,
+    step_ms: int = 1000,
+    first_ms: int = 0,
+    cont_every: int = 3,
+    pid: int = 4444,
+    tag: str = "item",
+    level_every: int = 7,
 ) -> list[str]:
-    """``n`` records, a continuation line or two on every ``cont_every``-th."""
+    """``n`` records, a continuation line or two on every ``cont_every``-th, a debug level change on every
+    ``level_every``-th (level windows that can span a skipped stretch)."""
     out: list[str] = []
     ts = first_ms
     for i in range(n):
         level = ("INFO", "DEBUGLOG", "ERROR")[i % 3]
         out.append(mf.header(ts, level, f"[Alpha] {tag} {i} step done", pid=pid, tid=7))
+        if level_every and i % level_every == 6:
+            names = ("DebugLog (3)", "Info (5)")
+            frm, to = names[(i // level_every) % 2], names[(i // level_every + 1) % 2]
+            out.append(mf.header(ts, "ALWAYS", f"Debug level changed from {frm} to {to}.", pid=pid, tid=7))
         if cont_every and i % cont_every == 0:
             out.extend(f"  detail {i}.{j}" for j in range(1 + i % 2))
         ts += step_ms
@@ -357,8 +370,9 @@ def run_interrupted(db, folder, opts, kind: str, at: int) -> bool:
 
         owner, name = IndexWriter, "commit"
     setattr(owner, name, flaky)
+    run_interrupted.last = None  # the result of a run that was not interrupted
     try:
-        run_ingest(db, folder, opts)
+        run_interrupted.last = run_ingest(db, folder, opts)
     except Interrupted:
         if db.in_transaction:  # what a crash does
             db.rollback()
@@ -544,7 +558,7 @@ def test_reopening_writes_nothing_and_removing_the_collection_removes_the_state(
 
 
 def test_flag_value_is_shared_with_the_derivation():
-    assert store_writer.FLAG_AFTER_SKIP == lifecycle.FLAG_AFTER_SKIP == 128
+    assert store_writer.FLAG_AFTER_SKIP == lifecycle.FLAG_AFTER_SKIP == DERIVE_FLAG_AFTER_SKIP == 128
 
 
 # ---------------------------------------------------------------------------------------------
@@ -757,7 +771,7 @@ def test_growth_after_an_empty_tail_starts_at_lo(tmp_path):
     assert state is not None and state.lo == len(head + middle)
     assert state.skipped_to_ts is None and state.skipped_bytes > 0
     assert db.execute("SELECT status FROM source").fetchone()[0] == "ready"
-    more = mf.render(build_log(30, first_ms=10**7, tag="late"))
+    more = mf.render(build_log(30, first_ms=10**7, tag="late", level_every=0))
     write_log(tmp_path, head + middle + more)
     ingest(folder, db, cap=1000)
     rows = rows_of(db)
@@ -791,6 +805,186 @@ def test_empty_tail_is_completed_and_resumed_atomically(tmp_path, kind):
         run_ingest(db, folder, opts)
         assert_same(snapshot(db), snapshot(ref))
         db.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# the decision of the first indexing (whole or reduced) is kept
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["read", "commit"])
+def test_append_to_a_whole_source_interrupted_is_resumed_not_reduced(tmp_path, kind):
+    small = log_bytes(40)
+    assert len(small) < CAP
+    big = small + mf.render(build_log(500, first_ms=10**6, tag="grown"))
+    assert len(big) > 3 * CAP
+    folder = write_log(tmp_path, small)
+    crashes = 0
+    for at in range(1, 40):
+        work = tmp_path / f"w{kind}{at}"
+        folder = write_log(work, small)
+        db = new_db(work)
+        opts = options(CAP, HEAD, chunk=400, batch=1200)
+        run_ingest(db, folder, opts)
+        assert state_of(db) is None
+        write_log(work, big)
+        if not run_interrupted(db, folder, opts, kind, at):
+            break
+        crashes += 1
+        run_ingest(db, folder, opts)  # the resume appends: it never turns into a reduction
+        assert state_of(db) is None
+        whole = new_db(work, "whole")
+        run_ingest(whole, folder, options(0, HEAD))
+        assert_same(content(db), content(whole))
+        assert len(rows_of(db)) >= 500
+        db.close()
+        whole.close()
+    assert crashes > 3
+
+
+def test_an_interrupted_reduction_still_starts_again(tmp_path):
+    data = log_bytes(300)
+    folder = write_log(tmp_path, data)
+    ref = new_db(tmp_path, "ref")
+    ingest(folder, ref)
+    seen = 0
+    for at in range(3, 30):
+        db = new_db(tmp_path, f"r{at}")
+        opts = options(CAP, HEAD, chunk=200, batch=1)  # every chunk commits
+        if not run_interrupted(db, folder, opts, "commit", at):
+            break
+        marker = db.execute("SELECT count(*) FROM meta WHERE key LIKE 'reducing.%'").fetchone()[0]
+        if marker and state_of(db) is None:  # interrupted in the head or the skipped stretch
+            seen += 1
+        run_ingest(db, folder, opts)
+        assert_same(snapshot(db), snapshot(ref))
+        db.close()
+    assert seen > 0
+
+
+# ---------------------------------------------------------------------------------------------
+# the stored limit decides what is listed (zip members over the member limit)
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("later_cap", [0, 4 * CAP, CAP // 2])
+def test_reopening_a_rewritten_zip_applies_the_stored_limit(tmp_path, later_cap):
+    first = log_bytes(800)
+    max_member = CAP + 2 * HEAD
+    assert len(first) > max_member
+    path = zip_with(tmp_path, first)
+    db = new_db(tmp_path)
+    ingest(path, db, max_member_bytes=max_member)
+    assert state_of(db) is not None
+    second = log_bytes(900, tag="other")
+    zip_with(tmp_path, second)  # the same zip path, other content
+    result = ingest(path, db, cap=later_cap, max_member_bytes=max_member)
+    assert result.sources_indexed == 1 and result.sources_failed == 0
+    state = state_of(db)
+    assert state is not None and state.cap == CAP  # the stored limit, not the one of this run
+    assert stored_rows(db) == expected_rows(second, envelope_of(db), CAP, HEAD)
+    assert db.execute("SELECT status FROM source").fetchone()[0] == "ready"
+
+
+# ---------------------------------------------------------------------------------------------
+# a window or an operation across the skipped stretch says so (detail.skipped_range)
+# ---------------------------------------------------------------------------------------------
+
+
+def _entry(i: int, ts: int, msg: str = "x", *, code=None, flags: int = 0, tid: int = 1):
+    from dmslog.derive.base import StoredEntry
+
+    return StoredEntry(
+        id=i, stream_id=1, ts=ts, tid=tid, pid=1, level=None, sev=4, tpl_code=code, tpl_class=None,
+        fields={}, msg=msg, flags=flags,
+    )  # fmt: skip
+
+
+def test_level_windows_across_the_skipped_stretch_are_marked():
+    from dmslog.derive.base import run_in_memory
+    from dmslog.derive.lifecycle import LifecycleDeriver
+
+    day = 86_400_000
+    change = "Debug level changed from {} to {}."
+    entries = [
+        _entry(1, 0, "start"),
+        _entry(2, 1000, change.format("DebugLog (3)", "Info (5)")),
+        _entry(3, 2000),
+        _entry(4, 2000 + day, "after the skip", flags=FLAG_AFTER_SKIP),
+        _entry(5, 3000 + day, change.format("Info (5)", "Verbose (6)")),
+        _entry(6, 4000 + day),
+        _entry(7, 5000 + day, change.format("Verbose (6)", "Info (5)")),
+        _entry(8, 6000 + day),
+    ]
+    events = run_in_memory([LifecycleDeriver("AWFM")], entries)
+    windows = [e for e in events if e.kind == "level_window"]
+    assert [(e.detail["level_name"], e.detail.get("skipped_range"), e.status) for e in windows] == [
+        ("DebugLog", None, "ok"),  # before the first change: no skipped stretch inside
+        ("Info", True, "ok"),  # spans it
+        ("Verbose", None, "ok"),
+        ("Info", None, "open"),
+    ]
+    # a first window (before any change) that spans it
+    entries = [
+        _entry(1, 0),
+        _entry(2, day, flags=FLAG_AFTER_SKIP),
+        _entry(3, day + 1, change.format("A (1)", "B (2)")),
+    ]
+    first = [e for e in run_in_memory([LifecycleDeriver("AWFM")], entries) if e.kind == "level_window"][0]
+    assert first.detail.get("skipped_range") is True
+
+
+def test_operations_across_the_skipped_stretch_are_marked():
+    from dmslog.derive.base import run_in_memory
+    from dmslog.derive.operations import OperationsDeriver
+
+    rules = [{"name": "Op", "start": ["EX-010"], "end_ok": ["EX-012"], "pair_by": ["tid"]}]
+    entries = [
+        _entry(1, 0, code="EX-010", tid=1),  # opens before the skip, closes after it
+        _entry(2, 1000, code="EX-010", tid=2),
+        _entry(3, 2000, code="EX-012", tid=2),  # closes before the skip
+        _entry(
+            4, 86_400_000, code="EX-012", tid=1, flags=FLAG_AFTER_SKIP
+        ),  # the closing record is the flagged one
+        _entry(5, 86_401_000, code="EX-010", tid=3, flags=0),
+        _entry(6, 86_402_000, code="EX-012", tid=3),
+    ]
+    events = [
+        e for e in run_in_memory([OperationsDeriver("EXAMPLE", rules)], entries) if e.kind == "operation"
+    ]
+    by_tid = {e.tid: e for e in events}
+    assert by_tid[1].detail.get("skipped_range") is True
+    assert "skipped_range" not in by_tid[2].detail and "skipped_range" not in by_tid[3].detail
+    # an operation that starts at the flagged record does not span the stretch
+    entries = [
+        _entry(1, 0),
+        _entry(2, 5000, code="EX-010", tid=4, flags=FLAG_AFTER_SKIP),
+        _entry(3, 6000, code="EX-012", tid=4),
+    ]
+    (event,) = [
+        e for e in run_in_memory([OperationsDeriver("EXAMPLE", rules)], entries) if e.kind == "operation"
+    ]
+    assert "skipped_range" not in event.detail
+
+
+def test_skipped_range_is_the_same_incremental_or_complete(tmp_path):
+    """The level windows of a reduced source say skipped_range, at any cut and after a resume."""
+    data = log_bytes(300)
+    folder = write_log(tmp_path, data)
+    ref = new_db(tmp_path, "ref")
+    ingest(folder, ref)
+    marked = ref.execute(
+        "SELECT count(*) FROM event WHERE kind='level_window' AND detail LIKE '%skipped_range%'"
+    )
+    assert marked.fetchone()[0] == 1
+    for kind in ("read", "commit"):
+        for at in range(1, 30, 3):
+            db = new_db(tmp_path, f"d-{kind}-{at}")
+            opts = options(CAP, HEAD, chunk=250, batch=1500)
+            run_interrupted(db, folder, opts, kind, at)
+            run_ingest(db, folder, opts)
+            assert_same(snapshot(db), snapshot(ref))
+            db.close()
 
 
 # ---------------------------------------------------------------------------------------------

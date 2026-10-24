@@ -31,7 +31,7 @@ from dataclasses import asdict, dataclass
 
 from dmslog.parse.envelope import Envelope
 from dmslog.parse.records import DEFAULT_MAX_RECORD_BYTES, Record, RecordGrouper, RecordTooLargeError
-from dmslog.store.writer import CAPPED_PREFIX, SOURCE_CAP_PREFIX
+from dmslog.store.writer import CAPPED_PREFIX, REDUCING_PREFIX, SOURCE_CAP_PREFIX
 
 DEFAULT_SOURCE_CAP_BYTES = 256 * 1024**2
 DEFAULT_HEAD_BYTES = 1024**2
@@ -106,7 +106,24 @@ def save_capped(conn: sqlite3.Connection, source_id: int, state: CappedState) ->
 
 
 def drop_capped(conn: sqlite3.Connection, source_id: int) -> None:
-    conn.execute("DELETE FROM meta WHERE key = ?", (capped_key(source_id),))
+    """Forget the state and the decision to reduce (the source is indexed again from scratch)."""
+    conn.execute(
+        "DELETE FROM meta WHERE key IN (?, ?)", (capped_key(source_id), f"{REDUCING_PREFIX}{source_id}")
+    )
+
+
+def mark_reducing(conn: sqlite3.Connection, source_id: int) -> None:
+    """Record that the first indexing of the source reduces it (before any state exists)."""
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES (?, '1')", (f"{REDUCING_PREFIX}{source_id}",)
+    )
+
+
+def is_reducing(conn: sqlite3.Connection, source_id: int) -> bool:
+    return (
+        conn.execute("SELECT 1 FROM meta WHERE key = ?", (f"{REDUCING_PREFIX}{source_id}",)).fetchone()
+        is not None
+    )
 
 
 def source_cap_key(group: int) -> str:

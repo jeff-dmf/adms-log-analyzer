@@ -123,6 +123,9 @@ PARTIAL_PREFIX = "partial."
 # per-file limit the collection group was opened with (it goes with the group).
 CAPPED_PREFIX = "capped."
 SOURCE_CAP_PREFIX = "source_cap."
+# ``meta['reducing.<source_id>']``: the first indexing of the source reduces it (written with its first
+# commit); tells an interrupted reduction (start again) from an interrupted append to a source indexed whole.
+REDUCING_PREFIX = "reducing."
 # meta['partial_scope.<collection_id>']: scope of an unfinished partial open;
 # meta['partial_order.<collection_id>']: families whose unknown_sig examples a source-first open must repair
 # once the collection is complete
@@ -883,6 +886,7 @@ class IndexWriter:
         keys += [f"payload_extraction_version.{sid}" for sid in sources]
         keys += [f"{PARTIAL_PREFIX}{sid}" for sid in sources]
         keys += [f"{CAPPED_PREFIX}{sid}" for sid in sources]
+        keys += [f"{REDUCING_PREFIX}{sid}" for sid in sources]
         keys.append(f"{SOURCE_CAP_PREFIX}{group}")
         keys += [f"{p}{cid}" for cid in cids for p in (PARTIAL_SCOPE_PREFIX, PARTIAL_ORDER_PREFIX)]
         conn.executemany("DELETE FROM meta WHERE key = ?", [(k,) for k in keys])

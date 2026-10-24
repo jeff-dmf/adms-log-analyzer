@@ -33,6 +33,12 @@ STATUS_TRUNCATED = "truncated"
 _DETAIL_ENCODER = json.JSONEncoder(sort_keys=True, separators=(",", ":"))
 
 
+# entry.flags bit set by the writer (store/writer.py FLAG_AFTER_SKIP, ingest/capped.py) on the first record
+# after a stretch skipped by a reduced source: the jump in time up to it is not a silence of the log, and
+# every window or operation open across it has an unreliable duration (detail.skipped_range).
+FLAG_AFTER_SKIP = 128
+
+
 @dataclass(frozen=True, slots=True)
 class StoredEntry:
     """An indexed record as the derivers see it (a read-only view of an ``entry`` row)."""

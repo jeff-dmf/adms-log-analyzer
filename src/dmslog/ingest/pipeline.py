@@ -23,7 +23,7 @@ import re
 import time
 import zipfile
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from dmslog import __version__
@@ -35,8 +35,10 @@ from dmslog.ingest.capped import (
     drop_capped,
     indexed_estimate,
     is_candidate,
+    is_reducing,
     load_capped,
     load_source_cap,
+    mark_reducing,
     save_capped,
     save_source_cap,
 )
@@ -794,9 +796,11 @@ class _Run:
         if (
             action is Action.RESUME
             and load_capped(self.w.conn, row.id) is None
-            and self.reduces(info, row.collection_id, reader)
+            and is_reducing(self.w.conn, row.id)
         ):
-            action = Action.REINDEX  # a reduced source interrupted before its tail started begins again
+            # a reduction interrupted before its tail started begins again; an append to a source that was
+            # indexed whole (no decision recorded) is simply resumed, whatever its size is now
+            action = Action.REINDEX
         if (
             action in (Action.APPEND, Action.RESUME)
             and row.envelope == PLAIN_ENVELOPE
@@ -956,6 +960,7 @@ class _Run:
         pending: list[bytes] = []
         pending_len = 0
         capped_saved = False
+        marked = False
 
         def new_grouper(found) -> RecordGrouper | CappedGrouper:
             if reduce_size is not None:
@@ -970,9 +975,12 @@ class _Run:
             w.append(row.id, records, stats)
 
         def commit(status: str) -> None:
-            nonlocal batch_start, capped_saved
+            nonlocal batch_start, capped_saved, marked
             assert grouper is not None
             w.flush()
+            if reduce_size is not None and not marked:
+                mark_reducing(w.conn, row.id)  # with the first commit: the decision survives a crash
+                marked = True
             if (
                 isinstance(grouper, CappedGrouper)
                 and not capped_saved
@@ -1637,6 +1645,15 @@ def run_ingest(
     writer.commit()
     cid = run.resolve_collection()
     run.cid = cid
+    stored_cap = load_source_cap(conn, writer.collection_group(cid))
+    if stored_cap is not None and stored_cap != (options.limits.source_cap_bytes, options.limits.head_bytes):
+        # the limit stored with the collection decides what is listed, selected and reduced, not the one of
+        # this run: list the sources again with it (a zip member over the member limit is reducible or not)
+        options = replace(
+            options, limits=replace(options.limits, source_cap_bytes=stored_cap[0], head_bytes=stored_cap[1])
+        )
+        run.opt = options
+        plan = run.plan = build_plan(path, options.limits, options.aliases)
     if (
         options.first is not None
         and not conn.execute("SELECT 1 FROM source WHERE collection_id = ? LIMIT 1", (cid,)).fetchone()
@@ -1740,7 +1757,6 @@ def resume_pending(
 ) -> list[IngestResult]:
     """Complete what partial opens left incomplete (``partial.pending_work``): one ``run_ingest`` per
     collection, with the scope it was opened with. Returns the results (empty: nothing pending)."""
-    from dataclasses import replace
 
     options = options or IngestOptions()
     out: list[IngestResult] = []

@@ -29,7 +29,9 @@ gaps            ``gap``             silence between two consecutive entries long
                                     stream (the period covered by the file), never before
                                     the first or after the last entry. Not between the last
                                     entry before a stretch skipped by a reduced source and the
-                                    first one after it (entry.flags & 128).
+                                    first one after it (entry.flags & 128). A level window
+                                    that spans such a stretch has ``detail.skipped_range = true``
+                                    (its duration is not reliable).
 clock           ``clock_jump``      ``ts`` goes backwards by more than 30 min between two
                                     consecutive entries (``detail.back_ms``).
 maps            ``map_reload``      ``"X" map closed.`` -> ``New "X" map content:`` (+
@@ -71,12 +73,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from typing import Any
 
-from dmslog.derive.base import STATUS_OK, STATUS_OPEN, STATUS_TRUNCATED, Event, StoredEntry
+from dmslog.derive.base import FLAG_AFTER_SKIP, STATUS_OK, STATUS_OPEN, STATUS_TRUNCATED, Event, StoredEntry
 
 KIND_STARTUP = "startup"
-# entry.flags bit set by the writer on the first record after a stretch skipped by a reduced source
-# (store/writer.py FLAG_AFTER_SKIP, ingest/capped.py): the jump in time up to it is not a silence of the log.
-FLAG_AFTER_SKIP = 128
 KIND_LEVEL = "level_window"
 KIND_GAP = "gap"
 KIND_CLOCK = "clock_jump"
@@ -297,6 +296,14 @@ class _Level:
         self.prev_id: int | None = None  # the entry before ``last_id``
         self.last_ts: int | None = None
         self.n = 0
+        self.first_skipped = False  # a skipped stretch lies inside the first window (before any change)
+
+    def skip(self) -> None:
+        """A record that follows a stretch skipped by a reduced source was fed: the open windows span it."""
+        if self.cur is not None:
+            self.cur["skipped"] = True
+        if not self.seen_change and self.first_id is not None:
+            self.first_skipped = True
 
     @staticmethod
     def parse(e: StoredEntry) -> tuple[str, int | None, str, int | None] | None:
@@ -332,6 +339,7 @@ class _Level:
                 "to_num": w["to_num"],
                 "level_name": w["level_name"],
                 "level_num": w["level_num"],
+                **({"skipped_range": True} if w.get("skipped") else {}),
             },
         )
 
@@ -359,10 +367,12 @@ class _Level:
                         "to_num": frm_n,
                         "level_name": frm,
                         "level_num": frm_n,
+                        "skipped": self.first_skipped,
                     }
                     out.append(self._event(first, end_id if self.n > 0 else e.id, ts, STATUS_OK))
                 self.seen_change = True
                 self.first_id = self.first_ts = None
+                self.first_skipped = False
                 self.cur = {
                     "id": e.id,
                     "ts": ts,
@@ -724,6 +734,8 @@ class LifecycleDeriver:
                 if level.first_id is None and not level.seen_change:
                     level.first_id, level.first_ts = entry.id, ts
                 level.last_ts = ts
+            if entry.flags & FLAG_AFTER_SKIP:
+                level.skip()
             level.prev_id = level.last_id
             level.last_id = entry.id
             if code in _CODES_LEVEL or (code is None and "Debug level changed" in msg):
