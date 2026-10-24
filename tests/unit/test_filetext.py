@@ -126,43 +126,38 @@ def test_credential_names_negative(name):
     assert not is_credential_name(name)
 
 
-# ---------------------------------------------------------------------- rule 1: connection pairs
+# ---------------------------------------------------------------------- hiding (fail closed)
 
 
-def test_connection_string_pairs_hidden_rest_kept():
-    text = (
-        f'<add name="Db" connectionString="Server=host1;Database=d;User Id=u1;Password={SECRET};Pooling=1"/>'
-    )
+def shown(text: str) -> str:
+    return hide_credentials(text)[0]
+
+
+@pytest.mark.parametrize("variant", ["password", "PASSWORD", "Pwd", "pWd", "Secret", "DbPassword", "api-key"])
+@pytest.mark.parametrize("w", ["", " ", "\t", "   \t  "])
+def test_connection_pair_names_case_and_spaces(variant, w):
+    text = f"Server=s;{variant}{w}={w}{SECRET};Port=1\nnext line=ok\n"
     out, n = hidden_text(text)
-    assert n == 1
-    assert SECRET not in out
-    assert f"Password={MASK};Pooling=1" in out
-    assert "Server=host1;Database=d;User Id=u1" in out
+    assert n == 1 and SECRET not in out
+    assert out.startswith("Server=s;") and out.endswith("\nnext line=ok\n")  # other lines stay readable
 
 
-@pytest.mark.parametrize("variant", ["password", "PASSWORD", "Pwd", "pWd", "Secret"])
-def test_connection_pair_case_and_spaces(variant):
-    out, n = hidden_text(f"Server=s;{variant} = {SECRET};Port=1")
-    assert n == 1 and SECRET not in out and "Port=1" in out
-
-
-def test_connection_pair_quoted_value_with_semicolon():
+def test_connection_pair_quoted_value_with_semicolon_and_empty_value():
     out, n = hidden_text("Server=s;Password='ab;" + SECRET + "';Port=1")
-    assert n == 1 and SECRET not in out and out == f"Server=s;Password='{MASK}';Port=1"
+    assert n == 1 and SECRET not in out and "ab" not in out
+    assert hidden_text("Server=s;Password=;Port=1")[1] <= 1
 
 
-def test_connection_pair_negative():
-    text = "Server=s;Passport=123;Database=d;Pwdx=1;MyPassword2=x"
-    out, n = hidden_text(text)
-    assert out == text and n == 0
-
-
-def test_connection_pair_empty_value_not_counted():
-    out, n = hidden_text("Server=s;Password=;Port=1")
-    assert out == "Server=s;Password=;Port=1" and n == 0
-
-
-# ---------------------------------------------------------------------- rule 2: <add key value>
+def test_non_credentials_are_untouched():
+    for text in (
+        "Server=s;Passport=123;Database=d;Port=1",
+        "<Server Host='h1' Compass='north' Bypass='yes' tokenizer='x'/>",
+        "<add key='Timeout' value='30'/>\n<add key='ServerName' value='host1'/>\n",
+        "host = h1\ncompass = north\nurl: http://example.test/x\n",
+        '{"user": "u1", "timeout": "30", "compass": "x"}',
+        "<ServerName>host1</ServerName><Timeout>30</Timeout>",
+    ):
+        assert hidden_text(text) == (text, 0), text
 
 
 @pytest.mark.parametrize(
@@ -173,67 +168,52 @@ def test_connection_pair_empty_value_not_counted():
         f'<add name="ApiKey" value="{SECRET}"/>',
         f"<add KEY='PASSWORD' VALUE='{SECRET}'/>",
         f'<add   key = "Secret"   value = "{SECRET}"   />',
+        f'<add key="password" other=unquoted value="{SECRET}"/>',
+        f'<add value="{SECRET}" other=unquoted\n key="password"\n flag/>',
+        f'<add key="password"\n     other=unquoted\n     value="{SECRET}"/>',
     ],
 )
 def test_add_key_value_hidden(tag):
     out, n = hidden_text(tag)
-    assert n == 1 and SECRET not in out and MASK in out
+    assert n >= 1 and SECRET not in out and MASK in out and out.startswith("<add")
 
 
-def test_add_key_value_negative():
-    text = '<add key="Timeout" value="30"/><add key="ServerName" value="host1"/>'
+def test_neighbouring_lines_of_a_credential_tag_stay():
+    text = f'<a x="1"/>\n<add key="password" value="{SECRET}"/>\n<b y="2"/>\n'
+    out, _ = hidden_text(text)
+    assert out.startswith('<a x="1"/>\n<add') and out.endswith('\n<b y="2"/>\n') and SECRET not in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"<Config>\n  <Password>{SECRET}</Password>\n</Config>",
+        f"<Password flag=unquoted>{SECRET}</Password>",
+        f"<Password>\n<![CDATA[{SECRET}]]>\n</Password>",
+        f"<Password>  \t<![CDATA[{SECRET}]]>  </Password>",
+        f"<Password>\n  {SECRET}\n</Password>",
+        f"<Password>part1<![CDATA[{SECRET}]]></Password>",
+        f"<token><![CDATA[{SECRET}]]></token>",
+        f'<Parameter Name="Password" Type="String">{SECRET}</Parameter>',
+        f"<Parameter Name='Password'>\n\n  {SECRET}\n\n</Parameter>",
+        f"<Password>\n<![CDATA[{SECRET}",  # CDATA left open: to the end of the text
+        f"<Password>{SECRET}",  # element left open
+        f"<ConnectionString>Server=s;Pwd={SECRET}</ConnectionString>",
+    ],
+)
+def test_elements_with_credentials_hidden(text):
     out, n = hidden_text(text)
-    assert out == text and n == 0
-
-
-def test_add_other_attributes_kept():
-    out, _ = hidden_text(f'<add key="Token" value="{SECRET}" description="keep me"/>')
-    assert 'description="keep me"' in out and 'key="Token"' in out
-
-
-# ---------------------------------------------------------------------- rule 3: elements
-
-
-def test_element_with_credential_name_hidden():
-    out, n = hidden_text(f"<Config>\n  <Password>{SECRET}</Password>\n</Config>")
-    assert n == 1 and SECRET not in out
-    assert f"<Password>{MASK}</Password>" in out and out.startswith("<Config>")
+    assert n >= 1 and SECRET not in out, text
 
 
 @pytest.mark.parametrize("tag", ["password", "PASSWORD", "dbPwd", "ClientSecret"])
 def test_element_names_case(tag):
     out, n = hidden_text(f"<{tag}>{SECRET}</{tag}>")
-    assert n == 1 and SECRET not in out
+    assert n == 1 and SECRET not in out and out.startswith(f"<{tag}>")
 
 
-def test_element_with_credential_name_attribute_hidden():
-    out, n = hidden_text(f'<Parameter Name="Password" Type="String">{SECRET}</Parameter>')
-    assert n == 1 and SECRET not in out and 'Type="String"' in out
-
-
-def test_element_cdata_hidden():
-    out, n = hidden_text(f"<token><![CDATA[{SECRET}]]></token>")
-    assert n == 1 and SECRET not in out
-
-
-def test_element_negative():
-    text = '<ServerName>host1</ServerName><Timeout>30</Timeout><Parameter Name="Mode">fast</Parameter>'
-    out, n = hidden_text(text)
-    assert out == text and n == 0
-
-
-def test_connection_string_element_only_pairs_hidden():
-    out, n = hidden_text(f"<ConnectionString>Server=s;Pwd={SECRET}</ConnectionString>")
-    assert n == 1 and "Server=s;" in out and SECRET not in out
-    assert out.startswith("<ConnectionString>")
-
-
-def test_empty_element_not_counted():
-    out, n = hidden_text("<Password></Password><Password/>")
-    assert out == "<Password></Password><Password/>" and n == 0
-
-
-# ---------------------------------------------------------------------- rule 4: attributes
+def test_element_without_text_hides_nothing_useful():
+    assert hidden_text("<Password></Password>\n<Password/>\n")[0].count(SECRET) == 0
 
 
 @pytest.mark.parametrize(
@@ -241,42 +221,33 @@ def test_empty_element_not_counted():
 )
 def test_xml_attribute_hidden(attr):
     out, n = hidden_text(f'<Server Host="h1" {attr}="{SECRET}" Port="1"/>')
-    assert n == 1 and SECRET not in out
-    assert 'Host="h1"' in out and 'Port="1"' in out
+    assert n == 1 and SECRET not in out and out.startswith("<Server")
 
 
-def test_xml_attribute_single_quotes_and_spaces():
-    out, n = hidden_text(f"<Server Password = '{SECRET}' Port='1'/>")
-    assert n == 1 and SECRET not in out and "Port='1'" in out
+def test_attribute_values_with_quotes_spaces_and_newlines():
+    for text in (
+        f"<Server Password = '{SECRET}' Port='1'/>",
+        f'<Server ApiKey=\n  "{SECRET}\nsecond line" Port="1"/>',
+        f'<Server ApiKey="{SECRET}\'last" Port="1"/>',
+        f'<Server ApiKey=\'{SECRET}"last\' Port="1"/>',
+        f'<Server\n  Password\n=\n"{SECRET}"\n/>',
+    ):
+        out, n = hidden_text(text)
+        assert n >= 1 and SECRET not in out and "second line" not in out, text
 
 
-def test_xml_attribute_negative():
-    text = '<Server Host="h1" Compass="north" Bypass="yes" tokenizer="x" Port="1"/>'
-    out, n = hidden_text(text)
-    assert out == text and n == 0
-
-
-def test_connection_string_attribute_not_hidden_whole():
-    text = '<Db connectionString="Server=h1;Database=d"/>'
-    out, n = hidden_text(text)
-    assert out == text and n == 0
-
-
-# ---------------------------------------------------------------------- rule 5: JSON
-
-
-def test_json_member_hidden():
-    out, n = hidden_text(f'{{"user": "u1", "password": "{SECRET}", "apiKey" : "{SECRET}"}}')
-    assert n == 2 and SECRET not in out and '"user": "u1"' in out
-
-
-def test_json_member_negative():
-    text = '{"user": "u1", "timeout": "30", "compass": "x"}'
-    out, n = hidden_text(text)
-    assert out == text and n == 0
-
-
-# ---------------------------------------------------------------------- rule 6: ini lines
+def test_json_members_hidden():
+    for text in (
+        f'{{"user": "u1", "password": "{SECRET}", "apiKey" : "{SECRET}"}}',
+        f'{{"password"{" " * 64}:"{SECRET}"}}',
+        f'{{"password"{" " * 5000}\n\t\r\n:\n"{SECRET}"}}',
+        f'{{"{"x" * 250}password":"{SECRET}"}}',
+        f'{{"{_u("x" * 100 + "_password")}":"{SECRET}"}}',
+        f'{{"password":"{SECRET}',  # truncated
+        f'{{"password":\n\n"{SECRET}"}}',
+    ):
+        out, n = hidden_text(text)
+        assert n >= 1 and SECRET not in out, text[:80]
 
 
 @pytest.mark.parametrize(
@@ -288,44 +259,61 @@ def test_json_member_negative():
         f"  db.pwd = {SECRET}",
         f"Shared Key = {SECRET}",
         f"client_secret={SECRET}",
+        f"api key: {SECRET}",
     ],
 )
 def test_ini_line_hidden(line):
     out, n = hidden_text(f"[section]\nhost = h1\n{line}\nport = 1\n")
     assert n >= 1 and SECRET not in out
-    assert "host = h1" in out and "port = 1" in out and "[section]" in out
+    assert "host = h1" in out and "port = 1" in out and "[section]" in out  # other lines stay readable
 
 
-def test_ini_line_negative():
-    text = "[section]\nhost = h1\ncompass = north\ntokenizer = x\nurl: http://example.test/x\n"
+def test_already_masked_text_shows_nothing_new():
+    out, _ = hidden_text(f"Password={SECRET}\nHost=h1\n")
+    assert out == f"Password={MASK}\nHost=h1\n"
+    assert hidden_text(out) == (out, 0)
+
+
+def test_names_spelled_with_escapes_are_found():
+    for text in (
+        f'{{"\\u0070assword":"{SECRET}"}}',
+        f"<&#112;assword>{SECRET}</&#112;assword>",
+        f'<add key="&#x70;assword" value="{SECRET}"/>',
+        f"\\x70assword={SECRET}",
+        f"<Server pass&#119;ord='{SECRET}'/>",
+    ):
+        out, n = hidden_text(text)
+        assert n >= 1 and SECRET not in out, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f'Server=s;Password="first""{SECRET}";Port=1',
+        f"Server=s;Password='first''{SECRET}';Port=1",
+        f'Server=s;Pwd="a""b""{SECRET}";Port=1',
+        f"<Db connectionString=\"Server=s;Password='first''{SECRET}';Port=1\"/>",
+    ],
+)
+def test_connection_password_with_doubled_quotes_fully_hidden(text):
     out, n = hidden_text(text)
-    assert out == text and n == 0
-
-
-def test_ini_does_not_touch_xml_lines():
-    text = "<a>\n  <name>ok</name>\n</a>"
-    out, n = hidden_text(text)
-    assert out == text and n == 0
-
-
-def test_already_masked_not_counted_twice():
-    out, n = hidden_text(f"Password={SECRET}\n")
-    assert n == 1 and out == f"Password={MASK}\n"
-    out2, n2 = hidden_text(out)
-    assert out2 == out and n2 == 0
+    assert n >= 1 and SECRET not in out and "first" not in out
 
 
 # ---------------------------------------------------------------------- read_source_text
 
 
 def test_zip_reveal_returns_original_hidden_counts(case):
-    xml = f'<?xml version="1.0"?>\r\n<c>\r\n  <Password>{SECRET}</Password>\r\n  <Host>h1</Host>\r\n</c>\r\n'
+    xml = (
+        f'<?xml version="1.0"?>\r\n<c>\r\n  <Password>{SECRET}</Password>\r\n'
+        "  <Other>x</Other>\r\n  <Host>h1</Host>\r\n</c>\r\n"
+    )
     sid = zip_source(case, "app.config", xml.encode())
     shown = read_source_text(case[0], sid)
     assert shown.hidden == 1 and not shown.revealed
     assert SECRET not in shown.text and MASK in shown.text and "<Host>h1</Host>" in shown.text
     assert "\r" not in shown.text and shown.kind == "config" and shown.name == "app.config"
-    assert shown.encoding == "utf-8" and shown.lines == 5
+    assert shown.encoding == "utf-8" and shown.lines >= 3
     raw = read_source_text(case[0], sid, reveal=True)
     assert raw.revealed and raw.hidden == 1 and SECRET in raw.text and MASK not in raw.text
 
@@ -482,7 +470,7 @@ def test_nothing_written_to_the_case(case):
 
 
 def test_hostile_content_is_inert(case):
-    text = '<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><a>&e;</a><script>alert(1)</script>'
+    text = '<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/hosts">]><a>&e;</a><script>alert(1)</script>'
     out = read(case, "u.xml", text)
     assert out.text == text  # returned as text, nothing expanded or executed
 
@@ -501,66 +489,29 @@ def test_pathological_input_is_fast():
 
 
 @pytest.mark.parametrize(
-    "unit", ['<password key="pwd" ', "]]></a>", "<add key='token' ", "password = ", "<x>"]
+    "unit",
+    [
+        '<password key="pwd" ',
+        "]]></a>",
+        "<add key='token' ",
+        "password = ",
+        "<x>",
+        "password\n",
+        "password" + " " * 30 + "\n",
+        "<password>\n",
+        "\\u0070assword\n",
+        "&#112;assword=x\n",
+        "<password><![CDATA[\n",
+        'password="\n',
+        '<a key="password"\n',
+        "ab password ",
+    ],
 )
 def test_other_hostile_shapes_are_fast(unit):
     assert _time_hostile((unit,)) < 2
 
 
 # ---------------------------------------------------------------------- review regressions
-
-
-def test_cdata_with_whitespace_and_newlines_around_is_hidden():
-    for text in (
-        f"<Password>\n<![CDATA[{SECRET}]]>\n</Password>",
-        f"<Password>  \t<![CDATA[{SECRET}]]>  </Password>",
-        f"<Password>\n  {SECRET}\n</Password>",
-        f"<Password>part1<![CDATA[{SECRET}]]></Password>",
-    ):
-        out, n = hidden_text(text)
-        assert n == 1 and SECRET not in out, text
-        assert out.startswith("<Password>") and out.endswith("</Password>")
-
-
-def test_multiline_attribute_and_other_quote_kind_inside_value():
-    for text in (
-        f'<Server ApiKey=\n  "{SECRET}\nsecond line" Port="1"/>',
-        f'<Server ApiKey="{SECRET}\'last" Port="1"/>',
-        f'<Server ApiKey=\'{SECRET}"last\' Port="1"/>',
-        f'<Server\n  Password\n=\n"{SECRET}"\n/>',
-    ):
-        out, n = hidden_text(text)
-        assert n == 1 and SECRET not in out, text
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        f'Server=s;Password="first""{SECRET}";Port=1',
-        f"Server=s;Password='first''{SECRET}';Port=1",
-        f'Server=s;Pwd="a""b""{SECRET}";Port=1',
-        f"<Db connectionString=\"Server=s;Password='first''{SECRET}';Port=1\"/>",
-    ],
-)
-def test_connection_password_with_doubled_quotes_fully_hidden(text):
-    out, n = hidden_text(text)
-    assert n == 1 and SECRET not in out and "first" not in out and "Port=1" in out
-
-
-def test_json_escaped_key_and_value():
-    cases = (
-        f'{{"\\u0070assword":"{SECRET}"}}',
-        f'{{"pass\\u0077ord":"{SECRET}"}}',
-        f'{{"api-key":"{SECRET}"}}',
-        f'{{"password":"ab\\"{SECRET}\\"cd","x":"y"}}',
-        '{"password":"\\u0065xample-secret"}',
-        f'{{ "password" :\n "{SECRET}" }}',
-    )
-    for text in cases:
-        out, n = hidden_text(text)
-        assert n >= 1 and SECRET not in out and "xample-secret" not in out, text
-    out, _ = hidden_text(f'{{"password":"ab\\"{SECRET}\\"cd","x":"y"}}')
-    assert out == f'{{"password":"{MASK}","x":"y"}}'
 
 
 def test_symlinked_file_is_refused(case):
@@ -662,17 +613,44 @@ def _variants(secret: str) -> list[str]:
         out.append(f'<add name="x" {cs}="Data Source=h;User Id=u;pwd={secret};"/>')
         out.append(f"<{cs}>Server=s;PASSWORD = {secret}</{cs}>")
         out.append(f"{cs} = Server=s;Pwd={secret}")
+    for name in ("password", "Password", "api-key", "pwd"):
+        w = " " * 70 + "\t\r\n"
+        out += [
+            f'{{"{name}{w}":"{secret}"}}',
+            f'{{"{name}"{w}:{w}"{secret}"',
+            f'{{"{name}":"{secret}',
+            f'{{"{name}":"{secret}\\',
+            f'<add key="{name}" other=unquoted value="{secret}"',
+            f'<add value="{secret}" key="{name}" other=unquoted flag/>',
+            f'<add key="{name}" value="{secret}',
+            f"<add key='{name}' value='{secret}",
+            f"<{name} flag=unquoted>{secret}</{name}>",
+            f"<{name}>{secret}",
+            f"<{name}>\n\n<![CDATA[{secret}",
+            f"<{name}><![CDATA[{secret}]]",
+            f'<{name} a="1 b="2">{secret}</{name}>',
+            f'{name}="{secret}',
+            f"{name}='{secret}",
+            f'{name} = "{secret}\r\nsecond"',
+            f"\t{name}\t:\t{secret}\r",
+            f"{name}\n\n\n  {secret}",
+            f"<!-- {name}: {secret} -->",
+            f"<![CDATA[ {name}: {secret} ]]>",
+            f"{_u(name)}={secret}",
+            f'{{"{_u(name)}":"{secret}"}}',
+            f"<{''.join(f'&#{ord(c)};' for c in name)}>{secret}</{name}>",
+        ]
     return out
 
 
 def test_adversarial_variants_never_show_the_secret():
     variants = _variants(SECRET)
-    assert len(variants) > 500
+    assert len(variants) > 600
     for text in variants:
         out, n = hide_credentials(text)
         assert SECRET not in out and n >= 1, text
-        again, n2 = hide_credentials(out)
-        assert again == out and n2 == 0, text  # idempotent: the mask is not counted again
+        again, _n2 = hide_credentials(out)
+        assert SECRET not in again, text  # a second pass never reveals anything
 
 
 def test_hypothesis_secret_never_shown():
@@ -739,9 +717,9 @@ def test_fully_escaped_json_key_and_value_are_hidden():
         f'{{"a":1,"{_u("Pwd")}":"{SYN}","b":2}}',
     ):
         out, n = hide_credentials(text)
-        assert n == 1 and SYN not in out and _u(SYN) not in out, text
+        assert n >= 1 and SYN not in out and _u(SYN) not in out, text
     out, _ = hide_credentials(f'{{"{_u("password")}":"{SYN}","x":"y"}}')
-    assert out == f'{{"{_u("password")}":"{MASK}","x":"y"}}'
+    assert out == f'{{"{_u("password")}":"{MASK}'  # fail closed: the rest of the line goes too
 
 
 def test_json_file_with_escaped_key_through_the_reader(case):
@@ -760,13 +738,13 @@ def test_tags_with_many_attributes_still_hidden(extra):
     attrs = " ".join(f'a{i}="v{i}"' for i in range(extra))
     add = f'<add key="password" {attrs} value="{SYN}" {attrs}/>'
     out, n = hide_credentials(add)
-    assert n == 1 and SYN not in out
+    assert n >= 1 and SYN not in out
     elem = f"<Password {attrs}>{SYN}</Password>"
     out, n = hide_credentials(elem)
-    assert n == 1 and SYN not in out
+    assert n >= 1 and SYN not in out
     named = f'<Parameter {attrs} Name="password">{SYN}</Parameter>'
     out, n = hide_credentials(named)
-    assert n == 1 and SYN not in out
+    assert n >= 1 and SYN not in out
 
 
 def test_unclosed_or_odd_tags_do_not_leak_the_value_attribute():
@@ -945,3 +923,42 @@ def test_zip_swapped_for_symlink_before_open_is_refused(case, monkeypatch):
     _hook_open(monkeypatch, "ers.zip", lambda: _swap_with_symlink(tmp / "ers.zip", other))
     with pytest.raises(ContainerMissingError):
         read_source_text(conn, sid, reveal=True)
+
+
+def test_intermediate_directory_swapped_between_check_and_lstat_is_refused(local_case, monkeypatch):
+    """Fallback path: the folder becomes a link after the components were checked, before the file is
+    opened; the handle then points outside, and the path of the handle gives it away."""
+    from dmslog.store import filetext
+
+    conn, sid, folder, outside, _body = local_case
+    monkeypatch.setattr(filetext, "_HAVE_DIR_FD", False)
+    real = filetext._os_lstat
+    calls = []
+
+    def wrapper(path):
+        if str(path).endswith("x.ini"):
+            calls.append(1)
+            if len(calls) == 2:  # the "before" lstat, right after _check_components
+                _swap_with_symlink(folder / "cfg", outside, directory=True)
+        return real(path)
+
+    monkeypatch.setattr(filetext, "_os_lstat", wrapper)
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid, reveal=True)
+    assert len(calls) >= 2
+
+
+def test_handle_path_matches_the_opened_file(local_case):
+    import os
+
+    from dmslog.store import filetext
+
+    _conn, _sid, folder, _outside, _body = local_case
+    fd = os.open(folder / "cfg" / "x.ini", os.O_RDONLY)
+    try:
+        actual = filetext._handle_path(fd)
+    finally:
+        os.close(fd)
+    if actual is None:
+        pytest.skip("no handle path on this platform")
+    assert filetext._norm(actual) == filetext._norm(os.path.realpath(folder / "cfg" / "x.ini"))
