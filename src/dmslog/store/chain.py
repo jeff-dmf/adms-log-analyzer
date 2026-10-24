@@ -142,8 +142,8 @@ def key_chain(
     cond = ""
     if collection is not None:
         cond = (
-            " AND k.entry_id IN (SELECT e.id FROM entry e JOIN source s ON s.id = e.source_id"
-            " JOIN stream st ON st.id = s.stream_id WHERE st.collection_group = ?)"
+            " AND EXISTS (SELECT 1 FROM entry e JOIN source s ON s.id = e.source_id"
+            " JOIN stream st ON st.id = s.stream_id WHERE e.id = k.entry_id AND st.collection_group = ?)"
         )
         params.append(collection)
     with read_guard(conn, PAGE_TIMEOUT_S):

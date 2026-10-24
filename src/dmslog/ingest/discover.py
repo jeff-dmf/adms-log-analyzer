@@ -200,7 +200,10 @@ class RuleSet:
                 if pool.family == family:
                     match = pool.regex.fullmatch(process)
                     if match:
-                        found = (pool.name, int(match.group("instance")))
+                        try:
+                            found = (pool.name, int(match.group("instance")))
+                        except ValueError:  # absurdly long numeric string
+                            found = None
                         break
             self._pool_cache[key] = found
         return self._pool_cache[key]
@@ -224,7 +227,13 @@ class Pool:
 
 _POOL_KEYS = {"name", "family", "process"}
 _POOL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
-_NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*}][^()]*\)[+*{]")
+# Restricted form: fixed literal, exactly one mandatory numeric group named "instance", fixed literal.
+# No other quantifier, group or alternation can appear, so matching is linear.
+_POOL_PROCESS_FORM = re.compile(
+    r"[A-Za-z0-9_-]*"
+    r"\(\?P<instance>(?:\[1-9\]\\d\{0,[0-9]{1,2}\}|\\d\{1,[0-9]{1,2}\}|\\d\+)\)"
+    r"[A-Za-z0-9_-]*"
+)
 
 
 def _compile_pools(raw: Any, families: set[str]) -> list[Pool]:
@@ -246,10 +255,13 @@ def _compile_pools(raw: Any, families: set[str]) -> list[Pool]:
             raise FamiliesConfigError(f"{where}: 'family' must be the family of a [[rule]]")
         if not isinstance(process, str) or not process:
             raise FamiliesConfigError(f"{where}: 'process' is required")
-        if _NESTED_QUANTIFIER.search(process):
-            raise FamiliesConfigError(f"{where}: 'process' must not use nested quantifiers")
+        if not _POOL_PROCESS_FORM.fullmatch(process):
+            raise FamiliesConfigError(
+                f"{where}: 'process' must be a fixed literal around exactly one mandatory group "
+                "(?P<instance>[1-9]\\d{0,N}) or (?P<instance>\\d+)"
+            )
         try:
-            regex = re.compile(process)
+            regex = re.compile(process, re.ASCII)
         except re.error as exc:
             raise FamiliesConfigError(f"{where}: invalid process pattern: {exc}") from exc
         if regex.groups != 1 or set(regex.groupindex) != {"instance"}:

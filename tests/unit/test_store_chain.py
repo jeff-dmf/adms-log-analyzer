@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 from dmslog.store import chain, create_case_db
@@ -302,3 +304,27 @@ def test_truncated_by_handoffs(db):
         h["from"]["ts"] for h in result["handoffs"]
     )
     assert result["handoffs"][0]["from"]["ts"] == T0
+
+
+def test_collection_filter_cost_follows_the_key_not_the_collection(db, monkeypatch):
+    db.stream("Sched")
+    db.conn.executemany(
+        "INSERT INTO entry(id, source_id, line_no, byte_off, nlines, ts, tid, sev, tpl_id, msg)"
+        " VALUES (?,1,?,?,1,?,1,4,1,'m')",
+        [(i, i, i, T0 + i) for i in range(1, 20_001)],
+    )
+    db.conn.execute("INSERT INTO entry_key(key_type, value, entry_id) VALUES ('job_id', 'rare', 10)")
+    db.conn.commit()
+    steps = [0]
+    real_guard = chain.read_guard
+
+    @contextlib.contextmanager
+    def counting_guard(conn, timeout_s):
+        with real_guard(conn, timeout_s) as expired:
+            conn.set_progress_handler(lambda: steps.__setitem__(0, steps[0] + 1) or 0, 10)
+            yield expired
+
+    monkeypatch.setattr(chain, "read_guard", counting_guard)
+    result = chain.key_chain(db.conn, "job_id", "rare", collection=1)
+    assert result["scanned"] == 1
+    assert steps[0] < 50  # x10 VM instructions; materializing the collection costs thousands of ticks
