@@ -40,12 +40,13 @@ function headRow(labels) {
 let uid = 0;
 
 // container: empty element to fill. Options:
-//   api               needs events(caseId, params, signal) and event(caseId, id, signal)
+//   api               needs events(caseId, params, signal) and event(caseId, id, signal); entry(caseId, id, signal) for "Same key"
 //   getCase()         current case id or null
 //   onShowInGrid(t)   t = { from, to, entryId }: set the grid time filter and select the entry
+//   onSameKey(type, value)  opens the "Same key" panel for the key of the open event (the button needs api.entry too)
 //   onRequestClose()  the dock closes the tab (the default hides the container)
 // Returns { refresh(), open(id) }; call refresh() when the case changed or indexing finished.
-export function initEventsPanel(container, { api, getCase, onShowInGrid, onRequestClose = null }) {
+export function initEventsPanel(container, { api, getCase, onShowInGrid, onSameKey = null, onRequestClose = null }) {
   uid += 1;
   const prefix = "ev" + uid + "-";
 
@@ -267,6 +268,15 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid, onReque
       show.dataset.action = "show";
       head.appendChild(show);
     }
+    const eventKey = current.data.event.key;
+    if (onSameKey && eventKey !== null && eventKey !== undefined && eventKey !== "") {
+      const same = element("button", "ev-show ev-samekey", S.evSameKey || "Same key");
+      same.type = "button";
+      same.dataset.action = "samekey";
+      same.disabled = true; // enabled once the type of the key is known
+      head.appendChild(same);
+      resolveKeyType(same, current.data.event);
+    }
     detailPane.appendChild(head);
     const dl = element("dl", "ev-fields");
     for (const item of view.fields) {
@@ -281,6 +291,37 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid, onReque
     noticeBox.hidden = true;
     detailPane.append(noticeBox, dl, entriesTable(view), relatedList(view.related));
     notices.check(current.data.event);
+  }
+
+  // The event does not say the type of its key: the first one (alphabetical) of its starting record whose value is that key.
+  let keyTypeToken = 0;
+  async function resolveKeyType(button, event) {
+    keyTypeToken += 1;
+    const token = keyTypeToken;
+    const caseId = getCase();
+    let type = null;
+    if (caseId && event.start_entry_id && typeof api.entry === "function") {
+      try {
+        const data = await api.entry(caseId, event.start_entry_id);
+        const keys = data && Array.isArray(data.keys) ? data.keys : [];
+        const types = keys
+          .filter((item) => item && item.key_type !== null && item.key_type !== undefined && String(item.value) === String(event.key))
+          .map((item) => String(item.key_type))
+          .sort();
+        type = types.length > 0 ? types[0] : null;
+      } catch (error) {
+        type = null;
+      }
+    }
+    if (token !== keyTypeToken || !detailPane.contains(button)) {
+      return;
+    }
+    if (type === null) {
+      button.title = S.evSameKeyNone || "No record of this operation carries its key as a correlation key.";
+      return;
+    }
+    button.dataset.keyType = type;
+    button.disabled = false;
   }
 
   function setStatus(text, isError) {
@@ -342,6 +383,14 @@ export function initEventsPanel(container, { api, getCase, onShowInGrid, onReque
     const related = event.target.closest("button[data-related]");
     if (related) {
       flow.select(Number(related.dataset.related));
+      return;
+    }
+    const same = event.target.closest("button");
+    if (same && same.dataset.action === "samekey") {
+      const key = flow.state.detail.data && flow.state.detail.data.event ? flow.state.detail.data.event.key : null;
+      if (onSameKey && !same.disabled && same.dataset.keyType && key && flow.state.caseId !== null && flow.state.caseId === getCase()) {
+        onSameKey(same.dataset.keyType, String(key));
+      }
       return;
     }
     if (event.target.closest("button[data-action=show]")) {

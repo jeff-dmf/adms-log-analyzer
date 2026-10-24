@@ -48,3 +48,56 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* "Operations and handoffs": operations of the key and the handoffs between its records, in time order. */
+.key-chain {
+  margin-bottom: var(--space-3);
+}
+
+.key-chain-title {
+  margin: 0 0 var(--space-2);
+  font-size: inherit;
+}
+
+.key-chain-summary {
+  margin-bottom: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.key-chain-status {
+  margin-bottom: 0;
+}
+
+.key-chain-note {
+  margin-bottom: var(--space-2);
+  color: var(--muted);
+}
+
+.key-chain-list {
+  overflow-x: auto;
+}
+
+.key-chain-table {
+  width: 100%;
+}
+
+.key-chain-table td {
+  vertical-align: top;
+}
+
+.key-chain-process,
+.key-chain-step {
+  overflow-wrap: anywhere;
+}
+
+.key-chain-row.is-handoff {
+  color: var(--muted);
+}
+
+.key-chain-actions {
+  white-space: nowrap;
+}
+
+.key-chain-action {
+  margin-right: var(--space-2);
+}
