@@ -650,8 +650,9 @@ def test_intermediate_directory_swapped_before_open_is_refused(local_case, monke
 
     conn, sid, folder, outside, _body = local_case
     monkeypatch.setattr(filetext, "_HAVE_DIR_FD", filetext._HAVE_DIR_FD and not fallback)
-    # the directory is opened by name ("cfg") with directory handles, by the whole path otherwise
-    target = "x.ini" if fallback else "cfg"
+    # the directory is opened by name ("cfg") with directory handles, by the whole path otherwise (no dir_fd on
+    # Windows, where the fallback is the only path)
+    target = "cfg" if filetext._HAVE_DIR_FD else "x.ini"
     _hook_open(monkeypatch, target, lambda: _swap_with_symlink(folder / "cfg", outside, directory=True))
     with pytest.raises(ContainerMissingError):
         read_source_text(conn, sid, reveal=True)
