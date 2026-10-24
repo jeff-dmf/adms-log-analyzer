@@ -17,6 +17,7 @@ loaded lazily, once per process, and validated with ``validate_pack``. The datac
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import stat
@@ -26,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from dmslog.knowledge.pack_schema import PACK_FILES, validate_pack
+from dmslog.knowledge.pack_schema import PACK_FILES, RT_SERVICES_FILE, validate_pack, validate_rt_services
 
 PACK_ENV = "DMSLOG_PACK_DIR"
 PACK_SUBDIR = ("knowledge", "pack")
@@ -48,6 +49,10 @@ class PackError(Exception):
 
 class PackNotInstalled(PackError):
     """No knowledge pack was found in any of the searched locations."""
+
+
+class RtServicesError(PackError):
+    """The optional ``rt_services.json`` is invalid; the rest of the pack is unaffected."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +124,33 @@ class Manifest:
 
 
 @dataclass(frozen=True, slots=True)
+class RtReference:
+    """Another vault note that mentions an RT service (pointer only, never a text excerpt)."""
+
+    doc: str
+    note: str
+    section: str | None
+    mentions: int
+
+
+@dataclass(frozen=True, slots=True)
+class RtService:
+    """What the vault says about one RealTime process (optional ``rt_services.json``)."""
+
+    process: str
+    family: str
+    title: str | None
+    summary: str | None
+    note: str | None
+    section: str | None
+    install_dir: str | None
+    monitored: tuple[str, ...]
+    counters: tuple[str, ...]
+    usage_events: int
+    references: tuple[RtReference, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Pack:
     manifest: Manifest
     adapters: tuple[AdapterInfo, ...]
@@ -126,6 +158,16 @@ class Pack:
     operations: tuple[OperationInfo, ...]
     errors: tuple[VaultError, ...]
     params: tuple[VaultParam, ...]
+    # Optional RT block: empty when the pack has no rt_services.json or the file is invalid
+    # (then ``rt_services_error`` says why; the rest of the pack is still usable).
+    rt_services: tuple[RtService, ...] = ()
+    rt_services_error: str | None = None
+
+    def rt_service(self, process: str) -> RtService | None:
+        for item in self.rt_services:
+            if item.process == process:
+                return item
+        return None
 
     def adapter(self, acronym: str) -> AdapterInfo | None:
         for item in self.adapters:
@@ -145,16 +187,51 @@ def _adapter(row: dict[str, Any]) -> AdapterInfo:
     return AdapterInfo(**row)
 
 
-def load_pack_from(directory: Path | str) -> Pack:
-    """Load and validate a pack from a real directory (used by tests and by ``load_pack``)."""
+def _rt_service(row: dict[str, Any]) -> RtService:
+    row = dict(row)
+    row["monitored"] = tuple(row["monitored"])
+    row["counters"] = tuple(row["counters"])
+    row["references"] = tuple(RtReference(**ref) for ref in row["references"])
+    return RtService(**row)
+
+
+def load_rt_services(directory: Path | str) -> tuple[RtService, ...]:
+    """Load the optional ``rt_services.json``: () when absent, ``RtServicesError`` when invalid."""
     directory = Path(directory)
-    problems = validate_pack(directory)
+    problems = validate_rt_services(directory)
+    if problems:
+        shown = "; ".join(problems[:5])
+        extra = f" (+{len(problems) - 5} more)" if len(problems) > 5 else ""
+        raise RtServicesError(f"invalid {RT_SERVICES_FILE} in {directory}: {shown}{extra}")
+    path = directory / RT_SERVICES_FILE
+    if not path.is_file():
+        return ()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:  # validated just before: a race or a hostile depth
+        raise RtServicesError(f"cannot read {RT_SERVICES_FILE}: {type(exc).__name__}") from exc
+    return tuple(_rt_service(row) for row in data["rt_services"])
+
+
+def load_pack_from(directory: Path | str) -> Pack:
+    """Load and validate a pack from a real directory (used by tests and by ``load_pack``).
+
+    The optional ``rt_services.json`` is tolerant: absent = no RT block; invalid = no RT block and
+    ``Pack.rt_services_error`` set, while the rest of the pack loads normally.
+    """
+    directory = Path(directory)
+    problems = validate_pack(directory, include_optional=False)
     if problems:
         shown = "; ".join(problems[:5])
         extra = f" (+{len(problems) - 5} more)" if len(problems) > 5 else ""
         raise PackError(f"invalid knowledge pack in {directory}: {shown}{extra}")
     data = {name: json.loads((directory / name).read_text(encoding="utf-8")) for name in PACK_FILES}
-    return _build(data)
+    pack = _build(data)
+    try:
+        services = load_rt_services(directory)
+    except RtServicesError as exc:
+        return dataclasses.replace(pack, rt_services_error=str(exc))
+    return dataclasses.replace(pack, rt_services=services)
 
 
 def _build(data: dict[str, Any]) -> Pack:

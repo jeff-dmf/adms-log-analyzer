@@ -56,6 +56,7 @@ MANIFEST_KEYS = {_norm(k) for k in ("schema_version", "generator_version", "noti
 MANIFEST_SHAPE = {_norm(k) for k in ("schema_version", "generator_version", "vault_commit", "files")}
 NOTICE_PHRASES = ("derived from Schneider Electric documentation", "do not publish this pack")
 DATA_FILES = ("adapters.json", "error_codes.json", "operations.json", "parameters.json")
+OPTIONAL_DATA_FILES = ("rt_services.json",)  # part of the pack when present (the fixture may carry it)
 KEY_NOTICE = _norm("notice")
 KEY_ADAPTERS = _norm("adapters")
 KEY_PROCESS_MAP = _norm("process_map")
@@ -99,6 +100,7 @@ def _field_signatures() -> dict[str, set[str]]:
         _norm("error_codes"): {_norm(f) for f in schema._ERROR_FIELDS},
         _norm("operations"): {_norm(f) for f in schema._OPERATION_FIELDS},
         _norm("parameters"): {_norm(f) for f in schema._PARAMETER_FIELDS},
+        _norm("rt_services"): {_norm(f) for f in schema._RT_SERVICE_FIELDS},
     }
 
 
@@ -558,7 +560,8 @@ def tracked_problems(names: Iterable[str], read: Callable[[str], bytes]) -> list
             problems.append(f"{name}: cannot be inspected ({exc})")
             continue
         path = PurePosixPath(name)
-        in_fixture = str(path.parent) == SYNTHETIC_DIR and path.name in (*DATA_FILES, "manifest.json")
+        fixture_names = (*DATA_FILES, *OPTIONAL_DATA_FILES, "manifest.json")
+        in_fixture = str(path.parent) == SYNTHETIC_DIR and path.name in fixture_names
         if synthetic_dir and in_fixture:
             continue  # the synthetic fixture, in its exact folder
         _inspect(None, name, data, 0, _Budget(), problems)

@@ -118,6 +118,47 @@ All fields are strings except `log_relevant` (boolean): true for the parameters 
 analysis: `AuditingPeriod`, `LogFileName`, `LogLevel`, `MessageLogLevel`, `ModelUpdatersLogLevel`,
 `NumOfRetries`, `RetryTimeout`, `SendTimeout`, `WaitForCRSCallback`.
 
+## rt_services.json (optional)
+
+Catalog of RealTime services, sorted by `process`. The file may be absent (older pack): the app then has
+no vault block for RT services. `schema_version` stays 1: an older app ignores the file, a newer app
+treats a pack without it as "unknown". If the file exists but is invalid, only the RT block is dropped
+(`Pack.rt_services_error` says why); the rest of the pack loads normally.
+
+```json
+{"rt_services": [{
+  "process": "DMS_ExampleScheduler",
+  "family": "DMSJOB",
+  "title": "Example Scheduler",
+  "summary": "Synthetic first sentence of the section.",
+  "note": "01 Example/Example Architecture/Example Service Notes.md",
+  "section": "1.2.3",
+  "install_dir": "Example\\bin",
+  "monitored": ["cpu", "ram"],
+  "counters": ["Example Queue Count"],
+  "usage_events": 3,
+  "references": [
+    {"doc": "EXMP", "note": "02 Example/EXMP 4 Example Procedure.md", "section": "4.1.2", "mentions": 2}
+  ]
+}]}
+```
+
+| Field | Type | Rule |
+|---|---|---|
+| `process` | string | Unique, sorted; letters, digits, `_`, `.`, `-`, at most 64 characters. |
+| `family` | string | One of `ARBIP`, `DMSCORE`, `DMSFH`, `DMSJOB`, `DMSMODEL`, `DMSOMS`, `DMSRT`, `ERS`, `NMC`, `PSENGINE`. |
+| `title`, `install_dir` | string or null | Single line, at most 300 characters. |
+| `summary` | string or null | First sentence of the section, single line, at most 240 characters. |
+| `note` | string or null | Vault-relative POSIX path of a `.md` note: no `..`, no leading `/`, no backslash or drive. |
+| `section` | string or null | Section number such as `1.2.3` (digits and dots only). |
+| `monitored` | list of strings | Distinct values from `cpu`, `ram`, `hdd`. |
+| `counters` | list of strings | At most 64 names, each a single line of at most 300 characters. |
+| `usage_events` | integer | 0 or more. |
+| `references` | list (at most 8) | Objects with exactly `doc` (four capital letters), `note` (same rule as above), `section` (string or null) and `mentions` (integer, 1 or more). Pointers only, never text. |
+
+The file holds at most 128 services and 1,000,000 bytes; any other key, missing field or wrong type makes
+the file invalid. `validate_rt_services(directory)` checks it alone; `validate_pack(directory)` includes it.
+
 ## manifest.json
 
 ```json

@@ -1,0 +1,42 @@
+{
+  "rt_services": [
+    {
+      "counters": [
+        "Example Queue Count"
+      ],
+      "family": "DMSJOB",
+      "install_dir": "Example\\bin",
+      "monitored": [
+        "cpu",
+        "ram"
+      ],
+      "note": "01 Example/Example Architecture/Example Service Notes.md",
+      "process": "DMS_ExampleScheduler",
+      "references": [
+        {
+          "doc": "EXMP",
+          "mentions": 2,
+          "note": "02 Example/EXMP 4 Example Procedure.md",
+          "section": "4.1.2"
+        }
+      ],
+      "section": "1.2.3",
+      "summary": "Synthetic first sentence of the section.",
+      "title": "Example Scheduler",
+      "usage_events": 3
+    },
+    {
+      "counters": [],
+      "family": "DMSFH",
+      "install_dir": null,
+      "monitored": [],
+      "note": null,
+      "process": "DMS_ExampleWorker",
+      "references": [],
+      "section": null,
+      "summary": null,
+      "title": null,
+      "usage_events": 0
+    }
+  ]
+}

@@ -8,11 +8,27 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 SCHEMA_VERSION = 1
 
 PACK_FILES = ("adapters.json", "error_codes.json", "manifest.json", "operations.json", "parameters.json")
+
+# Optional files: absent is fine (older pack), invalid is reported for that file only.
+RT_SERVICES_FILE = "rt_services.json"
+OPTIONAL_PACK_FILES = (RT_SERVICES_FILE,)
+
+RT_FAMILIES = ("ARBIP", "DMSCORE", "DMSFH", "DMSJOB", "DMSMODEL", "DMSOMS", "DMSRT", "ERS", "NMC", "PSENGINE")
+RT_MONITORED = ("cpu", "hdd", "ram")
+
+# Hard limits of rt_services.json (a hand-edited or hostile file stays small and bounded).
+RT_MAX_FILE_BYTES = 1_000_000
+RT_MAX_SERVICES = 128
+RT_MAX_REFERENCES = 8
+RT_MAX_COUNTERS = 64
+RT_MAX_SUMMARY = 240  # characters, one sentence
+RT_MAX_TEXT = 300  # any other short text field
 
 ADAPTER_TYPES = ("soap", "files", "rest", "multispeak", None)
 DIRECTIONS = ("inbound", "outbound", None)
@@ -78,7 +94,30 @@ _MANIFEST_FIELDS = {
     "files": (dict, False),
 }
 
+_RT_SERVICE_FIELDS = {
+    "process": (str, False),
+    "family": (str, False),
+    "title": (str, True),
+    "summary": (str, True),
+    "note": (str, True),
+    "section": (str, True),
+    "install_dir": (str, True),
+    "monitored": (list, False),
+    "counters": (list, False),
+    "usage_events": (int, False),
+    "references": (list, False),
+}
+_RT_REFERENCE_FIELDS = {
+    "doc": (str, False),
+    "note": (str, False),
+    "section": (str, True),
+    "mentions": (int, False),
+}
+
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_PROCESS = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+_SECTION = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){0,8}$")
+_DOC = re.compile(r"^[A-Z]{4}$")
 
 
 def _check_fields(record, fields, where, errors):
@@ -133,8 +172,120 @@ def _validate_list_file(directory, name, key, fields, errors):
     return data, rows
 
 
-def validate_pack(directory) -> list[str]:
-    """Validate the pack in ``directory`` and return error strings (empty = valid)."""
+def _check_text(value, where, errors, limit=RT_MAX_TEXT):
+    if not isinstance(value, str):
+        return
+    if len(value) > limit:
+        errors.append(f"{where}: longer than {limit} characters")
+    if any(
+        ord(ch) < 0x20 or ord(ch) == 0x7F or unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in value
+    ):
+        errors.append(f"{where}: must be a single line without control characters")
+
+
+def _check_note_path(value, where, errors):
+    """A vault-relative POSIX note path: no absolute path, no drive, no backslash, no ``..``."""
+    if not isinstance(value, str):
+        return
+    _check_text(value, where, errors)
+    parts = value.split("/")
+    if (
+        not value
+        or value.startswith("/")
+        or "\\" in value
+        or ":" in value
+        or any(part in ("", ".", "..") for part in parts)
+        or not value.endswith(".md")
+    ):
+        errors.append(f"{where}: must be a relative .md path without '..'")
+
+
+def validate_rt_services(directory) -> list[str]:
+    """Validate the optional ``rt_services.json``; absent file = no errors (older pack)."""
+    path = Path(directory) / RT_SERVICES_FILE
+    name = RT_SERVICES_FILE
+    if not path.is_file():
+        return []
+    errors: list[str] = []
+    try:
+        if path.stat().st_size > RT_MAX_FILE_BYTES:
+            return [f"{name}: larger than {RT_MAX_FILE_BYTES} bytes"]
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
+        return [f"{name}: cannot be read as JSON ({type(exc).__name__})"]
+    if not isinstance(data, dict) or set(data) != {"rt_services"}:
+        return [f"{name}: top level must be an object with the single key 'rt_services'"]
+    rows = data["rt_services"]
+    if not isinstance(rows, list):
+        return [f"{name}: 'rt_services' must be a list"]
+    if len(rows) > RT_MAX_SERVICES:
+        return [f"{name}: more than {RT_MAX_SERVICES} services"]
+    seen: set[str] = set()
+    previous = None
+    for index, row in enumerate(rows):
+        where = f"{name}[{index}]"
+        before = len(errors)
+        _check_fields(row, _RT_SERVICE_FIELDS, where, errors)
+        if not isinstance(row, dict) or len(errors) > before:
+            continue
+        process = row["process"]
+        if not _PROCESS.fullmatch(process):
+            errors.append(f"{where}: field 'process' is not a valid process name")
+        if process in seen:
+            errors.append(f"{where}: duplicate process '{process}'")
+        elif previous is not None and process < previous:
+            errors.append(f"{where}: rows must be sorted by process")
+        seen.add(process)
+        previous = process
+        if row["family"] not in RT_FAMILIES:
+            errors.append(f"{where}: field 'family' has an unknown value")
+        for field in ("title", "install_dir"):
+            _check_text(row[field], f"{where}.{field}", errors)
+        _check_text(row["summary"], f"{where}.summary", errors, RT_MAX_SUMMARY)
+        if row["note"] is not None:
+            _check_note_path(row["note"], f"{where}.note", errors)
+        if row["section"] is not None and not _SECTION.fullmatch(row["section"]):
+            errors.append(f"{where}: field 'section' is not a section number")
+        if isinstance(row["usage_events"], bool) or row["usage_events"] < 0:
+            errors.append(f"{where}: field 'usage_events' must be a non-negative integer")
+        monitored = row["monitored"]
+        _check_str_list(monitored, f"{where}.monitored", errors)
+        if all(isinstance(item, str) for item in monitored) and (
+            len(set(monitored)) != len(monitored) or not set(monitored) <= set(RT_MONITORED)
+        ):
+            errors.append(f"{where}: field 'monitored' must hold distinct values of {list(RT_MONITORED)}")
+        counters = row["counters"]
+        _check_str_list(counters, f"{where}.counters", errors)
+        if len(counters) > RT_MAX_COUNTERS:
+            errors.append(f"{where}: field 'counters' has more than {RT_MAX_COUNTERS} items")
+        for item in counters[:RT_MAX_COUNTERS]:
+            _check_text(item, f"{where}.counters", errors)
+        references = row["references"]
+        if len(references) > RT_MAX_REFERENCES:
+            errors.append(f"{where}: field 'references' has more than {RT_MAX_REFERENCES} items")
+        for ref_index, reference in enumerate(references[:RT_MAX_REFERENCES]):
+            ref_where = f"{where}.references[{ref_index}]"
+            before = len(errors)
+            _check_fields(reference, _RT_REFERENCE_FIELDS, ref_where, errors)
+            if not isinstance(reference, dict) or len(errors) > before:
+                continue
+            if not _DOC.fullmatch(reference["doc"]):
+                errors.append(f"{ref_where}: field 'doc' must be a four-letter document code")
+            _check_note_path(reference["note"], f"{ref_where}.note", errors)
+            section = reference["section"]
+            if section is not None and not _SECTION.fullmatch(section):
+                errors.append(f"{ref_where}: field 'section' is not a section number")
+            if isinstance(reference["mentions"], bool) or reference["mentions"] < 1:
+                errors.append(f"{ref_where}: field 'mentions' must be a positive integer")
+    return errors
+
+
+def validate_pack(directory, include_optional: bool = True) -> list[str]:
+    """Validate the pack in ``directory`` and return error strings (empty = valid).
+
+    ``include_optional`` also validates the optional files (``rt_services.json``); the run-time
+    loader passes False and handles them on their own, so a bad optional file never hides the pack.
+    """
     directory = Path(directory)
     errors: list[str] = []
     if not directory.is_dir():
@@ -198,4 +349,6 @@ def validate_pack(directory) -> list[str]:
             for index, row in enumerate(data[key]):
                 if isinstance(row, dict) and acronyms and row.get("acronym") not in acronyms:
                     errors.append(f"{name}[{index}]: acronym '{row.get('acronym')}' is not in adapters.json")
+    if include_optional:
+        errors.extend(validate_rt_services(directory))
     return errors
