@@ -85,20 +85,6 @@ def render(spec) -> bytes:
     return mf.render(lines, eol="\r\n" if crlf else "\n", final_newline=not no_final_newline)
 
 
-def without_first_window(snapshot: dict) -> dict:
-    """The snapshot without the level window "before any change" and without the elevated-level flag (16).
-
-    Known difference of the derivation that also exists without any limit: a file first seen up to its first
-    level change and completed later does not get that window (and the flag it sets) back. Reported
-    separately; it has nothing to do with reduced sources.
-    """
-    events = [
-        e for e in snapshot["events"] if not (e[0] == "level_window" and '"from": null' in (e[10] or ""))
-    ]
-    entries = [(*e[:10], e[10] & ~16, *e[11:]) for e in snapshot["entries"]]
-    return {**snapshot, "events": events, "entries": entries}
-
-
 def fresh(work: Path, folder: Path, cap: int, head: int, name: str = "ref", **kw):
     db = cs.new_db(work, name)
     run_ingest(db, folder, cs.options(cap, head, **kw))
@@ -239,8 +225,8 @@ def test_growth_equals_the_reference_with_the_same_cut(spec, lim, cuts, sizes, i
             ref = cs.grown_reference(work, folder, data, final, head=head)
             assert cs.state_of(ref).lo == final.lo
         ph.assert_same(
-            {**without_first_window(ph.content(db)), "capped": cs.capped_meta(db)},
-            {**without_first_window(ph.content(ref)), "capped": cs.capped_meta(ref)},
+            {**ph.content(db), "capped": cs.capped_meta(db)},
+            {**ph.content(ref), "capped": cs.capped_meta(ref)},
         )
         ph.assert_integrity(db)
         for _id, line_no, byte_off, *_rest in cs.rows_of(db):

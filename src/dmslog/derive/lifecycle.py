@@ -288,6 +288,9 @@ class _Startup:
 class _Level:
     def __init__(self, stream_start: bool = True) -> None:
         self.first_id: int | None = None  # first entry with ts, until the first change
+        # First entry fed at all (with or without ts), until the first change: the resume point of the
+        # first window must not skip untimed records that precede ``first_id``.
+        self.head_id: int | None = None
         self.first_ts: int | None = None
         # Resuming mid-stream: the first window (before any change) belongs to an earlier pass.
         self.seen_change = not stream_start
@@ -371,6 +374,7 @@ class _Level:
                     }
                     out.append(self._event(first, end_id if self.n > 0 else e.id, ts, STATUS_OK))
                 self.seen_change = True
+                self.head_id = None
                 self.first_id = self.first_ts = None
                 self.first_skipped = False
                 self.cur = {
@@ -395,8 +399,8 @@ class _Level:
         marks = []
         if self.cur is not None:
             marks.append(self.cur["id"])
-        if not self.seen_change and self.first_id is not None:
-            marks.append(self.first_id)
+        if not self.seen_change and self.head_id is not None:
+            marks.append(self.head_id)
         return min(marks) if marks else None
 
 
@@ -730,6 +734,8 @@ class LifecycleDeriver:
             if startup.open or msg.startswith(_START_PREFIXES) or msg[:1].isspace():
                 out.extend(startup.feed(entry))
             level = self._level
+            if level.head_id is None and not level.seen_change:
+                level.head_id = entry.id
             if ts is not None:
                 if level.first_id is None and not level.seen_change:
                     level.first_id, level.first_ts = entry.id, ts

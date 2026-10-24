@@ -328,6 +328,38 @@ def test_incremental_derivation_equals_one_shot(tmp_path_factory, actions, cut, 
         steps.close()
 
 
+def test_first_level_window_is_recovered_at_every_cut_with_an_orphan_head(tmp_path):
+    """An untimed record before the first timed one must not hide the window "before any change"."""
+    lines = [
+        "orphan line before any header",
+        line(0, "[Op] work 1"),
+        line(10, "[Op] work 2"),
+        line(20, "Debug level changed from Info (3) to Debug (4)."),
+        line(30, "[Op] work 3"),
+        line(40, "Debug level changed from Debug (4) to Info (3)."),
+        line(50, "[Op] work 4"),
+    ]
+    whole = tp.fresh_db(tmp_path, "whole")
+    try:
+        ingest(whole, tp.write_folder(tmp_path / "W", {WFM: render(lines)}))
+        want = snapshot(whole)
+        assert any(r[0] == "level_window" and r[1] == "Info" for r in want[0])
+        for first in range(1, len(lines) + 1):
+            for second in range(first, len(lines) + 1):
+                steps = tp.fresh_db(tmp_path, f"s{first}_{second}")
+                try:
+                    root = tp.write_folder(tmp_path / f"S{first}_{second}", {WFM: render(lines[:first])})
+                    ingest(steps, root)
+                    for upto in (second, len(lines)):
+                        (root / WFM).write_bytes(render(lines[:upto]))
+                        ingest(steps, root)
+                    assert snapshot(steps) == want, (first, second)
+                finally:
+                    steps.close()
+    finally:
+        whole.close()
+
+
 # --------------------------------------------------------------------------- stateful deriver (stats deltas)
 
 HOUR = 3_600_000

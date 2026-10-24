@@ -470,6 +470,32 @@ def test_rederivation_from_low_watermark_matches_whole_stream(family: str) -> No
         assert sorted(map(repr, map(key, kept + redone))) == sorted(map(repr, map(key, whole))), (family, k)
 
 
+@pytest.mark.parametrize("family", ["AWFM", "AAVL"])
+def test_untimed_head_does_not_hide_the_first_level_window(family: str) -> None:
+    mk = Maker()
+    entries = [
+        other(mk, None, "orphan"),
+        other(mk, None, "orphan 2"),
+        other(mk, T0),
+        other(mk, T0 + 1_000),
+        level_change(mk, T0 + 2_000, ("Info", 5), ("DebugLog", 3)),
+        other(mk, None),
+        other(mk, T0 + 3_000),
+    ]
+    whole = run_in_memory([LifecycleDeriver(family)], entries)
+    assert any(ev.kind == "level_window" and ev.detail.get("from") is None for ev in whole)
+    for k in range(1, len(entries) + 1):
+        first = LifecycleDeriver(family)
+        events = [ev for e in entries[:k] for ev in first.feed(e)]
+        wm = first.low_watermark()
+        assert wm is not None and wm <= entries[k - 1].id
+        kept = [ev for ev in events if (ev.start_entry_id or 0) < wm]
+        second = LifecycleDeriver(family, stream_start=wm == entries[0].id)
+        redone = run_in_memory([second], [e for e in entries if e.id >= wm])
+        redone = [ev for ev in redone if (ev.start_entry_id or 0) >= wm]
+        assert sorted(map(repr, map(key, kept + redone))) == sorted(map(repr, map(key, whole))), (family, k)
+
+
 def test_flush_without_eof_emits_nothing_and_watermark_tracks_open_state() -> None:
     mk = Maker()
     d = LifecycleDeriver("AWFM")
