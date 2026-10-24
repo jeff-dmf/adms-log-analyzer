@@ -91,7 +91,7 @@ export function mountFileViewer({ host, fetchText, onMessage, restoreFocus }) {
   const state = new ViewerState(read, paint);
 
   function focusables() {
-    return panel.querySelectorAll(FOCUSABLE).filter((node) => !node.hidden && !node.disabled);
+    return Array.from(panel.querySelectorAll(FOCUSABLE)).filter((node) => !node.hidden && !node.disabled);
   }
 
   function close() {

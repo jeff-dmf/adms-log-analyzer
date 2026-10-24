@@ -993,7 +993,7 @@ export class SourcesPanel {
     }
     this.refs.sourceList.appendChild(this.niItem); // also moves it behind rows added after it
     if (focusedKey !== undefined) {
-      const again = this.niItem.querySelectorAll("button").find((b) => b.dataset.niKey === focusedKey);
+      const again = Array.from(this.niItem.querySelectorAll("button")).find((b) => b.dataset.niKey === focusedKey);
       if (again) {
         again.focus();
       }

@@ -73,7 +73,16 @@ function sourceMetaText(source) {
 // here is a live region of its own). validate(paths, scope) and snapshot(paths, scope) take the files and the scope the
 // action will really use. Returns { snapshot, validate, reset, invalidate, refresh, showServerError, hasPreview,
 // focusFirst }.
-export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = defaultApi, onChange = null, announce = null }) {
+export function mountPartialBody({
+  host,
+  getCaseId,
+  getPaths,
+  getScope,
+  getCapMb = () => undefined,
+  api = defaultApi,
+  onChange = null,
+  announce = null,
+}) {
   const doc = host.ownerDocument || document;
   const id = String(++uid);
   host.textContent = "";
@@ -426,7 +435,7 @@ export function mountPartialBody({ host, getCaseId, getPaths, getScope, api = de
         setStatus(format(S.poReading, { name, index: index + 1, total }));
         const entry = { path, name, scope, sources: [], truncated: false, checked: new Set(), node: null, boxes: null, count: null, error: "" };
         try {
-          const data = await api.partial.plan(caseId, path, scope);
+          const data = await api.partial.plan(caseId, path, scope, undefined, getCapMb());
           if (mine !== token) {
             return; // reset, scope change or a newer preview: this answer is old
           }
