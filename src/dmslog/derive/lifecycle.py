@@ -291,6 +291,7 @@ class _Level:
         # First entry fed at all (with or without ts), until the first change: the resume point of the
         # first window must not skip untimed records that precede ``first_id``.
         self.head_id: int | None = None
+        self.pin_head = False  # the first window starts at the first change: keep ``head_id`` as watermark
         self.first_ts: int | None = None
         # Resuming mid-stream: the first window (before any change) belongs to an earlier pass.
         self.seen_change = not stream_start
@@ -373,8 +374,16 @@ class _Level:
                         "skipped": self.first_skipped,
                     }
                     out.append(self._event(first, end_id if self.n > 0 else e.id, ts, STATUS_OK))
+                # The first window starts at the first timed entry. When that entry is this very change, the
+                # window starts at the checkpoint a resume would use: the reset would delete it and, with
+                # entries before it, nothing would recreate it. The head stays the watermark until the next
+                # change (after which the first window starts before the checkpoint and is kept).
+                if self.cur is None and self.first_id == e.id:
+                    self.pin_head = True
+                else:
+                    self.head_id = None
+                    self.pin_head = False
                 self.seen_change = True
-                self.head_id = None
                 self.first_id = self.first_ts = None
                 self.first_skipped = False
                 self.cur = {
@@ -399,7 +408,7 @@ class _Level:
         marks = []
         if self.cur is not None:
             marks.append(self.cur["id"])
-        if not self.seen_change and self.head_id is not None:
+        if (not self.seen_change or self.pin_head) and self.head_id is not None:
             marks.append(self.head_id)
         return min(marks) if marks else None
 
