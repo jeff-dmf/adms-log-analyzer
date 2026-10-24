@@ -6,6 +6,9 @@ import { sectionHeading } from "./detail.js";
 import { buildKnowledgeView, planKnowledge } from "./knowledge-model.js";
 import { S, format } from "./strings.js";
 
+const PROCESS_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/; // the contract of GET /api/knowledge (process)
+const STREAM_FAMILY = /^[A-Za-z0-9_]{1,32}$/; // the contract of GET /api/knowledge (stream_family)
+
 const CACHE_LIMIT = 500;
 
 function element(tag, className, text) {
@@ -60,7 +63,10 @@ export class KnowledgeSection {
       return;
     }
     const family = this.getFamily(entry.source_id);
-    const processName = this.getProcess(entry.source_id) || "";
+    // Only names the API accepts are sent (process names such as "Example Server" of other logs would give a 400
+    // and hide the whole panel); the service block is for RT processes, whose names always fit.
+    const rawProcess = this.getProcess(entry.source_id) || "";
+    const processName = PROCESS_NAME.test(rawProcess) ? rawProcess : "";
     const plan = planKnowledge(entry, family);
     if (plan.template === null && plan.errors.length === 0) {
       this.clear();
@@ -71,7 +77,8 @@ export class KnowledgeSection {
       const [templateData, ...errorAnswers] = await Promise.all([
         plan.template === null ? null : this.lookup("t|" + caseId + "|" + processName + "|" + plan.template,
           () => api.knowledge(caseId, plan.template,
-            { process: processName || undefined, streamFamily: family || undefined }, ticket.signal)),
+            { process: processName || undefined, streamFamily: processName && STREAM_FAMILY.test(family) ? family : undefined },
+            ticket.signal)),
         ...plan.errors.map((item) =>
           this.lookup("e|" + caseId + "|" + item.family + "|" + item.code,
             () => api.knowledgeError(caseId, item.family, item.code, ticket.signal))),

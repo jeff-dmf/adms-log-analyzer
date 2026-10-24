@@ -24,12 +24,13 @@ globalThis.document = {
 const { KnowledgeSection } = await import("../../src/dmslog/web/js/knowledge.js");
 const { api } = await import("../../src/dmslog/web/js/api.js");
 
-function setup() {
+function setup(getProcess = () => "") {
   const host = node("section");
   const state = { caseId: "c1", errors: [] };
   const section = new KnowledgeSection(host, {
     getCase: () => state.caseId,
     getFamily: () => "AWFM",
+    getProcess,
     onError: (err) => state.errors.push(err),
   });
   return { host, state, section };
@@ -150,4 +151,20 @@ test("the cache is keyed by process as well as template", async () => {
   assert.equal(calls, 1);
   await section.show({ id: 13, tpl_id: 2, tpl: "RTL-001", fields: {}, source_id: 2 });
   assert.equal(calls, 2);
+});
+
+
+test("a process name outside the API contract is not sent (the panel stays available)", async () => {
+  const sent = [];
+  const { host, section } = setup((id) => ({ 1: "Example Server", 2: "123Example", 3: "DMS_FunctionHost_7" })[id] || "");
+  api.knowledge = async (caseId, template, opts) => { sent.push(opts); return TEMPLATE; };
+  api.knowledgeError = async () => { throw Object.assign(new Error("x"), { status: 404 }); };
+  for (const sourceId of [1, 2, 3]) {
+    await section.show({ id: 10 + sourceId, tpl_id: 2, tpl: "WFM-080" + sourceId, fields: {}, source_id: sourceId });
+  }
+  assert.equal(sent[0].process, undefined);
+  assert.equal(sent[1].process, undefined);
+  assert.equal(sent[2].process, "DMS_FunctionHost_7");
+  assert.equal(sent[2].streamFamily, "AWFM");
+  assert.equal(host.hidden, false);
 });
