@@ -21,6 +21,7 @@ INVALID_MAX_SOURCE_MB = "invalid --max-source-mb {value!r}: use 0 or a whole num
 INGEST_REDUCED = (
     "  [reduced] {name}: indexed the first {head} and the last {tail} of {size} (--max-source-mb)"
 )
+API_BAD_PROCESS = "process must be a process name: letters, digits, dot, dash or underscore, up to 64."
 API_BAD_SOURCE_CAP = "source_cap_mb must be a whole number of MB (0 indexes every file whole)."
 API_FILE_TEXT_NOT_FOUND = "No such file in this case."
 API_FILE_TEXT_NOT_VIEWABLE = "This file is not shown as text (indexed log or a type that is not text)."
