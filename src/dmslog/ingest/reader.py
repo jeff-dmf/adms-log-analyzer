@@ -24,6 +24,9 @@ Zip-bomb policy (applied on top of the listing limits of ``discover``):
   cap. Above the cap, a high ratio still rejects it. The exempt members of one run also share an
   aggregate cap (``RATIO_EXEMPT_MAX_TOTAL_BYTES``, 8 GiB): past it, further high-ratio members stay
   rejected, so a small zip cannot be turned into an arbitrarily large database (review 8.2, S2).
+* A source over the per-file limit (``source_cap_bytes``) is indexed reduced (``ingest/capped.py``): the
+  per-member limit then counts the bytes that are stored (the beginning and the end), and the bytes that are
+  only read and skipped have their own limit, ``max_skipped_member_bytes``.
 """
 
 from __future__ import annotations
@@ -39,6 +42,11 @@ from pathlib import Path
 from types import TracebackType
 
 from dmslog import messages
+from dmslog.ingest.capped import (
+    DEFAULT_HEAD_BYTES,
+    DEFAULT_MAX_SKIPPED_MEMBER_BYTES,
+    DEFAULT_SOURCE_CAP_BYTES,
+)
 from dmslog.ingest.discover import (
     DEFAULT_MAX_MEMBER_BYTES,
     DEFAULT_MAX_MEMBERS,
@@ -81,6 +89,25 @@ class ReadLimits:
     ratio_exempt_max_total_bytes: int = RATIO_EXEMPT_MAX_TOTAL_BYTES
     max_members: int = DEFAULT_MAX_MEMBERS
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES
+    # reduced sources (ingest/capped.py): per-file limit (0 = index every file whole), bytes indexed from the
+    # start of a reduced file, and the most a reduced file may skip (read and counted, never stored)
+    source_cap_bytes: int = DEFAULT_SOURCE_CAP_BYTES
+    head_bytes: int = DEFAULT_HEAD_BYTES
+    max_skipped_member_bytes: int = DEFAULT_MAX_SKIPPED_MEMBER_BYTES
+
+    @property
+    def reduce_over(self) -> int | None:
+        """Size above which a source is listed as reducible instead of ``too_large`` (None: never)."""
+        if self.source_cap_bytes <= 0 or self.source_cap_bytes > self.max_member_bytes:
+            return None
+        return self.source_cap_bytes + self.head_bytes
+
+    def member_extra(self, size: int, cap_bytes: int | None = None) -> int:
+        """Bytes a member of ``size`` may skip on top of ``max_member_bytes`` (reduced sources only)."""
+        cap = self.source_cap_bytes if cap_bytes is None else cap_bytes
+        if cap <= 0 or cap > self.max_member_bytes or size - cap <= 0:
+            return 0
+        return min(size - cap, self.max_skipped_member_bytes)
 
 
 class ReadBudget:
@@ -90,12 +117,11 @@ class ReadBudget:
         self.limits = limits
         self.total = 0
 
-    def consume(self, n: int, member_total: int) -> None:
+    def consume(self, n: int, member_total: int, member_extra: int = 0) -> None:
         self.total += n
-        if member_total > self.limits.max_member_bytes:
-            raise ReadLimitError(
-                "member_bytes", f"member exceeded {self.limits.max_member_bytes} decompressed bytes"
-            )
+        member_limit = self.limits.max_member_bytes + member_extra
+        if member_total > member_limit:
+            raise ReadLimitError("member_bytes", f"member exceeded {member_limit} decompressed bytes")
         if self.total > self.limits.max_total_bytes:
             raise ReadLimitError("total_bytes", f"run exceeded {self.limits.max_total_bytes} bytes read")
 
@@ -231,12 +257,12 @@ class SourceReader:
             while data := fh.read(chunk_size):
                 yield data
 
-    def _guarded(self, raw: Iterator[bytes]) -> Iterator[bytes]:
+    def _guarded(self, raw: Iterator[bytes], member_extra: int = 0) -> Iterator[bytes]:
         """Count raw bytes against the budget and the per-member limit."""
         member_total = 0
         for chunk in raw:
             member_total += len(chunk)
-            self.budget.consume(len(chunk), member_total)
+            self.budget.consume(len(chunk), member_total, member_extra)
             yield chunk
 
     def file_encoding(self, info: SourceInfo) -> str | None:
@@ -252,20 +278,27 @@ class SourceReader:
 
     # ------------------------------------------------------------------ public API
 
-    def iter_chunks(self, info: SourceInfo, start: int = 0, chunk_size: int = CHUNK_SIZE) -> Iterator[bytes]:
+    def iter_chunks(
+        self, info: SourceInfo, start: int = 0, chunk_size: int = CHUNK_SIZE, member_extra: int = 0
+    ) -> Iterator[bytes]:
         """Yield the UTF-8 byte stream of ``info`` from byte ``start`` (of that stream).
+
+        ``member_extra``: bytes the member may exceed ``max_member_bytes`` by (the stretch a reduced source
+        skips). Not applied to UTF-16 files, which are never reduced.
 
         Raises ``ReadLimitError`` when a limit is exceeded and ``zipfile.BadZipFile`` /
         ``OSError`` for damaged archives or unreadable files.
         """
         if info.container_kind != "zip":
             if self.file_encoding(info) is None:
-                yield from self._guarded(self._file_chunks(self._file_path(info), start, chunk_size))
+                yield from self._guarded(
+                    self._file_chunks(self._file_path(info), start, chunk_size), member_extra
+                )
                 return
             raw = self._file_chunks(self._file_path(info), 0, chunk_size)
         else:
             raw = self._zip_chunks(info, chunk_size)
-        raw = self._guarded(raw)
+        raw = self._guarded(raw, 0 if info.container_kind != "zip" else member_extra)
         first = next(raw, b"")
         while 0 < len(first) < 2:  # a BOM split across tiny reads
             more = next(raw, b"")

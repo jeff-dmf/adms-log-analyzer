@@ -39,6 +39,25 @@ def _port(value: str) -> int:
     return port
 
 
+_HELP_MAX_SOURCE_MB = messages.HELP_INGEST_MAX_SOURCE_MB
+_INVALID_MAX_SOURCE_MB = messages.INVALID_MAX_SOURCE_MB
+_INGEST_REDUCED = messages.INGEST_REDUCED
+
+
+def _max_source_mb(value: str) -> int:
+    try:
+        megabytes = int(value)
+    except ValueError:
+        megabytes = -1
+    if not 0 <= megabytes <= 1 << 20:
+        raise argparse.ArgumentTypeError(_INVALID_MAX_SOURCE_MB.format(value=value))
+    return megabytes
+
+
+def _mb_text(size: int) -> str:
+    return f"{size / 1024**2:.0f} MB" if size >= 1024**2 else f"{size / 1024:.0f} KB"
+
+
 def _interval(value: str) -> float:
     try:
         seconds = float(value)
@@ -84,6 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--case", metavar="NAME", default=None, help=messages.HELP_INGEST_CASE)
     ingest.add_argument("--all-logs", action="store_true", help=messages.HELP_INGEST_ALL)
     ingest.add_argument("--message-queue", action="store_true", help=messages.HELP_INGEST_QUEUE)
+    ingest.add_argument(
+        "--max-source-mb", type=_max_source_mb, default=None, metavar="N", help=_HELP_MAX_SOURCE_MB
+    )
 
     watch = sub.add_parser(
         "watch", help=messages.HELP_WATCH, description=messages.HELP_WATCH, parents=[data_dir_parent]
@@ -233,6 +255,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         return EXIT_FAILED
     data_dir = resolve_data_dir(getattr(args, "data_dir", None))
     limits = ReadLimits()
+    if getattr(args, "max_source_mb", None) is not None:
+        limits = dataclasses.replace(limits, source_cap_bytes=args.max_source_mb * 1024**2)
     try:
         plan_aliases = aliases_get(data_dir)
         plan = build_plan(args.path, limits, plan_aliases)
@@ -291,6 +315,16 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         conn.close()
 
     for detail in result.details:
+        if detail.reduced is not None:
+            kept = detail.reduced
+            print(
+                _INGEST_REDUCED.format(
+                    name=detail.member,
+                    head=_mb_text(kept.h),
+                    tail=_mb_text(kept.size_at_cap - kept.lo),
+                    size=_mb_text(kept.size_at_cap),
+                )
+            )
         if detail.action == "error":
             failed = messages.INGEST_SOURCE_FAILED.format(member=detail.member, error=detail.error)
             print(failed, file=sys.stderr)

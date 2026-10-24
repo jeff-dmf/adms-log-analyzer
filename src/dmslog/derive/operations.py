@@ -52,6 +52,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from dmslog.derive.base import (
+    FLAG_AFTER_SKIP,
     STATUS_BUSINESS_ERROR,
     STATUS_FAIL,
     STATUS_OK,
@@ -106,6 +107,7 @@ class _Op:
     biz: set[str] | None = None  # created when a business-error code is seen
     codes: list[str] | None = None  # created when an error code is seen
     exc: str | None = None
+    skipped = False  # a stretch skipped by a reduced source lies inside it (duration not reliable)
 
     def __init__(
         self, rule: _Rule, entry: StoredEntry, name: str | None, from_field: bool, key: str | None, ts: int
@@ -172,6 +174,9 @@ class OperationsDeriver:
         ts = entry.ts
         if ts is not None:
             self._last_ts = ts
+        if entry.flags & FLAG_AFTER_SKIP:  # the operations open now span the skipped stretch
+            for op in self._open.values():
+                op.skipped = True
         if entry.tpl_code not in self._by_code:
             # No rule names this code: it can only join the open operation of its TID (if any). This is
             # the hottest path (most entries), so ``_join`` is inlined here.
@@ -451,6 +456,8 @@ class OperationsDeriver:
             detail["entry_ids_dropped"] = op.dropped
         if closed_by:
             detail["closed_by"] = closed_by
+        if op.skipped:
+            detail["skipped_range"] = True
         ts_end = end.ts if end is not None else None
         duration = None
         if ts_end is not None:
