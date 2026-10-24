@@ -1,7 +1,9 @@
 // Pure model of the sources tree (no DOM): the folder structure of the ERS (the member path of every source), the
 // rows that are visible for a set of open folders and a filter, the check state of a folder, and the keys. The DOM
 // layer is source-tree.js. A folder checks every source under it; the selection is the same set the flat list uses.
+import { compareInstance, hasPool, processLabel } from "./process-label.js";
 import { fold, matchRange } from "./source-filter-model.js";
+import { S, format, pluralKey } from "./strings.js";
 
 export const STORAGE_PREFIX = "dmslog.sourceTree."; // + case id, in sessionStorage: the open folders of that case
 export const VIEW_KEY = "dmslog.sourcesView"; // "list" | "tree", in localStorage
@@ -18,6 +20,14 @@ const compare = (a, b) => {
   const right = fold(b.name);
   return left < right ? -1 : left > right ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 };
+
+// "DMS_FunctionHost (28 instances)": the keys poolFolderOne/poolFolderOther are created in strings.js; the defaults keep
+// the text readable until then.
+function poolFolderName(pool, count) {
+  const key = pluralKey("poolFolder", count);
+  const fallback = count === 1 ? "{pool} ({count} instance)" : "{pool} ({count} instances)";
+  return format(S[key] || fallback, { pool, count: count.toLocaleString("en-US") });
+}
 
 function folderNode(key, name) {
   return { key, name, folder: true, children: [], ids: [], files: 0, records: 0, unreadable: 0, sensitive: 0 };
@@ -57,9 +67,20 @@ export function buildTree(sources) {
       prefix += parts[i] + "/";
       parent = folderOf(parent, prefix, parts[i]);
     }
+    let poolFolder = null;
+    if (hasPool(source)) {
+      // The instances of a pool (the FunctionHost) sit in one virtual folder inside the folder they are in. The key
+      // holds a NUL, which a member name never has, so it cannot collide with a real folder.
+      poolFolder = folderOf(parent, prefix + "\u0000pool:" + source.pool + "/", source.pool);
+      poolFolder.pool = source.pool;
+      poolFolder.instances = (poolFolder.instances || 0) + 1;
+      poolFolder.name = poolFolderName(source.pool, poolFolder.instances);
+      parent = poolFolder;
+    }
     const leaf = {
       key: prefix + parts[parts.length - 1] + "#" + source.id,
       name: parts[parts.length - 1],
+      label: poolFolder ? processLabel(source) + ", " + parts[parts.length - 1] : null,
       folder: false,
       children: [],
       ids: [source.id],
@@ -72,7 +93,11 @@ export function buildTree(sources) {
     parent.children.push(leaf);
   }
   const finish = (node) => {
-    node.children.sort((a, b) => (a.folder === b.folder ? compare(a, b) : a.folder ? -1 : 1));
+    if (node.pool) {
+      node.children.sort((a, b) => compareInstance(a.source, b.source) || compare(a, b));
+    } else {
+      node.children.sort((a, b) => (a.folder === b.folder ? compare(a, b) : a.folder ? -1 : 1));
+    }
     for (const child of node.children) {
       if (child.folder) {
         finish(child);
@@ -86,7 +111,8 @@ export function buildTree(sources) {
   };
   finish(root);
   const merge = (node) => {
-    while (node.folder && node.children.length === 1 && node.children[0].folder) {
+    // A pool folder is never merged into its parent (nor another folder into it): it is a group, not a path.
+    while (node.folder && !node.pool && node.children.length === 1 && node.children[0].folder && !node.children[0].pool) {
       const only = node.children[0];
       node.name = node.name === "" ? only.name : node.name + "/" + only.name;
       node.key = only.key;

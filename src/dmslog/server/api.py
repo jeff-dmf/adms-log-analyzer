@@ -49,6 +49,7 @@ from ..report import redact, viewexport
 from ..store import (
     alerts,
     bookmarks,
+    chain,
     db,
     distinct,
     events,
@@ -1189,6 +1190,7 @@ class Api:
             ("POST", re.compile(r"/api/cases/(?P<case>[^/]+)/queue/read\Z"), self.queue_read),
             ("DELETE", re.compile(r"/api/cases/(?P<case>[^/]+)/queue\Z"), self.queue_delete),
             ("GET", re.compile(r"/api/keys/types\Z"), self.key_types),
+            ("GET", re.compile(r"/api/keys/(?P<type>[^/]+)/(?P<value>[^/]+)/chain\Z"), self.key_chain),
             ("GET", re.compile(r"/api/keys/(?P<type>[^/]+)/(?P<value>[^/]+)\Z"), self.key_records),
             ("GET", re.compile(r"/api/redaction\Z"), self.get_redaction),
             ("PUT", re.compile(r"/api/redaction\Z"), self.put_redaction),
@@ -1459,15 +1461,16 @@ class Api:
             rows = conn.execute(
                 "SELECT s.id, s.file_name, s.member, t.family, t.process, t.pid, t.sensitive, s.rotation,"
                 f" s.status, s.error, s.n_entries, s.first_ts, s.last_ts, s.size, {last_line},"  # noqa: S608
-                " (SELECT c.ers_group FROM collection c WHERE c.id = s.collection_id)"
+                " (SELECT c.ers_group FROM collection c WHERE c.id = s.collection_id), s.stream_id"
                 " FROM source s LEFT JOIN stream t ON t.id = s.stream_id ORDER BY s.id"
             ).fetchall()
+        rows = [(*r, *events.pool_fields(r[3], r[4])) for r in rows]
         sources = [
             {
                 "id": r[0], "name": r[1], "member": r[2], "family": r[3], "process": r[4], "pid": r[5],
                 "sensitive": bool(r[6]), "rotation": r[7], "status": r[8], "error": r[9],
                 "records": r[10], "lines": r[14] or 0, "ts_min": r[11], "ts_max": r[12], "size": r[13],
-                "collection": r[15],
+                "collection": r[15], "stream": r[16], "pool": r[17], "instance": r[18],
             }
             for r in rows
         ]  # fmt: skip
@@ -1821,6 +1824,20 @@ class Api:
         with self.store.reader(cid) as conn:
             types = keys.key_types(conn)
         return Response(200, {"types": types})
+
+    def key_chain(self, request: Request) -> Response:
+        key_type = _key_type_param(request.match["type"])
+        value = _key_value_param(request.match["value"])
+        cid = _case_from_query(self.store, request)
+        collection = _id_param(request, "collection")
+
+        def pool_of(family: str | None, process: str | None) -> tuple[str, int] | None:
+            pool, instance = events.pool_fields(family, process)
+            return (pool, instance) if pool is not None and instance is not None else None
+
+        with self.store.reader(cid) as conn:
+            result = chain.key_chain(conn, key_type, value, collection, pool_of)
+        return Response(200, result)
 
     def key_records(self, request: Request) -> Response:
         key_type = _key_type_param(request.match["type"])

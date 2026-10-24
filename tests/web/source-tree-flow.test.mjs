@@ -129,3 +129,26 @@ test("a folder chain that splits keeps its folders open and the focus on a survi
   t.panel.treeHook();
   assert.equal(doc.activeElement, t.byName("A"));
 });
+
+test("a pool folder checks all its instances, opens by keyboard and names each instance for assistive tech", () => {
+  const fh = (id, n) => src(id, "Svc/Log/DMS_FunctionHost_" + n + ".log", { family: "DMSFH", pool: "DMS_FunctionHost", instance: n });
+  const t = setup("", [fh(1, 10), fh(2, 2), src(3, "Svc/Log/other.log")]);
+  assert.deepEqual(names(t), ["Svc/Log", "DMS_FunctionHost (2 instances)", "other.log"]);
+  const pool = t.byName("DMS_FunctionHost (2 instances)");
+  assert.equal(pool.attrs["aria-expanded"], "false");
+  assert.equal(pool.attrs["aria-level"], "2");
+  pool.focus();
+  pool.dispatch("keydown", { key: "ArrowRight" });
+  assert.deepEqual(names(t).slice(1), ["DMS_FunctionHost (2 instances)", "DMS_FunctionHost_2.log", "DMS_FunctionHost_10.log", "other.log"]);
+  const leaf = t.byName("DMS_FunctionHost_2.log");
+  assert.equal(leaf.attrs["aria-level"], "3");
+  assert.equal(leaf.attrs["aria-label"], "DMS_FunctionHost #2, DMS_FunctionHost_2.log");
+  assert.equal(t.byName("other.log").getAttribute("aria-label"), null);
+  leaf.focus();
+  leaf.dispatch("keydown", { key: "ArrowLeft" });
+  assert.equal(doc.activeElement, t.byName("DMS_FunctionHost (2 instances)"), "ArrowLeft goes to the pool folder");
+  t.byName("DMS_FunctionHost (2 instances)").dispatch("keydown", { key: " " });
+  assert.deepEqual([...t.panel.selected].sort(), [1, 2]);
+  assert.equal(t.byName("DMS_FunctionHost (2 instances)").attrs["aria-checked"], "true");
+  assert.equal(t.byName("Svc/Log").attrs["aria-checked"], "mixed");
+});

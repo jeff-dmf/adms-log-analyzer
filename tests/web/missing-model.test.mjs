@@ -346,3 +346,8 @@ test("a server that answers after the abort cannot make an old page, an old summ
   await reset;
   assert.deepEqual(flow.state.items.map((r) => r.id), [8]);
 });
+
+test("the process column of a missing step uses the pool label", () => {
+  const event = { id: 4, kind: "operation", name: "FunctionHostJob", family: "DMSFH", process: "DMS_FunctionHost_7", pool: "DMS_FunctionHost", instance: 7, ts_start: 1000 };
+  assert.equal(buildItemRow({ event, missing: "end" }).process, "DMSFH / DMS_FunctionHost #7");
+});

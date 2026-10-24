@@ -247,6 +247,13 @@ pattern = '(?:^|/)(?P<account>dnaApp_[^/]+)/(?P<service>(?!DMS_INTEGRATION/)DMS_
 envelope = "adms"
 scope = "default"
 
+# Pools of identical processes: one stream per instance (derivation stays per instance); the viewer groups them.
+# Read-time annotation only: the stored process name and the stream identity do not change.
+[[pool]]
+name = "DMS_FunctionHost"
+family = "DMSFH"
+process = 'DMS_FunctionHost_(?P<instance>[1-9]\d{0,3})'
+
 # The services of the RT servers, by what they do (one family, one template file each). Anything else called
 # DMS_* or OMS_* falls into DMSRT below. Jobs: scheduling and launching of the calculation jobs.
 [[rule]]

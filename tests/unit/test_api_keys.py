@@ -54,7 +54,8 @@ def test_key_records_pagination_over_http(client, demo):  # noqa: F811
             break
         after = body["next"]
     assert seen == [r["id"] for r in full["records"]] and len(set(seen)) == 12
-    assert {"id", "source_id", "member", "family", "process", "sensitive", "ts", "tid", "level", "sev",
+    assert {"id", "source_id", "member", "family", "process", "pool", "instance", "sensitive", "ts", "tid",
+            "level", "sev",
             "tpl_code", "tpl_id", "msg", "collection"} == set(full["records"][0])  # fmt: skip
 
 

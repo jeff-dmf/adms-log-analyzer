@@ -438,3 +438,77 @@ def test_discover_returns_the_same_list_for_a_zip_and_its_extracted_folder(tmp_p
 def test_packaged_resource_is_a_plain_data_file():
     path = Path(discover_module.__file__).parents[1] / "families.toml"
     assert path.is_file()
+
+
+_POOL_BASE = "[[rule]]\nfamily='FH'\npattern='x'\n[fallback]\nfamily='U'\n"
+_POOL_OK = "[[pool]]\nname='Pool_X'\nfamily='FH'\nprocess='Svc_(?P<instance>[1-9]\\d{0,3})'\n"
+
+
+def test_pool_of_matches_whole_process_names_only():
+    rules = RuleSet.from_text(_POOL_BASE + _POOL_OK)
+    assert [p.name for p in rules.pools] == ["Pool_X"]
+    assert rules.pool_of("FH", "Svc_1") == ("Pool_X", 1)
+    assert rules.pool_of("FH", "Svc_28") == ("Pool_X", 28)
+    assert rules.pool_of("FH", "Svc_0") is None
+    assert rules.pool_of("FH", "Svc_7_extra") is None
+    assert rules.pool_of("FH", "xSvc_7") is None
+    assert rules.pool_of("U", "Svc_7") is None
+    assert rules.pool_of(None, "Svc_7") is None
+    assert rules.pool_of("FH", None) is None
+    assert rules.pool_of("FH", "Svc_7") == ("Pool_X", 7)
+    assert rules.pool_of("FH", "Svc_7") == ("Pool_X", 7)  # cached
+
+
+def test_no_pool_table_means_no_pools():
+    assert RuleSet.from_text(_POOL_BASE).pools == []
+    assert RuleSet.from_text(_POOL_BASE).pool_of("FH", "Svc_1") is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "[[pool]]\nname='1bad'\nfamily='FH'\nprocess='S(?P<instance>\\d)'\n",
+        "[[pool]]\nname='P'\nfamily='NOPE'\nprocess='S(?P<instance>\\d)'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='S(\\d'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='S\\d'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='S(?P<n>\\d)'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='(S)(?P<instance>\\d)'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='(?P<instance>(\\d+)+)'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='S(?P<instance>\\d)'\nbogus=1\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='(?P<instance>(?:\\d+))+'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='S(?P<instance>x)'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='S(?P<instance>\\d+)?'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='S(?P<instance>\\d+)+'\n",
+        "[[pool]]\nname='P'\nfamily='FH'\nprocess='(?:A|B)(?P<instance>\\d+)'\n",
+        _POOL_OK + _POOL_OK,
+    ],
+)
+def test_bad_pool_is_rejected(bad):
+    with pytest.raises(FamiliesConfigError):
+        RuleSet.from_text(_POOL_BASE + bad)
+
+
+def test_packaged_function_host_pool():
+    rules = load_rules()
+    assert rules.pool_of("DMSFH", "DMS_FunctionHost_1") == ("DMS_FunctionHost", 1)
+    assert rules.pool_of("DMSFH", "DMS_FunctionHost_28") == ("DMS_FunctionHost", 28)
+    assert rules.pool_of("DMSFH", "DMS_FunctionHost_0") is None
+    assert rules.pool_of("DMSJOB", "DMS_FunctionHost_7") is None
+    assert rules.pool_of("DMSFH", "OtherName") is None
+
+
+def test_pool_of_never_raises():
+    from hypothesis import given
+    from hypothesis import strategies as st
+
+    rules = RuleSet.from_text(
+        _POOL_BASE + _POOL_OK + "[[pool]]\nname='Q'\nfamily='FH'\nprocess='Q(?P<instance>\\d+)'\n"
+    )
+
+    @given(st.text(max_size=50) | st.from_regex(r"(Svc_|Q)[0-9\u0660-\u0669]{0,40}!?", fullmatch=True))
+    def check(name):
+        found = rules.pool_of("FH", name)
+        assert found is None or (isinstance(found[1], int) and found[1] >= 0)
+
+    check()
+    assert rules.pool_of("FH", "Q" + "9" * 5000) is None

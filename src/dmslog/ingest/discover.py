@@ -144,9 +144,11 @@ class SourceInfo:
 class RuleSet:
     """Ordered rules (first match wins) plus the fallback."""
 
-    def __init__(self, rules: list[Rule], fallback: Rule) -> None:
+    def __init__(self, rules: list[Rule], fallback: Rule, pools: list[Pool] | None = None) -> None:
         self.rules = rules
         self.fallback = fallback
+        self.pools: list[Pool] = pools or []
+        self._pool_cache: dict[tuple[str, str], tuple[str, int] | None] = {}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RuleSet:
@@ -166,7 +168,8 @@ class RuleSet:
         if not isinstance(fb, dict):
             raise FamiliesConfigError("families.toml needs a [fallback] table")
         fallback = _compile_rule({**fb, "pattern": ""}, layouts, "[fallback]", envelopes)
-        return cls(rules, fallback)
+        families = {rule.family for rule in rules}
+        return cls(rules, fallback, _compile_pools(data.get("pool", []), families))
 
     @classmethod
     def from_text(cls, text: str) -> RuleSet:
@@ -183,12 +186,91 @@ class RuleSet:
                 return _classification(rule, index, match)
         return _classification(self.fallback, None, None)
 
+    def pool_of(self, family: str | None, process: str | None) -> tuple[str, int] | None:
+        """``(pool name, instance)`` when the process is an instance of a declared pool, else ``None``.
+
+        A read-time annotation only: the stored stream identity never changes.
+        """
+        if not family or not process or not self.pools:
+            return None
+        key = (family, process)
+        if key not in self._pool_cache:
+            found = None
+            for pool in self.pools:
+                if pool.family == family:
+                    match = pool.regex.fullmatch(process)
+                    if match:
+                        try:
+                            found = (pool.name, int(match.group("instance")))
+                        except ValueError:  # absurdly long numeric string
+                            found = None
+                        break
+            self._pool_cache[key] = found
+        return self._pool_cache[key]
+
     @property
     def families(self) -> list[str]:
         seen: dict[str, None] = {}
         for rule in [*self.rules, self.fallback]:
             seen.setdefault(rule.family)
         return list(seen)
+
+
+@dataclass(frozen=True)
+class Pool:
+    """A pool of identical processes (one stream per instance); the viewer groups them."""
+
+    name: str
+    family: str
+    regex: re.Pattern[str]
+
+
+_POOL_KEYS = {"name", "family", "process"}
+_POOL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+# Restricted form: fixed literal, exactly one mandatory numeric group named "instance", fixed literal.
+# No other quantifier, group or alternation can appear, so matching is linear.
+_POOL_PROCESS_FORM = re.compile(
+    r"[A-Za-z0-9_-]*"
+    r"\(\?P<instance>(?:\[1-9\]\\d\{0,[0-9]{1,2}\}|\\d\{1,[0-9]{1,2}\}|\\d\+)\)"
+    r"[A-Za-z0-9_-]*"
+)
+
+
+def _compile_pools(raw: Any, families: set[str]) -> list[Pool]:
+    if not isinstance(raw, list):
+        raise FamiliesConfigError("[[pool]] must be an array of tables")
+    pools: list[Pool] = []
+    seen: set[tuple[str, str]] = set()
+    for i, item in enumerate(raw):
+        where = f"pool #{i + 1}"
+        if not isinstance(item, dict):
+            raise FamiliesConfigError(f"{where}: must be a table")
+        unknown = set(item) - _POOL_KEYS
+        if unknown:
+            raise FamiliesConfigError(f"{where}: unknown keys {sorted(unknown)}")
+        name, family, process = item.get("name"), item.get("family"), item.get("process")
+        if not isinstance(name, str) or not _POOL_NAME.fullmatch(name):
+            raise FamiliesConfigError(f"{where}: 'name' must match {_POOL_NAME.pattern}")
+        if not isinstance(family, str) or family not in families:
+            raise FamiliesConfigError(f"{where}: 'family' must be the family of a [[rule]]")
+        if not isinstance(process, str) or not process:
+            raise FamiliesConfigError(f"{where}: 'process' is required")
+        if not _POOL_PROCESS_FORM.fullmatch(process):
+            raise FamiliesConfigError(
+                f"{where}: 'process' must be a fixed literal around exactly one mandatory group "
+                "(?P<instance>[1-9]\\d{0,N}) or (?P<instance>\\d+)"
+            )
+        try:
+            regex = re.compile(process, re.ASCII)
+        except re.error as exc:
+            raise FamiliesConfigError(f"{where}: invalid process pattern: {exc}") from exc
+        if regex.groups != 1 or set(regex.groupindex) != {"instance"}:
+            raise FamiliesConfigError(f"{where}: 'process' needs exactly one group, named 'instance'")
+        if (family, name) in seen:
+            raise FamiliesConfigError(f"{where}: duplicate pool {name!r} for family {family!r}")
+        seen.add((family, name))
+        pools.append(Pool(name=name, family=family, regex=regex))
+    return pools
 
 
 _RULE_KEYS = {"family", "envelope", "scope", "anchor", "indexable", "layout", "process", "pattern"}

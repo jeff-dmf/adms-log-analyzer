@@ -2,6 +2,7 @@
 // Event names, keys and entry text come from the ERS (untrusted): this module only shapes them.
 // Every flow clears its state before a new request and drops answers of an older generation or of
 // another case, so a table never outlives its case.
+import { familyProcessText } from "./process-label.js";
 import { S, format } from "./strings.js";
 import { formatTs } from "./time.js";
 
@@ -71,9 +72,7 @@ export function buildEventParams(filters, after, limit = PAGE_LIMIT) {
 }
 
 export function familyText(event) {
-  const family = event.family || "";
-  const process = event.process || "";
-  return family && process && family !== process ? family + " / " + process : family || process;
+  return familyProcessText(event);
 }
 
 export function buildEventRow(event) {
