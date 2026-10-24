@@ -230,3 +230,9 @@ name = "Failed operations"
 description = "Operations of job scheduling and launching that failed, timed out or ended in a business error."
 family = "DMSJOB"
 filter = { event_status = ["fail", "timeout", "business_error"] }
+
+[[preset]]
+name = "PSengine: failures without the peer loop"
+description = "Critical and error records of PSengine without the repeated peer socket failure loop (PSE-001, PSE-002, PSE-003)."
+family = "PSENGINE"
+filter = { and = [{ sev = { le = 2 } }, { not = { tpl = ["PSE-001", "PSE-002", "PSE-003"] } }] }
