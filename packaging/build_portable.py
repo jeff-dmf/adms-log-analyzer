@@ -68,7 +68,7 @@ def fetch_embed() -> Path:
 def copy_pack(source: Path, target: Path) -> None:
     """Validate ``source`` and copy its pack files to ``target`` (internal builds only)."""
     sys.path.insert(0, str(ROOT / "src"))
-    from dmslog.knowledge.pack_schema import PACK_FILES, validate_pack
+    from dmslog.knowledge.pack_schema import OPTIONAL_PACK_FILES, PACK_FILES, validate_pack
 
     problems = validate_pack(source)
     if problems:
@@ -76,6 +76,9 @@ def copy_pack(source: Path, target: Path) -> None:
     target.mkdir(parents=True)
     for name in PACK_FILES:
         shutil.copyfile(source / name, target / name)
+    for name in OPTIONAL_PACK_FILES:  # e.g. rt_services.json: copied when the pack has it
+        if (source / name).is_file():
+            shutil.copyfile(source / name, target / name)
     print(f"INTERNAL BUILD: knowledge pack copied from {source}; do not publish this folder or zip")
 
 

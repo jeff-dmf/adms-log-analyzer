@@ -1,5 +1,6 @@
 import dataclasses
 import importlib.util
+import json
 import shutil
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 
 from dmslog.knowledge import pack as pack_module
 from dmslog.knowledge.pack import (
+    EMPTY_PACK,
     SOURCE_DATA_DIR,
     SOURCE_ENV,
     SOURCE_OPTION,
@@ -16,14 +18,16 @@ from dmslog.knowledge.pack import (
     STATE_NOT_INSTALLED,
     PackError,
     PackNotInstalled,
+    RtServicesError,
     current_pack,
     load_pack,
     load_pack_from,
+    load_rt_services,
     locate_pack,
     pack_candidates,
     pack_status,
 )
-from dmslog.knowledge.pack_schema import validate_pack
+from dmslog.knowledge.pack_schema import validate_pack, validate_rt_services
 from dmslog.knowledge.resolve import Knowledge
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -236,3 +240,156 @@ def test_an_unreachable_implicit_candidate_is_invalid_without_fallback(tmp_path,
     monkeypatch.setattr(Path, "stat", stat)
     status, _ = locate_pack(pack_candidates(None, data_dir, {}, app))
     assert status.state == STATE_INVALID and status.source == SOURCE_DATA_DIR
+
+
+# -- optional rt_services.json ---------------------------------------------------------------------
+
+
+def _rt_row(**changes):
+    row = {
+        "process": "DMS_ExampleScheduler",
+        "family": "DMSJOB",
+        "title": None,
+        "summary": None,
+        "note": None,
+        "section": None,
+        "install_dir": None,
+        "monitored": [],
+        "counters": [],
+        "usage_events": 0,
+        "references": [],
+    }
+    row.update(changes)
+    return row
+
+
+def _write_rt(directory, rows):
+    (directory / "rt_services.json").write_text(json.dumps({"rt_services": rows}), encoding="utf-8")
+
+
+def test_mini_pack_rt_services_load_and_are_immutable(mini_pack_dir):
+    pack = load_pack_from(mini_pack_dir)
+    assert pack.rt_services_error is None
+    assert [s.process for s in pack.rt_services] == ["DMS_ExampleScheduler", "DMS_ExampleWorker"]
+    service = pack.rt_service("DMS_ExampleScheduler")
+    assert service.family == "DMSJOB" and service.monitored == ("cpu", "ram")
+    assert service.references[0].doc == "EXMP" and service.references[0].mentions == 2
+    assert pack.rt_service("DMS_Unknown") is None
+    bare = pack.rt_service("DMS_ExampleWorker")
+    assert bare.title is None and bare.references == () and bare.counters == ()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        service.title = "x"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        service.references[0].mentions = 9
+
+
+def test_pack_without_rt_services_is_valid(tmp_path, mini_pack_dir):
+    old = copy_pack(mini_pack_dir, tmp_path / "old")
+    (old / "rt_services.json").unlink()
+    assert validate_pack(old) == []
+    pack = load_pack_from(old)
+    assert pack.rt_services == () and pack.rt_services_error is None and pack.rt_service("x") is None
+    assert load_rt_services(old) == ()
+    assert EMPTY_PACK.rt_services == ()
+
+
+def test_invalid_rt_services_only_drops_the_rt_block(tmp_path, mini_pack_dir):
+    broken = copy_pack(mini_pack_dir, tmp_path / "broken")
+    _write_rt(broken, [_rt_row(family="NOPE")])
+    assert any("rt_services.json" in p for p in validate_pack(broken))
+    with pytest.raises(RtServicesError, match="rt_services.json"):
+        load_rt_services(broken)
+    pack = load_pack_from(broken)
+    assert pack.rt_services == () and "rt_services.json" in pack.rt_services_error
+    assert [a.acronym for a in pack.adapters] == ["AAAA", "ABBB"]
+    pack_module.configure(pack_dir=broken)
+    status = pack_status()
+    assert status.state == STATE_INSTALLED and current_pack().rt_services_error
+
+
+def test_unreadable_rt_services_json(tmp_path, mini_pack_dir):
+    broken = copy_pack(mini_pack_dir, tmp_path / "broken")
+    (broken / "rt_services.json").write_text("{not json", encoding="utf-8")
+    assert validate_rt_services(broken)[0].startswith("rt_services.json: cannot be read")
+    assert load_pack_from(broken).rt_services_error
+
+
+@pytest.mark.parametrize("data", [[], {}, {"rt_services": {}}, {"rt_services": [], "extra": 1}])
+def test_rt_services_top_level_shape(tmp_path, data):
+    (tmp_path / "rt_services.json").write_text(json.dumps(data), encoding="utf-8")
+    assert validate_rt_services(tmp_path)
+
+
+_REF = {"doc": "EXMP", "note": "a.md", "section": None, "mentions": 1}
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"process": "bad name"},
+        {"process": 3},
+        {"family": "DMSXXX"},
+        {"title": "a" * 301},
+        {"title": "two\nlines"},
+        {"summary": "x" * 241},
+        {"summary": "line\nbreak"},
+        {"note": "../escape.md"},
+        {"note": "a/../b.md"},
+        {"note": "/abs/note.md"},
+        {"note": "dir\\note.md"},
+        {"note": "C:/note.md"},
+        {"note": "dir/note.txt"},
+        {"section": "1.a"},
+        {"section": "1..2"},
+        {"monitored": ["cpu", "cpu"]},
+        {"monitored": ["gpu"]},
+        {"monitored": [1]},
+        {"counters": [1]},
+        {"counters": ["c"] * 65},
+        {"counters": ["x" * 301]},
+        {"usage_events": -1},
+        {"usage_events": True},
+        {"usage_events": "3"},
+        {"references": [_REF] * 9},
+        {"references": [{**_REF, "doc": "ex"}]},
+        {"references": [{**_REF, "note": "../a.md"}]},
+        {"references": [{**_REF, "section": "x"}]},
+        {"references": [{**_REF, "mentions": 0}]},
+        {"references": [{k: v for k, v in _REF.items() if k != "mentions"}]},
+        {"references": [{**_REF, "text": "t"}]},
+        {"references": ["a.md"]},
+        {"unexpected": 1},
+    ],
+)
+def test_rt_service_rejects_bad_values(tmp_path, changes):
+    _write_rt(tmp_path, [_rt_row(**changes)])
+    assert validate_rt_services(tmp_path), changes
+
+
+def test_rt_service_accepts_limits(tmp_path):
+    ref = {"doc": "EXMP", "note": "a/b.md", "section": "1.2", "mentions": 1}
+    _write_rt(
+        tmp_path,
+        [_rt_row(summary="s" * 240, title="t" * 300, counters=["c"] * 64, references=[ref] * 8)],
+    )
+    assert validate_rt_services(tmp_path) == []
+
+
+def test_rt_service_missing_field_and_null_rules(tmp_path):
+    row = _rt_row()
+    del row["monitored"]
+    _write_rt(tmp_path, [row])
+    assert any("missing field 'monitored'" in p for p in validate_rt_services(tmp_path))
+    _write_rt(tmp_path, [_rt_row(process=None)])
+    assert any("must not be null" in p for p in validate_rt_services(tmp_path))
+
+
+def test_rt_services_must_be_unique_sorted_and_bounded(tmp_path):
+    _write_rt(tmp_path, [_rt_row(process="B"), _rt_row(process="A")])
+    assert any("sorted" in p for p in validate_rt_services(tmp_path))
+    _write_rt(tmp_path, [_rt_row(process="A"), _rt_row(process="A")])
+    assert any("duplicate" in p for p in validate_rt_services(tmp_path))
+    _write_rt(tmp_path, [_rt_row(process=f"P{i:03d}") for i in range(129)])
+    assert any("more than" in p for p in validate_rt_services(tmp_path))
+    (tmp_path / "rt_services.json").write_text(" " * 1_000_001, encoding="utf-8")
+    assert any("larger than" in p for p in validate_rt_services(tmp_path))

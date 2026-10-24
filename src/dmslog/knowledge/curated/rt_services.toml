@@ -1,0 +1,284 @@
+# Real-time (RT) services and processes: the link between a process as it appears in the logs, its
+# family, its template code ranges, its correlation keys and (when the vault has one) the number of its
+# section. Identifiers only: no text of the vault. Source of the pack file rt_services.json
+#. Checked by tests/unit/test_rt_services_curated.py.
+#
+# process   process name as in the log file name; DMS_FunctionHost is the pool (instances _<n> resolve to it)
+# group     core | model_db | model_management | calculation | oms | platform | tool
+# codes     template ranges of the service inside the family file (PFX-NNN..NNN, PFX-SNNN..SNNN, PFX-SNNN)
+# keys      correlation keys emitted by the templates of those ranges
+# related   other RT services and the key that links them (a key of this service or "handoff")
+# vault     { doc, note, section }: note file name and section number; "absent" when the vault has none
+
+version = 1
+
+[[service]]
+process = "DMS_FunctionHost"
+family = "DMSFH"
+group = "calculation"
+codes = ["DFH-001..199"]
+keys = ["job_id"]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.4.3" }
+
+[[service]]
+process = "DMS_JobScheduler"
+family = "DMSJOB"
+group = "calculation"
+codes = ["DJB-001..039"]
+keys = ["job_id"]
+related = [{ process = "DMS_JobLauncher", via = "job_id" }, { process = "DMS_CoreFunctionsService", via = "job_id" }, { process = "DMS_FunctionHost", via = "job_id" }]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.4.1" }
+
+[[service]]
+process = "DMS_JobLauncher"
+family = "DMSJOB"
+group = "calculation"
+codes = ["DJB-040..079"]
+keys = ["job_id", "fh_pid", "new_pid"]
+related = [{ process = "DMS_JobScheduler", via = "job_id" }, { process = "DMS_FunctionHost", via = "handoff" }]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.4.2" }
+
+[[service]]
+process = "DMS_JobManagerService"
+family = "DMSJOB"
+group = "core"
+codes = ["DJB-100..169", "DJB-S100..S129"]
+keys = ["job_id", "jms_job"]
+related = [{ process = "DMS_JobScheduler", via = "job_id" }]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.1.1" }
+
+[[service]]
+process = "DMS_CoreFunctionsService"
+family = "DMSCORE"
+group = "model_management"
+codes = ["DCR-001..099"]
+keys = ["job_id"]
+related = [{ process = "DMS_JobScheduler", via = "job_id" }, { process = "DMS_FunctionHost", via = "job_id" }]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.3.2" }
+
+[[service]]
+process = "DMS_ModelTopologyService"
+family = "DMSCORE"
+group = "model_management"
+codes = ["DCR-100..129"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.3.1" }
+
+[[service]]
+process = "DMS_ChangesetRepositoryService"
+family = "DMSCORE"
+group = "model_db"
+codes = ["DCR-130..149"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.2.5" }
+
+[[service]]
+process = "DMS_ModelPromotionService"
+family = "DMSCORE"
+group = "model_db"
+codes = ["DCR-150..159"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.2.6" }
+
+[[service]]
+process = "DMS_GraphicalModelService"
+family = "DMSCORE"
+group = "model_db"
+codes = ["DCR-160..179"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.2.2" }
+
+[[service]]
+process = "DMS_GenericCalculationService"
+family = "DMSCORE"
+group = "model_management"
+codes = ["DCR-180..219"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.3.7" }
+
+[[service]]
+process = "DMS_LoadForecastService"
+family = "DMSCORE"
+group = "model_management"
+codes = ["DCR-220..279"]
+keys = ["job_id"]
+related = [{ process = "DMS_FunctionHost", via = "job_id" }]
+vault = "absent"
+
+[[service]]
+process = "DMS_LocalContextManager"
+family = "DMSCORE"
+group = "core"
+codes = ["DCR-280..319", "DCR-S280..S289"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.1.3" }
+
+[[service]]
+process = "DMS_ContextCoordinatorService"
+family = "DMSCORE"
+group = "core"
+codes = ["DCR-320..339"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.1 Context Coordinator Service.md", section = "5.4.1" }
+
+[[service]]
+process = "DMS_ExportService"
+family = "DMSCORE"
+group = "model_management"
+codes = ["DCR-340..369"]
+keys = []
+vault = "absent"
+
+[[service]]
+process = "DMS_ControlSequenceManagementService"
+family = "DMSCORE"
+group = "model_management"
+codes = ["DCR-370..399"]
+keys = []
+vault = "absent"
+
+[[service]]
+process = "DMS_NetworkModelService"
+family = "DMSMODEL"
+group = "model_db"
+codes = ["DMD-001..049"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.2.1" }
+
+[[service]]
+process = "DMS_DynamicsDataService"
+family = "DMSMODEL"
+group = "model_db"
+codes = ["DMD-050..109", "DMD-S050..S089"]
+keys = ["exc_type"]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.2.3" }
+
+[[service]]
+process = "DMS_ModelManagerService"
+family = "DMSMODEL"
+group = "model_db"
+codes = ["DMD-110..149"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.2.4" }
+
+[[service]]
+process = "DMS_ReplicationService"
+family = "DMSMODEL"
+group = "core"
+codes = ["DMD-150..169"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.1.4" }
+
+[[service]]
+process = "DMS_ScheduleManagementService"
+family = "DMSMODEL"
+group = "model_management"
+codes = ["DMD-170..184"]
+keys = []
+vault = "absent"
+
+[[service]]
+process = "DMS_GDAProxyService"
+family = "DMSMODEL"
+group = "core"
+codes = ["DMD-185..189"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.1.2" }
+
+[[service]]
+process = "DMS_LandBaseService"
+family = "DMSMODEL"
+group = "model_db"
+codes = ["DMD-190..199"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.9 Landbase Service.md", section = "5.4.9" }
+
+[[service]]
+process = "OMS_IncidentManagementService"
+family = "DMSOMS"
+group = "oms"
+codes = ["DOM-001..049", "DOM-S001..S019"]
+keys = ["job_id", "incident_gid", "inc"]
+related = [{ process = "DMS_FunctionHost", via = "job_id" }]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.5.1" }
+
+[[service]]
+process = "DMS_WorkManagementService"
+family = "DMSOMS"
+group = "model_management"
+codes = ["DOM-050..099"]
+keys = ["gid"]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.3.4" }
+
+[[service]]
+process = "DMS_OutageProcessingService"
+family = "DMSOMS"
+group = "model_management"
+codes = ["DOM-100..114", "DOM-S100..S104"]
+keys = ["job_id", "gid"]
+related = [{ process = "DMS_FunctionHost", via = "job_id" }]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.3.3" }
+
+[[service]]
+process = "OMS_CrewManagementService"
+family = "DMSOMS"
+group = "oms"
+codes = ["DOM-115..139"]
+keys = ["gid", "exc_type"]
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.5.2" }
+
+[[service]]
+process = "DMS_AlarmsEventsService"
+family = "DMSOMS"
+group = "model_management"
+codes = ["DOM-140..159", "DOM-S140"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.3.8" }
+
+[[service]]
+process = "DMS_SmartMeterManagementService"
+family = "DMSOMS"
+group = "model_management"
+codes = ["DOM-160..184"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.4.3 RealTime Service.md", section = "5.4.3.3.5" }
+
+[[service]]
+process = "DMS_MajorEventService"
+family = "DMSOMS"
+group = "oms"
+codes = ["DOM-185..209"]
+keys = []
+vault = "absent"
+
+[[service]]
+process = "PSengine"
+family = "PSENGINE"
+group = "platform"
+codes = ["PSE-001..049"]
+keys = []
+vault = "absent"
+
+[[service]]
+process = "arbIP"
+family = "ARBIP"
+group = "platform"
+codes = ["ARB-001..049"]
+keys = []
+vault = { doc = "SARC", note = "SARC 5.2 OASyS DNA Infrastructure.md", section = "5.2.7" }
+
+[[service]]
+process = "NMC"
+family = "NMC"
+group = "tool"
+codes = ["NMC-001..049"]
+keys = ["exc_type"]
+vault = "absent"
+
+[[service]]
+process = "ERS"
+family = "ERS"
+group = "tool"
+codes = ["ERS-001..029"]
+keys = []
+vault = { doc = "PRFI", note = "PRFI 3.1 ERS Files.md", section = "3.1" }
