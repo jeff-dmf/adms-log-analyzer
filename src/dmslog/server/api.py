@@ -54,6 +54,7 @@ from ..store import (
     db,
     distinct,
     events,
+    filetext,
     highlights,
     keys,
     panelrun,
@@ -1159,6 +1160,7 @@ class Api:
             ("POST", re.compile(r"/api/cases/(?P<case>[^/]+)/resume\Z"), self.resume),
             ("GET", re.compile(r"/api/cases/(?P<case>[^/]+)/progress\Z"), self.progress),
             ("GET", re.compile(r"/api/sources\Z"), self.list_sources),
+            ("GET", re.compile(r"/api/sources/(?P<id>[^/]+)/text\Z"), self.source_text),
             ("GET", re.compile(r"/api/templates\Z"), self.list_templates),
             ("GET", re.compile(r"/api/unknown\Z"), self.list_unknown),
             ("GET", re.compile(r"/api/config\Z"), self.get_config),
@@ -1490,6 +1492,34 @@ class Api:
             for r in rows
         ]  # fmt: skip
         return Response(200, {"sources": sources})
+
+    def source_text(self, request: Request) -> Response:
+        """Read-only text of a source that is not indexed (config, XML, ...): ``reveal=1`` shows the values
+        hidden by default. Nothing is written to the case."""
+        cid = _case_from_query(self.store, request)
+        raw = request.match["id"]
+        if not _SMALL_INT.match(raw):
+            raise ApiError(404, "source_not_found", messages.API_FILE_TEXT_NOT_FOUND)
+        reveal = request.query.get("reveal") == "1"
+        try:
+            with self.store.reader(cid) as conn:
+                found = filetext.read_source_text(conn, int(raw), reveal=reveal)
+        except filetext.FileTooLargeError as exc:
+            raise ApiError(
+                exc.status,
+                exc.code,
+                messages.API_FILE_TEXT_TOO_LARGE.format(limit=exc.limit),
+                limit=exc.limit,
+            ) from exc
+        except filetext.FileTextError as exc:
+            text = {
+                "source_not_found": messages.API_FILE_TEXT_NOT_FOUND,
+                "not_viewable": messages.API_FILE_TEXT_NOT_VIEWABLE,
+                "binary_content": messages.API_FILE_TEXT_BINARY,
+                "container_missing": messages.API_FILE_TEXT_MISSING,
+            }.get(exc.code, messages.API_DATABASE_ERROR)
+            raise ApiError(exc.status, exc.code, text) from exc
+        return Response(200, asdict(found))
 
     # -- templates and unknown signatures
 

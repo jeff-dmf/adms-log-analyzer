@@ -90,3 +90,27 @@ def test_sources_list_has_the_reduced_field(client, case):  # noqa: F811
     """A source indexed whole answers ``reduced: null`` (the field exists for the file list badge)."""
     _, sources, _ = client.get(f"/api/sources?case={case}")
     assert sources["sources"] and all("reduced" in s and s["reduced"] is None for s in sources["sources"])
+
+
+def test_source_text_route_errors_and_nothing_written(client, case):  # noqa: F811
+    """GET /api/sources/<id>/text: an indexed log is not viewable, unknown ids are 404."""
+    _, sources, _ = client.get(f"/api/sources?case={case}")
+    indexed = next(s for s in sources["sources"] if s["status"] == "ready")
+    status, body, _ = client.get(f"/api/sources/{indexed['id']}/text?case={case}")
+    assert status == 409 and body["error"] == "not_viewable"
+    assert client.get(f"/api/sources/99999/text?case={case}")[0] == 404
+    assert client.get(f"/api/sources/abc/text?case={case}")[0] == 404
+    after = client.get(f"/api/sources?case={case}")[1]
+    assert after == sources
+
+
+def test_source_text_route_reads_a_non_indexable_text_file(client, case):  # noqa: F811
+    _, sources, _ = client.get(f"/api/sources?case={case}")
+    candidates = [s for s in sources["sources"] if s["status"] == "skipped" and s["error"] == "not_indexable"]
+    if not candidates:  # the sample ERS may carry none: the reader is covered in test_filetext
+        return
+    for s in candidates:
+        status, body, _ = client.get(f"/api/sources/{s['id']}/text?case={case}")
+        assert status in (200, 409, 413, 422)
+        if status == 200:
+            assert body["source_id"] == s["id"] and body["revealed"] is False and "text" in body
