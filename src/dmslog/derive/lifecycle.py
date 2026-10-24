@@ -768,6 +768,17 @@ class LifecycleDeriver:
     def tracks_pid(self) -> bool:
         return self._pid is not None
 
+    def resume_level(self, *, first_window_open: bool, n_before: int, last_id: int | None) -> None:
+        """Called by the engine when it resumes mid-chain. ``first_window_open``: no level window starts
+        before the checkpoint, so the first window (before any change) is derived again from here; the
+        entries before the checkpoint (all untimed then) are only counted (``n_before``, ``last_id``) so
+        that its entry count and end id equal those of the whole run. Otherwise the saved windows stand."""
+        level = self._level
+        level.seen_change = not first_window_open
+        if first_window_open:
+            level.n = n_before
+            level.last_id = last_id
+
     def seed_previous_pid(self, pid: int | None) -> None:
         """Called by the engine when it resumes mid-chain: the CONFIRMED PID in force before the first
         entry fed (not the last PID seen, which may be an isolated candidate). Another rule may hold

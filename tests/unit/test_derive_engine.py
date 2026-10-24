@@ -304,12 +304,14 @@ def snapshot(conn):
 
 @settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @example(  # an operation closed by the tail record (re-added by the ingestion) next to an open level window
-    actions=[(1, "begin")] * 7 + [(1, "level"), (1, "end"), (1, "begin")], cut=0, cut2=9
+    actions=[(1, "begin")] * 7 + [(1, "level"), (1, "end"), (1, "begin")], cut=0, cut2=9, orphans=0
 )
-@example(actions=[(1, "begin")] * 7 + [(1, "level"), (1, "begin")], cut=0, cut2=8)
-@given(actions=ACTIONS, cut=st.integers(0, 40), cut2=st.integers(0, 40))
-def test_incremental_derivation_equals_one_shot(tmp_path_factory, actions, cut, cut2):
-    lines = build_lines(actions)
+@example(actions=[(1, "begin")] * 7 + [(1, "level"), (1, "begin")], cut=0, cut2=8, orphans=0)
+@example(actions=[(1, "level"), (1, "work"), (1, "level")], cut=2, cut2=3, orphans=1)
+@example(actions=[(1, "level"), (1, "work")], cut=2, cut2=2, orphans=2)
+@given(actions=ACTIONS, cut=st.integers(0, 40), cut2=st.integers(0, 40), orphans=st.integers(0, 3))
+def test_incremental_derivation_equals_one_shot(tmp_path_factory, actions, cut, cut2, orphans):
+    lines = [f"orphan line {i}" for i in range(orphans)] + build_lines(actions)
     first = min(cut, len(lines))
     second = min(max(first, cut2), len(lines))
     base = tmp_path_factory.mktemp("prop")
@@ -326,6 +328,106 @@ def test_incremental_derivation_equals_one_shot(tmp_path_factory, actions, cut, 
     finally:
         whole.close()
         steps.close()
+
+
+ORPHAN = "orphan line before any header"
+UP = "Debug level changed from Info (3) to Debug (4)."
+DOWN = "Debug level changed from Debug (4) to Info (3)."
+
+
+def _first_window_scenarios():
+    return {
+        "orphan_work_change": [ORPHAN, line(0, "[Op] work 1"), line(10, "[Op] work 2"), line(20, UP)]
+        + [line(30, "[Op] work 3"), line(40, DOWN), line(50, "[Op] work 4")],
+        # the first timed record is the change itself
+        "orphan_then_change": [ORPHAN, line(0, UP), line(10, "[Op] work 1"), line(20, DOWN)]
+        + [line(30, "[Op] work 2")],
+        "many_orphans_then_change": [ORPHAN, ORPHAN + " 2", ORPHAN + " 3", line(0, UP)]
+        + [line(10, "[Op] work 1"), line(20, "[Op] work 2")],
+        "change_is_record_one": [
+            line(0, UP),
+            line(10, "[Op] work 1"),
+            line(20, DOWN),
+            line(30, "[Op] work 2"),
+        ],
+        "two_changes_in_a_row": [ORPHAN, line(0, UP), line(0, DOWN), line(10, "[Op] work 1")]
+        + [line(20, UP), line(30, "[Op] work 2")],
+        "orphan_work_two_changes": [ORPHAN, line(0, "[Op] work 1"), line(5, UP), line(5, DOWN)]
+        + [line(9, "[Op] work 2")],
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_first_window_scenarios()))
+def test_first_level_window_is_recovered_at_every_cut(tmp_path, name):
+    """Untimed records before the first timed one, or the change as the first timed record, must not hide
+    the window "before any change" (nor its flag) after an incremental run cut anywhere."""
+    lines = _first_window_scenarios()[name]
+    whole = tp.fresh_db(tmp_path, "whole")
+    try:
+        ingest(whole, tp.write_folder(tmp_path / "W", {WFM: render(lines)}))
+        want = snapshot(whole)
+        assert any(r[0] == "level_window" for r in want[0])
+        for first in range(1, len(lines) + 1):
+            for second in range(first, len(lines) + 1):
+                steps = tp.fresh_db(tmp_path, f"s{first}_{second}")
+                try:
+                    root = tp.write_folder(tmp_path / f"S{first}_{second}", {WFM: render(lines[:first])})
+                    ingest(steps, root)
+                    for upto in (second, len(lines)):
+                        (root / WFM).write_bytes(render(lines[:upto]))
+                        ingest(steps, root)
+                    assert snapshot(steps) == want, (name, first, second)
+                finally:
+                    steps.close()
+    finally:
+        whole.close()
+
+
+def test_first_level_window_survives_a_checkpoint_pulled_back_by_a_gap(tmp_path):
+    """The hourly-gap rule keeps the last entry as its resume point: the checkpoint can sit on the first
+    change although the second one already closed the first window (AAVL: gaps over 61 minutes)."""
+    avl = f"{tp.LOGDIR}/AVLAdapter_5000.log"
+    hours = 2 * 3_600_000
+    lines = [ORPHAN, line(0, UP), line(hours, DOWN), line(hours + 10, "[Op] work 1")]
+    whole = tp.fresh_db(tmp_path, "whole")
+    try:
+        ingest(whole, tp.write_folder(tmp_path / "W", {avl: render(lines)}))
+        want = snapshot(whole)
+        assert sum(r[0] == "level_window" for r in want[0]) == 3
+        for first in range(1, len(lines) + 1):
+            for second in range(first, len(lines) + 1):
+                steps = tp.fresh_db(tmp_path, f"g{first}_{second}")
+                try:
+                    root = tp.write_folder(tmp_path / f"G{first}_{second}", {avl: render(lines[:first])})
+                    ingest(steps, root)
+                    for upto in (second, len(lines)):
+                        (root / avl).write_bytes(render(lines[:upto]))
+                        ingest(steps, root)
+                    assert snapshot(steps) == want, (first, second)
+                finally:
+                    steps.close()
+    finally:
+        whole.close()
+
+
+@pytest.mark.parametrize("name", ["orphan_then_change", "many_orphans_then_change"])
+def test_first_level_window_survives_a_rotation_follow_up(tmp_path, name):
+    lines = _first_window_scenarios()[name]
+    extra = [line(100, "[Op] work 7"), line(110, "[Op] work 8")]
+    steps = tp.fresh_db(tmp_path, "steps")
+    whole = tp.fresh_db(tmp_path, "whole")
+    try:
+        root = tp.write_folder(tmp_path / "S", {WFM: render(lines)})
+        ingest(steps, root)
+        (root / WFM).rename(root / WFM_ROTATED)
+        (root / WFM).write_bytes(render(extra))
+        ingest(steps, root)
+        both = tp.write_folder(tmp_path / "W", {WFM: render(extra), WFM_ROTATED: render(lines)})
+        ingest(whole, both)
+        assert snapshot(steps) == snapshot(whole)
+    finally:
+        steps.close()
+        whole.close()
 
 
 # --------------------------------------------------------------------------- stateful deriver (stats deltas)
