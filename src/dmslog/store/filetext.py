@@ -10,22 +10,28 @@ values of credentials hidden by default.
   are regular expressions over the text.
 * Only extensions of a closed list are viewable, up to ``MAX_TEXT_BYTES`` decoded bytes; a NUL byte in
   the first 8 KiB means a binary file.
-* Hiding rules (the name of a credential is tested by ``is_credential_name``):
-    1. ``Password=``, ``Pwd=`` and ``Secret=`` pairs (connection strings, anywhere in the text);
-    2. start tags with a credential ``key=`` / ``name=`` attribute: the ``value`` attribute (``<add>``);
-    3. simple-text elements with a credential name, or with a credential ``key`` / ``name`` attribute;
-    4. XML attributes with a credential name;
-    5. JSON string members with a credential name;
+* Hiding rules (the name of a credential is tested by ``is_credential_name``); each only collects spans
+  of the original text, which are merged and replaced in one linear pass:
+    1. ``name=value`` pairs anywhere (connection strings), bare or quoted (doubled quotes are escapes);
+    2. XML attributes with a credential name (any quote kind inside, multiline values);
+    3. start tags with a credential ``key=`` / ``name=`` attribute: the ``value`` attribute (``<add>``);
+    4. elements with simple text (text and CDATA, whitespace around it) with a credential name or a
+       credential ``key`` / ``name`` attribute;
+    5. JSON string members with a credential name (escapes in the key are decoded first);
     6. ``name = value`` and ``name: value`` lines (``.ini``, ``.init``, ``.csc``, ``.sql``).
   Connection-string attributes and elements are not hidden whole, only their password pairs (rule 1).
   Hosts, accounts and addresses are not hidden.
+* Files of folder and loose-file collections are read only when the path, resolved, is the registered
+  one: a symlink (or junction) on the file or any folder of the member path is refused.
 """
 
 from __future__ import annotations
 
+import functools
+import json
+import os
 import re
 import sqlite3
-from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -171,6 +177,7 @@ def _is_connection_string_name(name: str) -> bool:
     return joined in _CONN_NAMES or ("connection" in toks and "string" in toks)
 
 
+@functools.lru_cache(maxsize=8192)
 def is_credential_name(name: str) -> bool:
     """True when ``name`` (an attribute, element, key or setting name) names a credential.
 
@@ -182,6 +189,8 @@ def is_credential_name(name: str) -> bool:
     if _is_connection_string_name(name):
         return False
     toks = _tokens(name)
+    if "".join(toks) in _CRED_TOKENS:
+        return True
     for i, tok in enumerate(toks):
         if tok in _CRED_TOKENS or (len(tok) > 3 and tok.endswith(_CRED_SUFFIXES)):
             return True
@@ -190,154 +199,179 @@ def is_credential_name(name: str) -> bool:
     return False
 
 
-_ATTR = r"""[\w:.\-]+\s*=\s*(?:"[^"]*"|'[^']*')"""
-_ATTRS = rf"(?:\s+{_ATTR})*"
-_ATTR_RE = re.compile(r"""(?P<name>[\w:.\-]+)(?P<eq>\s*=\s*)(?:"(?P<dq>[^"]*)"|'(?P<sq>[^']*)')""")
-
-# 1. Password pairs of connection strings: Password=...; Pwd=...; Secret=...
-_PAIR_RE = re.compile(
-    r"""(?<![A-Za-z0-9_])(?P<key>password|pwd|secret)(?P<eq>[ \t]*=[ \t]*)"""
-    r"""(?P<val>"[^"\r\n]*"|'[^'\r\n]*'|[^;"'<>\r\n]*)""",
-    re.IGNORECASE,
+_ATTR_RE = re.compile(
+    r"""(?<![\w:.\-])(?P<name>[\w:.\-]+)\s*=\s*(?:"(?P<dq>[^"]*)"|'(?P<sq>[^']*)')""",
 )
-# 2. Start tags (add, setting, ...) whose key/name attribute is a credential: hide the value attribute.
-_START_TAG_RE = re.compile(rf"<(?P<tag>[\w:.\-]+)(?P<attrs>{_ATTRS})(?P<end>\s*/?)>")
-# 3. Elements with simple text: <tag attrs>text</tag>
-_ELEMENT_RE = re.compile(
-    rf"<(?P<tag>[\w:.\-]+)(?P<attrs>{_ATTRS})\s*>(?P<text>[^<>]*|<!\[CDATA\[.*?\]\]>)</(?P=tag)\s*>",
-    re.DOTALL,
+# A start tag with at most 64 well-formed attributes (the bound keeps hostile input linear).
+_OPEN_TAG_RE = re.compile(
+    r"""<(?P<tag>[\w:.\-]+)(?P<attrs>(?:\s+[\w:.\-]+\s*=\s*(?:"[^"]*"|'[^']*')){0,64})\s*(?P<end>/?)>""",
 )
-# 4. XML attributes
-_ATTR_FULL_RE = re.compile(
-    r"""(?<![\w:.\-])""" + r"""(?P<name>[\w:.\-]+)(?P<eq>\s*=\s*)(?P<q>["'])(?P<val>[^"'\r\n]*?)(?P=q)"""
-)
-# 5. JSON members
+_CLOSE_TAG_RE = re.compile(r"</(?P<tag>[\w:.\-]+)\s*>")
+_PAIR_NAME_RE = re.compile(r"(?<![\w.\-])(?P<name>[\w.\-]+)[ \t]*=[ \t]*")
+_UNQUOTED_RE = re.compile(r"""[^;"'<>\r\n]*""")
 _JSON_RE = re.compile(
-    r"""(?P<pre>"(?P<name>[^"\\\r\n]{1,100})"\s*:\s*")(?P<val>(?:[^"\\\r\n]|\\.)*)(?P<post>")"""
+    r'"(?P<key>(?:[^"\\\r\n]|\\.)*)"[ \t\r\n]*:[ \t\r\n]*"(?P<val>(?:[^"\\\r\n]|\\.)*)"',
 )
-# 6. ini style lines (lines that do not start an XML tag)
 _LINE_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<name>[A-Za-z_][\w.\- \t]{0,100}?)(?P<sep>[ \t]*[=:][ \t]*)(?P<val>[^\r\n]+)$",
     re.MULTILINE,
 )
+_HINT_RE = re.compile(r"pass|pwd|secret|token|credential|key", re.IGNORECASE)
 _KEY_ATTRS = ("key", "name")
+_CDATA_OPEN = "<![CDATA["
+Span = tuple[int, int]
 
 
-class _Masker:
-    """Applies the rules and counts the values hidden."""
+def _cdata_sections(text: str) -> dict[int, int]:
+    """Start -> end of every CDATA section, in one pass (-1 for an unterminated one: it runs to the end)."""
+    out: dict[int, int] = {}
+    pos = 0
+    while (i := text.find(_CDATA_OPEN, pos)) != -1:
+        k = text.find("]]>", i + len(_CDATA_OPEN))
+        if k == -1:
+            out[i] = -1
+            break
+        out[i] = k + 3
+        pos = k + 3
+    return out
 
-    def __init__(self) -> None:
-        self.count = 0
 
-    def mask(self, value: str) -> str:
-        if not value.strip() or value.strip() == MASK:
-            return value  # nothing to hide, or already hidden
-        self.count += 1
-        return MASK
+def _pair_value_span(text: str, start: int) -> Span | None:
+    """Value after ``name=``: quoted (doubled quotes are escapes) up to the real closing quote, or bare."""
+    n = len(text)
+    if start >= n:
+        return None
+    q = text[start]
+    if q in "\"'":
+        i = start + 1
+        while True:
+            k = text.find(q, i)
+            if k == -1:  # unterminated: hide up to the end of the line
+                nl = text.find("\n", start)
+                return (start + 1, n if nl == -1 else nl)
+            if k + 1 < n and text[k + 1] == q:
+                i = k + 2
+                continue
+            return (start + 1, k)
+    m = _UNQUOTED_RE.match(text, start)
+    return (start, m.end()) if m else None
 
-    def _attr_values(self, attrs: str) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for m in _ATTR_RE.finditer(attrs):
-            val = m.group("dq") if m.group("dq") is not None else m.group("sq")
-            out[m.group("name").lower()] = val
-        return out
 
-    def _has_credential_key(self, attrs: str) -> bool:
-        values = self._attr_values(attrs)
-        return any(is_credential_name(values[k]) for k in _KEY_ATTRS if k in values)
+def _element_text_span(text: str, start: int, tag: str, cdata: dict[int, int]) -> Span | None:
+    """Span of the text of ``<tag>...</tag>`` (text and CDATA only, whitespace around it excluded)."""
+    i = start
+    while True:
+        j = text.find("<", i)
+        if j == -1:
+            return None
+        if text.startswith(_CDATA_OPEN, j):
+            end = cdata.get(j, -1)
+            if end == -1:
+                return None
+            i = end
+            continue
+        close = _CLOSE_TAG_RE.match(text, j)
+        if close is None or close.group("tag") != tag:
+            return None
+        region = text[start:j]
+        lead = len(region) - len(region.lstrip())
+        trail = len(region) - len(region.rstrip())
+        return (start + lead, j - trail)
 
-    # rule 1
-    def pairs(self, text: str) -> str:
-        def repl(m: re.Match[str]) -> str:
+
+def _json_unescape(raw: str) -> str:
+    if "\\" not in raw:
+        return raw
+    try:
+        return json.loads(f'"{raw}"')
+    except ValueError:
+        return raw
+
+
+def _collect_spans(text: str) -> list[Span]:
+    spans: list[Span] = []
+    # 1. name=value pairs (connection strings, anywhere): any credential name, quoted or bare
+    covered = 0  # pairs that start inside a value already hidden are skipped (keeps the pass linear)
+    for m in _PAIR_NAME_RE.finditer(text):
+        if m.start() >= covered and is_credential_name(m.group("name")):
+            span = _pair_value_span(text, m.end())
+            if span:
+                spans.append(span)
+                covered = max(covered, span[1])
+    # 2. XML attributes with a credential name (any quote kind inside, multiline values)
+    for m in _ATTR_RE.finditer(text):
+        if is_credential_name(m.group("name")):
+            spans.append(m.span("dq") if m.group("dq") is not None else m.span("sq"))
+    # 3. start tags: <add key=".." value=".."> and elements with simple text
+    cdata = _cdata_sections(text)
+    for m in _OPEN_TAG_RE.finditer(text):
+        attrs = m.group("attrs")
+        cred_key = False
+        value_span: Span | None = None
+        for a in _ATTR_RE.finditer(text, m.start("attrs"), m.end("attrs")):
+            name = a.group("name").lower()
+            inner = a.span("dq") if a.group("dq") is not None else a.span("sq")
+            if name in _KEY_ATTRS and is_credential_name(text[inner[0] : inner[1]]):
+                cred_key = True
+            elif name == "value":
+                value_span = inner
+        if cred_key and value_span:
+            spans.append(value_span)
+        if not m.group("end") and attrs is not None and (cred_key or is_credential_name(m.group("tag"))):
+            span = _element_text_span(text, m.end(), m.group("tag"), cdata)
+            if span:
+                spans.append(span)
+    # 4. JSON string members (escapes in the key are decoded before the name is classified)
+    for m in _JSON_RE.finditer(text):
+        if is_credential_name(_json_unescape(m.group("key"))):
+            spans.append(m.span("val"))
+    # 5. "name = value" / "name: value" lines
+    for m in _LINE_RE.finditer(text):
+        if is_credential_name(m.group("name")):
+            start, end = m.span("val")
             val = m.group("val")
-            if val[:1] in "\"'" and len(val) >= 2:
-                inner = self.mask(val[1:-1])
-                return f"{m.group('key')}{m.group('eq')}{val[0]}{inner}{val[0]}"
-            return f"{m.group('key')}{m.group('eq')}{self.mask(val)}"
-
-        return _PAIR_RE.sub(repl, text)
-
-    # rule 2
-    def key_value_tags(self, text: str) -> str:
-        def repl(m: re.Match[str]) -> str:
-            attrs = m.group("attrs")
-            if not self._has_credential_key(attrs):
-                return m.group(0)
-
-            def attr_repl(a: re.Match[str]) -> str:
-                if a.group("name").lower() != "value":
-                    return a.group(0)
-                quote = '"' if a.group("dq") is not None else "'"
-                val = a.group("dq") if a.group("dq") is not None else a.group("sq")
-                return f"{a.group('name')}{a.group('eq')}{quote}{self.mask(val)}{quote}"
-
-            new_attrs = _ATTR_RE.sub(attr_repl, attrs)
-            return f"<{m.group('tag')}{new_attrs}{m.group('end')}>"
-
-        return _START_TAG_RE.sub(repl, text)
-
-    # rule 3
-    def elements(self, text: str) -> str:
-        def repl(m: re.Match[str]) -> str:
-            tag = m.group("tag")
-            if not (is_credential_name(tag) or self._has_credential_key(m.group("attrs"))):
-                return m.group(0)
-            body = m.group("text")
-            new = self.mask(body)
-            if new == body:
-                return m.group(0)
-            return f"<{tag}{m.group('attrs')}>{new}</{tag}>"
-
-        return _ELEMENT_RE.sub(repl, text)
-
-    # rule 4
-    def attributes(self, text: str) -> str:
-        def repl(m: re.Match[str]) -> str:
-            if not is_credential_name(m.group("name")):
-                return m.group(0)
-            q = m.group("q")
-            return f"{m.group('name')}{m.group('eq')}{q}{self.mask(m.group('val'))}{q}"
-
-        return _ATTR_FULL_RE.sub(repl, text)
-
-    # rule 5
-    def json_members(self, text: str) -> str:
-        def repl(m: re.Match[str]) -> str:
-            if not is_credential_name(m.group("name")):
-                return m.group(0)
-            return f"{m.group('pre')}{self.mask(m.group('val'))}{m.group('post')}"
-
-        return _JSON_RE.sub(repl, text)
-
-    # rule 6
-    def lines(self, text: str) -> str:
-        def repl(m: re.Match[str]) -> str:
-            if not is_credential_name(m.group("name")):
-                return m.group(0)
-            val = m.group("val")
-            stripped = val.rstrip()
-            head = f"{m.group('indent')}{m.group('name')}{m.group('sep')}"
-            return f"{head}{self.mask(stripped)}{val[len(stripped) :]}"
-
-        return _LINE_RE.sub(repl, text)
+            spans.append((start, end - (len(val) - len(val.rstrip()))))
+    return spans
 
 
-_RULES: tuple[Callable[[_Masker, str], str], ...] = (
-    _Masker.pairs,
-    _Masker.key_value_tags,
-    _Masker.elements,
-    _Masker.attributes,
-    _Masker.json_members,
-    _Masker.lines,
-)
+_NONBLANK_RE = re.compile(r"\S")
+
+
+def _worth_hiding(text: str, a: int, b: int) -> bool:
+    """False for an empty or blank span, or one that is already the mask (no slicing of long spans)."""
+    if b <= a:
+        return False
+    m = _NONBLANK_RE.search(text, a, b)
+    if m is None:
+        return False
+    return not (b - a <= 2 * len(MASK) and text[a:b].strip() == MASK)
 
 
 def hide_credentials(text: str) -> tuple[str, int]:
-    """``text`` with credential values replaced by ``MASK``, and how many values were hidden."""
-    masker = _Masker()
-    for rule in _RULES:
-        text = rule(masker, text)
-    return text, masker.count
+    """``text`` with credential values replaced by ``MASK``, and how many values were hidden.
+
+    Every rule only collects spans of the original text; overlapping spans are merged and replaced in
+    one pass, so a value found by two rules is counted once and the cost stays linear.
+    """
+    if not _HINT_RE.search(text):
+        return text, 0
+    spans = sorted((a, b) for a, b in _collect_spans(text) if _worth_hiding(text, a, b))
+    if not spans:
+        return text, 0
+    merged: list[list[int]] = []
+    for a, b in spans:
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    out: list[str] = []
+    pos = 0
+    for a, b in merged:
+        out.append(text[pos:a])
+        out.append(MASK)
+        pos = b
+    out.append(text[pos:])
+    return "".join(out), len(merged)
 
 
 # ---------------------------------------------------------------------- reading
@@ -384,6 +418,36 @@ def _info_from_rows(kind: str, coll_path: str, member: str, file_name: str, size
     )
 
 
+def _is_redirect(path: Path) -> bool:
+    isjunction = getattr(os.path, "isjunction", None)
+    return path.is_symlink() or bool(isjunction and isjunction(path))
+
+
+def _check_not_redirected(kind: str, root: Path, member: str) -> None:
+    """Refuse folder and file sources whose path was redirected (symlink, junction) after discovery."""
+    if kind == "ers_zip":
+        return
+    unavailable = ContainerMissingError("the collection file is not available")
+    try:
+        if kind == "file":
+            if _is_redirect(root) or not root.is_file():
+                raise unavailable
+            return
+        parts = member.split("/")
+        current = root
+        for part in parts:
+            current = current / part
+            if _is_redirect(current):
+                raise unavailable
+        real_root = root.resolve(strict=True)
+        expected = real_root.joinpath(*parts)
+        real = current.resolve(strict=True)
+        if os.path.normcase(str(real)) != os.path.normcase(str(expected)) or not real.is_file():
+            raise unavailable
+    except OSError as exc:
+        raise unavailable from exc
+
+
 def read_source_text(
     conn: sqlite3.Connection,
     source_id: int,
@@ -413,6 +477,7 @@ def read_source_text(
         raise FileTooLargeError(limits.max_bytes)
 
     info = _info_from_rows(ckind, cpath, member, file_name, size or 0)
+    _check_not_redirected(ckind, Path(cpath), member)
     chunks: list[bytes] = []
     total = 0
     try:

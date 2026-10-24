@@ -487,17 +487,220 @@ def test_hostile_content_is_inert(case):
     assert out.text == text  # returned as text, nothing expanded or executed
 
 
-def test_pathological_input_is_fast(case):
+def _time_hostile(shapes) -> float:
+    size = 4 * 1024 * 1024
     start = time.perf_counter()
+    for unit in shapes:
+        hide_credentials(unit * (size // len(unit)))
+    return time.perf_counter() - start
+
+
+def test_pathological_input_is_fast():
+    """4 MiB of hostile input per shape: the four review shapes in 2 s in total (the passes are linear)."""
+    assert _time_hostile(("<x><![CDATA[", "Password=", "<a ", '<a b="', "Password='")) < 2
+
+
+@pytest.mark.parametrize(
+    "unit", ['<password key="pwd" ', "]]></a>", "<add key='token' ", "password = ", "<x>"]
+)
+def test_other_hostile_shapes_are_fast(unit):
+    assert _time_hostile((unit,)) < 2
+
+
+# ---------------------------------------------------------------------- review regressions
+
+
+def test_cdata_with_whitespace_and_newlines_around_is_hidden():
     for text in (
-        "<a " * 200_000,
-        '<a b="' * 100_000,
-        "<x>" * 200_000,
-        "Password=" * 100_000,
-        "a " * 300_000 + "=",
+        f"<Password>\n<![CDATA[{SECRET}]]>\n</Password>",
+        f"<Password>  \t<![CDATA[{SECRET}]]>  </Password>",
+        f"<Password>\n  {SECRET}\n</Password>",
+        f"<Password>part1<![CDATA[{SECRET}]]></Password>",
     ):
-        hide_credentials(text)
-    assert time.perf_counter() - start < 10
+        out, n = hidden_text(text)
+        assert n == 1 and SECRET not in out, text
+        assert out.startswith("<Password>") and out.endswith("</Password>")
+
+
+def test_multiline_attribute_and_other_quote_kind_inside_value():
+    for text in (
+        f'<Server ApiKey=\n  "{SECRET}\nsecond line" Port="1"/>',
+        f'<Server ApiKey="{SECRET}\'last" Port="1"/>',
+        f'<Server ApiKey=\'{SECRET}"last\' Port="1"/>',
+        f'<Server\n  Password\n=\n"{SECRET}"\n/>',
+    ):
+        out, n = hidden_text(text)
+        assert n == 1 and SECRET not in out, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f'Server=s;Password="first""{SECRET}";Port=1',
+        f"Server=s;Password='first''{SECRET}';Port=1",
+        f'Server=s;Pwd="a""b""{SECRET}";Port=1',
+        f"<Db connectionString=\"Server=s;Password='first''{SECRET}';Port=1\"/>",
+    ],
+)
+def test_connection_password_with_doubled_quotes_fully_hidden(text):
+    out, n = hidden_text(text)
+    assert n == 1 and SECRET not in out and "first" not in out and "Port=1" in out
+
+
+def test_json_escaped_key_and_value():
+    cases = (
+        f'{{"\\u0070assword":"{SECRET}"}}',
+        f'{{"pass\\u0077ord":"{SECRET}"}}',
+        f'{{"api-key":"{SECRET}"}}',
+        f'{{"password":"ab\\"{SECRET}\\"cd","x":"y"}}',
+        '{"password":"\\u0065xample-secret"}',
+        f'{{ "password" :\n "{SECRET}" }}',
+    )
+    for text in cases:
+        out, n = hidden_text(text)
+        assert n >= 1 and SECRET not in out and "xample-secret" not in out, text
+    out, _ = hidden_text(f'{{"password":"ab\\"{SECRET}\\"cd","x":"y"}}')
+    assert out == f'{{"password":"{MASK}","x":"y"}}'
+
+
+def test_symlinked_file_is_refused(case):
+    conn, _db, tmp = case
+    folder = tmp / "Log"
+    folder.mkdir()
+    outside = tmp / "outside.ini"
+    outside.write_text(f"Password={SECRET}\n", encoding="utf-8")
+    link = folder / "x.ini"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+    sid = add_source(conn, add_collection(conn, "folder", folder), "x.ini", 20)
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid, reveal=True)
+
+
+def test_symlinked_directory_is_refused(case):
+    conn, _db, tmp = case
+    folder = tmp / "Log"
+    folder.mkdir()
+    outside = tmp / "elsewhere"
+    outside.mkdir()
+    (outside / "x.ini").write_text(f"Password={SECRET}\n", encoding="utf-8")
+    try:
+        (folder / "cfg").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+    sid = add_source(conn, add_collection(conn, "folder", folder), "cfg/x.ini", 20)
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid, reveal=True)
+
+
+def test_symlinked_loose_file_is_refused(case):
+    conn, _db, tmp = case
+    real = tmp / "real.xml"
+    real.write_text("<a/>", encoding="utf-8")
+    link = tmp / "link.xml"
+    try:
+        link.symlink_to(real)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+    sid = add_source(conn, add_collection(conn, "file", link), "link.xml", 4)
+    with pytest.raises(ContainerMissingError):
+        read_source_text(conn, sid)
+
+
+def test_registered_root_may_itself_be_a_symlink(case):
+    conn, _db, tmp = case
+    real = tmp / "RealLog"
+    real.mkdir()
+    (real / "x.ini").write_text("host=h1\n", encoding="utf-8")
+    root = tmp / "RootLink"
+    try:
+        root.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+    sid = add_source(conn, add_collection(conn, "folder", root), "x.ini", 8)
+    assert read_source_text(conn, sid).text == "host=h1\n"
+
+
+# ---------------------------------------------------------------------- adversarial pass
+
+
+def _variants(secret: str) -> list[str]:
+    out: list[str] = []
+    names = [
+        "Password",
+        "PASSWORD",
+        "password",
+        "pWd",
+        "DbPassword",
+        "api-key",
+        "ApiKey",
+        "client_secret",
+        "authToken",
+    ]
+    for name in names:
+        for w in ["", " ", "\t", "  \t"]:
+            for q in ('"', "'"):
+                other = "'" if q == '"' else '"'
+                out.append(f'<Server {name}{w}={w}{q}{secret}{q} Port="1"/>')
+                out.append(f'<Server {name}{w}={w}{q}{secret}{other}x{q} Port="1"/>')
+                out.append(f'<Server Port="1"\r\n  {name}{w}={w}{q}{secret}{q}/>')
+                out.append(f"Server=s;{name}{w}={w}{q}{secret}{q};Port=1")
+                out.append(f"Server=s;{name}{w}={w}{q}ab{q}{q}{secret}{q};Port=1")
+                out.append(f'{{"{name}"{w}:{w}"{secret}"}}')
+            out.append(f"Server=s;{name}{w}={w}{secret};Port=1")
+            out.append(f"{name}{w}={w}{secret}\r\nnext=1\r\n")
+            out.append(f"{name}{w}:{w}{secret}\n")
+            out.append(f"<{name}>{w}{secret}{w}</{name}>")
+            out.append(f'<{name} attr="1">\r\n<![CDATA[{secret}]]>\r\n</{name}>')
+            out.append(f"<!-- c --><{name}>{secret}</{name}><!-- d -->")
+            out.append(f'<add key{w}={w}"{name}" value{w}={w}"{secret}"/>')
+            out.append(f"<add value='{secret}' name='{name}' />")
+            out.append(f'<add\r\n  key="{name}"\r\n  value="{secret}"\r\n/>')
+    for cs in ("connectionString", "ConnectionString", "connection-string"):
+        out.append(f'<add name="x" {cs}="Data Source=h;User Id=u;pwd={secret};"/>')
+        out.append(f"<{cs}>Server=s;PASSWORD = {secret}</{cs}>")
+        out.append(f"{cs} = Server=s;Pwd={secret}")
+    return out
+
+
+def test_adversarial_variants_never_show_the_secret():
+    variants = _variants(SECRET)
+    assert len(variants) > 500
+    for text in variants:
+        out, n = hide_credentials(text)
+        assert SECRET not in out and n >= 1, text
+        again, n2 = hide_credentials(out)
+        assert again == out and n2 == 0, text  # idempotent: the mask is not counted again
+
+
+def test_hypothesis_secret_never_shown():
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    names = st.sampled_from(
+        ["password", "Password", "PWD", "pwd", "DbPassword", "api_key", "ApiKey", "token", "secret"]
+    )
+    ws = st.text(alphabet=" \t", max_size=3)
+    quote = st.sampled_from(['"', "'"])
+    junk = st.text(alphabet="abc <>/=;\n", max_size=12)
+
+    @settings(max_examples=300, deadline=None)
+    @given(names, ws, ws, quote, st.integers(0, 5), junk, junk)
+    def check(name, w1, w2, q, shape, before, after):
+        body = {
+            0: f"<S {name}{w1}={w2}{q}{SECRET}{q}/>",
+            1: f"{name}{w1}={w2}{SECRET}\n",
+            2: f"<{name}>{w1}{SECRET}{w2}</{name}>",
+            3: f'<add key="{name}" value="{SECRET}"/>',
+            4: f"Server=s;{name}{w1}={w2}{q}{SECRET}{q};",
+            5: f'{{"{name}"{w1}:{w2}"{SECRET}"}}',
+        }[shape]
+        out, _ = hide_credentials(f"{before}\n{body}\n{after}")
+        assert SECRET not in out
+
+    check()
 
 
 @pytest.mark.parametrize("bom,codec", [(b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")])
