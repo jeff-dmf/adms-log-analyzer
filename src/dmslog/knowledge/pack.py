@@ -206,7 +206,10 @@ def load_rt_services(directory: Path | str) -> tuple[RtService, ...]:
     path = directory / RT_SERVICES_FILE
     if not path.is_file():
         return ()
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:  # validated just before: a race or a hostile depth
+        raise RtServicesError(f"cannot read {RT_SERVICES_FILE}: {type(exc).__name__}") from exc
     return tuple(_rt_service(row) for row in data["rt_services"])
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -176,8 +177,10 @@ def _check_text(value, where, errors, limit=RT_MAX_TEXT):
         return
     if len(value) > limit:
         errors.append(f"{where}: longer than {limit} characters")
-    if "\n" in value or "\r" in value or "\x00" in value:
-        errors.append(f"{where}: must be a single line")
+    if any(
+        ord(ch) < 0x20 or ord(ch) == 0x7F or unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in value
+    ):
+        errors.append(f"{where}: must be a single line without control characters")
 
 
 def _check_note_path(value, where, errors):
@@ -208,8 +211,8 @@ def validate_rt_services(directory) -> list[str]:
         if path.stat().st_size > RT_MAX_FILE_BYTES:
             return [f"{name}: larger than {RT_MAX_FILE_BYTES} bytes"]
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return [f"{name}: cannot be read as JSON ({exc})"]
+    except (OSError, ValueError, RecursionError) as exc:
+        return [f"{name}: cannot be read as JSON ({type(exc).__name__})"]
     if not isinstance(data, dict) or set(data) != {"rt_services"}:
         return [f"{name}: top level must be an object with the single key 'rt_services'"]
     rows = data["rt_services"]
@@ -226,7 +229,7 @@ def validate_rt_services(directory) -> list[str]:
         if not isinstance(row, dict) or len(errors) > before:
             continue
         process = row["process"]
-        if not _PROCESS.match(process):
+        if not _PROCESS.fullmatch(process):
             errors.append(f"{where}: field 'process' is not a valid process name")
         if process in seen:
             errors.append(f"{where}: duplicate process '{process}'")
@@ -241,7 +244,7 @@ def validate_rt_services(directory) -> list[str]:
         _check_text(row["summary"], f"{where}.summary", errors, RT_MAX_SUMMARY)
         if row["note"] is not None:
             _check_note_path(row["note"], f"{where}.note", errors)
-        if row["section"] is not None and not _SECTION.match(row["section"]):
+        if row["section"] is not None and not _SECTION.fullmatch(row["section"]):
             errors.append(f"{where}: field 'section' is not a section number")
         if isinstance(row["usage_events"], bool) or row["usage_events"] < 0:
             errors.append(f"{where}: field 'usage_events' must be a non-negative integer")
@@ -266,11 +269,11 @@ def validate_rt_services(directory) -> list[str]:
             _check_fields(reference, _RT_REFERENCE_FIELDS, ref_where, errors)
             if not isinstance(reference, dict) or len(errors) > before:
                 continue
-            if not _DOC.match(reference["doc"]):
+            if not _DOC.fullmatch(reference["doc"]):
                 errors.append(f"{ref_where}: field 'doc' must be a four-letter document code")
             _check_note_path(reference["note"], f"{ref_where}.note", errors)
             section = reference["section"]
-            if section is not None and not _SECTION.match(section):
+            if section is not None and not _SECTION.fullmatch(section):
                 errors.append(f"{ref_where}: field 'section' is not a section number")
             if isinstance(reference["mentions"], bool) or reference["mentions"] < 1:
                 errors.append(f"{ref_where}: field 'mentions' must be a positive integer")

@@ -393,3 +393,51 @@ def test_rt_services_must_be_unique_sorted_and_bounded(tmp_path):
     assert any("more than" in p for p in validate_rt_services(tmp_path))
     (tmp_path / "rt_services.json").write_text(" " * 1_000_001, encoding="utf-8")
     assert any("larger than" in p for p in validate_rt_services(tmp_path))
+
+
+def _load_rt_json(mini_pack_dir):
+    import json
+
+    data = json.loads((mini_pack_dir / "rt_services.json").read_text(encoding="utf-8"))
+    return data, data["rt_services"][0]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("process", "ExampleService\n"),
+        ("section", "1.2\n"),
+        ("title", "bad \x1b[31m title"),
+        ("title", "line separator"),
+        ("summary", "tab\there\x7f"),
+    ],
+)
+def test_rt_services_reject_newline_tail_and_control_characters(tmp_path, mini_pack_dir, field, value):
+    import json
+
+    broken = copy_pack(mini_pack_dir, tmp_path / "ctl")
+    data, row = _load_rt_json(broken)
+    row[field] = value
+    (broken / "rt_services.json").write_text(json.dumps(data), encoding="utf-8")
+    assert validate_pack(broken) != []
+
+
+def test_rt_services_reference_doc_with_newline_is_rejected(tmp_path, mini_pack_dir):
+    import json
+
+    broken = copy_pack(mini_pack_dir, tmp_path / "doc")
+    data, row = _load_rt_json(broken)
+    if not row["references"]:
+        pytest.skip("fixture row without references")
+    row["references"][0]["doc"] = "EXMP\n"
+    (broken / "rt_services.json").write_text(json.dumps(data), encoding="utf-8")
+    assert validate_pack(broken) != []
+
+
+def test_deeply_nested_rt_services_drops_only_the_rt_block(tmp_path, mini_pack_dir):
+    broken = copy_pack(mini_pack_dir, tmp_path / "deep")
+    (broken / "rt_services.json").write_text("[" * 200_000 + "]" * 200_000, encoding="utf-8")
+    pack = load_pack_from(broken)
+    assert pack.rt_services == () and pack.rt_services_error
+    pack_module.configure(pack_dir=broken)
+    assert pack_status().state == STATE_INSTALLED

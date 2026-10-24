@@ -321,6 +321,7 @@ SECTIONS = {
     "error_codes": "_ERROR_FIELDS",
     "operations": "_OPERATION_FIELDS",
     "parameters": "_PARAMETER_FIELDS",
+    "rt_services": "_RT_SERVICE_FIELDS",
 }
 
 
@@ -475,3 +476,8 @@ def test_named_archive_that_does_not_open_still_fails_safe(tmp_path, is_zipfile_
     broken.write_bytes(b"#!/usr/bin/env python3\n" + ZIP_SIGNATURES * 5)
     problems = module.artifact_problems(broken)
     assert problems and "cannot be inspected" in problems[0]
+
+
+def test_a_single_renamed_rt_services_file_is_caught_by_shape(repo):
+    track(repo, {"kb/rt.dat": (MINI_PACK / "rt_services.json").read_bytes()})
+    assert_blocked(run_guard(repo), "kb/rt.dat", "data file")
