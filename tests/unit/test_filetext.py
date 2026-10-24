@@ -151,6 +151,11 @@ REPRODUCERS = [
     "pa&#x00AD;ssword=SYNTHETIC_9472",
     "\\u0026notoken=SYNTHETIC_9472",
     "pass\\u0026notit;word=SYNTHETIC_9472",
+    "p&#97;ss&nosuch;word=SYNTHETIC_9472",
+    "pass&amp;nosuch;word=SYNTHETIC_9472",
+    "pass&amp;notit;word=SYNTHETIC_9472",
+    "p&amp;#97;ss&amp;amp;nosuch;word=SYNTHETIC_9472",
+    "p\\u0026#97;ss\\u0026nosuch;word=SYNTHETIC_9472",
 ]
 
 
@@ -462,6 +467,10 @@ def test_pathological_input_is_fast():
         "&a;",
         "e\u0301",
         "&amp;#",
+        "&amp;",
+        "&amp;amp;amp;amp;",
+        "p&amp;#97;ss&amp;nosuch;word ",
+        "&a;",
         "&",
         "&&",
         "&not",
@@ -784,5 +793,94 @@ def test_hypothesis_entities_and_punctuation_between_letters_or_glued_before():
         else:
             spelled = word
         assert credential_mentions(f"{prefix}{spelled}={SYN}") >= 1
+
+    check()
+
+
+def test_hypothesis_composed_encodings_never_hide_a_mention():
+    """Any composition of per-letter encodings and per-position insertions still counts as a mention.
+
+    The one documented exception is a legacy reference WITHOUT ";" that really forms another character
+    inside the word (``to&notken`` reads ``to`` + not-sign + ``ken``): nothing in the file spells the
+    word then, so a bare ``&name`` is only inserted followed by a punctuation character.
+    """
+    import html as html_module
+
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    words = ["password", "passwd", "pwd", "secret", "token", "apikey", "privatekey", "clientsecret"]
+    words += ["credential"]
+
+    def named(letter: str) -> str | None:
+        for suffix in ("scr", "opf", "fr"):
+            if f"{letter}{suffix};" in html_module.entities.html5:
+                return f"&{letter}{suffix};"
+        return None
+
+    def encode_letter(letter: str, how: int, zeros: int, amps: int) -> str:
+        code = ord(letter)
+        if how == 1:
+            enc = f"&#{'0' * zeros}{code};"
+        elif how == 2:
+            enc = f"&#x{'0' * zeros}{code:x};"
+        elif how == 3:
+            enc = named(letter) or f"&#{code};"
+        elif how == 4:
+            enc = f"\\u{code:04x}"
+        else:
+            return letter
+        for _ in range(amps):  # "&" written as "&amp;" up to three times
+            enc = enc.replace("&", "&amp;") if how != 4 else enc
+        return enc
+
+    inserts = st.sampled_from(
+        [
+            "&nosuch;",
+            "&notit;",
+            "&nbsp;",
+            "&shy;",
+            "&#99999999999;",
+            "&#xZZ;",
+            "&#;",
+            "&nosuch.",
+            "&nosuch ",
+            "&x-",
+            "\u0301",
+            "\u200b",
+            "\u00ad",
+            "\u202e",
+            ".",
+            "-",
+            "_",
+            " ",
+            "\t",
+            "\n",
+            ":",
+            "&amp;nosuch;",
+            "&amp;amp;nosuch;",
+        ]
+    )
+
+    @settings(max_examples=500, deadline=None)
+    @given(
+        st.sampled_from(words),
+        st.lists(st.tuples(st.integers(0, 4), st.integers(0, 6), st.integers(0, 3)), min_size=8, max_size=16),
+        st.lists(st.one_of(st.just(""), inserts), min_size=8, max_size=16),
+        st.booleans(),
+        st.integers(0, 2),
+    )
+    def check(word, encodings, gaps, upper, outer_amps):
+        parts = []
+        for i, letter in enumerate(word):
+            letter = letter.upper() if upper and i % 2 == 0 else letter
+            how, zeros, amps = encodings[i % len(encodings)]
+            parts.append(encode_letter(letter, how, zeros, amps))
+            if i < len(word) - 1:
+                parts.append(gaps[i % len(gaps)])
+        spelled = "".join(parts)
+        for _ in range(outer_amps):  # the whole text escaped once more
+            spelled = spelled.replace("&", "&amp;")
+        assert credential_mentions(f"{spelled}={SYN}") >= 1, spelled
 
     check()
