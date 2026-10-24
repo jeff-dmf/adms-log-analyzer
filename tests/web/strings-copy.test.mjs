@@ -37,7 +37,7 @@ test("countNoun formats the count with the right noun", () => {
 
 test("every plural base has both forms", () => {
   const keys = new Set(Object.keys(S));
-  const notPlural = new Set(["colPanelsOne", "timelineOther", "clkBannerOne", "sbsPaneOther", "cfKindOther"]); // not plural forms (a single collection, the "Other" bucket, a single banner and similar)
+  const notPlural = new Set(["colPanelsOne", "timelineOther", "clkBannerOne", "sbsPaneOther", "cfKindOther", "ntOther"]); // not plural forms (a single collection, the "Other" bucket, a single banner and similar)
   for (const key of keys) {
     if (notPlural.has(key)) {
       continue;

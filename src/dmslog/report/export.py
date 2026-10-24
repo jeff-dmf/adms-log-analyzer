@@ -5,6 +5,7 @@ Layout (all fixed texts live in :mod:`dmslog.messages`)::
     dmslog report - <case label>[ - part k/N]
     Generated: <local time> - dmslog <version> - pack <version>
     Source: ERS <time> (<machine>) - Enterprise+Sensitive
+    Reduced: <source> - ...  one line per reduced source (very large log, indexed in part) shown in the report
     Redaction: OFF (original text)      or, when asked: Redaction: ON (profile "default", strict mode)
     Time shown as logged (local server time, no conversion).
 
@@ -58,6 +59,7 @@ from itertools import groupby
 from typing import Any
 
 from .. import __version__, messages
+from ..ingest.capped import CappedState, load_all_capped
 from ..parse.envelope import LEVEL_NAMES
 from ..store import query
 from .redact import CATEGORIES, Profile, Redactor, default_profile
@@ -229,6 +231,27 @@ def _format_ers_ts(value: str | None) -> str:
 
 
 _VARIANT_NAMES = {"enterprise": "Enterprise", "sensitive": "Sensitive"}
+
+
+# Header lines of reduced sources (R3d): at most this many are listed, then a summary line.
+MAX_REDUCED_LINES = 20
+
+
+def _size_text(size: int) -> str:
+    """Byte size with a binary unit (B, KB, MB, GB), one decimal at most."""
+    value = float(max(size, 0))
+    unit = "B"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            break
+        value /= 1024
+    text = f"{value:.1f}".removesuffix(".0") if unit != "B" else f"{int(value)}"
+    return f"{text} {unit}"
+
+
+def _public_name(file_name: str) -> str:
+    """The last segment of a source name: a reduced-source line never shows a directory."""
+    return file_name.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
 def _clean(text: str) -> str:
@@ -616,6 +639,8 @@ class _Builder:
         self._pack_text = "n/a"
         self._collection_lines: list[str] = []  # header lines of a case with several collection groups
         self._source_tags: dict[int, str] = {}
+        self.reduced: list[tuple[int, str, CappedState]] = []  # (source id, name, state) with a record shown
+        self._reduced_lines: list[str] = []
 
     def R(self, text: str, *, payload: bool = False, spans: Any = None, identifier: bool = False) -> str:
         """Anonymize a text taken from the case (identity when anonymization is off). ``spans`` are the
@@ -717,6 +742,7 @@ class _Builder:
             wanted = list(self.rows)
             self.table_payloads = _fetch_payloads(self.conn, wanted)
             self.notes = _fetch_notes(self.conn, wanted)
+            self.reduced = self._reduced_sources()
             index = dict(events)
             owners = {
                 r.event_id
@@ -729,6 +755,18 @@ class _Builder:
                 index.update(_fetch_events(self.conn, extra))
         self.selected_ids = selected_all
         return info, ordered_events, event_blocks, record_blocks, index
+
+    def _reduced_sources(self) -> list[tuple[int, str, CappedState]]:
+        """Reduced sources (ingest/capped.py) that have at least one record in the report."""
+        shown = {r.source_id: r.file_name for r in self.rows.values()}
+        if not shown:
+            return []
+        states = load_all_capped(self.conn)
+        return [
+            (sid, _public_name(shown[sid]), states[sid])
+            for sid in sorted(shown)
+            if states.get(sid) is not None
+        ]
 
     # -- building
 
@@ -804,6 +842,27 @@ class _Builder:
         exceptions = {c for c in candidates if _SAFE_CODE.match(c) and probe.redact(c) == c}
         return Redactor(profile, exceptions=exceptions, known=known)
 
+    def _make_reduced_lines(self) -> list[str]:
+        lines: list[str] = []
+        for sid, name, state in self.reduced[:MAX_REDUCED_LINES]:
+            shown = self.R(_clean(name).replace("\n", " ")) or "-"
+            tag = self._source_tags.get(sid)
+            lines.append(
+                messages.EXPORT_REDUCED_LINE.format(
+                    name=f"{tag} {shown}" if tag else shown,
+                    head=_size_text(state.h),
+                    tail=_size_text(max(state.size_at_cap - state.lo, 0)),
+                    size=_size_text(state.size_at_cap),
+                    skipped=_size_text(state.skipped_bytes),
+                    lines=state.skipped_lines,
+                    start=format_ts(state.skipped_from_ts),
+                    end=format_ts(state.skipped_to_ts),
+                )
+            )
+        if len(self.reduced) > MAX_REDUCED_LINES:
+            lines.append(messages.EXPORT_REDUCED_MORE.format(count=len(self.reduced) - MAX_REDUCED_LINES))
+        return lines
+
     def _prime(self, info: _CaseInfo) -> None:
         label = _clean(self.label_override or info.label).replace("\n", " ")
         self._label_text = self.R(label)[:MAX_LABEL_CHARS]  # anonymize first, then cut
@@ -816,6 +875,7 @@ class _Builder:
         pack = self.pack_override or info.pack_version
         self._pack_text = self.R(_clean(pack).replace("\n", " ")) if pack else "n/a"
         self._source_tags = info.source_tags
+        self._reduced_lines = self._make_reduced_lines()
         self._collection_lines = []
         for tag, kind, stamp, guid, group_variants, host in info.collections:
             shown_host = messages.EXPORT_UNKNOWN_VALUE
@@ -1166,6 +1226,7 @@ class _Builder:
                 ),
                 messages.EXPORT_SOURCE_MULTI.format(count=len(self._collection_lines)),
                 *self._collection_lines,
+                *self._reduced_lines,
                 self._redaction_line(),
                 messages.EXPORT_TIME_NOTE,
                 messages.EXPORT_TIME_NOTE_MULTI,
@@ -1189,6 +1250,7 @@ class _Builder:
                 when=self.now.strftime("%Y-%m-%d %H:%M:%S"), version=self.version, pack=pack
             ),
             source,
+            *self._reduced_lines,
             self._redaction_line(),
             messages.EXPORT_TIME_NOTE,
             "",

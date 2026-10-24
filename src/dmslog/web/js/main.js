@@ -11,6 +11,7 @@ import { createBookmarkStore } from "./bookmarks-model.js";
 import { createHighlightStore } from "./highlight-model.js";
 import { compareButtonLabel, createCompareSelection } from "./compare-model.js";
 import { CaseFiles } from "./case-files.js";
+import { capChoices } from "./case-files-model.js";
 import { Detail, adoptHeading } from "./detail.js";
 import {
   andFilters, composeFilter, createLatestRequest, navPlan, stateFromForm,
@@ -225,6 +226,7 @@ function start() {
   };
 
   fillSelect(byId("scope-select"), [["default", S.scopeDefault], ["all", S.scopeAll]]);
+  fillSelect(byId("cap-select"), capChoices());
   fillSelect(byId("sev-select"), [["", S.filterAny]].concat(
     [1, 2, 3, 4, 5].map((n) => [String(n), format(S.severityAtLeast, { name: S.severityNames[n] })])));
   fillSelect(byId("level-select"), [["", S.filterAny]].concat(
@@ -500,7 +502,12 @@ function start() {
       const source = sources.find((item) => item.id === id);
       const tags = isMulti(collections) ? gridTags(collections) : null; // the collection is said only when there are several
       const tag = source && tags && tags.get(source.collection);
-      return { name: sourceNames.get(id) || String(id), sensitive: Boolean(source && source.sensitive), tag: tag ? tag.tag : "" };
+      return {
+        name: sourceNames.get(id) || String(id),
+        sensitive: Boolean(source && source.sensitive),
+        tag: tag ? tag.tag : "",
+        reduced: source && source.reduced ? source.reduced : null,
+      };
     },
     isBookmarked: (id) => Boolean(bookmarkStore.get(id)),
     onBookmarkToggle: (id) => bookmarkStore.toggle(id).catch(showError),
@@ -637,6 +644,7 @@ function start() {
     openForm: byId("open-form"),
     pathInput: byId("path-input"),
     scopeSelect: byId("scope-select"),
+    capSelect: byId("cap-select"),
     sourceList: byId("source-list"),
     caseHeader: byId("case-header"),
     caseHeaderName: byId("case-header-name"),

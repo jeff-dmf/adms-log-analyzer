@@ -3,6 +3,7 @@
 // filters the same way. Names come from the logs: text nodes and <mark> only, never HTML. Text comes from strings.js.
 import { S, format } from "./strings.js";
 import { highlightParts, isFiltering, matchRange } from "./source-filter-model.js";
+import { badgeText, formatSize, isReduced, label, reducedTitle } from "./case-files-model.js";
 import { isUnreadable, sourceMeta, unreadableTitle } from "./sources.js";
 import {
   STORAGE_PREFIX, buildTree, checkState, closed, defaultOpen, idsOf, matchedIds, parseOpen, serializeOpen, toggled, treeKeyTarget,
@@ -87,7 +88,9 @@ export class SourceTree {
   // Rebuilds from the panel's sources, then writes only what changed.
   update() {
     const sources = this.panel.sources;
-    const sig = sources.map((s) => s.id + ":" + (s.member || s.name) + ":" + s.records + ":" + s.status).join("|");
+    const sig = sources
+      .map((s) => s.id + ":" + (s.member || s.name) + ":" + s.records + ":" + s.status + ":" + (s.error || "") + ":" + (isReduced(s) ? s.reduced.skipped_bytes : ""))
+      .join("|");
     const caseChanged = this.openFor !== this.panel.caseId;
     if (sig !== this.sig || caseChanged) {
       this.sig = sig;
@@ -115,7 +118,7 @@ export class SourceTree {
 
   toggleFirst() {
     if (this.list[0]) {
-      this.toggleCheck(this.list[0].node.key);
+      this.activate(this.list[0].node.key, null);
     }
   }
 
@@ -199,8 +202,18 @@ export class SourceTree {
     badge.className = "badge";
     badge.textContent = S.sourceSensitive;
     badge.hidden = true;
-    el.append(twisty, box, mark, name, count, badge);
-    return { el, twisty, box, mark, name, count, badge, sig: null };
+    const reduced = document.createElement("span");
+    reduced.className = "badge badge-reduced";
+    reduced.textContent = badgeText();
+    reduced.hidden = true;
+    const view = document.createElement("button");
+    view.type = "button";
+    view.className = "ui-button st-view";
+    view.textContent = label("fvView", "View");
+    view.setAttribute("tabindex", "-1"); // the row is the tab stop; Enter on a viewable row does the same
+    view.hidden = true;
+    el.append(twisty, box, mark, name, count, badge, reduced, view);
+    return { el, twisty, box, mark, name, count, badge, reduced, view, sig: null };
   }
 
   fill(entry, row, selected, query) {
@@ -214,8 +227,16 @@ export class SourceTree {
       el.setAttribute("aria-expanded", row.open ? "true" : "false");
     }
     const ids = idsOf(node, this.matched);
-    const state = checkState(ids, selected);
-    el.setAttribute("aria-checked", state === "all" ? "true" : state === "some" ? "mixed" : "false");
+    const state = node.notIndexed ? "none" : checkState(ids, selected);
+    if (node.notIndexed) {
+      // Not indexed: nothing to select, so no check state (the row opens a folder or the viewer).
+      if (el.getAttribute("aria-checked") !== null) {
+        el.removeAttribute("aria-checked");
+      }
+      el.classList.add("is-not-indexed");
+    } else {
+      el.setAttribute("aria-checked", state === "all" ? "true" : state === "some" ? "mixed" : "false");
+    }
     el.dataset.state = state;
     const sig = node.name + "\u0000" + query;
     if (entry.sig !== sig) {
@@ -233,13 +254,17 @@ export class SourceTree {
       }
     }
     const records = (node.records || 0).toLocaleString("en-US");
-    const count = node.folder ? format(S.treeFiles, { n: node.files.toLocaleString("en-US") }) : records;
+    const count = node.notIndexed
+      ? (node.folder ? "" : node.source.size === null || node.source.size === undefined ? "" : formatSize(node.source.size))
+      : node.folder ? format(S.treeFiles, { n: node.files.toLocaleString("en-US") }) : records;
     if (entry.count.textContent !== count) {
       entry.count.textContent = count;
     }
-    const title = node.folder
-      ? format(S.treeFolderTitle, { path: node.name, files: node.files.toLocaleString("en-US"), records })
-      : sourceMeta(node.source);
+    const title = node.notIndexed
+      ? node.folder ? node.name : node.name + (node.source.error ? " - " + node.source.error : "")
+      : node.folder
+        ? format(S.treeFolderTitle, { path: node.name, files: node.files.toLocaleString("en-US"), records })
+        : sourceMeta(node.source);
     if (el.title !== title) {
       el.title = title;
     }
@@ -251,12 +276,25 @@ export class SourceTree {
     } else if (el.getAttribute("aria-label") !== null) {
       el.removeAttribute("aria-label");
     }
-    const bad = node.folder ? node.unreadable > 0 : isUnreadable(node.source);
+    const bad = node.folder || node.notIndexed ? node.unreadable > 0 : isUnreadable(node.source);
     entry.mark.hidden = !bad;
     if (bad) {
       entry.mark.title = node.folder ? format(S.treeUnreadable, { n: node.unreadable }) : unreadableTitle(node.source);
     }
     entry.badge.hidden = node.folder || !node.source.sensitive;
+    const reduced = !node.folder && isReduced(node.source);
+    entry.reduced.hidden = !reduced;
+    if (reduced) {
+      const text = reducedTitle(node.source);
+      if (entry.reduced.title !== text) {
+        entry.reduced.title = text;
+      }
+    }
+    const viewable = Boolean(node.viewable);
+    entry.view.hidden = !viewable;
+    if (viewable) {
+      entry.view.setAttribute("aria-label", label("fvViewFile", "View {name}", { name: node.name }));
+    }
   }
 
   syncTabStops() {
@@ -276,6 +314,24 @@ export class SourceTree {
     }
     this.saveOpen();
     this.update();
+  }
+
+  // A click, Space or Enter on a row. A folder of the "Not indexed" group opens or closes; a file of it opens the viewer
+  // (when it can be viewed); any other row checks the sources under it.
+  activate(key, opener) {
+    const row = this.list.find((r) => r.node.key === key);
+    if (!row) {
+      return;
+    }
+    if (row.node.notIndexed) {
+      if (row.node.folder) {
+        this.setOpen(key, !row.open);
+      } else if (row.node.viewable) {
+        this.panel.viewSource(row.node.source, opener);
+      }
+      return;
+    }
+    this.toggleCheck(key);
   }
 
   toggleCheck(key) {
@@ -299,7 +355,7 @@ export class SourceTree {
     if (row.node.folder && event.target.closest(".st-twisty")) {
       this.setOpen(key, !row.open);
     } else {
-      this.toggleCheck(key);
+      this.activate(key, event.target.closest(".st-view") ? event.target : this.rows.get(key).el);
     }
   }
 
@@ -311,7 +367,7 @@ export class SourceTree {
     const index = this.list.findIndex((r) => r.node.key === key);
     if (event.key === " " || event.key === "Enter") {
       event.preventDefault();
-      this.toggleCheck(key);
+      this.activate(key, this.rows.has(key) ? this.rows.get(key).el : event.target);
       return;
     }
     if (event.key === "Escape" && this.panel.refs.filterInput) {

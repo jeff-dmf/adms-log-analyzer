@@ -2767,6 +2767,96 @@ mark {
   }
 }
 
+/* A source the indexer read only in part (the first and last stretch of a huge log): the title of the badge says what was
+   skipped (js/case-files-model.js reducedTitle). The text carries the meaning; the border reinforces it. */
+.badge-reduced {
+  flex: none;
+  padding: 0 var(--space-1);
+  color: var(--status-info-ink);
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  cursor: help;
+}
+
+/* "Not indexed (n)": the sources the indexer skipped, closed by default. In the tree its rows are st-row; in the flat list
+   they are ni-row inside one list item at the end of the list. */
+.st-row.is-not-indexed .st-box {
+  visibility: hidden;
+}
+
+.st-view,
+.ni-view {
+  flex: none;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.ni-group {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.ni-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--source-row);
+  white-space: nowrap;
+}
+
+.ni-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.ni-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.ni-toggle[aria-expanded="false"] .st-twisty::before {
+  content: "\25B8"; /* right-pointing triangle */
+}
+
+.ni-toggle[aria-expanded="true"] .st-twisty::before {
+  content: "\25BE"; /* down-pointing triangle */
+}
+
+.ni-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ni-size {
+  flex: none;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-skip-note {
+  color: var(--ink-muted);
+}
+
+@media (forced-colors: active) {
+  .badge-reduced {
+    border-color: CanvasText;
+  }
+}
+
 /* ---- filter-tree.css ---- */
 /* Filter tree editor and saved filters. Uses the theme tokens of app.css (light and dark). */
 .filter-tree {
@@ -5812,6 +5902,115 @@ body.no-case #grid-panel > :not(.case-empty):not(h2) {
 
 .key-chain-action {
   margin-right: var(--space-2);
+}
+
+/* ---- file-viewer.css ---- */
+/* The read-only text viewer for files that were not indexed (js/file-viewer.js). Colors, spacing and layers come from
+   tokens.css. The overlay is the backdrop; the panel is the dialog. */
+.fv-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+}
+
+.fv-overlay[hidden] {
+  display: none;
+}
+
+.fv-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(1100px, 100%);
+  max-height: 100%;
+  padding: var(--space-3) var(--space-4);
+  color: var(--ink);
+  background: var(--surface-overlay);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.fv-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.fv-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--text-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fv-facts,
+.fv-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  color: var(--ink-muted);
+}
+
+.fv-warning,
+.fv-status {
+  flex: none;
+  margin: 0;
+}
+
+.fv-warning {
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink);
+  border: 1px solid var(--sev-warning);
+  border-radius: var(--radius-sm);
+}
+
+.fv-warning[hidden],
+.fv-status:empty {
+  display: none;
+}
+
+.fv-text {
+  flex: 1 1 auto;
+  min-height: 8em;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre;
+  background: var(--surface-field);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.fv-text[hidden] {
+  display: none;
+}
+
+.fv-text:focus-visible,
+.fv-panel:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+@media (forced-colors: active) {
+  .fv-panel,
+  .fv-text,
+  .fv-warning {
+    border-color: CanvasText;
+  }
 }
 
 /* ---- queue.css ---- */

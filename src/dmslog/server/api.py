@@ -8,6 +8,7 @@ which is only handed to the ingest as its input; case ids are validated strictly
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -166,6 +167,23 @@ _BOOKMARK_STATUS = {
     "not_found": 404, "entry_not_found": 404, "already_bookmarked": 409, "too_many": 409,
     "import_too_large": 413,
 }  # fmt: skip
+
+
+def _source_cap_param(body: dict[str, Any]) -> int | None:
+    """``source_cap_mb`` of an open or plan request: whole MB, 0 = every file whole; absent = default."""
+    raw = body.get("source_cap_mb")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or not 0 <= raw <= 1_000_000:
+        raise ApiError(400, "bad_source_cap", messages.API_BAD_SOURCE_CAP)
+    return raw
+
+
+def _limits_for_cap(cap_mb: int | None) -> pipeline.ReadLimits:
+    """The read limits of a run: the default ones, with the per-file cap of the request when given."""
+    if cap_mb is None:
+        return pipeline.ReadLimits()
+    return dataclasses.replace(pipeline.ReadLimits(), source_cap_bytes=cap_mb * 1024**2)
 
 
 def _reduced_json(state: capped_ingest.CappedState | None) -> dict[str, Any] | None:
@@ -423,6 +441,7 @@ class IngestJobs:
         scope: str,
         first: pipeline.FirstPass | None = None,
         queue: bool = False,
+        source_cap_mb: int | None = None,
     ) -> str:
         """Start an ingestion of ``path``; ``path=None`` completes what partial opens left (``resume``)."""
         case_id = self._store.canonical_case_id(case_id)
@@ -432,7 +451,7 @@ class IngestJobs:
             raise ApiError(409, "job_running", messages.API_CASE_BUSY.format(case=case_id))
         thread = threading.Thread(
             target=self._run,
-            args=(case_id, job_id, path, scope, hub, first, queue),
+            args=(case_id, job_id, path, scope, hub, first, queue, source_cap_mb),
             name=f"ingest-{case_id}",
             daemon=True,
         )
@@ -461,6 +480,7 @@ class IngestJobs:
         hub: ProgressHub,
         first: pipeline.FirstPass | None = None,
         queue: bool = False,
+        source_cap_mb: int | None = None,
     ) -> None:
         conn: sqlite3.Connection | None = None
         done: dict[str, Any] = {"job_id": job_id, "status": "error", "message": ""}
@@ -485,7 +505,11 @@ class IngestJobs:
         try:
             conn = db.create_case_db(self._store.db_path(case_id))
             options = pipeline.IngestOptions(
-                scope=scope, case_name=case_id, aliases=aliases.get(self._store.data_dir), first=first
+                scope=scope,
+                case_name=case_id,
+                aliases=aliases.get(self._store.data_dir),
+                first=first,
+                limits=_limits_for_cap(source_cap_mb),
             )
             if path is None:  # resume: one run per collection a partial open left incomplete
                 results = pipeline.resume_pending(conn, options, progress) or [pipeline.IngestResult()]
@@ -1364,7 +1388,7 @@ class Api:
                 400, "path_unreadable", messages.JOB_FAILED.format(error=self._shown(exc))
             ) from exc
         queue = self._queue_option(cid, body.get("message_queue"))
-        job_id = self.jobs.start(cid, path, scope, first, queue)
+        job_id = self.jobs.start(cid, path, scope, first, queue, _source_cap_param(body))
         return Response(202, {"job_id": job_id})
 
     def _queue_option(self, cid: str, raw: Any) -> bool:
@@ -1407,7 +1431,9 @@ class Api:
                 400, "path_not_found", messages.API_PATH_NOT_FOUND.format(path=self._component(str(path)))
             )
         try:
-            previews = pipeline.preview_sources(path, scope, aliases=aliases.get(self.data_dir))
+            previews = pipeline.preview_sources(
+                path, scope, _limits_for_cap(_source_cap_param(body)), aliases=aliases.get(self.data_dir)
+            )
         except (OSError, UnsafeArchiveError, SourceNotFoundError, ReadLimitError) as exc:
             raise ApiError(
                 400, "path_unreadable", messages.JOB_FAILED.format(error=self._shown(exc))

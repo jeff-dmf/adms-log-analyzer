@@ -1,5 +1,7 @@
 // Pure model of the "files of a new case" list: names, kinds, duplicates, and the create flow.
 // No DOM here; the DOM side is case-files.js.
+import { S, format } from "./strings.js";
+import { formatTs } from "./time.js";
 
 // Same convention as the server (ingest/ers.py): ERS_CL_<GUID>_<yyyymmddHHMMSS>_[Sensitive_]<Product>[_desc].zip
 const ERS_NAME = /^ERS_CL_[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}_\d{14}_(Sensitive_)?[A-Za-z]+(_.*)?\.zip$/i;
@@ -372,4 +374,132 @@ export class PickFlow {
       // The pending pick answers on its own.
     }
   }
+}
+
+
+// ---- reduced sources, not indexed sources and "Large files" (R3c, R4c); pure helpers the opening loads anyway ----------
+// (the viewer and the "Not indexed" group are in file-viewer-model.js, which loads on demand)
+
+// A string of strings.js, or the English default until the key is added there.
+export function label(key, fallback, values) {
+  const text = Object.prototype.hasOwnProperty.call(S, key) && typeof S[key] === "string" ? S[key] : fallback;
+  return values ? format(text, values) : text;
+}
+
+export function countText(n) {
+  return n.toLocaleString("en-US");
+}
+
+// A source the indexer skipped (not selected, not indexable or over the limit): listed, never read into the index.
+export function isNotIndexed(source) {
+  return Boolean(source) && source.status === "skipped";
+}
+
+export function isReduced(source) {
+  return Boolean(source) && source.reduced !== null && source.reduced !== undefined && typeof source.reduced === "object";
+}
+
+export function safeNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function formatMb(mb) {
+  return mb >= 1024 && mb % 1024 === 0 ? mb / 1024 + " GB" : mb + " MB";
+}
+
+// {from, to} as text; both "unknown" when the server did not know the times.
+function rangeParts(reduced) {
+  const from = safeNumber(reduced.skipped_from_ts);
+  const to = safeNumber(reduced.skipped_to_ts);
+  if (from === null || to === null) {
+    const unknown = label("srcReducedUnknownTime", "unknown time");
+    return { from: unknown, to: unknown };
+  }
+  return { from: formatTs(from), to: formatTs(to) };
+}
+
+export function badgeText() {
+  return label("srcReducedBadge", "Reduced");
+}
+
+// The `title` of the badge: what was indexed, what was skipped (size, lines, times) and the limit.
+export function reducedTitle(source) {
+  if (!isReduced(source)) {
+    return "";
+  }
+  const reduced = source.reduced;
+  const size = safeNumber(source.size);
+  const head = safeNumber(reduced.head_end);
+  const start = safeNumber(reduced.tail_start);
+  const tail = size !== null && start !== null && size >= start ? size - start : null;
+  return label(
+    "srcReducedTitle",
+    "Indexed the first {head} and the last {tail} of {size}. Skipped {skipped} in between ({lines} lines, {from} to {to}). Per-file limit: {cap}.",
+    {
+      head: head === null ? "?" : formatSize(head),
+      tail: tail === null ? "?" : formatSize(tail),
+      size: size === null ? "?" : formatSize(size),
+      skipped: formatSize(safeNumber(reduced.skipped_bytes) || 0),
+      lines: countText(safeNumber(reduced.skipped_lines) || 0),
+      ...rangeParts(reduced),
+      cap: formatSize(safeNumber(reduced.cap) || 0),
+    },
+  );
+}
+
+export const FLAG_AFTER_SKIP = 128;
+
+export function isAfterSkip(entry) {
+  return Boolean(entry) && Number.isInteger(entry.flags) && (entry.flags & FLAG_AFTER_SKIP) !== 0;
+}
+
+// The note of the record detail for the first record after a skipped stretch; "" for any other record. `source` is the
+// source info of the record ({reduced} when known); without the numbers the note still says that lines were skipped.
+export function afterSkipNote(entry, source) {
+  if (!isAfterSkip(entry)) {
+    return "";
+  }
+  if (!isReduced(source)) {
+    return label("detailAfterSkipBare", "Lines before this record were skipped.");
+  }
+  const reduced = source.reduced;
+  return label("detailAfterSkip", "Lines before this record were skipped: {lines} lines ({skipped}), {from} to {to}.", {
+    lines: countText(safeNumber(reduced.skipped_lines) || 0),
+    skipped: formatSize(safeNumber(reduced.skipped_bytes) || 0),
+    ...rangeParts(reduced),
+  });
+}
+
+// ---- "Large files" in the opening of a case -----------------------------------------------------------------------
+
+export const HEAD_MB = 1;
+export const DEFAULT_CAP_MB = 256;
+export const CAP_OPTIONS = [
+  { value: String(DEFAULT_CAP_MB), mb: DEFAULT_CAP_MB, key: "capDefault", fallback: "First 1 MB and last 256 MB (default)" },
+  { value: "1024", mb: 1024, key: "capLarge", fallback: "First 1 MB and last 1 GB" },
+  { value: "0", mb: 0, key: "capWhole", fallback: "Whole file (slow, large database)" },
+];
+
+// [value, text] pairs for the select (the same shape main.js gives fillSelect).
+export function capChoices() {
+  return CAP_OPTIONS.map((option) => [option.value, label(option.key, option.fallback)]);
+}
+
+// The limit in MB the select stands for: 256, 1024 or 0 (no limit); anything else is the default.
+export function capMbOf(value) {
+  const found = CAP_OPTIONS.find((option) => option.value === String(value));
+  return found ? found.mb : DEFAULT_CAP_MB;
+}
+
+// The note under the preview of the sources: what a file over the limit gets. "" when there is no limit.
+export function previewCappedText(capMb) {
+  const mb = capMbOf(capMb);
+  if (mb === 0) {
+    return "";
+  }
+  return label(
+    "previewCapped",
+    "Over the {cap} per-file limit: only the first {head} and the last {cap} will be indexed.",
+    { cap: formatMb(mb), head: formatMb(HEAD_MB) },
+  );
 }
