@@ -6,6 +6,39 @@ import { badgeText, capMbOf, formatSize, isNotIndexed, isReduced, label, reduced
 import { setFieldError } from "./field-error.js";
 import { S, countNoun, format, pluralKey } from "./strings.js";
 
+// The members of a pool of identical processes go where the first member is, by the number of the instance ("_2" before
+// "_10"); everything else keeps its place. Same rule as groupPoolItems in process-label.js, which is not imported here
+// because the opening graph of the app has no room for one more module (boot-graph.test.mjs).
+export function orderPoolEntries(entries) {
+  const pooled = (entry) => typeof entry.source.pool === "string" && entry.source.pool !== "" && Number.isSafeInteger(entry.source.instance);
+  const groups = new Map();
+  for (const entry of entries) {
+    if (pooled(entry)) {
+      if (!groups.has(entry.source.pool)) {
+        groups.set(entry.source.pool, []);
+      }
+      groups.get(entry.source.pool).push(entry);
+    }
+  }
+  if (groups.size === 0) {
+    return entries;
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.source.instance - b.source.instance); // stable: equal instances keep their order
+  }
+  const out = [];
+  const done = new Set();
+  for (const entry of entries) {
+    if (!pooled(entry)) {
+      out.push(entry);
+    } else if (!done.has(entry.source.pool)) {
+      done.add(entry.source.pool);
+      out.push(...groups.get(entry.source.pool));
+    }
+  }
+  return out;
+}
+
 export function conflictMessage(error) {
   const key = "conflict_" + error.code;
   return Object.prototype.hasOwnProperty.call(S, key) ? S[key] : S.conflict_generic + " " + error.message;
@@ -882,7 +915,8 @@ export class SourcesPanel {
   // removed and only the new ones inserted, so the focus, the scroll and the checkboxes of the others stay.
   renderSources() {
     const list = this.refs.sourceList;
-    const shown = this.sources.length === 0 ? [] : filterSources(this.sources, this.query);
+    // the instances of a pool go by the number of the instance ("_2" before "_10"); the rest keeps its order
+    const shown = this.sources.length === 0 ? [] : orderPoolEntries(filterSources(this.sources, this.query));
     const entries = [];
     const skipped = []; // the sources that were not indexed: their own group at the end, never a checkable row
     const seen = new Set();
